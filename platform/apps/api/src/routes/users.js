@@ -15,6 +15,13 @@ const paginationSchema = z.object({
     limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 
+function normalizeUser(user) {
+    return {
+        ...user,
+        telegramId: user.telegramId != null ? user.telegramId.toString() : null,
+    };
+}
+
 // GET /api/users
 router.get('/',
     validateParams({ query: paginationSchema }),
@@ -28,7 +35,7 @@ router.get('/',
             }),
             db.user.count(),
         ]);
-        res.json({ ok: true, data: users, meta: { total, page, limit } });
+        res.json({ ok: true, data: users.map(normalizeUser), meta: { total, page, limit } });
     })
 );
 
@@ -38,7 +45,7 @@ router.get('/:id',
     asyncHandler(async (req, res) => {
         const user = await db.user.findUnique({ where: { id: req.params.id } });
         if (!user) throw new NotFoundError('User', req.params.id);
-        res.json({ ok: true, data: user });
+        res.json({ ok: true, data: normalizeUser(user) });
     })
 );
 

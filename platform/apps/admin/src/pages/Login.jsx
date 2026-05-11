@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Navigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore.js';
 
 export function Login() {
@@ -6,7 +7,9 @@ export function Login() {
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
-    const login = useAuthStore(s => s.login);
+    const { login, isAuthenticated } = useAuthStore();
+
+    if (isAuthenticated) return <Navigate to="/" replace />;
 
     const submit = async (e) => {
         e.preventDefault();

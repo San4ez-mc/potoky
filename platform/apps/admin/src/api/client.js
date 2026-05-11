@@ -14,7 +14,7 @@ async function req(method, path, body) {
 
 export const api = {
     // Auth
-    login: (password) => req('POST', '/admin/login', { password }),
+    login: (login, password) => req('POST', '/admin/login', { login, password }),
     logout: () => req('POST', '/admin/logout'),
 
     // Projects

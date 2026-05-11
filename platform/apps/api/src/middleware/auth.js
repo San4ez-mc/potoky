@@ -21,9 +21,14 @@ function authMiddleware(req, res, next) {
  * Login handler — verify password and set session.
  */
 async function loginHandler(req, res) {
-    const { password } = req.body;
-    if (!password) {
-        return res.status(400).json({ ok: false, error: { code: 'MISSING_PASSWORD', message: 'Password required' } });
+    const { login, password } = req.body;
+    if (!login || !password) {
+        return res.status(400).json({ ok: false, error: { code: 'MISSING_CREDENTIALS', message: 'Login and password required' } });
+    }
+
+    const expectedLogin = process.env.ADMIN_LOGIN || 'admin';
+    if (login !== expectedLogin) {
+        return res.status(401).json({ ok: false, error: { code: 'INVALID_CREDENTIALS', message: 'Invalid login or password' } });
     }
 
     const hash = process.env.ADMIN_PASSWORD_HASH;
@@ -33,7 +38,7 @@ async function loginHandler(req, res) {
 
     const isValid = await bcrypt.compare(password, hash);
     if (!isValid) {
-        return res.status(401).json({ ok: false, error: { code: 'INVALID_PASSWORD', message: 'Invalid password' } });
+        return res.status(401).json({ ok: false, error: { code: 'INVALID_CREDENTIALS', message: 'Invalid login or password' } });
     }
 
     req.session.isAdmin = true;

@@ -14,8 +14,8 @@ export const useAuthStore = create((set) => ({
         }
     },
 
-    login: async (password) => {
-        await api.login(password);
+    login: async (loginVal, password) => {
+        await api.login(loginVal, password);
         set({ isAuthenticated: true });
     },
 

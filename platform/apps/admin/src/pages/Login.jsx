@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useAuthStore } from '../stores/authStore.js';
 
 export function Login() {
+    const [loginVal, setLoginVal] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
@@ -12,9 +13,9 @@ export function Login() {
         setError('');
         setLoading(true);
         try {
-            await login(password);
+            await login(loginVal, password);
         } catch (err) {
-            setError(err.message || 'Невірний пароль');
+            setError(err.message || 'Невірний логін або пароль');
         } finally {
             setLoading(false);
         }
@@ -28,10 +29,23 @@ export function Login() {
                         <span className="text-3xl">🤖</span>
                     </div>
                     <h1 className="text-2xl font-bold text-white">AI Bots Platform</h1>
-                    <p className="text-gray-400 mt-1">Введіть пароль для входу</p>
+                    <p className="text-gray-400 mt-1">Введіть дані для входу</p>
                 </div>
 
                 <form onSubmit={submit} className="bg-gray-900 rounded-2xl p-6 border border-gray-800 space-y-4">
+                    <div>
+                        <label className="text-sm text-gray-400 block mb-1.5">Логін</label>
+                        <input
+                            type="text"
+                            value={loginVal}
+                            onChange={e => setLoginVal(e.target.value)}
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand"
+                            placeholder="admin"
+                            required
+                            autoFocus
+                            autoComplete="username"
+                        />
+                    </div>
                     <div>
                         <label className="text-sm text-gray-400 block mb-1.5">Пароль</label>
                         <input
@@ -41,7 +55,7 @@ export function Login() {
                             className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand"
                             placeholder="••••••••"
                             required
-                            autoFocus
+                            autoComplete="current-password"
                         />
                     </div>
 

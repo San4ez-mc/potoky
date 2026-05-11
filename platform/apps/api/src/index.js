@@ -21,6 +21,7 @@ const adminRouter = require('./routes/admin');
 const webhookRouter = require('./routes/webhook');
 const funnelsRouter = require('./routes/funnels');
 const connectorsRouter = require('./routes/connectors');
+const mcpRouter = require('./routes/mcp');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -72,6 +73,9 @@ app.use('/api/users', authMiddleware, usersRouter);
 app.use('/api/funnels', authMiddleware, funnelsRouter);
 app.use('/api/connectors', authMiddleware, connectorsRouter);
 app.use('/api/admin', adminRouter);
+
+// MCP endpoint (public with optional Bearer token via MCP_SECRET)
+app.use('/mcp', mcpRouter);
 
 // Health check (public)
 app.get('/health', asyncHandler(async (_req, res) => {

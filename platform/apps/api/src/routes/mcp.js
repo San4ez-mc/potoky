@@ -6,8 +6,11 @@
  *
  * Endpoint: POST /mcp  (or GET /mcp for SSE stream negotiation)
  *
- * Auth: Bearer token via MCP_SECRET env var (set in .env on server).
- * Add to Claude.ai: https://flows.fineko.space/mcp  (with Authorization header)
+ * Auth (two options):
+ *   1. Global:   Authorization: Bearer <MCP_SECRET env var>
+ *   2. Per-user: ?token=<user.mcpToken>  OR  Authorization: Bearer <user.mcpToken>
+ *
+ * Add to Claude.ai: https://flows.fineko.space/mcp?token=<your_token>
  */
 
 const express = require('express');
@@ -18,11 +21,27 @@ const prisma = new PrismaClient();
 
 // ─── Auth ──────────────────────────────────────────────────────────────────────
 
-function checkAuth(req, res) {
-    const secret = process.env.MCP_SECRET;
-    if (!secret) return true; // no secret configured — open (dev mode)
-    const auth = req.headers.authorization || '';
-    if (auth === `Bearer ${secret}`) return true;
+async function checkAuth(req, res) {
+    const globalSecret = process.env.MCP_SECRET;
+    const bearer = (req.headers.authorization || '').replace(/^Bearer\s+/, '');
+    const queryToken = req.query.token;
+    const candidate = bearer || queryToken;
+
+    if (!candidate) {
+        if (!globalSecret) return true; // no auth configured — open
+        res.status(401).json({ error: 'Unauthorized' });
+        return false;
+    }
+
+    // Check global secret first
+    if (globalSecret && candidate === globalSecret) return true;
+
+    // Check per-user token in DB
+    try {
+        const user = await prisma.user.findUnique({ where: { mcpToken: candidate } });
+        if (user) return true;
+    } catch (_) {}
+
     res.status(401).json({ error: 'Unauthorized' });
     return false;
 }
@@ -345,8 +364,8 @@ async function handleJsonRpc(msg) {
  * GET /mcp — SSE endpoint for MCP Streamable HTTP transport
  * Claude.ai connects here first for negotiation.
  */
-router.get('/', (req, res) => {
-    if (!checkAuth(req, res)) return;
+router.get('/', async (req, res) => {
+    if (!await checkAuth(req, res)) return;
     // Return server info for capability discovery
     res.json({
         name: 'platform-funnel-mcp',
@@ -361,7 +380,7 @@ router.get('/', (req, res) => {
  * Claude.ai sends tool calls here.
  */
 router.post('/', async (req, res) => {
-    if (!checkAuth(req, res)) return;
+    if (!await checkAuth(req, res)) return;
 
     const body = req.body;
     try {

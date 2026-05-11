@@ -9,6 +9,7 @@ import { FunnelEditor } from './pages/FunnelEditor.jsx';
 import { Sessions } from './pages/Sessions.jsx';
 import { SessionDetail } from './pages/SessionDetail.jsx';
 import { Users } from './pages/Users.jsx';
+import { UserDetail } from './pages/UserDetail.jsx';
 import { Errors } from './pages/Errors.jsx';
 import { ApiLogs } from './pages/ApiLogs.jsx';
 
@@ -57,6 +58,7 @@ export default function App() {
                     <Route path="sessions" element={<Sessions />} />
                     <Route path="sessions/:id" element={<SessionDetail />} />
                     <Route path="users" element={<Users />} />
+                    <Route path="users/:id" element={<UserDetail />} />
                     <Route path="api-logs" element={<ApiLogs />} />
                     <Route path="errors" element={<Errors />} />
                 </Route>

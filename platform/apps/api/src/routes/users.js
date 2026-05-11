@@ -2,6 +2,7 @@
 
 const { Router } = require('express');
 const { z } = require('zod');
+const crypto = require('crypto');
 const { db } = require('@platform/db');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const { validateParams } = require('../middleware/validateParams');
@@ -85,6 +86,39 @@ router.get('/:id/sessions',
             db.session.count({ where: { userId: req.params.id } }),
         ]);
         res.json({ ok: true, data: sessions, meta: { total, page, limit } });
+    })
+);
+
+// POST /api/users/:id/mcp-token  — generate (or regenerate) MCP token for user
+router.post('/:id/mcp-token',
+    validateParams({ params: z.object({ id: z.string().uuid() }) }),
+    asyncHandler(async (req, res) => {
+        const user = await db.user.findUnique({ where: { id: req.params.id } });
+        if (!user) throw new NotFoundError('User', req.params.id);
+
+        const token = crypto.randomBytes(32).toString('hex');
+        const updated = await db.user.update({
+            where: { id: req.params.id },
+            data: { mcpToken: token },
+        });
+        const host = process.env.PUBLIC_URL || 'https://flows.fineko.space';
+        res.json({ ok: true, data: { mcpToken: updated.mcpToken, mcpUrl: `${host}/mcp?token=${updated.mcpToken}` } });
+    })
+);
+
+// GET /api/users/:id/mcp-token  — get existing MCP token (or generate if missing)
+router.get('/:id/mcp-token',
+    validateParams({ params: z.object({ id: z.string().uuid() }) }),
+    asyncHandler(async (req, res) => {
+        let user = await db.user.findUnique({ where: { id: req.params.id } });
+        if (!user) throw new NotFoundError('User', req.params.id);
+
+        if (!user.mcpToken) {
+            const token = crypto.randomBytes(32).toString('hex');
+            user = await db.user.update({ where: { id: req.params.id }, data: { mcpToken: token } });
+        }
+        const host = process.env.PUBLIC_URL || 'https://flows.fineko.space';
+        res.json({ ok: true, data: { mcpToken: user.mcpToken, mcpUrl: `${host}/mcp?token=${user.mcpToken}` } });
     })
 );
 

@@ -67,6 +67,7 @@ model User {
   lastName     String?  @db.VarChar(255)
   languageCode String?  @db.VarChar(10)
   projectId    String
+  mcpToken     String?  @unique @db.VarChar(64)
   metadata     Json     @default("{}")
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt

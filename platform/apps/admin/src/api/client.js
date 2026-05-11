@@ -54,6 +54,8 @@ export const api = {
     getUserProgress: (id) => req('GET', `/users/${id}/progress`),
     getUserFiles: (id) => req('GET', `/users/${id}/files`),
     getUserSessions: (id) => req('GET', `/users/${id}/sessions`),
+    getUserMcpToken: (id) => req('GET', `/users/${id}/mcp-token`),
+    regenerateMcpToken: (id) => req('POST', `/users/${id}/mcp-token`),
 
     // Admin
     getAnalytics: () => req('GET', '/admin/analytics'),

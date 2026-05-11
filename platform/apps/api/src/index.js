@@ -26,6 +26,9 @@ const mcpRouter = require('./routes/mcp');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Trust nginx reverse proxy (needed for secure cookies via HTTPS)
+app.set('trust proxy', 1);
+
 // ── Body parsing ────────────────────────────────────────────
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));

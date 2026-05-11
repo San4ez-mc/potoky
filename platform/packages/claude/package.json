@@ -1,0 +1,12 @@
+{
+    "name": "@platform/claude",
+    "version": "1.0.0",
+    "private": true,
+    "main": "index.js",
+    "dependencies": {
+        "@anthropic-ai/sdk": "^0.24.0",
+        "@platform/errors": "*",
+        "@platform/logger": "*",
+        "@platform/db": "*"
+    }
+}

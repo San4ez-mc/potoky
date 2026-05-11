@@ -1,0 +1,11 @@
+{
+    "name": "@platform/storage",
+    "version": "1.0.0",
+    "private": true,
+    "main": "index.js",
+    "dependencies": {
+        "@platform/db": "*",
+        "@platform/errors": "*",
+        "@platform/logger": "*"
+    }
+}

@@ -1,0 +1,21 @@
+{
+    "name": "@platform/worker",
+    "version": "1.0.0",
+    "private": true,
+    "main": "src/index.js",
+    "scripts": {
+        "dev": "nodemon src/index.js",
+        "start": "node src/index.js"
+    },
+    "dependencies": {
+        "bull": "^4.16.3",
+        "dotenv": "^16.4.5",
+        "@platform/db": "*",
+        "@platform/errors": "*",
+        "@platform/logger": "*",
+        "@platform/telegram": "*"
+    },
+    "devDependencies": {
+        "nodemon": "^3.1.4"
+    }
+}

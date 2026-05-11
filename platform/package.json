@@ -1,0 +1,23 @@
+{
+    "name": "ai-bots-platform",
+    "version": "1.0.0",
+    "private": true,
+    "workspaces": [
+        "apps/*",
+        "packages/*",
+        "projects/*"
+    ],
+    "scripts": {
+        "dev:api": "yarn workspace @platform/api dev",
+        "dev:worker": "yarn workspace @platform/worker dev",
+        "build:admin": "yarn workspace @platform/admin build",
+        "db:generate": "yarn workspace @platform/db generate",
+        "db:migrate:dev": "yarn workspace @platform/db migrate:dev",
+        "db:migrate:deploy": "yarn workspace @platform/db migrate:deploy",
+        "db:studio": "yarn workspace @platform/db studio"
+    },
+    "engines": {
+        "node": ">=18.0.0",
+        "yarn": ">=1.22.0"
+    }
+}

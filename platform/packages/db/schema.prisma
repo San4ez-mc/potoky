@@ -1,0 +1,292 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// PROJECTS
+// ============================================================
+
+model Project {
+  id          String   @id @default(uuid())
+  name        String   @db.VarChar(255)
+  slug        String   @unique @db.VarChar(100)
+  description String?  @db.Text
+  isActive    Boolean  @default(true)
+  settings    Json     @default("{}")
+  createdAt   DateTime @default(now())
+
+  bots         Bot[]
+  users        User[]
+  userProgress UserProgress[]
+
+  @@map("projects")
+}
+
+// ============================================================
+// BOTS
+// ============================================================
+
+model Bot {
+  id          String   @id @default(uuid())
+  projectId   String
+  name        String   @db.VarChar(255)
+  slug        String   @db.VarChar(100)
+  description String?  @db.Text
+  trigger     String?  @db.VarChar(255)
+  isActive    Boolean  @default(true)
+  settings    Json     @default("{}")
+  createdAt   DateTime @default(now())
+
+  project         Project          @relation(fields: [projectId], references: [id])
+  sessions        Session[]
+  files           File[]
+  userProgress    UserProgress[]
+  errors          AppError[]
+  flowDefinition  FlowDefinition?
+  funnelKeys      FunnelKey[]
+
+  @@unique([projectId, slug])
+  @@index([projectId])
+  @@map("bots")
+}
+
+// ============================================================
+// USERS (Telegram users)
+// ============================================================
+
+model User {
+  id           String   @id @default(uuid())
+  telegramId   BigInt   @unique
+  username     String?  @db.VarChar(255)
+  firstName    String?  @db.VarChar(255)
+  lastName     String?  @db.VarChar(255)
+  languageCode String?  @db.VarChar(10)
+  projectId    String
+  metadata     Json     @default("{}")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  project      Project       @relation(fields: [projectId], references: [id])
+  sessions     Session[]
+  files        File[]
+  userProgress UserProgress[]
+  errors       AppError[]
+
+  @@index([projectId])
+  @@map("users")
+}
+
+// ============================================================
+// SESSIONS
+// ============================================================
+
+model Session {
+  id          String    @id @default(uuid())
+  userId      String
+  botId       String
+  state       String    @db.VarChar(100)
+  context     Json      @default("{}")
+  startedAt   DateTime  @default(now())
+  lastActive  DateTime  @default(now())
+  completedAt DateTime?
+  isActive    Boolean   @default(true)
+
+  user     User      @relation(fields: [userId], references: [id])
+  bot      Bot       @relation(fields: [botId], references: [id])
+  messages Message[]
+  apiCalls ApiCall[]
+  files    File[]
+  errors   AppError[]
+
+  @@index([userId])
+  @@index([botId])
+  @@index([isActive])
+  @@map("sessions")
+}
+
+// ============================================================
+// MESSAGES
+// ============================================================
+
+model Message {
+  id        String   @id @default(uuid())
+  sessionId String
+  role      String   @db.VarChar(20)   // 'user' | 'assistant' | 'system'
+  content   String   @db.Text
+  metadata  Json     @default("{}")
+  createdAt DateTime @default(now())
+
+  session Session @relation(fields: [sessionId], references: [id])
+
+  @@index([sessionId])
+  @@map("messages")
+}
+
+// ============================================================
+// API CALLS (log кожного зовнішнього виклику)
+// ============================================================
+
+model ApiCall {
+  id           String   @id @default(uuid())
+  sessionId    String?
+  service      String   @db.VarChar(50)    // 'claude' | 'telegram' | 'google_sheets' | 'apps_script'
+  method       String   @db.VarChar(100)
+  requestData  Json     @default("{}")
+  responseData Json     @default("{}")
+  statusCode   Int?
+  durationMs   Int?
+  error        String?  @db.Text
+  createdAt    DateTime @default(now())
+
+  session Session? @relation(fields: [sessionId], references: [id])
+
+  @@index([sessionId])
+  @@index([service])
+  @@index([createdAt])
+  @@map("api_calls")
+}
+
+// ============================================================
+// FILES (артефакти генерованих ботів)
+// ============================================================
+
+model File {
+  id        String   @id @default(uuid())
+  userId    String
+  botId     String
+  sessionId String?
+  fileType  String   @db.VarChar(50)
+  fileName  String   @db.VarChar(255)
+  filePath  String   @db.VarChar(500)
+  content   String   @db.Text
+  version   Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id])
+  bot     Bot     @relation(fields: [botId], references: [id])
+  session Session? @relation(fields: [sessionId], references: [id])
+
+  userProgress UserProgress[]
+
+  @@index([userId, fileType])
+  @@index([userId, version])
+  @@index([sessionId])
+  @@map("files")
+}
+
+// ============================================================
+// USER PROGRESS (прогрес по блоках/урокам)
+// ============================================================
+
+model UserProgress {
+  id             String    @id @default(uuid())
+  userId         String
+  projectId      String
+  blockNumber    Int
+  lessonNumber   String?   @db.VarChar(10)   // '2.1', '4.2' тощо
+  botId          String?
+  status         String    @default("locked") @db.VarChar(50)
+  // 'locked' | 'available' | 'in_progress' | 'completed'
+  completedAt    DateTime?
+  artifactFileId String?
+
+  user         User     @relation(fields: [userId], references: [id])
+  project      Project  @relation(fields: [projectId], references: [id])
+  bot          Bot?     @relation(fields: [botId], references: [id])
+  artifactFile File?    @relation(fields: [artifactFileId], references: [id])
+
+  @@unique([userId, projectId, lessonNumber])
+  @@index([userId, projectId])
+  @@index([status])
+  @@map("user_progress")
+}
+
+// ============================================================
+// FLOW DEFINITIONS (visual funnel editor — n8n-like)
+// ============================================================
+
+model FlowDefinition {
+  id        String   @id @default(uuid())
+  botId     String   @unique
+  nodes     Json     @default("[]")
+  edges     Json     @default("[]")
+  viewport  Json     @default("{\"x\":0,\"y\":0,\"zoom\":1}")
+  updatedAt DateTime @updatedAt
+
+  bot Bot @relation(fields: [botId], references: [id])
+
+  @@map("flow_definitions")
+}
+
+// ============================================================
+// FUNNEL KEYS (bot-specific env vars / secrets)
+// ============================================================
+
+model FunnelKey {
+  id        String   @id @default(uuid())
+  botId     String
+  key       String   @db.VarChar(100)
+  value     String   @db.Text
+  label     String?  @db.VarChar(255)
+  isSecret  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  bot Bot @relation(fields: [botId], references: [id])
+
+  @@unique([botId, key])
+  @@index([botId])
+  @@map("funnel_keys")
+}
+
+// ============================================================
+// CONNECTOR DEFINITIONS (бібліотека конекторів)
+// ============================================================
+
+model ConnectorDef {
+  id          String   @id @default(uuid())
+  name        String   @db.VarChar(100)
+  type        String   @unique @db.VarChar(50)
+  description String?  @db.Text
+  icon        String?  @db.VarChar(50)
+  color       String?  @db.VarChar(20)
+  schema      Json     @default("{}")
+  isBuiltin   Boolean  @default(true)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  @@map("connector_defs")
+}
+
+// ============================================================
+// APP ERRORS
+// ============================================================
+
+model AppError {
+  id        String   @id @default(uuid())
+  sessionId String?
+  botId     String?
+  userId    String?
+  errorType String   @db.VarChar(100)
+  message   String   @db.Text
+  stack     String?  @db.Text
+  context   Json     @default("{}")
+  resolved  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  session Session? @relation(fields: [sessionId], references: [id])
+  bot     Bot?     @relation(fields: [botId], references: [id])
+  user    User?    @relation(fields: [userId], references: [id])
+
+  @@index([sessionId])
+  @@index([botId])
+  @@index([resolved])
+  @@index([createdAt])
+  @@map("app_errors")
+}

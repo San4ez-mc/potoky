@@ -1,0 +1,89 @@
+import React, { useCallback, useRef } from 'react';
+import {
+    ReactFlow,
+    Background,
+    Controls,
+    MiniMap,
+    addEdge,
+    useReactFlow,
+} from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
+import { useFunnelStore } from '../../stores/funnelStore.js';
+import { NODE_TYPES } from './NodeTypes.jsx';
+
+let nodeCounter = Date.now();
+const uid = () => `node_${++nodeCounter}`;
+
+export function FunnelCanvas({ onNodeClick }) {
+    const { nodes, edges, viewport, setNodes, setEdges, setViewport, selectNode } = useFunnelStore();
+    const { screenToFlowPosition } = useReactFlow();
+    const ref = useRef(null);
+
+    const onConnect = useCallback(
+        (params) => setEdges((eds) => addEdge({ ...params, animated: true }, eds)),
+        [setEdges]
+    );
+
+    const onNodeClickCb = useCallback((_, node) => {
+        selectNode(node.id);
+        onNodeClick?.(node);
+    }, [selectNode, onNodeClick]);
+
+    const onPaneClick = useCallback(() => {
+        useFunnelStore.getState().clearSelection();
+        onNodeClick?.(null);
+    }, [onNodeClick]);
+
+    const onDrop = useCallback((event) => {
+        event.preventDefault();
+        const type = event.dataTransfer.getData('application/node-type');
+        const defaultData = JSON.parse(event.dataTransfer.getData('application/node-data') || '{}');
+        if (!type) return;
+
+        const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+        const newNode = { id: uid(), type, position, data: { label: type, ...defaultData } };
+        setNodes((nds) => [...nds, newNode]);
+    }, [setNodes, screenToFlowPosition]);
+
+    const onDragOver = (event) => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+    };
+
+    return (
+        <div ref={ref} className="flex-1 h-full" onDrop={onDrop} onDragOver={onDragOver}>
+            <ReactFlow
+                nodes={nodes}
+                edges={edges}
+                onNodesChange={(changes) => {
+                    const { applyNodeChanges } = require('@xyflow/react');
+                    setNodes((nds) => applyNodeChanges(changes, nds));
+                }}
+                onEdgesChange={(changes) => {
+                    const { applyEdgeChanges } = require('@xyflow/react');
+                    setEdges((eds) => applyEdgeChanges(changes, eds));
+                }}
+                onConnect={onConnect}
+                onNodeClick={onNodeClickCb}
+                onPaneClick={onPaneClick}
+                nodeTypes={NODE_TYPES}
+                defaultViewport={viewport}
+                onMoveEnd={(_, vp) => setViewport(vp)}
+                fitView
+                fitViewOptions={{ padding: 0.2 }}
+                deleteKeyCode="Delete"
+                className="bg-gray-950"
+            >
+                <Background color="#1f2937" gap={20} size={1} />
+                <Controls />
+                <MiniMap
+                    nodeColor={(n) => {
+                        const colors = { start: '#059669', message: '#1d4ed8', claude: '#7c3aed', js: '#b45309', condition: '#c2410c', connector: '#0e7490' };
+                        return colors[n.type] || '#374151';
+                    }}
+                    maskColor="#03070D88"
+                />
+            </ReactFlow>
+        </div>
+    );
+}

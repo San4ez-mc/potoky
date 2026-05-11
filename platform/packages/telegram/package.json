@@ -1,0 +1,12 @@
+{
+    "name": "@platform/telegram",
+    "version": "1.0.0",
+    "private": true,
+    "main": "index.js",
+    "dependencies": {
+        "node-telegram-bot-api": "^0.66.0",
+        "@platform/errors": "*",
+        "@platform/logger": "*",
+        "@platform/db": "*"
+    }
+}

@@ -51,9 +51,10 @@ export default function App() {
                         </ProtectedRoute>
                     }
                 >
-                    <Route index element={<Navigate to="/dashboard" replace />} />
+                    <Route index element={<Navigate to="/funnels" replace />} />
+                    <Route path="funnels" element={<Bots />} />
                     <Route path="dashboard" element={<Dashboard />} />
-                    <Route path="bots" element={<Bots />} />
+                    <Route path="bots" element={<Navigate to="/funnels" replace />} />
                     <Route path="bots/:botId/sessions" element={<Sessions />} />
                     <Route path="sessions" element={<Sessions />} />
                     <Route path="sessions/:id" element={<SessionDetail />} />

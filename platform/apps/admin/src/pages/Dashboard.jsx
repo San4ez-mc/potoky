@@ -49,7 +49,7 @@ export function Dashboard() {
             <div>
                 <div className="flex items-center justify-between mb-3">
                     <h2 className="text-base font-semibold text-white">Проєкти</h2>
-                    <Link to="/bots" className="text-sm text-brand-light hover:text-brand">Всі боти →</Link>
+                    <Link to="/funnels" className="text-sm text-brand-light hover:text-brand">Всі воронки →</Link>
                 </div>
                 <div className="space-y-3">
                     {projects.map(project => (
@@ -63,10 +63,10 @@ export function Dashboard() {
                                     <div className="text-xs text-gray-500">{project.slug}</div>
                                 </div>
                                 <Link
-                                    to={`/projects/${project.id}/bots`}
+                                    to="/funnels"
                                     className="text-sm text-brand-light hover:text-brand px-3 py-1.5 rounded-lg border border-brand/30 hover:border-brand/60 transition-colors"
                                 >
-                                    Боти
+                                    Воронки
                                 </Link>
                             </div>
                         </div>

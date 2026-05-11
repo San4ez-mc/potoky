@@ -4,8 +4,8 @@ import { useAuthStore } from '../../stores/authStore.js';
 import clsx from 'clsx';
 
 const NAV = [
+    { to: '/funnels', icon: '🗺', label: 'Воронки' },
     { to: '/dashboard', icon: '📊', label: 'Дашборд' },
-    { to: '/bots', icon: '🤖', label: 'Боти' },
     { to: '/sessions', icon: '💬', label: 'Сесії' },
     { to: '/users', icon: '👥', label: 'Юзери' },
     { to: '/api-logs', icon: '📡', label: 'API логи' },

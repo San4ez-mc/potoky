@@ -29,7 +29,8 @@ export function Bots() {
 
     return (
         <div className="p-6 space-y-6">
-            <h1 className="text-xl font-semibold text-white">Боти</h1>
+            <h1 className="text-xl font-semibold text-white">Воронки</h1>
+            <p className="text-sm text-gray-400">Основний блок платформи: відкрий воронку і далі керуй сесіями та юзерами.</p>
 
             {projects.map(project => (
                 <div key={project.id}>
@@ -51,13 +52,19 @@ export function Bots() {
                                         onClick={() => navigate(`/funnel/${bot.id}`)}
                                         className="flex-1 py-1.5 bg-brand/20 hover:bg-brand/30 text-brand-light text-sm rounded-lg transition-colors"
                                     >
-                                        🗺 Воронка
+                                        🗺 Редагувати
                                     </button>
                                     <button
                                         onClick={() => navigate(`/bots/${bot.id}/sessions`)}
                                         className="flex-1 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-colors"
                                     >
                                         💬 Сесії
+                                    </button>
+                                    <button
+                                        onClick={() => navigate('/users')}
+                                        className="flex-1 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-colors"
+                                    >
+                                        👥 Юзери
                                     </button>
                                 </div>
                             </div>

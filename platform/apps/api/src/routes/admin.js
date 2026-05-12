@@ -122,7 +122,6 @@ router.get('/sessions',
                             lastName: true,
                             username: true, 
                             telegramId: true,
-                            telegramUsername: true,
                         } 
                     },
                     bot: { select: { id: true, name: true, slug: true } },

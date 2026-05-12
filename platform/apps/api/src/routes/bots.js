@@ -46,7 +46,6 @@ router.get('/:id/sessions',
                             firstName: true, 
                             lastName: true,
                             username: true,
-                            telegramUsername: true,
                         } 
                     },
                     _count: { select: { messages: true, apiCalls: true } },

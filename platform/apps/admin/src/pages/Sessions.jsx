@@ -50,7 +50,7 @@ export function Sessions() {
                             s.user?.firstName || '',
                             s.user?.lastName || ''
                         ].filter(Boolean).join(' ') || s.user?.username || `id:${s.user?.telegramId || '?'}`;
-                        const tgHandle = s.user?.telegramUsername || s.user?.username || '—';
+                        const tgHandle = s.user?.username || '—';
                         const tgId = s.user?.telegramId ? String(s.user.telegramId) : '—';
                         const msgCount = s._count?.messages ?? '—';
                         const apiCount = s._count?.apiCalls ?? '—';

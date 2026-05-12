@@ -12,15 +12,21 @@ export function Sessions() {
 
     useEffect(() => {
         setLoading(true);
-        const params = { page };
-        if (botId) params.botId = botId;
 
-        api.getAllSessions(params)
+        // Use per-bot endpoint if botId is present, otherwise use admin endpoint
+        const promise = botId
+            ? api.getBotSessions(botId, page)
+            : api.getAllSessions({ page });
+
+        promise
             .then(res => {
                 setSessions(res.data || []);
                 setMeta(res.meta || { total: 0 });
             })
-            .catch(() => setSessions([]))
+            .catch(err => {
+                console.error('Failed to load sessions:', err);
+                setSessions([]);
+            })
             .finally(() => setLoading(false));
     }, [botId, page]);
 

@@ -59,6 +59,10 @@ export const api = {
     getSessionMessages: (id) => req('GET', `/sessions/${id}/messages`),
     getSessionApiCalls: (id) => req('GET', `/sessions/${id}/api-calls`),
     sendSessionMessage: (id, text) => req('POST', `/sessions/${id}/send`, { text }),
+    getBotSessions: (botId, page = 0) => {
+        const q = new URLSearchParams({ page, limit: 50 }).toString();
+        return reqWithMeta('GET', `/bots/${botId}/sessions${q ? '?' + q : ''}`);
+    },
 
     // Users
     getUsers: (page = 0) => req('GET', `/users?page=${page}`),

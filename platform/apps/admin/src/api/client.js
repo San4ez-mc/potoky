@@ -33,6 +33,9 @@ export const api = {
     getProjects: () => req('GET', '/projects'),
     getProjectStats: (id) => req('GET', `/projects/${id}/stats`),
     getProjectBots: (id) => req('GET', `/projects/${id}/bots`),
+    createProject: (name, slug, description) => req('POST', '/projects', { name, slug, description }),
+    updateProject: (id, name, description, isActive) => req('PUT', `/projects/${id}`, { name, description, isActive }),
+    deleteProject: (id) => req('DELETE', `/projects/${id}`),
 
     // Bots
     getBot: (id) => req('GET', `/bots/${id}`),

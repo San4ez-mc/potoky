@@ -202,4 +202,68 @@ router.get('/:id/global-keys/:key/reveal',
     })
 );
 
+// ── CRUD Operations ──────────────────────────────────────────
+
+// POST /api/projects — create new project
+router.post('/',
+    validateParams({
+        body: z.object({
+            name: z.string().min(1).max(255),
+            slug: z.string().min(1).max(100),
+            description: z.string().max(1000).optional(),
+        }),
+    }),
+    asyncHandler(async (req, res) => {
+        const { name, slug, description } = req.body;
+
+        const existing = await db.project.findUnique({ where: { slug } });
+        if (existing) throw new Error('Проект з таким slug уже існує');
+
+        const project = await db.project.create({
+            data: { name, slug, description: description || null },
+        });
+
+        res.json({ ok: true, data: project });
+    })
+);
+
+// PUT /api/projects/:id — update project
+router.put('/:id',
+    validateParams({
+        params: z.object({ id: z.string().uuid() }),
+        body: z.object({
+            name: z.string().min(1).max(255).optional(),
+            description: z.string().max(1000).optional(),
+            isActive: z.boolean().optional(),
+        }),
+    }),
+    asyncHandler(async (req, res) => {
+        const project = await db.project.findUnique({ where: { id: req.params.id } });
+        if (!project) throw new NotFoundError('Project', req.params.id);
+
+        const updated = await db.project.update({
+            where: { id: req.params.id },
+            data: req.body,
+        });
+
+        res.json({ ok: true, data: updated });
+    })
+);
+
+// DELETE /api/projects/:id — soft delete project (mark as inactive)
+router.delete('/:id',
+    validateParams({ params: z.object({ id: z.string().uuid() }) }),
+    asyncHandler(async (req, res) => {
+        const project = await db.project.findUnique({ where: { id: req.params.id } });
+        if (!project) throw new NotFoundError('Project', req.params.id);
+
+        const updated = await db.project.update({
+            where: { id: req.params.id },
+            data: { isActive: false },
+        });
+
+        res.json({ ok: true, data: updated });
+    })
+);
+
 module.exports = router;

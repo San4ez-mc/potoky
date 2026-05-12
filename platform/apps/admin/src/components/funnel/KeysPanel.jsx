@@ -20,9 +20,68 @@ const CHANNEL_PRESETS = [
             { key: 'INSTAGRAM_APP_SECRET', label: 'Instagram App Secret', isSecret: true },
             { key: 'INSTAGRAM_VERIFY_TOKEN', label: 'Instagram Verify Token', isSecret: true },
             { key: 'INSTAGRAM_BUSINESS_ID', label: 'Instagram Business ID', isSecret: false },
+            { key: 'INSTAGRAM_USERNAME', label: 'Instagram Username (without @)', isSecret: false },
         ],
     },
 ];
+
+function toKeyMap(keys) {
+    return keys.reduce((acc, item) => {
+        acc[item.key] = item.value;
+        return acc;
+    }, {});
+}
+
+function normalizeTelegramUsername(raw) {
+    if (!raw) return '';
+    return String(raw).trim().replace(/^@/, '');
+}
+
+function normalizeInstagramUsername(raw) {
+    if (!raw) return '';
+    return String(raw).trim().replace(/^@/, '');
+}
+
+function buildChannelLinks({ channels, keyMap, bot, counts }) {
+    if (!bot) return [];
+
+    const links = [];
+
+    if (channels.includes('telegram')) {
+        const username = normalizeTelegramUsername(keyMap.TELEGRAM_BOT_USERNAME);
+        const total = Math.max(1, counts.telegram || 1);
+        for (let i = 0; i < total; i += 1) {
+            const suffix = i === 0 ? '' : `__l${i + 1}`;
+            const payload = `${bot.slug || bot.id}${suffix}`;
+            links.push({
+                id: `telegram-${i}`,
+                channel: 'Telegram',
+                title: `Telegram #${i + 1}`,
+                missing: !username,
+                hint: 'Заповніть TELEGRAM_BOT_USERNAME, щоб згенерувати посилання.',
+                url: username ? `https://t.me/${username}?start=${encodeURIComponent(payload)}` : '',
+            });
+        }
+    }
+
+    if (channels.includes('instagram')) {
+        const username = normalizeInstagramUsername(keyMap.INSTAGRAM_USERNAME);
+        const total = Math.max(1, counts.instagram || 1);
+        for (let i = 0; i < total; i += 1) {
+            const ref = `${bot.slug || bot.id}_l${i + 1}`;
+            links.push({
+                id: `instagram-${i}`,
+                channel: 'Instagram',
+                title: `Instagram #${i + 1}`,
+                missing: !username,
+                hint: 'Заповніть INSTAGRAM_USERNAME, щоб згенерувати посилання.',
+                url: username ? `https://ig.me/m/${username}?ref=${encodeURIComponent(ref)}` : '',
+            });
+        }
+    }
+
+    return links;
+}
 
 function parseSelectedChannels(rawValue) {
     if (!rawValue) return [];
@@ -178,11 +237,12 @@ function KeyForm({ initial, onSave, onCancel }) {
 }
 
 export function KeysPanel() {
-    const { keys, upsertKey, deleteKey, revealKey } = useFunnelStore();
+    const { bot, keys, upsertKey, deleteKey, revealKey } = useFunnelStore();
     const [editing, setEditing] = useState(null); // null | {} (new) | existing key
     const [isNew, setIsNew] = useState(false);
     const [selectedChannels, setSelectedChannels] = useState([]);
     const [isApplyingChannels, setIsApplyingChannels] = useState(false);
+    const [linkCounts, setLinkCounts] = useState({ telegram: 1, instagram: 1 });
 
     const channelsKey = useMemo(
         () => keys.find(k => k.key === CHANNELS_KEY),
@@ -192,6 +252,16 @@ export function KeysPanel() {
     useEffect(() => {
         setSelectedChannels(parseSelectedChannels(channelsKey?.value));
     }, [channelsKey?.value]);
+
+    const keyMap = useMemo(() => toKeyMap(keys), [keys]);
+    const visibleKeys = useMemo(
+        () => keys.filter(k => k.key !== CHANNELS_KEY),
+        [keys]
+    );
+    const generatedLinks = useMemo(
+        () => buildChannelLinks({ channels: selectedChannels, keyMap, bot, counts: linkCounts }),
+        [selectedChannels, keyMap, bot, linkCounts]
+    );
 
     const handleSave = async (form) => {
         await upsertKey(form.key, form.value, form.label, form.isSecret);
@@ -229,6 +299,18 @@ export function KeysPanel() {
             }
         } finally {
             setIsApplyingChannels(false);
+        }
+    };
+
+    const addGeneratedLink = (channelId) => {
+        setLinkCounts(prev => ({ ...prev, [channelId]: (prev[channelId] || 1) + 1 }));
+    };
+
+    const copyToClipboard = async (text) => {
+        try {
+            await navigator.clipboard.writeText(text);
+        } catch {
+            // no-op
         }
     };
 
@@ -272,13 +354,67 @@ export function KeysPanel() {
                             ? 'Оновлюю список ключів...'
                             : 'Ключі не видаляються автоматично після зняття чекбоксу, щоб не втратити дані.'}
                     </div>
+
+                    {selectedChannels.length > 0 && (
+                        <div className="mt-2 pt-2 border-t border-gray-800 space-y-2">
+                            <div className="text-xs text-gray-300 font-medium">Посилання на цю воронку</div>
+
+                            {generatedLinks.map(item => (
+                                <div key={item.id} className="bg-gray-950 border border-gray-800 rounded-lg p-2 space-y-1">
+                                    <div className="text-[11px] text-gray-400">{item.title}</div>
+                                    {item.missing ? (
+                                        <div className="text-[11px] text-yellow-400">{item.hint}</div>
+                                    ) : (
+                                        <>
+                                            <a
+                                                href={item.url}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="block text-[11px] text-brand-light hover:text-white break-all font-mono"
+                                            >
+                                                {item.url}
+                                            </a>
+                                            <button
+                                                type="button"
+                                                onClick={() => copyToClipboard(item.url)}
+                                                className="text-[11px] px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 transition-colors"
+                                            >
+                                                Копіювати
+                                            </button>
+                                        </>
+                                    )}
+                                </div>
+                            ))}
+
+                            <div className="flex gap-2">
+                                {selectedChannels.includes('telegram') && (
+                                    <button
+                                        type="button"
+                                        onClick={() => addGeneratedLink('telegram')}
+                                        className="text-[11px] px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 transition-colors"
+                                    >
+                                        + Лінк Telegram
+                                    </button>
+                                )}
+                                {selectedChannels.includes('instagram') && (
+                                    <button
+                                        type="button"
+                                        onClick={() => addGeneratedLink('instagram')}
+                                        className="text-[11px] px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 transition-colors"
+                                    >
+                                        + Лінк Instagram
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    )}
                 </div>
 
                 {isNew && editing && (
                     <KeyForm initial={editing} onSave={handleSave} onCancel={() => { setEditing(null); setIsNew(false); }} />
                 )}
 
-                {keys.map(k => (
+                {visibleKeys.map(k => (
                     editing?.key === k.key && !isNew ? (
                         <KeyForm key={k.key} initial={editing} onSave={handleSave} onCancel={() => setEditing(null)} />
                     ) : (
@@ -286,7 +422,7 @@ export function KeysPanel() {
                     )
                 ))}
 
-                {keys.length === 0 && !isNew && (
+                {visibleKeys.length === 0 && !isNew && (
                     <div className="text-center text-gray-500 text-sm py-8">
                         Немає ключів.<br />
                         <button onClick={handleNew} className="text-brand-light hover:text-brand mt-2">Додати перший</button>

@@ -27,10 +27,14 @@ async function handleMessage(msg) {
     if (text?.startsWith('/start')) {
         const parts = text.split(' ');
         const deepLink = parts[1];
+        const normalizedDeepLink = deepLink ? deepLink.split('__')[0] : '';
+        const botSlugFromLink = normalizedDeepLink
+            ? (DEEP_LINK_MAP[normalizedDeepLink] || normalizedDeepLink)
+            : null;
+        const isKnownBotSlug = botSlugFromLink ? Object.values(BOT_SLUGS).includes(botSlugFromLink) : false;
 
-        if (deepLink && DEEP_LINK_MAP[deepLink]) {
-            const botSlug = DEEP_LINK_MAP[deepLink];
-            await startBot(user, chatId, botSlug);
+        if (isKnownBotSlug) {
+            await startBot(user, chatId, botSlugFromLink);
         } else {
             await sendMainMenu(user, chatId);
         }

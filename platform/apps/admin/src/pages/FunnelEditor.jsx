@@ -7,7 +7,7 @@ import { NodeLibrary } from '../components/funnel/NodeLibrary.jsx';
 import { NodeEditor } from '../components/funnel/NodeEditor.jsx';
 import { KeysPanel } from '../components/funnel/KeysPanel.jsx';
 
-function TopBar({ bot, isDirty, isSaving, onSave, onExport, onImport }) {
+function TopBar({ bot, isDirty, isSaving, onSave, onExport, onImport, onBack }) {
     const importRef = useRef(null);
 
     const handleImport = (e) => {
@@ -21,6 +21,13 @@ function TopBar({ bot, isDirty, isSaving, onSave, onExport, onImport }) {
 
     return (
         <div className="h-12 bg-gray-900 border-b border-gray-800 flex items-center gap-3 px-4 shrink-0">
+            <button
+                onClick={onBack}
+                className="text-sm px-2.5 py-1 rounded-md text-gray-300 hover:text-white hover:bg-gray-800 transition-colors"
+            >
+                ← До воронок
+            </button>
+
             {/* Bot info */}
             <div className="flex items-center gap-2">
                 <div className="w-6 h-6 bg-brand/20 rounded flex items-center justify-center text-brand-light text-xs font-bold">
@@ -72,6 +79,10 @@ export function FunnelEditor() {
 
     const [rightPanel, setRightPanel] = useState('keys'); // 'keys' | 'node'
 
+    const handleBack = () => {
+        navigate('/funnels');
+    };
+
     useEffect(() => {
         if (botId) loadFunnel(botId);
     }, [botId]);
@@ -104,6 +115,7 @@ export function FunnelEditor() {
                     onSave={saveFunnel}
                     onExport={exportFunnel}
                     onImport={importFunnel}
+                    onBack={handleBack}
                 />
                 <div className="flex flex-1 overflow-hidden">
                     {/* Left: Node library */}

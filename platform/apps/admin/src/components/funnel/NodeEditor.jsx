@@ -222,12 +222,17 @@ function StartNodeEditor({ data, update }) {
 }
 
 export function NodeEditor() {
-    const { selectedNode, updateNodeData, connectors } = useFunnelStore();
+    const { selectedNode, updateNodeData, connectors, deleteNode } = useFunnelStore();
 
     if (!selectedNode) return null;
 
     const { type, data } = selectedNode;
     const update = (patch) => updateNodeData(selectedNode.id, patch);
+
+    const removeNode = () => {
+        if (!selectedNode?.id) return;
+        deleteNode(selectedNode.id);
+    };
 
     const renderEditor = () => {
         switch (type) {
@@ -264,6 +269,16 @@ export function NodeEditor() {
             {/* Type-specific editor */}
             <div className="flex-1 overflow-y-auto px-4 py-3">
                 {renderEditor()}
+            </div>
+
+            <div className="px-4 py-3 border-t border-gray-800">
+                <button
+                    onClick={removeNode}
+                    className="w-full py-2 rounded-lg border border-red-900 bg-red-950/30 text-red-400 hover:bg-red-900/30 hover:text-red-300 transition-colors text-sm"
+                >
+                    🗑 Видалити ноду
+                </button>
+                <div className="text-[11px] text-gray-500 mt-2">Також працює клавіша Delete у полотні воронки.</div>
             </div>
         </div>
     );

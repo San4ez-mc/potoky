@@ -7,6 +7,7 @@ const { asyncHandler } = require('../middleware/asyncHandler');
 const { authMiddleware } = require('../middleware/auth');
 const { validateParams } = require('../middleware/validateParams');
 const { NotFoundError } = require('@platform/errors');
+const { syncChannelsForBot } = require('../services/channelSync');
 
 const router = Router();
 router.use(authMiddleware);
@@ -57,7 +58,9 @@ router.put('/:botId',
             update: { nodes, edges, ...(viewport ? { viewport } : {}) },
         });
 
-        res.json({ ok: true, data: flow });
+        const channelSync = await syncChannelsForBot(botId);
+
+        res.json({ ok: true, data: { ...flow, channelSync } });
     })
 );
 
@@ -105,7 +108,9 @@ router.post('/:botId/import',
             update: { nodes: flow.nodes, edges: flow.edges },
         });
 
-        res.json({ ok: true });
+        const channelSync = await syncChannelsForBot(botId);
+
+        res.json({ ok: true, data: { channelSync } });
     })
 );
 
@@ -147,7 +152,16 @@ router.put('/:botId/keys',
             update: { value, label, isSecret: isSecret ?? false },
         });
 
-        res.json({ ok: true, data: { ...result, value: result.isSecret ? '••••••••' : result.value } });
+        const channelSync = await syncChannelsForBot(botId);
+
+        res.json({
+            ok: true,
+            data: {
+                ...result,
+                value: result.isSecret ? '••••••••' : result.value,
+                channelSync,
+            },
+        });
     })
 );
 
@@ -160,7 +174,17 @@ router.delete('/:botId/keys/:key',
         await db.funnelKey.deleteMany({
             where: { botId: req.params.botId, key: req.params.key },
         });
-        res.json({ ok: true });
+        const channelSync = await syncChannelsForBot(req.params.botId);
+        res.json({ ok: true, data: { channelSync } });
+    })
+);
+
+// POST /api/funnels/:botId/sync-channels — manual re-sync for delivery channels
+router.post('/:botId/sync-channels',
+    validateParams({ params: z.object({ botId: z.string().uuid() }) }),
+    asyncHandler(async (req, res) => {
+        const result = await syncChannelsForBot(req.params.botId);
+        res.json({ ok: true, data: result });
     })
 );
 

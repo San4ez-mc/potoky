@@ -5,6 +5,7 @@ import { Layout } from './components/layout/Layout.jsx';
 import { Login } from './pages/Login.jsx';
 import { Dashboard } from './pages/Dashboard.jsx';
 import { Bots } from './pages/Bots.jsx';
+import { Projects } from './pages/Projects.jsx';
 import { FunnelEditor } from './pages/FunnelEditor.jsx';
 import { Sessions } from './pages/Sessions.jsx';
 import { SessionDetail } from './pages/SessionDetail.jsx';
@@ -53,6 +54,7 @@ export default function App() {
                 >
                     <Route index element={<Navigate to="/funnels" replace />} />
                     <Route path="funnels" element={<Bots />} />
+                    <Route path="projects" element={<Projects />} />
                     <Route path="dashboard" element={<Dashboard />} />
                     <Route path="bots" element={<Navigate to="/funnels" replace />} />
                     <Route path="bots/:botId/sessions" element={<Sessions />} />

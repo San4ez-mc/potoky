@@ -39,7 +39,12 @@ export const useFunnelStore = create((set, get) => ({
     },
 
     // React Flow handlers
-    setNodes: (nodes) => set({ nodes: typeof nodes === 'function' ? nodes(get().nodes) : nodes, isDirty: true }),
+    setNodes: (nodes) => set((state) => {
+        const nextNodes = typeof nodes === 'function' ? nodes(state.nodes) : nodes;
+        const selectedId = state.selectedNode?.id;
+        const nextSelected = selectedId ? (nextNodes.find(n => n.id === selectedId) || null) : null;
+        return { nodes: nextNodes, selectedNode: nextSelected, isDirty: true };
+    }),
     setEdges: (edges) => set({ edges: typeof edges === 'function' ? edges(get().edges) : edges, isDirty: true }),
     setViewport: (viewport) => set({ viewport }),
 
@@ -49,6 +54,16 @@ export const useFunnelStore = create((set, get) => ({
         set({ selectedNode: node });
     },
     clearSelection: () => set({ selectedNode: null }),
+
+    // Delete node with all connected edges
+    deleteNode: (nodeId) => {
+        set((state) => ({
+            isDirty: true,
+            nodes: state.nodes.filter(n => n.id !== nodeId),
+            edges: state.edges.filter(e => e.source !== nodeId && e.target !== nodeId),
+            selectedNode: state.selectedNode?.id === nodeId ? null : state.selectedNode,
+        }));
+    },
 
     // Update node data (prompts, code, config)
     updateNodeData: (nodeId, patch) => {

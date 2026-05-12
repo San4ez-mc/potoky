@@ -1,5 +1,42 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useFunnelStore } from '../../stores/funnelStore.js';
+
+const CHANNELS_KEY = 'FUNNEL_CHANNELS';
+
+const CHANNEL_PRESETS = [
+    {
+        id: 'telegram',
+        label: 'Telegram бот',
+        keys: [
+            { key: 'TELEGRAM_BOT_TOKEN', label: 'Telegram Bot Token', isSecret: true },
+            { key: 'TELEGRAM_BOT_USERNAME', label: 'Telegram Bot Username', isSecret: false },
+        ],
+    },
+    {
+        id: 'instagram',
+        label: 'Instagram',
+        keys: [
+            { key: 'INSTAGRAM_ACCESS_TOKEN', label: 'Instagram Access Token', isSecret: true },
+            { key: 'INSTAGRAM_APP_SECRET', label: 'Instagram App Secret', isSecret: true },
+            { key: 'INSTAGRAM_VERIFY_TOKEN', label: 'Instagram Verify Token', isSecret: true },
+            { key: 'INSTAGRAM_BUSINESS_ID', label: 'Instagram Business ID', isSecret: false },
+        ],
+    },
+];
+
+function parseSelectedChannels(rawValue) {
+    if (!rawValue) return [];
+    try {
+        const parsed = JSON.parse(rawValue);
+        if (Array.isArray(parsed)) return parsed.filter(Boolean);
+    } catch {
+        // fall through to CSV mode
+    }
+    return String(rawValue)
+        .split(',')
+        .map(v => v.trim())
+        .filter(Boolean);
+}
 
 function KeyRow({ k, onEdit, onDelete, onReveal }) {
     const [revealed, setRevealed] = useState(false);
@@ -117,6 +154,17 @@ export function KeysPanel() {
     const { keys, upsertKey, deleteKey, revealKey } = useFunnelStore();
     const [editing, setEditing] = useState(null); // null | {} (new) | existing key
     const [isNew, setIsNew] = useState(false);
+    const [selectedChannels, setSelectedChannels] = useState([]);
+    const [isApplyingChannels, setIsApplyingChannels] = useState(false);
+
+    const channelsKey = useMemo(
+        () => keys.find(k => k.key === CHANNELS_KEY),
+        [keys]
+    );
+
+    useEffect(() => {
+        setSelectedChannels(parseSelectedChannels(channelsKey?.value));
+    }, [channelsKey?.value]);
 
     const handleSave = async (form) => {
         await upsertKey(form.key, form.value, form.label, form.isSecret);
@@ -129,6 +177,32 @@ export function KeysPanel() {
     const handleDelete = async (key) => {
         if (!confirm(`Видалити ключ ${key}?`)) return;
         await deleteKey(key);
+    };
+
+    const handleToggleChannel = async (channelId) => {
+        const next = selectedChannels.includes(channelId)
+            ? selectedChannels.filter(c => c !== channelId)
+            : [...selectedChannels, channelId];
+
+        setSelectedChannels(next);
+        setIsApplyingChannels(true);
+
+        try {
+            await upsertKey(CHANNELS_KEY, JSON.stringify(next), 'Канали запуску воронки', false);
+
+            const existing = new Set(keys.map(k => k.key));
+            const required = CHANNEL_PRESETS
+                .filter(preset => next.includes(preset.id))
+                .flatMap(preset => preset.keys);
+
+            const missing = required.filter(item => !existing.has(item.key));
+
+            for (const item of missing) {
+                await upsertKey(item.key, '', item.label, item.isSecret);
+            }
+        } finally {
+            setIsApplyingChannels(false);
+        }
     };
 
     return (
@@ -147,6 +221,32 @@ export function KeysPanel() {
             </div>
 
             <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
+                <div className="bg-gray-900 rounded-lg p-3 border border-gray-800 space-y-2">
+                    <div className="text-sm font-medium text-white">Де працює воронка</div>
+                    <div className="text-xs text-gray-400">Оберіть 1+ каналів. Потрібні ключі з'являться автоматично.</div>
+
+                    <div className="space-y-1.5 pt-1">
+                        {CHANNEL_PRESETS.map(channel => (
+                            <label key={channel.id} className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={selectedChannels.includes(channel.id)}
+                                    onChange={() => handleToggleChannel(channel.id)}
+                                    disabled={isApplyingChannels}
+                                    className="accent-brand"
+                                />
+                                <span>{channel.label}</span>
+                            </label>
+                        ))}
+                    </div>
+
+                    <div className="text-[11px] text-gray-500">
+                        {isApplyingChannels
+                            ? 'Оновлюю список ключів...'
+                            : 'Ключі не видаляються автоматично після зняття чекбоксу, щоб не втратити дані.'}
+                    </div>
+                </div>
+
                 {isNew && editing && (
                     <KeyForm initial={editing} onSave={handleSave} onCancel={() => { setEditing(null); setIsNew(false); }} />
                 )}

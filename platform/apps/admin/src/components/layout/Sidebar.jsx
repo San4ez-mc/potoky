@@ -5,6 +5,7 @@ import clsx from 'clsx';
 
 const NAV = [
     { to: '/funnels', icon: '🗺', label: 'Воронки' },
+    { to: '/projects', icon: '📁', label: 'Проєкти' },
     { to: '/dashboard', icon: '📊', label: 'Дашборд' },
     { to: '/sessions', icon: '💬', label: 'Сесії' },
     { to: '/users', icon: '👥', label: 'Юзери' },

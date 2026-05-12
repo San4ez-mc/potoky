@@ -35,8 +35,46 @@ router.get('/:id/bots',
         const bots = await db.bot.findMany({
             where: { projectId: req.params.id, isActive: true },
             orderBy: { createdAt: 'asc' },
+            include: {
+                flowDefinition: { select: { updatedAt: true } },
+                _count: { select: { sessions: true } },
+            },
         });
-        res.json({ ok: true, data: bots });
+
+        const botsWithMetrics = await Promise.all(
+            bots.map(async (bot) => {
+                const [activeSessions, unresolvedErrors, distinctUsers] = await Promise.all([
+                    db.session.count({ where: { botId: bot.id, isActive: true } }),
+                    db.appError.count({ where: { botId: bot.id, resolved: false } }),
+                    db.session.findMany({
+                        where: { botId: bot.id },
+                        distinct: ['userId'],
+                        select: { userId: true },
+                    }),
+                ]);
+
+                return {
+                    id: bot.id,
+                    projectId: bot.projectId,
+                    name: bot.name,
+                    slug: bot.slug,
+                    description: bot.description,
+                    trigger: bot.trigger,
+                    isActive: bot.isActive,
+                    settings: bot.settings,
+                    createdAt: bot.createdAt,
+                    metrics: {
+                        totalSessions: bot._count.sessions,
+                        activeSessions,
+                        usersCount: distinctUsers.length,
+                        unresolvedErrors,
+                        flowUpdatedAt: bot.flowDefinition?.updatedAt || null,
+                    },
+                };
+            })
+        );
+
+        res.json({ ok: true, data: botsWithMetrics });
     })
 );
 

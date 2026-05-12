@@ -1,7 +1,7 @@
 'use strict';
 
 const readline = require('readline');
-const { TOOLS, callTool, disconnect } = require('./tools');
+const { TOOLS, callTool, disconnect, safeJsonStringify } = require('./tools');
 
 function respond(id, result) {
     process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id, result })}\n`);
@@ -31,7 +31,7 @@ async function handleMessage(message) {
             const { name, arguments: args } = params;
             const result = await callTool(name, args || {});
             return respond(id, {
-                content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+                content: [{ type: 'text', text: safeJsonStringify(result) }],
             });
         }
 

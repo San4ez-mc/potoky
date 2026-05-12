@@ -10,6 +10,10 @@ const {
 
 const prisma = new PrismaClient();
 
+function safeJsonStringify(value) {
+    return JSON.stringify(value, (_, current) => (typeof current === 'bigint' ? current.toString() : current), 2);
+}
+
 const NODE_TYPES = ['start', 'message', 'claude', 'js', 'condition', 'connector', 'saveFile', 'wait', 'loadFile', 'httpRequest', 'tag', 'abtest'];
 
 const TOOLS = [
@@ -651,4 +655,4 @@ async function disconnect() {
     await prisma.$disconnect();
 }
 
-module.exports = { TOOLS, callTool, disconnect };
+module.exports = { TOOLS, callTool, disconnect, safeJsonStringify };

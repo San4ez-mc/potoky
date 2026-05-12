@@ -15,7 +15,7 @@
 
 const express = require('express');
 const { PrismaClient } = require('@prisma/client');
-const { TOOLS, callTool } = require('../../../../apps/mcp/src/tools');
+const { TOOLS, callTool, safeJsonStringify } = require('../../../../apps/mcp/src/tools');
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -72,7 +72,7 @@ async function handleJsonRpc(msg) {
             const result = await callTool(name, args || {});
             return {
                 jsonrpc: '2.0', id, result: {
-                    content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+                    content: [{ type: 'text', text: safeJsonStringify(result) }],
                 }
             };
         } catch (err) {

@@ -23,6 +23,7 @@ model Project {
   bots         Bot[]
   users        User[]
   userProgress UserProgress[]
+  globalKeys   GlobalKey[]
 
   @@map("projects")
 }
@@ -263,6 +264,28 @@ model ConnectorDef {
   createdAt   DateTime @default(now())
 
   @@map("connector_defs")
+}
+
+// ============================================================
+// GLOBAL KEYS (проектные ключи и токены)
+// ============================================================
+
+model GlobalKey {
+  id          String   @id @default(uuid())
+  projectId   String
+  key         String   @db.VarChar(100)
+  label       String?  @db.VarChar(255)
+  value       String   @db.Text
+  description String?  @db.Text
+  isSecret    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id])
+
+  @@unique([projectId, key])
+  @@index([projectId])
+  @@map("global_keys")
 }
 
 // ============================================================

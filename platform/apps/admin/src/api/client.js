@@ -69,4 +69,11 @@ export const api = {
         return req('GET', `/admin/api-logs${q ? '?' + q : ''}`);
     },
     getLogs: (tab = 'all') => req('GET', `/admin/logs?tab=${tab}`),
+
+    // Global Keys
+    getGlobalKeys: (projectId) => req('GET', `/projects/${projectId}/global-keys`),
+    upsertGlobalKey: (projectId, key, label, value, isSecret, description) =>
+        req('PUT', `/projects/${projectId}/global-keys/${key}`, { label, value, isSecret, description }),
+    deleteGlobalKey: (projectId, key) => req('DELETE', `/projects/${projectId}/global-keys/${key}`),
+    revealGlobalKey: (projectId, key) => req('GET', `/projects/${projectId}/global-keys/${key}/reveal`),
 };

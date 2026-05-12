@@ -35,7 +35,7 @@ export function Logs() {
 
     useEffect(() => {
         const filtered = logs.filter(log =>
-            !searchQuery || 
+            !searchQuery ||
             log.message?.toLowerCase().includes(searchQuery.toLowerCase()) ||
             log.service?.toLowerCase().includes(searchQuery.toLowerCase()) ||
             log.botId?.toLowerCase().includes(searchQuery.toLowerCase())
@@ -56,11 +56,10 @@ export function Logs() {
                     <button
                         key={tab.id}
                         onClick={() => setActiveTab(tab.id)}
-                        className={`px-4 py-2 text-sm font-medium transition-colors ${
-                            activeTab === tab.id
+                        className={`px-4 py-2 text-sm font-medium transition-colors ${activeTab === tab.id
                                 ? 'text-brand-light border-b-2 border-brand'
                                 : 'text-gray-400 hover:text-white'
-                        }`}
+                            }`}
                     >
                         {tab.label}
                     </button>
@@ -89,18 +88,16 @@ export function Logs() {
                         <div
                             key={log.id}
                             onClick={() => setExpandedId(expandedId === log.id ? null : log.id)}
-                            className={`bg-gray-800 border border-gray-700 rounded-lg p-4 cursor-pointer transition-colors ${
-                                expandedId === log.id ? 'border-brand bg-gray-750' : 'hover:bg-gray-750'
-                            }`}
+                            className={`bg-gray-800 border border-gray-700 rounded-lg p-4 cursor-pointer transition-colors ${expandedId === log.id ? 'border-brand bg-gray-750' : 'hover:bg-gray-750'
+                                }`}
                         >
                             <div className="flex items-start justify-between gap-4">
                                 <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-2 mb-1">
-                                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
-                                            log.level === 'error' ? 'bg-red-900/40 text-red-400' :
-                                            log.level === 'warn' ? 'bg-yellow-900/40 text-yellow-400' :
-                                            'bg-blue-900/40 text-blue-400'
-                                        }`}>
+                                        <span className={`px-2 py-1 rounded text-xs font-semibold ${log.level === 'error' ? 'bg-red-900/40 text-red-400' :
+                                                log.level === 'warn' ? 'bg-yellow-900/40 text-yellow-400' :
+                                                    'bg-blue-900/40 text-blue-400'
+                                            }`}>
                                             {log.level?.toUpperCase()}
                                         </span>
                                         <span className="text-xs text-gray-500">{log.service}</span>

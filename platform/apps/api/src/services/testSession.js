@@ -98,15 +98,36 @@ async function getLatestAssistantMessage(sessionId) {
     });
 }
 
+async function findLatestSession(userId, botId) {
+    return db.session.findFirst({
+        where: { userId, botId },
+        orderBy: { startedAt: 'desc' },
+    });
+}
+
 async function startTestSession({ botId, botSlug, userId }) {
     const bot = await resolveBot({ botId, botSlug });
     const identity = await resolveIdentity(userId, bot.slug);
 
     let warning = null;
-    try {
-        await handleTelegramUpdate(buildUpdate(identity, `/start ${bot.slug}`));
-    } catch (error) {
-        warning = error.message;
+    const attempts = [
+        `/start ${bot.slug}`,
+        '/start',
+        'Привіт',
+    ];
+
+    for (const message of attempts) {
+        try {
+            await handleTelegramUpdate(buildUpdate(identity, message));
+        } catch (error) {
+            warning = error.message;
+        }
+
+        const existingUser = await db.user.findUnique({ where: { telegramId: BigInt(identity.telegramId) } });
+        if (!existingUser) continue;
+
+        const existingSession = await findLatestSession(existingUser.id, bot.id);
+        if (existingSession) break;
     }
 
     const user = await db.user.findUnique({ where: { telegramId: BigInt(identity.telegramId) } });
@@ -114,10 +135,7 @@ async function startTestSession({ botId, botSlug, userId }) {
         throw new Error('Test user was not created by handler');
     }
 
-    const session = await db.session.findFirst({
-        where: { userId: user.id, botId: bot.id },
-        orderBy: { startedAt: 'desc' },
-    });
+    const session = await findLatestSession(user.id, bot.id);
 
     if (!session) {
         throw new Error('Test session was not created');

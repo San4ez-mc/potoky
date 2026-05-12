@@ -22,6 +22,8 @@ const webhookRouter = require('./routes/webhook');
 const funnelsRouter = require('./routes/funnels');
 const connectorsRouter = require('./routes/connectors');
 const mcpRouter = require('./routes/mcp');
+const mcpFlowsRouter = require('./routes/mcp-flows');
+const mcpDebugRouter = require('./routes/mcp-debug');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -80,7 +82,10 @@ app.use('/api/funnels', authMiddleware, funnelsRouter);
 app.use('/api/connectors', authMiddleware, connectorsRouter);
 app.use('/api/admin', adminRouter);
 
-// MCP endpoint (public with optional Bearer token via MCP_SECRET)
+// MCP endpoints: split into flows (manage funnels) and debug (sessions, logs, test)
+app.use('/api/mcp', mcpFlowsRouter);
+app.use('/api/mcp-debug', mcpDebugRouter);
+// Legacy MCP endpoint (kept for backward compatibility)
 app.use('/mcp', mcpRouter);
 
 // Health check (public)

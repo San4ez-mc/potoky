@@ -76,7 +76,7 @@ const TOOLS = [
             type: 'object',
             properties: {
                 botId: { type: 'string' },
-                type: { type: 'string', enum: ['start', 'message', 'claude', 'js', 'condition', 'connector', 'saveFile', 'wait'] },
+                type: { type: 'string', enum: ['start', 'message', 'claude', 'js', 'condition', 'connector', 'saveFile', 'wait', 'loadFile', 'httpRequest', 'tag', 'abtest'] },
                 data: { type: 'object', description: 'Initial node data (label, text, systemPrompt, code, etc.)' },
                 position: {
                     type: 'object',
@@ -97,6 +97,19 @@ const TOOLS = [
                 nodeId: { type: 'string' },
             },
             required: ['botId', 'nodeId'],
+        },
+    },
+    {
+        name: 'create_edge',
+        description: 'Create an edge (connection) between two nodes in the funnel',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                botId: { type: 'string', description: 'Bot UUID' },
+                source: { type: 'string', description: 'Source node ID' },
+                target: { type: 'string', description: 'Target node ID' },
+            },
+            required: ['botId', 'source', 'target'],
         },
     },
     {
@@ -257,6 +270,22 @@ async function deleteNode({ botId, nodeId }) {
     return { deleted: nodeId, removedEdges: flow.edges.length - edges.length };
 }
 
+async function createEdge({ botId, source, target }) {
+    const flow = await prisma.flowDefinition.findUnique({ where: { botId } });
+    if (!flow) throw new Error(`No flow found for botId: ${botId}`);
+
+    // Verify source and target nodes exist
+    if (!flow.nodes.some(n => n.id === source)) throw new Error(`Source node ${source} not found`);
+    if (!flow.nodes.some(n => n.id === target)) throw new Error(`Target node ${target} not found`);
+
+    const newEdge = { id: `edge_${Date.now()}`, source, target };
+    const edges = flow.edges || [];
+    edges.push(newEdge);
+
+    await prisma.flowDefinition.update({ where: { botId }, data: { edges } });
+    return { edge: newEdge };
+}
+
 async function updateFunnelKey({ botId, key, value, label, isSecret }) {
     if (!/^[A-Z0-9_]+$/.test(key)) throw new Error('Key must match [A-Z0-9_]+');
     const result = await prisma.funnelKey.upsert({
@@ -326,6 +355,7 @@ switch (name) {
     case 'update_node': return updateNode(args);
     case 'add_node': return addNode(args);
     case 'delete_node': return deleteNode(args);
+    case 'create_edge': return createEdge(args);
     case 'update_funnel_key': return updateFunnelKey(args);
     case 'delete_funnel_key': return deleteFunnelKey(args);
     case 'list_connectors': return listConnectors();

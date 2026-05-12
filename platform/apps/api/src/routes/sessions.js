@@ -112,6 +112,8 @@ router.get('/:sessionId/context',
             payment_processes: 'paymentProcesses',
             balance_articles: 'balanceArticles',
             balance_table_url: 'balanceUrl',
+            payment_calendar_url: 'calendarUrl',
+            team_instructions: 'teamInstructions',
         };
 
         // For each file type, use the most recent file

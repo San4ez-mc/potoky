@@ -281,11 +281,19 @@ function LoadFileNodeEditor({ data, update }) {
                     className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
                 >
                     <option value="">Оберіть тип</option>
-                    <option value="cashflow_articles">cashflow_articles</option>
-                    <option value="pl_articles">pl_articles</option>
-                    <option value="business_process">business_process</option>
-                    <option value="cashflow_table_url">cashflow_table_url</option>
-                    <option value="balance_articles">balance_articles</option>
+                    <option value="cashflow_articles">cashflow_articles → context.cashflowArticles</option>
+                    <option value="pl_articles">pl_articles → context.plArticles</option>
+                    <option value="business_process">business_process → context.businessProcess</option>
+                    <option value="business_process_v2">business_process_v2 → context.businessProcessV2</option>
+                    <option value="cashflow_table_url">cashflow_table_url → context.sheetsUrl</option>
+                    <option value="combined_table_url">combined_table_url → context.combinedUrl</option>
+                    <option value="financial_mechanics">financial_mechanics → context.financialMechanics</option>
+                    <option value="salary_processes">salary_processes → context.salaryProcesses</option>
+                    <option value="payment_processes">payment_processes → context.paymentProcesses</option>
+                    <option value="balance_articles">balance_articles → context.balanceArticles</option>
+                    <option value="balance_table_url">balance_table_url → context.balanceUrl</option>
+                    <option value="payment_calendar_url">payment_calendar_url → context.calendarUrl</option>
+                    <option value="team_instructions">team_instructions → context.teamInstructions</option>
                 </select>
             </Field>
             <Field label="Що робити якщо файлу немає?">
@@ -299,8 +307,8 @@ function LoadFileNodeEditor({ data, update }) {
                     <option value="block">Заблокувати (показати повідомлення)</option>
                 </select>
             </Field>
-            <Field label="Зберегти у змінну">
-                <TextInput value={data.outputVar} onChange={v => update({ outputVar: v })} placeholder="context.file" />
+            <Field label="Зберегти у змінну (авто-маппінг за типом)">
+                <TextInput value={data.outputVar} onChange={v => update({ outputVar: v })} placeholder="auto-mapped from fileType" disabled />
             </Field>
         </div>
     );

@@ -67,8 +67,9 @@ function KeyRow({ k, onEdit, onDelete, onReveal }) {
                         <button
                             onClick={handleReveal}
                             className="text-xs px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white transition-colors"
+                            title={revealed ? 'Сховати значення' : 'Показати значення'}
                         >
-                            {revealed ? '🙈' : '👁'}
+                            {revealed ? 'Сховати' : 'Показати'}
                         </button>
                     )}
                     <button
@@ -91,6 +92,7 @@ function KeyRow({ k, onEdit, onDelete, onReveal }) {
 
 function KeyForm({ initial, onSave, onCancel }) {
     const [form, setForm] = useState(initial || { key: '', value: '', label: '', isSecret: false });
+    const [showValue, setShowValue] = useState(false);
     const set = (field, val) => setForm(f => ({ ...f, [field]: val }));
 
     return (
@@ -106,13 +108,23 @@ function KeyForm({ initial, onSave, onCancel }) {
             </div>
             <div>
                 <label className="text-xs text-gray-400 block mb-1">Значення</label>
-                <input
-                    type={form.isSecret ? 'password' : 'text'}
-                    value={form.value}
-                    onChange={e => set('value', e.target.value)}
-                    placeholder="value"
-                    className="w-full bg-gray-700 border border-gray-600 rounded px-2.5 py-1.5 text-sm text-white font-mono focus:outline-none focus:border-brand"
-                />
+                <div className="flex gap-2">
+                    <input
+                        type={form.isSecret && !showValue ? 'password' : 'text'}
+                        value={form.value}
+                        onChange={e => set('value', e.target.value)}
+                        placeholder="value"
+                        className="w-full bg-gray-700 border border-gray-600 rounded px-2.5 py-1.5 text-sm text-white font-mono focus:outline-none focus:border-brand"
+                    />
+                    <button
+                        type="button"
+                        onClick={() => setShowValue(v => !v)}
+                        className="px-2.5 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded text-xs transition-colors"
+                        title={showValue ? 'Сховати значення' : 'Показати значення'}
+                    >
+                        {showValue ? 'Сховати' : 'Показати'}
+                    </button>
+                </div>
             </div>
             <div>
                 <label className="text-xs text-gray-400 block mb-1">Мітка (опційно)</label>

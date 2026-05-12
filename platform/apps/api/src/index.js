@@ -26,6 +26,9 @@ const mcpRouter = require('./routes/mcp');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Prevent JSON serialization crashes for DB bigint fields (e.g. telegramId).
+app.set('json replacer', (_key, value) => (typeof value === 'bigint' ? value.toString() : value));
+
 // Trust nginx reverse proxy (needed for secure cookies via HTTPS)
 app.set('trust proxy', 1);
 

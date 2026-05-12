@@ -12,6 +12,18 @@ async function req(method, path, body) {
     return data.data ?? data;
 }
 
+async function reqWithMeta(method, path, body) {
+    const res = await fetch(`${BASE}${path}`, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error?.message || 'Request failed');
+    return data;
+}
+
 export const api = {
     // Auth
     login: (login, password) => req('POST', '/admin/login', { login, password }),
@@ -61,7 +73,7 @@ export const api = {
     getAnalytics: () => req('GET', '/admin/analytics'),
     getAllSessions: (params = {}) => {
         const q = new URLSearchParams(params).toString();
-        return req('GET', `/admin/sessions${q ? '?' + q : ''}`);
+        return reqWithMeta('GET', `/admin/sessions${q ? '?' + q : ''}`);
     },
     getErrors: (params = {}) => {
         const q = new URLSearchParams(params).toString();

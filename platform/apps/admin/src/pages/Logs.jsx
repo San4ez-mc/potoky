@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { apiClient } from '../api/client.js';
+import { api } from '../api/client.js';
 
 const TABS = [
     { id: 'all', label: 'Всі' },
@@ -21,10 +21,8 @@ export function Logs() {
         const fetchLogs = async () => {
             setIsLoading(true);
             try {
-                const res = await apiClient.get('/api/admin/logs', { params: { tab: activeTab } });
-                if (res.ok) {
-                    setLogs(res.data || []);
-                }
+                const res = await api.getLogs(activeTab);
+                setLogs(res || []);
             } catch (err) {
                 console.error('Failed to fetch logs:', err);
             } finally {

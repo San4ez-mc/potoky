@@ -68,4 +68,5 @@ export const api = {
         const q = new URLSearchParams(params).toString();
         return req('GET', `/admin/api-logs${q ? '?' + q : ''}`);
     },
+    getLogs: (tab = 'all') => req('GET', `/admin/logs?tab=${tab}`),
 };

@@ -168,7 +168,7 @@ const TOOLS = [
     },
     {
         name: 'get_session_logs',
-        description: 'Get recent sessions with their message history and API calls for debugging',
+        description: 'Get recent sessions list with message history and API calls for debugging',
         inputSchema: {
             type: 'object',
             properties: {
@@ -192,7 +192,7 @@ const TOOLS = [
     },
     {
         name: 'get_session_messages',
-        description: 'Get all messages for a session',
+        description: 'Get messages from session — all messages for a session',
         inputSchema: {
             type: 'object',
             properties: { sessionId: { type: 'string' } },
@@ -201,7 +201,7 @@ const TOOLS = [
     },
     {
         name: 'get_session_api_calls',
-        description: 'Get all API calls for a session',
+        description: 'Get api calls from session — all API calls for a session',
         inputSchema: {
             type: 'object',
             properties: { sessionId: { type: 'string' } },
@@ -210,7 +210,7 @@ const TOOLS = [
     },
     {
         name: 'get_session_context',
-        description: 'Load context variables derived from files saved in previous sessions',
+        description: 'Get context of session — load context variables derived from files saved in previous sessions',
         inputSchema: {
             type: 'object',
             properties: { sessionId: { type: 'string' } },
@@ -219,7 +219,7 @@ const TOOLS = [
     },
     {
         name: 'get_api_logs',
-        description: 'Get recent API calls across the platform',
+        description: 'Get api logs — get recent API calls across the platform',
         inputSchema: {
             type: 'object',
             properties: {
@@ -232,7 +232,7 @@ const TOOLS = [
     },
     {
         name: 'get_errors',
-        description: 'Get application errors with stack traces and resolution status',
+        description: 'Get bot errors log — get application errors with stack traces and resolution status',
         inputSchema: {
             type: 'object',
             properties: {
@@ -246,7 +246,7 @@ const TOOLS = [
     },
     {
         name: 'get_node_stats',
-        description: 'Get node performance stats and error indicator for a bot node',
+        description: 'Get node statistics — get node performance stats and error indicator for a bot node',
         inputSchema: {
             type: 'object',
             properties: {
@@ -259,7 +259,7 @@ const TOOLS = [
     },
     {
         name: 'start_test_session',
-        description: 'Start a simulated Telegram test session for a bot',
+        description: 'Start test session for bot testing — start a simulated Telegram test session for a bot',
         inputSchema: {
             type: 'object',
             properties: {
@@ -272,7 +272,7 @@ const TOOLS = [
     },
     {
         name: 'send_test_message',
-        description: 'Send a message into an existing simulated test session',
+        description: 'Send message to test session — send a message into an existing simulated test session',
         inputSchema: {
             type: 'object',
             properties: {
@@ -284,7 +284,7 @@ const TOOLS = [
     },
     {
         name: 'get_test_session_state',
-        description: 'Get current state, context and history of a simulated test session',
+        description: 'Get state of test session — get current state, context and history of a simulated test session',
         inputSchema: {
             type: 'object',
             properties: {
@@ -295,7 +295,7 @@ const TOOLS = [
     },
     {
         name: 'end_test_session',
-        description: 'Finish a simulated test session and return summary',
+        description: 'End close test session — finish a simulated test session and return summary',
         inputSchema: {
             type: 'object',
             properties: {

@@ -8,7 +8,37 @@ export function Bots() {
     const [rows, setRows] = useState([]);
     const [projectFilter, setProjectFilter] = useState('all');
     const [loading, setLoading] = useState(true);
+    const [runningBotId, setRunningBotId] = useState(null);
+    const [runReports, setRunReports] = useState({});
     const navigate = useNavigate();
+
+    const runRegression = async (botId) => {
+        setRunningBotId(botId);
+        try {
+            const report = await api.runBotRegression(botId);
+            setRunReports((prev) => ({
+                ...prev,
+                [botId]: {
+                    ok: true,
+                    finalState: report.finalState,
+                    historyCount: report.historyCount,
+                    source: report.legend?.source || 'fallback',
+                    at: new Date().toISOString(),
+                },
+            }));
+        } catch (error) {
+            setRunReports((prev) => ({
+                ...prev,
+                [botId]: {
+                    ok: false,
+                    error: error.message || 'Regression failed',
+                    at: new Date().toISOString(),
+                },
+            }));
+        } finally {
+            setRunningBotId(null);
+        }
+    };
 
     useEffect(() => {
         api.getProjects()
@@ -100,9 +130,26 @@ export function Bots() {
                                 </td>
                                 <td className="px-4 py-3 text-xs text-gray-500">
                                     {bot.metrics?.flowUpdatedAt ? format(new Date(bot.metrics.flowUpdatedAt), 'dd.MM.yyyy HH:mm') : '—'}
+                                    {runReports[bot.id] && (
+                                        <div className={[
+                                            'mt-1 text-[11px]',
+                                            runReports[bot.id].ok ? 'text-emerald-400' : 'text-red-400',
+                                        ].join(' ')}>
+                                            {runReports[bot.id].ok
+                                                ? `test ok | state: ${runReports[bot.id].finalState || 'unknown'} | legend: ${runReports[bot.id].source}`
+                                                : `test failed: ${runReports[bot.id].error}`}
+                                        </div>
+                                    )}
                                 </td>
                                 <td className="px-4 py-3">
                                     <div className="flex justify-end gap-2">
+                                        <button
+                                            onClick={() => runRegression(bot.id)}
+                                            disabled={runningBotId === bot.id}
+                                            className="px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 text-xs rounded-lg transition-colors disabled:opacity-50"
+                                        >
+                                            {runningBotId === bot.id ? 'Тестується...' : 'Тест'}
+                                        </button>
                                         <button
                                             onClick={() => navigate(`/funnel/${bot.id}`)}
                                             className="px-3 py-1.5 bg-brand/20 hover:bg-brand/30 text-brand-light text-xs rounded-lg transition-colors"

@@ -6,6 +6,7 @@ const { db } = require('@platform/db');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const { validateParams } = require('../middleware/validateParams');
 const { authMiddleware, loginHandler, logoutHandler } = require('../middleware/auth');
+const { runBotRegression, runProjectRegressions } = require('../services/regressionRunner');
 
 const router = Router();
 
@@ -152,6 +153,24 @@ router.get('/api-logs',
         ]);
 
         res.json({ ok: true, data: calls, meta: { total, page, limit } });
+    })
+);
+
+// POST /api/admin/bots/:id/run-regression — run automated regression for one bot
+router.post('/bots/:id/run-regression',
+    validateParams({ params: z.object({ id: z.string().uuid() }) }),
+    asyncHandler(async (req, res) => {
+        const data = await runBotRegression(req.params.id);
+        res.json({ ok: true, data });
+    })
+);
+
+// POST /api/admin/projects/:slug/run-regressions — run automated regressions for all project bots
+router.post('/projects/:slug/run-regressions',
+    validateParams({ params: z.object({ slug: z.string().min(1) }) }),
+    asyncHandler(async (req, res) => {
+        const data = await runProjectRegressions(req.params.slug);
+        res.json({ ok: true, data });
     })
 );
 

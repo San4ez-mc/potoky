@@ -73,6 +73,8 @@ export const api = {
         return req('GET', `/admin/api-logs${q ? '?' + q : ''}`);
     },
     getLogs: (tab = 'all') => req('GET', `/admin/logs?tab=${tab}`),
+    runBotRegression: (botId) => req('POST', `/admin/bots/${botId}/run-regression`),
+    runProjectRegressions: (projectSlug) => req('POST', `/admin/projects/${projectSlug}/run-regressions`),
 
     // Global Keys
     getGlobalKeys: (projectId) => req('GET', `/projects/${projectId}/global-keys`),

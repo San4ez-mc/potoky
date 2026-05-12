@@ -80,4 +80,67 @@ router.post('/:id/send',
     })
 );
 
+// ── CONTEXT PASSING (Gap #4: load context from previous sessions) ────
+
+// GET /api/sessions/:sessionId/context — load context from user's files
+router.get('/:sessionId/context',
+    validateParams({ params: z.object({ sessionId: z.string().uuid() }) }),
+    asyncHandler(async (req, res) => {
+        const session = await db.session.findUnique({
+            where: { id: req.params.sessionId },
+            select: { userId: true, botId: true },
+        });
+        if (!session) throw new NotFoundError('Session', req.params.sessionId);
+
+        // Load all files saved by this user
+        const files = await db.file.findMany({
+            where: { userId: session.userId },
+            orderBy: { createdAt: 'desc' },
+        });
+
+        // Map files to context variables based on fileType
+        const context = {};
+        const fileTypeToContextVar = {
+            cashflow_articles: 'cashflowArticles',
+            pl_articles: 'plArticles',
+            business_process: 'businessProcess',
+            business_process_v2: 'businessProcessV2',
+            cashflow_table_url: 'sheetsUrl',
+            combined_table_url: 'combinedUrl',
+            financial_mechanics: 'financialMechanics',
+            salary_processes: 'salaryProcesses',
+            payment_processes: 'paymentProcesses',
+            balance_articles: 'balanceArticles',
+            balance_table_url: 'balanceUrl',
+        };
+
+        // For each file type, use the most recent file
+        const seenTypes = new Set();
+        for (const file of files) {
+            if (seenTypes.has(file.fileType)) continue;
+            seenTypes.add(file.fileType);
+
+            const contextVar = fileTypeToContextVar[file.fileType];
+            if (contextVar) {
+                context[contextVar] = {
+                    url: file.url,
+                    fileName: file.fileName,
+                    savedAt: file.createdAt,
+                    botId: file.botId,
+                };
+            }
+        }
+
+        res.json({
+            ok: true,
+            data: {
+                sessionId: req.params.sessionId,
+                userId: session.userId,
+                context,
+                filesCount: files.length,
+            },
+        });
+    })
+);
+
 module.exports = router;

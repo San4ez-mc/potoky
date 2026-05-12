@@ -13,6 +13,8 @@ import { Users } from './pages/Users.jsx';
 import { UserDetail } from './pages/UserDetail.jsx';
 import { Errors } from './pages/Errors.jsx';
 import { ApiLogs } from './pages/ApiLogs.jsx';
+import { Logs } from './pages/Logs.jsx';
+import { Settings } from './pages/Settings.jsx';
 
 function ProtectedRoute({ children }) {
     const { isAuthenticated, isLoading } = useAuthStore();
@@ -61,9 +63,13 @@ export default function App() {
                     <Route path="sessions" element={<Sessions />} />
                     <Route path="sessions/:id" element={<SessionDetail />} />
                     <Route path="users" element={<Users />} />
+                    <Route path="subscribers" element={<Users />} />
                     <Route path="users/:id" element={<UserDetail />} />
+                    <Route path="subscribers/:id" element={<UserDetail />} />
                     <Route path="api-logs" element={<ApiLogs />} />
                     <Route path="errors" element={<Errors />} />
+                    <Route path="logs" element={<Logs />} />
+                    <Route path="settings" element={<Settings />} />
                 </Route>
 
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />

@@ -200,4 +200,171 @@ router.get('/:botId/keys/:key/reveal',
     })
 );
 
+// ── EDGES (Gap #7: create_edge & update_edges) ────────────
+
+// POST /api/funnels/:botId/edges — add or update a single edge
+router.post('/:botId/edges',
+    validateParams({
+        params: z.object({ botId: z.string().uuid() }),
+        body: z.object({
+            source: z.string().min(1),
+            target: z.string().min(1),
+        }),
+    }),
+    asyncHandler(async (req, res) => {
+        const { botId } = req.params;
+        const { source, target } = req.body;
+
+        const flow = await db.flowDefinition.findUnique({ where: { botId } });
+        if (!flow) throw new NotFoundError('FlowDefinition', botId);
+
+        const newEdge = { id: `edge_${Date.now()}`, source, target };
+        const edges = flow.edges || [];
+        edges.push(newEdge);
+
+        await db.flowDefinition.update({
+            where: { botId },
+            data: { edges },
+        });
+
+        res.json({ ok: true, data: { edge: newEdge } });
+    })
+);
+
+// PUT /api/funnels/:botId/edges — replace all edges (bulk update)
+router.put('/:botId/edges',
+    validateParams({
+        params: z.object({ botId: z.string().uuid() }),
+        body: z.object({
+            edges: z.array(z.object({ source: z.string(), target: z.string() })),
+        }),
+    }),
+    asyncHandler(async (req, res) => {
+        const { botId } = req.params;
+        const { edges } = req.body;
+
+        await db.flowDefinition.update({
+            where: { botId },
+            data: { edges },
+        });
+
+        res.json({ ok: true, data: { edgesCount: edges.length } });
+    })
+);
+
+// DELETE /api/funnels/:botId/edges/:edgeId — delete edge
+router.delete('/:botId/edges/:edgeId',
+    validateParams({
+        params: z.object({ botId: z.string().uuid(), edgeId: z.string() }),
+    }),
+    asyncHandler(async (req, res) => {
+        const { botId, edgeId } = req.params;
+
+        const flow = await db.flowDefinition.findUnique({ where: { botId } });
+        if (!flow) throw new NotFoundError('FlowDefinition', botId);
+
+        const edges = (flow.edges || []).filter(e => e.id !== edgeId);
+
+        await db.flowDefinition.update({
+            where: { botId },
+            data: { edges },
+        });
+
+        res.json({ ok: true, data: { deleted: edgeId } });
+    })
+);
+
+// ── NODE STATS (Gap #9: get_node_stats for monitoring) ─────
+
+// GET /api/funnels/:botId/nodes/:nodeId/stats — node performance stats
+router.get('/:botId/nodes/:nodeId/stats',
+    validateParams({
+        params: z.object({ botId: z.string().uuid(), nodeId: z.string() }),
+    }),
+    asyncHandler(async (req, res) => {
+        const { botId, nodeId } = req.params;
+        const { period = '24h' } = req.query; // 24h, 7d, 30d
+
+        const bot = await db.bot.findUnique({ where: { id: botId } });
+        if (!bot) throw new NotFoundError('Bot', botId);
+
+        // Count sessions that passed through this node
+        const timeFrom = new Date(Date.now() - (period === '7d' ? 7 * 24 * 60 * 60 * 1000 : period === '30d' ? 30 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000));
+
+        const sessionsPassedThrough = await db.session.count({
+            where: {
+                botId,
+                createdAt: { gte: timeFrom },
+            },
+        });
+
+        const errorsAtNode = await db.$queryRaw`
+            SELECT COUNT(*) as count FROM app_errors
+            WHERE "botId" = ${botId}
+            AND "nodeId" = ${nodeId}
+            AND "createdAt" >= ${timeFrom}
+            AND "resolved" = false
+        `;
+
+        const errorCount = errorsAtNode?.[0]?.count || 0;
+
+        res.json({
+            ok: true,
+            data: {
+                nodeId,
+                period,
+                sessionsPassedThrough,
+                errors: Number(errorCount),
+                errorRate: sessionsPassedThrough > 0 ? (Number(errorCount) / sessionsPassedThrough * 100).toFixed(2) + '%' : '0%',
+                indicator: Number(errorCount) > 0 ? 'error' : sessionsPassedThrough > 100 ? 'warning' : 'ok',
+            },
+        });
+    })
+);
+
+// ── PREREQUISITES (Gap #2: check before start) ─────────────
+
+// POST /api/funnels/:botId/check-prerequisites — check if user can start this funnel
+router.post('/:botId/check-prerequisites',
+    validateParams({
+        params: z.object({ botId: z.string().uuid() }),
+        body: z.object({
+            userId: z.string(),
+        }),
+    }),
+    asyncHandler(async (req, res) => {
+        const { botId } = req.params;
+        const { userId } = req.body;
+
+        const flow = await db.flowDefinition.findUnique({ where: { botId } });
+        if (!flow) throw new NotFoundError('FlowDefinition', botId);
+
+        const flowObj = flow;
+        const prerequisites = flowObj.prerequisites || {};
+        const requiredFiles = prerequisites.files || [];
+
+        if (requiredFiles.length === 0) {
+            return res.json({ ok: true, data: { canStart: true, missing: [] } });
+        }
+
+        // Collect all files stored by this user from previous sessions
+        const userFiles = await db.file.findMany({
+            where: { userId },
+            select: { fileType: true },
+        });
+
+        const userFileTypes = new Set(userFiles.map(f => f.fileType));
+        const missing = requiredFiles.filter(type => !userFileTypes.has(type));
+
+        res.json({
+            ok: true,
+            data: {
+                canStart: missing.length === 0,
+                missing,
+                suggestedBot: prerequisites.onFail?.suggest_bot || null,
+            },
+        });
+    })
+);
+
 module.exports = router;

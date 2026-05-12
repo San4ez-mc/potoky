@@ -47,7 +47,7 @@ export function UserDetail() {
                 setSessions(s?.data ?? s ?? []);
                 setMcpUrl(mcp?.mcpUrl ?? null);
             })
-            .catch(() => {})
+            .catch(() => { })
             .finally(() => setLoading(false));
     }, [id]);
 

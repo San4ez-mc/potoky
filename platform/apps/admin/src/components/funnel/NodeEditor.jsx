@@ -221,6 +221,171 @@ function StartNodeEditor({ data, update }) {
     );
 }
 
+// ── NEW NODE EDITORS (Gap fillers + UI improvements) ────────────────────────────
+
+function WaitNodeEditor({ data, update }) {
+    return (
+        <div className="space-y-3">
+            <Field label="Тип затримки">
+                <select
+                    value={data.waitType || 'duration'}
+                    onChange={e => update({ waitType: e.target.value })}
+                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+                >
+                    <option value="duration">Тривалість (хв/год/дні)</option>
+                    <option value="specificTime">До конкретного часу</option>
+                    <option value="specificDate">До конкретної дати</option>
+                </select>
+            </Field>
+            {data.waitType === 'duration' && (
+                <div className="flex gap-2">
+                    <input type="number" min="1" value={data.duration || 5} onChange={e => update({ duration: parseInt(e.target.value) })} className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-white" />
+                    <select value={data.unit || 'minutes'} onChange={e => update({ unit: e.target.value })} className="w-24 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-white">
+                        <option value="minutes">хвилини</option>
+                        <option value="hours">години</option>
+                        <option value="days">дні</option>
+                        <option value="weeks">тижні</option>
+                    </select>
+                </div>
+            )}
+            <Field label="Дні тижня (для розправи)">
+                <div className="grid grid-cols-7 gap-1">
+                    {['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'нд'].map((day, i) => (
+                        <label key={i} className="flex items-center gap-1">
+                            <input type="checkbox" checked={data.daysOfWeek?.includes(i) || false} onChange={e => {
+                                const days = data.daysOfWeek || [];
+                                update({ daysOfWeek: e.target.checked ? [...days, i] : days.filter(d => d !== i) });
+                            }} className="accent-brand" />
+                            <span className="text-xs text-gray-400">{day}</span>
+                        </label>
+                    ))}
+                </div>
+            </Field>
+            <Field label="Тихі години (від 22:00 до 9:00)?">
+                <label className="flex items-center gap-2">
+                    <input type="checkbox" checked={data.quietHours || false} onChange={e => update({ quietHours: e.target.checked })} className="accent-brand" />
+                    <span className="text-sm text-gray-300">Не надсилати у ночі</span>
+                </label>
+            </Field>
+        </div>
+    );
+}
+
+function LoadFileNodeEditor({ data, update }) {
+    return (
+        <div className="space-y-3">
+            <Field label="Тип файлу (fileType)">
+                <select
+                    value={data.fileType || ''}
+                    onChange={e => update({ fileType: e.target.value })}
+                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+                >
+                    <option value="">Оберіть тип</option>
+                    <option value="cashflow_articles">cashflow_articles</option>
+                    <option value="pl_articles">pl_articles</option>
+                    <option value="business_process">business_process</option>
+                    <option value="cashflow_table_url">cashflow_table_url</option>
+                    <option value="balance_articles">balance_articles</option>
+                </select>
+            </Field>
+            <Field label="Що робити якщо файлу немає?">
+                <select
+                    value={data.onMissing || 'ask'}
+                    onChange={e => update({ onMissing: e.target.value })}
+                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+                >
+                    <option value="ask">Запитати користувача</option>
+                    <option value="skip">Пропустити</option>
+                    <option value="block">Заблокувати (показати повідомлення)</option>
+                </select>
+            </Field>
+            <Field label="Зберегти у змінну">
+                <TextInput value={data.outputVar} onChange={v => update({ outputVar: v })} placeholder="context.file" />
+            </Field>
+        </div>
+    );
+}
+
+function HttpRequestNodeEditor({ data, update }) {
+    return (
+        <div className="space-y-3">
+            <Field label="URL">
+                <TextInput value={data.url} onChange={v => update({ url: v })} placeholder="https://script.google.com/..." />
+            </Field>
+            <Field label="Метод">
+                <select
+                    value={data.method || 'POST'}
+                    onChange={e => update({ method: e.target.value })}
+                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+                >
+                    <option value="GET">GET</option>
+                    <option value="POST">POST</option>
+                    <option value="PUT">PUT</option>
+                    <option value="DELETE">DELETE</option>
+                </select>
+            </Field>
+            <Field label="Body Template (JSON)">
+                <CodeBlock
+                    value={data.bodyTemplate ? JSON.stringify(data.bodyTemplate, null, 2) : '{}'}
+                    onChange={v => {
+                        try { update({ bodyTemplate: JSON.parse(v) }); } catch { }
+                    }}
+                    language="json"
+                />
+            </Field>
+            <Field label="Зберегти відповідь у">
+                <TextInput value={data.outputVar} onChange={v => update({ outputVar: v })} placeholder="context.sheetsUrl" />
+            </Field>
+            <Field label="Шлях в response (JSON path)">
+                <TextInput value={data.responsePath} onChange={v => update({ responsePath: v })} placeholder="spreadsheetUrl" />
+            </Field>
+        </div>
+    );
+}
+
+function TagNodeEditor({ data, update }) {
+    return (
+        <div className="space-y-3">
+            <Field label="Дія">
+                <select
+                    value={data.action || 'add'}
+                    onChange={e => update({ action: e.target.value })}
+                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+                >
+                    <option value="add">Додати тег</option>
+                    <option value="remove">Видалити тег</option>
+                </select>
+            </Field>
+            <Field label="Тег">
+                <TextInput value={data.tag} onChange={v => update({ tag: v })} placeholder="block_2_done" />
+            </Field>
+        </div>
+    );
+}
+
+function ABTestNodeEditor({ data, update }) {
+    return (
+        <div className="space-y-3">
+            <Field label="Варіант A (%)">
+                <div className="flex gap-2">
+                    <input type="number" min="0" max="100" value={data.percentA || 50} onChange={e => {
+                        const pA = parseInt(e.target.value);
+                        update({ percentA: pA, percentB: 100 - pA });
+                    }} className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-white" />
+                    <span className="text-gray-400 px-2 py-1.5">%</span>
+                </div>
+            </Field>
+            <Field label="Назва варіанта A">
+                <TextInput value={data.variantA} onChange={v => update({ variantA: v })} placeholder="Версія А" />
+            </Field>
+            <div className="text-xs text-gray-500 text-right">Варіант B: {100 - (data.percentA || 50)}%</div>
+            <Field label="Назва варіанта B">
+                <TextInput value={data.variantB} onChange={v => update({ variantB: v })} placeholder="Версія Б" />
+            </Field>
+        </div>
+    );
+}
+
 export function NodeEditor() {
     const { selectedNode, updateNodeData, connectors, deleteNode } = useFunnelStore();
 
@@ -242,6 +407,11 @@ export function NodeEditor() {
             case 'js': return <JsNodeEditor data={data} update={update} />;
             case 'condition': return <ConditionNodeEditor data={data} update={update} />;
             case 'connector': return <ConnectorNodeEditor data={data} update={update} connectors={connectors} />;
+            case 'wait': return <WaitNodeEditor data={data} update={update} />;
+            case 'loadFile': return <LoadFileNodeEditor data={data} update={update} />;
+            case 'httpRequest': return <HttpRequestNodeEditor data={data} update={update} />;
+            case 'tag': return <TagNodeEditor data={data} update={update} />;
+            case 'abtest': return <ABTestNodeEditor data={data} update={update} />;
             default: return <div className="text-gray-500 text-sm">Немає налаштувань для цього вузла</div>;
         }
     };

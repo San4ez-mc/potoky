@@ -7,10 +7,9 @@ const NAV = [
     { to: '/funnels', icon: '🗺', label: 'Воронки' },
     { to: '/projects', icon: '📁', label: 'Проєкти' },
     { to: '/dashboard', icon: '📊', label: 'Дашборд' },
-    { to: '/sessions', icon: '💬', label: 'Сесії' },
-    { to: '/users', icon: '👥', label: 'Юзери' },
-    { to: '/api-logs', icon: '📡', label: 'API логи' },
-    { to: '/errors', icon: '🔴', label: 'Помилки' },
+    { to: '/subscribers', icon: '👥', label: 'Підписники' },
+    { to: '/logs', icon: '📡', label: 'Логи' },
+    { to: '/settings', icon: '⚙️', label: 'Налаштування' },
 ];
 
 export function Sidebar() {

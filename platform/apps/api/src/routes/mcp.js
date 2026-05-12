@@ -40,7 +40,7 @@ async function checkAuth(req, res) {
     try {
         const user = await prisma.user.findUnique({ where: { mcpToken: candidate } });
         if (user) return true;
-    } catch (_) {}
+    } catch (_) { }
 
     res.status(401).json({ error: 'Unauthorized' });
     return false;
@@ -328,11 +328,13 @@ async function handleJsonRpc(msg) {
     const { id, method, params } = msg;
 
     if (method === 'initialize') {
-        return { jsonrpc: '2.0', id, result: {
-            protocolVersion: '2024-11-05',
-            capabilities: { tools: {} },
-            serverInfo: { name: 'platform-funnel-mcp', version: '1.0.0' },
-        }};
+        return {
+            jsonrpc: '2.0', id, result: {
+                protocolVersion: '2024-11-05',
+                capabilities: { tools: {} },
+                serverInfo: { name: 'platform-funnel-mcp', version: '1.0.0' },
+            }
+        };
     }
 
     if (method === 'tools/list') {
@@ -343,9 +345,11 @@ async function handleJsonRpc(msg) {
         const { name, arguments: args } = params;
         try {
             const result = await callTool(name, args || {});
-            return { jsonrpc: '2.0', id, result: {
-                content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-            }};
+            return {
+                jsonrpc: '2.0', id, result: {
+                    content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+                }
+            };
         } catch (err) {
             return { jsonrpc: '2.0', id, error: { code: -32603, message: err.message } };
         }

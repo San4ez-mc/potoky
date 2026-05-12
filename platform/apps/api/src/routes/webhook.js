@@ -52,7 +52,7 @@ router.post('/telegram',
         // Обробка у фоні (щоб не timeout)
         setImmediate(async () => {
             try {
-                const { handleTelegramUpdate } = require('../../../../../../projects/finance-course/src/telegramHandler');
+                const { handleTelegramUpdate } = require('../../../../projects/finance-course/src/telegramHandler');
                 await handleTelegramUpdate(update);
             } catch (error) {
                 logger.error('Telegram webhook handler failed', { error: error.message, stack: error.stack });
@@ -70,7 +70,7 @@ router.post('/telegram/:botId',
 
         setImmediate(async () => {
             try {
-                const { handleTelegramUpdate } = require('../../../../../../projects/finance-course/src/telegramHandler');
+                const { handleTelegramUpdate } = require('../../../../projects/finance-course/src/telegramHandler');
                 await handleTelegramUpdate(update);
             } catch (error) {
                 logger.error('Telegram webhook handler failed (bot-scoped)', {

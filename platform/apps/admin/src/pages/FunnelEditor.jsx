@@ -7,7 +7,19 @@ import { NodeLibrary } from '../components/funnel/NodeLibrary.jsx';
 import { NodeEditor } from '../components/funnel/NodeEditor.jsx';
 import { KeysPanel } from '../components/funnel/KeysPanel.jsx';
 
-function TopBar({ bot, isDirty, isSaving, onSave, onExport, onImport, onBack }) {
+function TopBar({
+    bot,
+    isDirty,
+    isSaving,
+    isLeftPanelOpen,
+    isRightPanelOpen,
+    onToggleLeftPanel,
+    onToggleRightPanel,
+    onSave,
+    onExport,
+    onImport,
+    onBack,
+}) {
     const importRef = useRef(null);
 
     const handleImport = (e) => {
@@ -43,6 +55,24 @@ function TopBar({ bot, isDirty, isSaving, onSave, onExport, onImport, onBack }) 
                 </span>
             )}
 
+            <button
+                onClick={onToggleLeftPanel}
+                className={`text-sm px-3 py-1.5 rounded-lg transition-colors ${isLeftPanelOpen
+                    ? 'bg-gray-800 hover:bg-gray-700 text-white'
+                    : 'bg-gray-900 hover:bg-gray-800 text-gray-400 border border-gray-800'}`}
+            >
+                {isLeftPanelOpen ? '◧ Ліва панель' : '◨ Ліва панель'}
+            </button>
+
+            <button
+                onClick={onToggleRightPanel}
+                className={`text-sm px-3 py-1.5 rounded-lg transition-colors ${isRightPanelOpen
+                    ? 'bg-gray-800 hover:bg-gray-700 text-white'
+                    : 'bg-gray-900 hover:bg-gray-800 text-gray-400 border border-gray-800'}`}
+            >
+                {isRightPanelOpen ? '◧ Права панель' : '◨ Права панель'}
+            </button>
+
             <div className="flex-1" />
 
             {/* Actions */}
@@ -77,6 +107,8 @@ export function FunnelEditor() {
     const navigate = useNavigate();
     const { bot, connectors, isDirty, isSaving, isLoading, error, selectedNode, loadFunnel, saveFunnel, exportFunnel, importFunnel } = useFunnelStore();
 
+    const [isLeftPanelOpen, setLeftPanelOpen] = useState(true);
+    const [isRightPanelOpen, setRightPanelOpen] = useState(true);
     const [rightPanel, setRightPanel] = useState('keys'); // 'keys' | 'node'
 
     const handleBack = () => {
@@ -112,6 +144,10 @@ export function FunnelEditor() {
                     bot={bot}
                     isDirty={isDirty}
                     isSaving={isSaving}
+                    isLeftPanelOpen={isLeftPanelOpen}
+                    isRightPanelOpen={isRightPanelOpen}
+                    onToggleLeftPanel={() => setLeftPanelOpen(value => !value)}
+                    onToggleRightPanel={() => setRightPanelOpen(value => !value)}
                     onSave={saveFunnel}
                     onExport={exportFunnel}
                     onImport={importFunnel}
@@ -119,13 +155,13 @@ export function FunnelEditor() {
                 />
                 <div className="flex flex-1 overflow-hidden">
                     {/* Left: Node library */}
-                    <NodeLibrary connectors={connectors} />
+                    {isLeftPanelOpen && <NodeLibrary connectors={connectors} />}
 
                     {/* Center: Canvas */}
                     <FunnelCanvas />
 
                     {/* Right: Keys or Node editor */}
-                    {rightPanel === 'node' && selectedNode ? <NodeEditor /> : <KeysPanel />}
+                    {isRightPanelOpen && (rightPanel === 'node' && selectedNode ? <NodeEditor /> : <KeysPanel />)}
                 </div>
             </div>
         </ReactFlowProvider>

@@ -7,8 +7,64 @@ const { asyncHandler } = require('../middleware/asyncHandler');
 const { validateParams } = require('../middleware/validateParams');
 const { NotFoundError } = require('@platform/errors');
 const { sendMessage } = require('@platform/telegram');
+const {
+    startTestSession,
+    sendTestMessage,
+    getTestSessionState,
+    endTestSession,
+} = require('../services/testSession');
 
 const router = Router();
+
+// POST /api/sessions/test/start
+router.post('/test/start',
+    validateParams({
+        body: z.object({
+            botId: z.string().uuid().optional(),
+            botSlug: z.string().min(1).optional(),
+            userId: z.string().uuid().optional(),
+        }),
+    }),
+    asyncHandler(async (req, res) => {
+        const { botId, botSlug, userId } = req.body;
+        if (!botId && !botSlug) {
+            return res.status(400).json({ ok: false, error: 'Provide botId or botSlug' });
+        }
+
+        const data = await startTestSession({ botId, botSlug, userId });
+        res.json({ ok: true, data });
+    })
+);
+
+// POST /api/sessions/test/:id/send
+router.post('/test/:id/send',
+    validateParams({
+        params: z.object({ id: z.string().uuid() }),
+        body: z.object({ message: z.string().min(1).max(4096) }),
+    }),
+    asyncHandler(async (req, res) => {
+        const data = await sendTestMessage({ sessionId: req.params.id, message: req.body.message });
+        res.json({ ok: true, data });
+    })
+);
+
+// GET /api/sessions/test/:id/state
+router.get('/test/:id/state',
+    validateParams({ params: z.object({ id: z.string().uuid() }) }),
+    asyncHandler(async (req, res) => {
+        const data = await getTestSessionState({ sessionId: req.params.id });
+        res.json({ ok: true, data });
+    })
+);
+
+// POST /api/sessions/test/:id/end
+router.post('/test/:id/end',
+    validateParams({ params: z.object({ id: z.string().uuid() }) }),
+    asyncHandler(async (req, res) => {
+        const data = await endTestSession({ sessionId: req.params.id });
+        res.json({ ok: true, data });
+    })
+);
 
 // GET /api/sessions/:id
 router.get('/:id',

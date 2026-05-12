@@ -2,9 +2,9 @@
 
 const logger = require('@platform/logger');
 const { sendMessage } = require('@platform/telegram');
-const { UserService } = require('./services/UserService');
-const { DEEP_LINK_MAP, BOT_SLUGS } = require('./constants');
-const { checkPrerequisites } = require('./config/prerequisites');
+const { UserService } = require('../services/UserService');
+const { DEEP_LINK_MAP, BOT_SLUGS } = require('../constants');
+const { checkPrerequisites } = require('../config/prerequisites');
 const { db } = require('@platform/db');
 
 /**
@@ -92,7 +92,7 @@ async function startBot(user, chatId, botSlug) {
         return;
     }
 
-    const { getHandler } = require(`./bots/${botSlug}/index`);
+    const { getHandler } = require(`../bots/${botSlug}/index`);
     const handler = getHandler();
     await handler.start(user, chatId, bot);
 }
@@ -163,7 +163,7 @@ async function routeToActiveSession(user, chatId, text) {
         return;
     }
 
-    const { getHandler } = require(`./bots/${activeSession.bot.slug}/index`);
+    const { getHandler } = require(`../bots/${activeSession.bot.slug}/index`);
     const handler = getHandler();
     await handler.handleMessage(user, chatId, text, activeSession);
 }
@@ -177,7 +177,7 @@ async function routeCallbackToActiveSession(user, chatId, data) {
 
     if (!activeSession) return;
 
-    const { getHandler } = require(`./bots/${activeSession.bot.slug}/index`);
+    const { getHandler } = require(`../bots/${activeSession.bot.slug}/index`);
     const handler = getHandler();
     if (handler.handleCallback) {
         await handler.handleCallback(user, chatId, data, activeSession);

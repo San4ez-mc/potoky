@@ -41,12 +41,26 @@ function parseSelectedChannels(rawValue) {
 function KeyRow({ k, onEdit, onDelete, onReveal }) {
     const [revealed, setRevealed] = useState(false);
     const [revealedValue, setRevealedValue] = useState('');
+    const [isRevealing, setIsRevealing] = useState(false);
 
     const handleReveal = async () => {
         if (revealed) { setRevealed(false); return; }
+        setIsRevealing(true);
         const value = await onReveal(k.key);
         setRevealedValue(value);
         setRevealed(true);
+        setIsRevealing(false);
+    };
+
+    const handleEdit = async () => {
+        if (k.isSecret) {
+            // Reveal real value before opening edit form
+            const realValue = revealedValue || await onReveal(k.key);
+            if (!revealedValue) setRevealedValue(realValue);
+            onEdit({ ...k, value: realValue });
+        } else {
+            onEdit(k);
+        }
     };
 
     return (
@@ -58,7 +72,7 @@ function KeyRow({ k, onEdit, onDelete, onReveal }) {
                         {k.isSecret && <span className="text-[10px] bg-yellow-900/40 text-yellow-400 border border-yellow-800 rounded px-1.5 py-0.5">SECRET</span>}
                     </div>
                     {k.label && <div className="text-xs text-gray-400 mt-0.5">{k.label}</div>}
-                    <div className="text-sm text-gray-300 mt-1 font-mono truncate">
+                    <div className="text-sm text-gray-300 mt-1 font-mono break-all">
                         {revealed ? revealedValue : (k.isSecret ? '••••••••' : k.value)}
                     </div>
                 </div>
@@ -66,14 +80,15 @@ function KeyRow({ k, onEdit, onDelete, onReveal }) {
                     {k.isSecret && (
                         <button
                             onClick={handleReveal}
-                            className="text-xs px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white transition-colors"
+                            disabled={isRevealing}
+                            className="text-xs px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white transition-colors disabled:opacity-50"
                             title={revealed ? 'Сховати значення' : 'Показати значення'}
                         >
-                            {revealed ? 'Сховати' : 'Показати'}
+                            {isRevealing ? '…' : revealed ? 'Сховати' : 'Показати'}
                         </button>
                     )}
                     <button
-                        onClick={() => onEdit(k)}
+                        onClick={handleEdit}
                         className="text-xs px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white transition-colors"
                     >
                         ✏️

@@ -91,6 +91,41 @@ router.patch('/errors/:id/resolve',
     })
 );
 
+// GET /api/admin/sessions — all sessions across all bots
+router.get('/sessions',
+    validateParams({
+        query: z.object({
+            botId: z.string().uuid().optional(),
+            isActive: z.enum(['true', 'false']).optional(),
+            page: z.coerce.number().int().min(0).default(0),
+            limit: z.coerce.number().int().min(1).max(100).default(50),
+        }),
+    }),
+    asyncHandler(async (req, res) => {
+        const { botId, isActive, page, limit } = req.query;
+        const where = {};
+        if (botId) where.botId = botId;
+        if (isActive !== undefined) where.isActive = isActive === 'true';
+
+        const [sessions, total] = await Promise.all([
+            db.session.findMany({
+                where,
+                orderBy: { startedAt: 'desc' },
+                take: limit,
+                skip: page * limit,
+                include: {
+                    user: { select: { id: true, firstName: true, username: true, telegramId: true } },
+                    bot: { select: { id: true, name: true, slug: true } },
+                    _count: { select: { messages: true, apiCalls: true } },
+                },
+            }),
+            db.session.count({ where }),
+        ]);
+
+        res.json({ ok: true, data: sessions, meta: { total, page, limit } });
+    })
+);
+
 // GET /api/admin/api-logs — stream of recent API calls
 router.get('/api-logs',
     validateParams({

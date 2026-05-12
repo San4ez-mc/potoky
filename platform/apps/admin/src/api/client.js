@@ -59,6 +59,10 @@ export const api = {
 
     // Admin
     getAnalytics: () => req('GET', '/admin/analytics'),
+    getAllSessions: (params = {}) => {
+        const q = new URLSearchParams(params).toString();
+        return req('GET', `/admin/sessions${q ? '?' + q : ''}`);
+    },
     getErrors: (params = {}) => {
         const q = new URLSearchParams(params).toString();
         return req('GET', `/admin/errors${q ? '?' + q : ''}`);

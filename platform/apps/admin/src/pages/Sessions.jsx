@@ -3,63 +3,71 @@ import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { format } from 'date-fns';
 
-const STATE_COLORS = {
-    active: 'text-emerald-400 bg-emerald-900/30 border-emerald-800',
-    completed: 'text-gray-400 bg-gray-900 border-gray-700',
-    error: 'text-red-400 bg-red-900/30 border-red-800',
-};
-
 export function Sessions() {
     const { botId } = useParams();
     const [sessions, setSessions] = useState([]);
+    const [meta, setMeta] = useState({ total: 0 });
     const [page, setPage] = useState(0);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         setLoading(true);
-        const fetch = botId ? api.getBotSessions(botId, page) : api.getUsers(page).then(u => u);
-        // For now just get all via admin
-        api.getApiLogs({ page })
-            .then(() => { })
-            .catch(() => { });
+        const params = { page };
+        if (botId) params.botId = botId;
 
-        // Real sessions via bot
-        (botId ? api.getBotSessions(botId, page) : Promise.resolve([]))
-            .then(setSessions)
+        api.getAllSessions(params)
+            .then(res => {
+                setSessions(res.data || []);
+                setMeta(res.meta || { total: 0 });
+            })
             .catch(() => setSessions([]))
             .finally(() => setLoading(false));
     }, [botId, page]);
 
     return (
-        <div className="p-6">
-            <h1 className="text-xl font-semibold text-white mb-4">
-                {botId ? 'Сесії бота' : 'Всі сесії'}
-            </h1>
+        <div className="p-6 max-w-5xl">
+            <div className="flex items-center justify-between mb-6">
+                <div>
+                    <h1 className="text-xl font-semibold text-white">
+                        {botId ? 'Сесії бота' : 'Всі сесії'}
+                    </h1>
+                    {meta.total > 0 && <div className="text-sm text-gray-500 mt-0.5">Всього: {meta.total}</div>}
+                </div>
+            </div>
 
             {loading ? (
                 <div className="text-gray-400">Завантаження...</div>
             ) : (
                 <div className="space-y-2">
-                    {sessions.map(s => (
-                        <Link
-                            key={s.id}
-                            to={`/sessions/${s.id}`}
-                            className="block bg-gray-900 border border-gray-800 hover:border-gray-600 rounded-xl px-4 py-3 transition-colors"
-                        >
-                            <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-3">
-                                    <span className={`text-xs px-2 py-0.5 rounded-full border ${STATE_COLORS[s.isActive ? 'active' : 'completed'] || STATE_COLORS.completed}`}>
-                                        {s.isActive ? 'активна' : 'завершена'}
+                    {sessions.map(s => {
+                        const userName = s.user?.firstName || s.user?.username || `id:${s.user?.telegramId || '?'}`;
+                        const msgCount = s._count?.messages ?? '—';
+                        const apiCount = s._count?.apiCalls ?? '—';
+                        return (
+                            <Link
+                                key={s.id}
+                                to={`/sessions/${s.id}`}
+                                className="block bg-gray-900 border border-gray-800 hover:border-gray-600 rounded-xl px-4 py-3 transition-colors"
+                            >
+                                <div className="flex items-center justify-between gap-4">
+                                    <div className="flex items-center gap-3 min-w-0">
+                                        <span className={`shrink-0 text-xs px-2 py-0.5 rounded-full border ${s.isActive ? 'text-emerald-400 bg-emerald-900/30 border-emerald-800' : 'text-gray-400 bg-gray-900 border-gray-700'}`}>
+                                            {s.isActive ? 'активна' : 'завершена'}
+                                        </span>
+                                        <span className="text-sm text-white font-semibold truncate">{userName}</span>
+                                        {s.bot && (
+                                            <span className="text-xs text-gray-500 font-mono shrink-0">/{s.bot.slug}</span>
+                                        )}
+                                        <span className="text-xs text-gray-600 shrink-0">💬 {msgCount} · 📡 {apiCount}</span>
+                                    </div>
+                                    <span className="text-xs text-gray-500 shrink-0">
+                                        {s.startedAt ? format(new Date(s.startedAt), 'dd.MM.yyyy HH:mm') : ''}
                                     </span>
-                                    <span className="text-sm text-white font-mono">{s.id.slice(0, 8)}…</span>
-                                    <span className="text-sm text-gray-400">{s.state}</span>
                                 </div>
-                                <span className="text-xs text-gray-500">
-                                    {s.updatedAt ? format(new Date(s.updatedAt), 'dd.MM.yyyy HH:mm') : ''}
-                                </span>
-                            </div>
-                        </Link>
-                    ))}
+                                <div className="text-xs text-gray-600 mt-1 font-mono">{s.id.slice(0, 8)}…  стан: {s.state}</div>
+                            </Link>
+                        );
+                    })}
                     {sessions.length === 0 && <div className="text-gray-500 py-8 text-center">Немає сесій</div>}
                 </div>
             )}

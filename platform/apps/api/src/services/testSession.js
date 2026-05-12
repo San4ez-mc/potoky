@@ -1,6 +1,7 @@
 'use strict';
 
 const { db } = require('@platform/db');
+const { BOT_REQUIREMENTS } = require('../../../../projects/finance-course/config/prerequisites');
 
 const { handleTelegramUpdate } = require('../../../../projects/finance-course/src/telegramHandler');
 
@@ -105,6 +106,33 @@ async function findLatestSession(userId, botId) {
     });
 }
 
+async function ensurePrerequisiteFiles(userId, bot) {
+    const requirements = BOT_REQUIREMENTS[bot.slug] || { files: [] };
+
+    for (const fileType of requirements.files || []) {
+        const latest = await db.file.findFirst({
+            where: { userId, fileType },
+            orderBy: { version: 'desc' },
+        });
+
+        if (latest) {
+            continue;
+        }
+
+        await db.file.create({
+            data: {
+                userId,
+                botId: bot.id,
+                fileType,
+                fileName: `${fileType}_seed_v1.md`,
+                filePath: `/tmp/test-seed/${userId}/${fileType}_v1.md`,
+                content: `Seed file for automated regression: ${fileType}`,
+                version: 1,
+            },
+        });
+    }
+}
+
 async function startTestSession({ botId, botSlug, userId }) {
     const bot = await resolveBot({ botId, botSlug });
     const identity = await resolveIdentity(userId, bot.slug);
@@ -125,6 +153,8 @@ async function startTestSession({ botId, botSlug, userId }) {
 
         const existingUser = await db.user.findUnique({ where: { telegramId: BigInt(identity.telegramId) } });
         if (!existingUser) continue;
+
+        await ensurePrerequisiteFiles(existingUser.id, bot);
 
         const existingSession = await findLatestSession(existingUser.id, bot.id);
         if (existingSession) break;

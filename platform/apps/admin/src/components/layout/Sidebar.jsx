@@ -7,6 +7,7 @@ const NAV = [
     { to: '/funnels', icon: '🗺', label: 'Воронки' },
     { to: '/projects', icon: '📁', label: 'Проєкти' },
     { to: '/dashboard', icon: '📊', label: 'Дашборд' },
+    { to: '/connectors', icon: '🔌', label: 'Збережені конектори' },
     { to: '/subscribers', icon: '👥', label: 'Підписники' },
     { to: '/logs', icon: '📡', label: 'Логи' },
     { to: '/settings', icon: '⚙️', label: 'Налаштування' },

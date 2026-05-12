@@ -138,6 +138,7 @@ async function startTestSession({ botId, botSlug, userId }) {
     const identity = await resolveIdentity(userId, bot.slug);
 
     let warning = null;
+    const diagnostics = [];
     const attempts = [
         `/start ${bot.slug}`,
         '/start',
@@ -153,11 +154,20 @@ async function startTestSession({ botId, botSlug, userId }) {
         }
 
         const existingUser = await db.user.findUnique({ where: { telegramId: BigInt(identity.telegramId) } });
-        if (!existingUser) continue;
+        if (!existingUser) {
+            diagnostics.push({ message, userCreated: false, sessionCreated: false, warning });
+            continue;
+        }
 
         await ensurePrerequisiteFiles(existingUser.id, bot);
 
         const existingSession = await findLatestSession(existingUser.id, bot.id);
+        diagnostics.push({
+            message,
+            userCreated: true,
+            sessionCreated: Boolean(existingSession),
+            warning,
+        });
         if (existingSession) break;
     }
 
@@ -169,7 +179,7 @@ async function startTestSession({ botId, botSlug, userId }) {
     const session = await findLatestSession(user.id, bot.id);
 
     if (!session) {
-        throw new Error('Test session was not created');
+        throw new Error(`Test session was not created. Diagnostics: ${JSON.stringify(diagnostics)}`);
     }
 
     const firstMessage = await getLatestAssistantMessage(session.id);

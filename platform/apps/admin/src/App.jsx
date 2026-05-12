@@ -16,6 +16,7 @@ import { ApiLogs } from './pages/ApiLogs.jsx';
 import { Logs } from './pages/Logs.jsx';
 import { Settings } from './pages/Settings.jsx';
 import { Connectors } from './pages/Connectors.jsx';
+import MCPSettings from './pages/MCPSettings.jsx';
 
 function ProtectedRoute({ children }) {
     const { isAuthenticated, isLoading } = useAuthStore();
@@ -72,6 +73,7 @@ export default function App() {
                     <Route path="errors" element={<Errors />} />
                     <Route path="logs" element={<Logs />} />
                     <Route path="settings" element={<Settings />} />
+                    <Route path="mcp" element={<MCPSettings />} />
                 </Route>
 
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />

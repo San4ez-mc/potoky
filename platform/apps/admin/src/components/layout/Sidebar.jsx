@@ -10,6 +10,7 @@ const NAV = [
     { to: '/connectors', icon: '🔌', label: 'Збережені конектори' },
     { to: '/subscribers', icon: '👥', label: 'Підписники' },
     { to: '/logs', icon: '📡', label: 'Логи' },
+    { to: '/mcp', icon: '🧠', label: 'MCP Servers' },
     { to: '/settings', icon: '⚙️', label: 'Налаштування' },
 ];
 

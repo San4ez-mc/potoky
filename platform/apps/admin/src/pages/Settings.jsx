@@ -97,8 +97,8 @@ export function Settings() {
                         key={tab.id}
                         onClick={() => setActiveSection(tab.id)}
                         className={`px-4 py-3 text-sm font-medium transition-colors ${activeSection === tab.id
-                                ? 'text-brand-light border-b-2 border-brand'
-                                : 'text-gray-400 hover:text-white'
+                            ? 'text-brand-light border-b-2 border-brand'
+                            : 'text-gray-400 hover:text-white'
                             }`}
                     >
                         {tab.label}

@@ -73,21 +73,21 @@ async function fixBot21EdgeRouting() {
 
         // Add correct routing
         flow.edges.push(
-            { 
-                id: `edge_${Date.now()}_1`, 
-                source: 'claude_main', 
+            {
+                id: `edge_${Date.now()}_1`,
+                source: 'claude_main',
                 target: 'save_result',
                 label: '✅ Fixed'
             },
-            { 
-                id: `edge_${Date.now()}_2`, 
-                source: 'save_result', 
+            {
+                id: `edge_${Date.now()}_2`,
+                source: 'save_result',
                 target: 'node_1778531261129',
                 label: '✅ Fixed'
             },
-            { 
-                id: `edge_${Date.now()}_3`, 
-                source: 'node_1778531261129', 
+            {
+                id: `edge_${Date.now()}_3`,
+                source: 'node_1778531261129',
                 target: 'msg_done',
                 label: '✅ Fixed'
             }
@@ -110,14 +110,14 @@ async function fixBot21EdgeRouting() {
 
 async function main() {
     console.log('🚀 Fixing Bot 2.1 edge routing and preparing loadFile node setup...\n');
-    
+
     // Fix Bot 2.1 edge routing
     await fixBot21EdgeRouting();
 
     console.log('\n✨ Setup complete!');
     console.log('📝 To add loadFile nodes to other bots, use Claude MCP with add_node tool.');
     console.log('   Example: add_node(botId, "loadFile", { fileType: "cashflow_articles", onMissing: "skip" }, { x: 200, y: 200 })');
-    
+
     await prisma.$disconnect();
 }
 

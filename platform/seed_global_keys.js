@@ -10,8 +10,8 @@ const prisma = new PrismaClient();
  * Источники:
  * - Google Service Account: ultra-surfer-492920-a5-cd1642cd832a.json
  * - Telegram боты: fineko_processes_bot, fineko_bot (и другие)
- * - Apps Script URLs: из боти/*/src/config.js или deploy.md
- */
+ * - Apps Script URLs: из боти/*/src / config.js или deploy.md
+    */
 async function main() {
     const project = await prisma.project.findUnique({
         where: { slug: 'finance-course' },

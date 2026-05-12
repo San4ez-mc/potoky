@@ -46,7 +46,12 @@ export function Sessions() {
             ) : (
                 <div className="space-y-2">
                     {sessions.map(s => {
-                        const userName = s.user?.firstName || s.user?.username || `id:${s.user?.telegramId || '?'}`;
+                        const fullName = [
+                            s.user?.firstName || '',
+                            s.user?.lastName || ''
+                        ].filter(Boolean).join(' ') || s.user?.username || `id:${s.user?.telegramId || '?'}`;
+                        const tgHandle = s.user?.telegramUsername || s.user?.username || '—';
+                        const tgId = s.user?.telegramId ? String(s.user.telegramId) : '—';
                         const msgCount = s._count?.messages ?? '—';
                         const apiCount = s._count?.apiCalls ?? '—';
                         return (
@@ -56,11 +61,14 @@ export function Sessions() {
                                 className="block bg-gray-900 border border-gray-800 hover:border-gray-600 rounded-xl px-4 py-3 transition-colors"
                             >
                                 <div className="flex items-center justify-between gap-4">
-                                    <div className="flex items-center gap-3 min-w-0">
+                                    <div className="flex items-center gap-3 min-w-0 flex-wrap">
                                         <span className={`shrink-0 text-xs px-2 py-0.5 rounded-full border ${s.isActive ? 'text-emerald-400 bg-emerald-900/30 border-emerald-800' : 'text-gray-400 bg-gray-900 border-gray-700'}`}>
                                             {s.isActive ? 'активна' : 'завершена'}
                                         </span>
-                                        <span className="text-sm text-white font-semibold truncate">{userName}</span>
+                                        <div className="flex flex-col min-w-0">
+                                            <span className="text-sm text-white font-semibold truncate">{fullName}</span>
+                                            <span className="text-xs text-gray-500 truncate">@{tgHandle} · ID: {tgId}</span>
+                                        </div>
                                         {s.bot && (
                                             <span className="text-xs text-gray-500 font-mono shrink-0">/{s.bot.slug}</span>
                                         )}

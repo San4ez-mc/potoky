@@ -115,7 +115,16 @@ router.get('/sessions',
                 take: limit,
                 skip: page * limit,
                 include: {
-                    user: { select: { id: true, firstName: true, username: true, telegramId: true } },
+                    user: { 
+                        select: { 
+                            id: true, 
+                            firstName: true, 
+                            lastName: true,
+                            username: true, 
+                            telegramId: true,
+                            telegramUsername: true,
+                        } 
+                    },
                     bot: { select: { id: true, name: true, slug: true } },
                     _count: { select: { messages: true, apiCalls: true } },
                 },

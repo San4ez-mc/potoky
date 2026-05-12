@@ -148,10 +148,6 @@ function extractSpreadsheetId(url) {
     return match ? match[1] : null;
 }
 
-function buildMessages(dbMessages) {
-    return dbMessages.map(m => ({ role: m.role, content: m.content }));
-}
-
 function getHandler() {
     return new Bot23Handler();
 }

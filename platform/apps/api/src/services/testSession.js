@@ -142,6 +142,7 @@ async function startTestSession({ botId, botSlug, userId }) {
         `/start ${bot.slug}`,
         '/start',
         'Привіт',
+        `/start ${bot.slug}`,
     ];
 
     for (const message of attempts) {

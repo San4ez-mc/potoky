@@ -11,7 +11,7 @@ const router = Router();
 
 const savedConnectorSchema = z.object({
     name: z.string().min(1).max(100),
-    type: z.enum(['telegram', 'openai', 'anthropic', 'google', 'custom']),
+    type: z.string().min(1).max(50),
     description: z.string().optional(),
     config: z.record(z.string(), z.any()).default({}),
 });

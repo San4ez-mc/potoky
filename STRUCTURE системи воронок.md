@@ -606,3 +606,77 @@ UserProgress.update() → статус 'completed'
 | Health check | https://flows.fineko.space/health |
 | Prisma Studio | `yarn workspace @platform/db studio` |
 | PM2 статус | `pm2 status` (на сервері) |
+
+
+---
+
+## 9. онектори — архітектура та концепція
+
+### ва рівні: шаблон і екземпляр
+
+Система конекторів побудована на двох незалежних сутностях.
+
+#### ConnectorDef — системний шаблон типу конектора
+
+Таблиця connector_defs. азвичай isBuiltin: true. писує:
+- **type** — унікальний slug (наприклад, claude_sonnet, 	elegram_bot)
+- **name** — людська назва (Claude Sonnet, Telegram Bot)
+- **icon** — емодзі для UI
+- **description** — пояснення, коли використовувати
+- **schema.fields** — масив полів, які потрібно заповнити:
+  - key — ключ у config JSON
+  - label — відображувана назва
+  - secret: true — поле рендериться як password
+  - multiline: true — textarea (наприклад, JSON ключа)
+  - placeholder — підказка
+- **schema.docs_url** — посилання на офіційну документацію API
+
+ConnectorDef **не містить реальних ключів**. е лише інструкція "які поля треба заповнити і як відправляти запити".
+
+#### SavedConnector — збережений екземпляр із ключами
+
+Таблиця saved_connectors. істить:
+- **name** — ваша назва (Sonnet основний, Fineko main bot)
+- **type** — посилання на ConnectorDef.type
+- **config** — JSON з реальними значеннями ключів, які ввів користувач
+- **description** — необов'язкова нотатка
+
+#### риклад розподілу
+
+`
+ConnectorDef: claude_sonnet
+  └── SavedConnector: "Sonnet основний"   { api_key: "sk-ant-..." }
+  └── SavedConnector: "Sonnet додатковий" { api_key: "sk-ant-..." }
+
+ConnectorDef: telegram_bot
+  └── SavedConnector: "Fineko main bot"   { token: "7123456789:AAH..." }
+  └── SavedConnector: "Test bot"          { token: "9876543210:AAB..." }
+`
+
+дин ConnectorDef може мати **необмежену кількість** SavedConnector із різними ключами.
+
+### Сторінка онектори (admin UI)
+
+Сторінка /connectors має три секції:
+1. **оступні типи конекторів** — картки ConnectorDef із бази, кожна з кнопкою "+ берегти конектор цього типу"
+2. **бережені конектори** — список SavedConnector, згрупований за типом, з редагуванням і видаленням
+3. **лобальні ключі проекту** — змінні середовища для ботів (окремий механізм)
+
+### аповнення шаблонів
+
+ля заповнення connector_defs використовується seed-скрипт:
+`ash
+yarn seed:connector-defs
+# або напряму:
+node scripts/seed_connector_defs.js
+`
+
+оточні шаблони: claude_haiku, claude_sonnet, claude_opus, openai_gpt4, 	elegram_bot, google_sheets, pps_script, webhook_generic.
+
+### икористання у воронці (NodeEditor)
+
+оли редагується нода типу connector у NodeEditor, є два режими:
+- **бережений** — вибір зі списку SavedConnector (автоматично заповнює config)
+- **учний** — пряме введення параметрів
+
+Список у NodeEditor фільтрується за типом ноди (наприклад, для Claude-ноди показуються лише claude_* конектори).

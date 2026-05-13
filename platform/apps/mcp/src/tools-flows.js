@@ -27,7 +27,7 @@ const TOOLS = [
     },
     {
         name: 'create_funnel',
-        description: 'Create a new bot and an empty default funnel definition',
+        description: 'Create a new bot or funnel in a project. Use this to add a new bot, create a new flow, register a new funnel, or start a new automation workflow.',
         inputSchema: {
             type: 'object',
             properties: {

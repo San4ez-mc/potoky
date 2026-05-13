@@ -1,40 +1,34 @@
-import React, { useEffect, useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import { api } from '../api/client.js';
 
-const CONNECTOR_TYPES = [
-    { value: 'telegram', label: 'Telegram', icon: '🤖', fields: [{ key: 'token', label: 'Bot Token', secret: true, placeholder: '123456:ABC-DEF...' }] },
-    { value: 'openai', label: 'OpenAI', icon: '🧠', fields: [{ key: 'api_key', label: 'API Key', secret: true, placeholder: 'sk-...' }] },
-    { value: 'anthropic', label: 'Anthropic (Claude)', icon: '🎭', fields: [{ key: 'api_key', label: 'API Key', secret: true, placeholder: 'sk-ant-...' }] },
-    { value: 'google', label: 'Google / Sheets', icon: '📊', fields: [{ key: 'service_account_json', label: 'Service Account JSON', secret: true, placeholder: '{"type":"service_account",...}' }, { key: 'spreadsheet_id', label: 'Spreadsheet ID', secret: false, placeholder: '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms' }] },
-    { value: 'custom', label: 'Інший (Custom)', icon: '🔧', fields: [] },
-];
+// ── ConnectorModal — creates/edits a SavedConnector (instance with real keys) ──
 
-const TYPE_ICONS = Object.fromEntries(CONNECTOR_TYPES.map(t => [t.value, t.icon]));
-const TYPE_LABELS = Object.fromEntries(CONNECTOR_TYPES.map(t => [t.value, t.label]));
-
-function ConnectorModal({ connector, onClose, onSave }) {
+function ConnectorModal({ connector, connectorDefs, onClose, onSave }) {
     const isEdit = Boolean(connector?.id);
+    const defaultType = connector?.type || (connectorDefs[0]?.type ?? '');
+
     const [form, setForm] = useState({
         name: connector?.name || '',
-        type: connector?.type || 'telegram',
+        type: connector?.type || defaultType,
         description: connector?.description || '',
         config: connector?.config || {},
     });
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
 
-    const typeInfo = CONNECTOR_TYPES.find(t => t.value === form.type);
+    const def = connectorDefs.find(d => d.type === form.type);
+    const fields = def?.schema?.fields || [];
 
     const setField = (key, value) => setForm(f => ({ ...f, [key]: value }));
     const setConfig = (key, value) => setForm(f => ({ ...f, config: { ...f.config, [key]: value } }));
 
     const handleTypeChange = (newType) => {
-        setField('type', newType);
         setForm(f => ({ ...f, type: newType, config: {} }));
     };
 
     const handleSave = async () => {
-        if (!form.name.trim()) { setError('Назва обов\'язкова'); return; }
+        if (!form.name.trim()) { setError("азва обов'язкова"); return; }
+        if (!form.type) { setError("Тип конектора обов'язковий"); return; }
         setSaving(true);
         setError('');
         try {
@@ -45,7 +39,7 @@ function ConnectorModal({ connector, onClose, onSave }) {
             }
             onSave();
         } catch (err) {
-            setError(err.message || 'Помилка збереження');
+            setError(err.message || 'омилка збереження');
         } finally {
             setSaving(false);
         }
@@ -53,59 +47,71 @@ function ConnectorModal({ connector, onClose, onSave }) {
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-            <div className="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-lg mx-4 shadow-2xl">
-                <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800">
+            <div className="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-lg mx-4 shadow-2xl max-h-[90vh] flex flex-col">
+                <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800 shrink-0">
                     <h2 className="text-lg font-semibold text-white">
-                        {isEdit ? 'Редагувати конектор' : 'Новий конектор'}
+                        {isEdit ? 'едагувати збережений конектор' : 'берегти новий конектор'}
                     </h2>
-                    <button onClick={onClose} className="text-gray-400 hover:text-white text-xl leading-none">✕</button>
+                    <button onClick={onClose} className="text-gray-400 hover:text-white text-xl leading-none">x</button>
                 </div>
 
-                <div className="px-6 py-4 space-y-4">
+                <div className="px-6 py-4 space-y-4 overflow-y-auto flex-1">
                     <div>
-                        <label className="text-xs text-gray-400 block mb-1">Назва *</label>
-                        <input
-                            value={form.name}
-                            onChange={e => setField('name', e.target.value)}
-                            placeholder="Наприклад: Fineko main bot"
-                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
-                        />
-                    </div>
-
-                    <div>
-                        <label className="text-xs text-gray-400 block mb-1">Тип конектора</label>
+                        <label className="text-xs text-gray-400 block mb-1">Тип конектора (шаблон)</label>
                         <select
                             value={form.type}
                             onChange={e => handleTypeChange(e.target.value)}
-                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+                            disabled={isEdit}
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 disabled:opacity-60"
                         >
-                            {CONNECTOR_TYPES.map(t => (
-                                <option key={t.value} value={t.value}>{t.icon} {t.label}</option>
+                            {connectorDefs.map(d => (
+                                <option key={d.type} value={d.type}>{d.icon} {d.name}</option>
                             ))}
                         </select>
+                        {def && def.description && (
+                            <p className="text-xs text-gray-500 mt-1">{def.description}</p>
+                        )}
+                        {def && def.schema && def.schema.docs_url && (
+                            <a href={def.schema.docs_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-400 hover:text-blue-300 mt-0.5 block">
+                                окументація API
+                            </a>
+                        )}
                     </div>
 
                     <div>
-                        <label className="text-xs text-gray-400 block mb-1">Опис (необов'язково)</label>
+                        <label className="text-xs text-gray-400 block mb-1">азва *</label>
+                        <input
+                            value={form.name}
+                            onChange={e => setField('name', e.target.value)}
+                            placeholder={def ? def.name + " основний" : "азва конектора"}
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                        />
+                        <p className="text-xs text-gray-600 mt-1">е ім'я відображатиметься при виборі у воронці</p>
+                    </div>
+
+                    <div>
+                        <label className="text-xs text-gray-400 block mb-1">отатка (необов'язково)</label>
                         <input
                             value={form.description}
                             onChange={e => setField('description', e.target.value)}
-                            placeholder="Короткий опис"
+                            placeholder="априклад: для основних ботів, ліміт $50/міс"
                             className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
                         />
                     </div>
 
-                    {typeInfo && typeInfo.fields.length > 0 && (
+                    {fields.length > 0 && (
                         <div className="space-y-3">
-                            <div className="text-xs text-gray-400 font-medium uppercase tracking-wider">Облікові дані</div>
-                            {typeInfo.fields.map(field => (
+                            <div className="text-xs text-gray-400 font-medium uppercase tracking-wider border-t border-gray-800 pt-3">
+                                блікові дані / ключі
+                            </div>
+                            {fields.map(field => (
                                 <div key={field.key}>
                                     <label className="text-xs text-gray-400 block mb-1">{field.label}</label>
-                                    {field.key === 'service_account_json' ? (
+                                    {field.multiline ? (
                                         <textarea
                                             value={form.config[field.key] || ''}
                                             onChange={e => setConfig(field.key, e.target.value)}
-                                            placeholder={field.placeholder}
+                                            placeholder={field.placeholder || ''}
                                             rows={4}
                                             className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500 font-mono focus:outline-none focus:border-blue-500 resize-y"
                                         />
@@ -114,7 +120,7 @@ function ConnectorModal({ connector, onClose, onSave }) {
                                             type={field.secret ? 'password' : 'text'}
                                             value={form.config[field.key] || ''}
                                             onChange={e => setConfig(field.key, e.target.value)}
-                                            placeholder={field.placeholder}
+                                            placeholder={field.placeholder || ''}
                                             className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 font-mono focus:outline-none focus:border-blue-500"
                                         />
                                     )}
@@ -123,47 +129,31 @@ function ConnectorModal({ connector, onClose, onSave }) {
                         </div>
                     )}
 
-                    {form.type === 'custom' && (
+                    {fields.length === 0 && (
                         <div className="space-y-3">
-                            <div className="text-xs text-gray-400 font-medium uppercase tracking-wider">Довільні поля</div>
+                            <div className="text-xs text-gray-400 font-medium uppercase tracking-wider border-t border-gray-800 pt-3">
+                                овільні поля конфігурації
+                            </div>
                             {Object.entries(form.config).map(([k, v]) => (
                                 <div key={k} className="flex gap-2 items-center">
-                                    <input
-                                        value={k}
-                                        readOnly
-                                        className="w-32 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-300 font-mono"
-                                    />
-                                    <input
-                                        value={v}
-                                        onChange={e => setConfig(k, e.target.value)}
-                                        className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white"
-                                    />
-                                    <button
-                                        onClick={() => {
-                                            const cfg = { ...form.config };
-                                            delete cfg[k];
-                                            setField('config', cfg);
-                                        }}
-                                        className="text-red-400 hover:text-red-300 px-2 text-sm"
-                                    >✕</button>
+                                    <input readOnly value={k} className="w-32 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-300 font-mono" />
+                                    <input value={v} onChange={e => setConfig(k, e.target.value)} className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white" />
+                                    <button onClick={() => { const c = { ...form.config }; delete c[k]; setField('config', c); }} className="text-red-400 hover:text-red-300 px-2 text-sm">x</button>
                                 </div>
                             ))}
                             <button
-                                onClick={() => {
-                                    const key = prompt('Ключ поля:');
-                                    if (key) setConfig(key, '');
-                                }}
+                                onClick={() => { const key = prompt('азва поля (ключ):'); if (key) setConfig(key, ''); }}
                                 className="w-full py-1.5 border border-dashed border-gray-600 rounded-lg text-gray-400 hover:text-white hover:border-gray-400 text-xs transition-colors"
                             >
-                                + Додати поле
+                                + одати поле
                             </button>
                         </div>
                     )}
 
-                    {error && <div className="text-red-400 text-sm">{error}</div>}
+                    {error && <div className="text-red-400 text-sm bg-red-900/20 rounded px-3 py-2">{error}</div>}
                 </div>
 
-                <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-800">
+                <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-800 shrink-0">
                     <button onClick={onClose} className="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors">
                         Скасувати
                     </button>
@@ -172,7 +162,7 @@ function ConnectorModal({ connector, onClose, onSave }) {
                         disabled={saving}
                         className="px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors"
                     >
-                        {saving ? 'Збереження...' : isEdit ? 'Зберегти' : 'Створити'}
+                        {saving ? 'береження...' : isEdit ? 'берегти зміни' : 'берегти конектор'}
                     </button>
                 </div>
             </div>
@@ -180,29 +170,32 @@ function ConnectorModal({ connector, onClose, onSave }) {
     );
 }
 
+// ── Main page ──────────────────────────────────────────────────────────────────
+
 export function Connectors() {
-    const [globalKeys, setGlobalKeys] = useState([]);
+    const [connectorDefs, setConnectorDefs] = useState([]);
     const [savedConnectors, setSavedConnectors] = useState([]);
+    const [globalKeys, setGlobalKeys] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
     const [editingKey, setEditingKey] = useState(null);
     const [editValue, setEditValue] = useState('');
-    const [modal, setModal] = useState(null); // null | { connector?: object }
+    const [modal, setModal] = useState(null);
 
     const projectId = localStorage.getItem('projectId');
 
-    useEffect(() => {
-        loadData();
-    }, []);
+    useEffect(() => { loadData(); }, []);
 
     const loadData = async () => {
         setIsLoading(true);
         try {
-            const [keysData, connectorsData] = await Promise.allSettled([
-                projectId ? api.getGlobalKeys(projectId) : Promise.resolve([]),
+            const [defsRes, savedRes, keysRes] = await Promise.allSettled([
+                api.getConnectors(),
                 api.getSavedConnectors(),
+                projectId ? api.getGlobalKeys(projectId) : Promise.resolve([]),
             ]);
-            setGlobalKeys(keysData.status === 'fulfilled' && Array.isArray(keysData.value) ? keysData.value : []);
-            setSavedConnectors(connectorsData.status === 'fulfilled' ? (connectorsData.value?.data || []) : []);
+            setConnectorDefs(defsRes.status === 'fulfilled' ? (defsRes.value?.data || []) : []);
+            setSavedConnectors(savedRes.status === 'fulfilled' ? (savedRes.value?.data || []) : []);
+            setGlobalKeys(keysRes.status === 'fulfilled' && Array.isArray(keysRes.value) ? keysRes.value : []);
         } catch (err) {
             console.error('Failed to load data:', err);
         } finally {
@@ -216,127 +209,142 @@ export function Connectors() {
             const result = await api.revealGlobalKey(projectId, keyName);
             setEditingKey(keyName);
             setEditValue(result.value || '');
-        } catch (err) {
-            console.error('Failed to reveal key:', err);
-        }
+        } catch (err) { console.error(err); }
     };
 
     const handleSaveKey = async () => {
         if (!projectId || !editingKey) return;
         try {
             const key = globalKeys.find(k => k.key === editingKey);
-            await api.upsertGlobalKey(
-                projectId,
-                editingKey,
-                key?.label || editingKey,
-                editValue,
-                key?.isSecret || false,
-                key?.description || ''
-            );
+            await api.upsertGlobalKey(projectId, editingKey, key?.label || editingKey, editValue, key?.isSecret || false, key?.description || '');
             setEditingKey(null);
             setEditValue('');
             await loadData();
-        } catch (err) {
-            console.error('Failed to save key:', err);
-        }
+        } catch (err) { console.error(err); }
     };
 
     const handleDeleteKey = async (keyName) => {
-        if (!projectId) return;
-        if (!window.confirm(`Видалити ключ ${keyName}?`)) return;
-        try {
-            await api.deleteGlobalKey(projectId, keyName);
-            await loadData();
-        } catch (err) {
-            console.error('Failed to delete key:', err);
-        }
+        if (!projectId || !window.confirm('идалити ключ ' + keyName + '?')) return;
+        try { await api.deleteGlobalKey(projectId, keyName); await loadData(); } catch (err) { console.error(err); }
     };
 
     const handleDeleteConnector = async (id, name) => {
-        if (!window.confirm(`Видалити конектор "${name}"?`)) return;
-        try {
-            await api.deleteSavedConnector(id);
-            await loadData();
-        } catch (err) {
-            console.error('Failed to delete connector:', err);
-        }
+        if (!window.confirm('идалити збережений конектор "' + name + '"?')) return;
+        try { await api.deleteSavedConnector(id); await loadData(); } catch (err) { console.error(err); }
     };
 
-    const groupedConnectors = CONNECTOR_TYPES.map(t => ({
-        ...t,
-        items: savedConnectors.filter(c => c.type === t.value),
-    })).filter(g => g.items.length > 0);
+    const savedByType = savedConnectors.reduce((acc, sc) => {
+        if (!acc[sc.type]) acc[sc.type] = [];
+        acc[sc.type].push(sc);
+        return acc;
+    }, {});
 
     return (
         <div className="space-y-6">
             <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-                <div className="flex items-start justify-between gap-4">
-                    <div>
-                        <h1 className="text-xl font-semibold text-white">Збережені конектори</h1>
-                        <p className="text-sm text-gray-400 mt-2">
-                            Збережіть ключі один раз — і обирайте їх у будь-якій воронці при додаванні ноди-конектора.
-                        </p>
-                    </div>
-                    <button
-                        onClick={() => setModal({ connector: null })}
-                        className="shrink-0 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
-                    >
-                        + Новий конектор
-                    </button>
-                </div>
+                <h1 className="text-xl font-semibold text-white">онектори</h1>
+                <p className="text-sm text-gray-400 mt-2">
+                    <strong className="text-gray-300">Шаблон конектора</strong> — тип інтеграції (наприклад, "Claude Sonnet"), який описує потрібні поля та як відправляти запити.{' '}
+                    <strong className="text-gray-300">бережений конектор</strong> — ваш екземпляр із заповненими ключами. априклад, "Sonnet основний" та "Sonnet додатковий" — два збережені конектори одного типу з різними API ключами.
+                </p>
             </div>
 
-            {/* Saved Connectors */}
             <div className="bg-gray-800 rounded-lg border border-gray-700 p-6">
-                <h2 className="text-lg font-semibold text-white mb-4">Конектори</h2>
+                <h2 className="text-lg font-semibold text-white mb-1">оступні типи конекторів</h2>
+                <p className="text-xs text-gray-500 mb-4">Системні шаблони. беріть тип щоб зберегти свій конектор із ключами.</p>
 
                 {isLoading ? (
-                    <div className="text-center text-gray-400">Завантаження...</div>
-                ) : savedConnectors.length === 0 ? (
-                    <div className="text-center py-10">
-                        <div className="text-4xl mb-3">🔌</div>
-                        <div className="text-gray-400 text-sm mb-4">Ще немає збережених конекторів</div>
+                    <div className="text-center text-gray-400 py-8">авантаження...</div>
+                ) : connectorDefs.length === 0 ? (
+                    <div className="text-center text-gray-500 py-8 text-sm">
+                        емає шаблонів. апустіть: <code className="font-mono bg-gray-700 px-1 rounded">yarn seed:connector-defs</code>
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                        {connectorDefs.map(def => {
+                            const count = savedByType[def.type]?.length || 0;
+                            return (
+                                <div key={def.type} className="bg-gray-900 rounded-xl border border-gray-700 p-4 flex flex-col gap-2 hover:border-gray-500 transition-colors">
+                                    <div className="flex items-center gap-3">
+                                        <div className="text-2xl">{def.icon || '?'}</div>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="font-medium text-white text-sm">{def.name}</div>
+                                            <div className="text-xs text-gray-500 font-mono">{def.type}</div>
+                                        </div>
+                                        {count > 0 && (
+                                            <span className="text-xs bg-blue-900/40 text-blue-400 border border-blue-800 rounded-full px-2 py-0.5">{count}</span>
+                                        )}
+                                    </div>
+                                    {def.description && (
+                                        <p className="text-xs text-gray-400 leading-relaxed line-clamp-2">{def.description}</p>
+                                    )}
+                                    {def.schema && def.schema.fields && def.schema.fields.length > 0 && (
+                                        <div className="text-xs text-gray-600">
+                                            оля: {def.schema.fields.map(f => f.label).join(', ')}
+                                        </div>
+                                    )}
+                                    <button
+                                        onClick={() => setModal({ connector: { type: def.type } })}
+                                        className="mt-auto w-full py-1.5 rounded-lg border border-dashed border-gray-600 text-gray-400 hover:text-white hover:border-blue-500 hover:bg-blue-950/30 text-xs transition-colors"
+                                    >
+                                        + берегти конектор цього типу
+                                    </button>
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
+            </div>
+
+            <div className="bg-gray-800 rounded-lg border border-gray-700 p-6">
+                <div className="flex items-center justify-between mb-4">
+                    <div>
+                        <h2 className="text-lg font-semibold text-white">бережені конектори</h2>
+                        <p className="text-xs text-gray-500 mt-0.5">аші екземпляри з заповненими ключами</p>
+                    </div>
+                    {connectorDefs.length > 0 && (
                         <button
                             onClick={() => setModal({ connector: null })}
                             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
                         >
-                            Створити перший конектор
+                            + овий
                         </button>
+                    )}
+                </div>
+
+                {isLoading ? (
+                    <div className="text-center text-gray-400">авантаження...</div>
+                ) : savedConnectors.length === 0 ? (
+                    <div className="text-center py-8">
+                        <div className="text-3xl mb-3">🔑</div>
+                        <div className="text-gray-400 text-sm">Ще немає збережених конекторів</div>
+                        <div className="text-gray-600 text-xs mt-1">беріть тип вище і збережіть ваші ключі</div>
                     </div>
                 ) : (
                     <div className="space-y-6">
-                        {groupedConnectors.map(group => (
-                            <div key={group.value}>
-                                <div className="text-xs text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
-                                    <span>{group.icon}</span>
-                                    <span>{group.label}</span>
-                                    <span className="bg-gray-700 text-gray-400 rounded-full px-2 py-0.5 text-xs">{group.items.length}</span>
+                        {connectorDefs.filter(d => savedByType[d.type] && savedByType[d.type].length > 0).map(def => (
+                            <div key={def.type}>
+                                <div className="flex items-center gap-2 mb-2">
+                                    <span className="text-base">{def.icon || '?'}</span>
+                                    <span className="text-xs text-gray-500 uppercase tracking-wider font-medium">{def.name}</span>
+                                    <span className="bg-gray-700 text-gray-400 rounded-full px-2 py-0.5 text-xs">{savedByType[def.type].length}</span>
                                 </div>
-                                <div className="space-y-2">
-                                    {group.items.map(item => (
-                                        <div key={item.id} className="bg-gray-900 rounded-lg p-4 border border-gray-700 flex items-center gap-4">
-                                            <div className="text-2xl">{TYPE_ICONS[item.type] || '🔧'}</div>
+                                <div className="space-y-2 pl-1">
+                                    {savedByType[def.type].map(item => (
+                                        <div key={item.id} className="bg-gray-900 rounded-lg p-3 border border-gray-700 flex items-center gap-3">
                                             <div className="flex-1 min-w-0">
                                                 <div className="font-medium text-white text-sm">{item.name}</div>
-                                                {item.description && (
-                                                    <div className="text-xs text-gray-400 mt-0.5">{item.description}</div>
-                                                )}
-                                                <div className="text-xs text-gray-600 mt-1 font-mono">
-                                                    {Object.keys(item.config || {}).join(', ') || 'Немає полів'}
+                                                {item.description && <div className="text-xs text-gray-500 mt-0.5">{item.description}</div>}
+                                                <div className="text-xs text-gray-700 mt-1 font-mono">
+                                                    {Object.keys(item.config || {}).map(k => k + ': ...').join(' | ') || 'емає полів'}
                                                 </div>
                                             </div>
                                             <div className="flex gap-2 shrink-0">
-                                                <button
-                                                    onClick={() => setModal({ connector: item })}
-                                                    className="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white rounded text-xs transition-colors"
-                                                >
-                                                    Редагувати
+                                                <button onClick={() => setModal({ connector: item })} className="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white rounded text-xs transition-colors">
+                                                    едагувати
                                                 </button>
-                                                <button
-                                                    onClick={() => handleDeleteConnector(item.id, item.name)}
-                                                    className="px-3 py-1 bg-red-900/30 hover:bg-red-900/50 text-red-400 rounded text-xs transition-colors"
-                                                >
-                                                    Видалити
+                                                <button onClick={() => handleDeleteConnector(item.id, item.name)} className="px-3 py-1 bg-red-900/30 hover:bg-red-900/50 text-red-400 rounded text-xs transition-colors">
+                                                    идалити
                                                 </button>
                                             </div>
                                         </div>
@@ -348,80 +356,42 @@ export function Connectors() {
                 )}
             </div>
 
-            {/* Global Keys section */}
             {projectId && (
                 <div className="bg-gray-800 rounded-lg border border-gray-700 p-6">
-                    <h2 className="text-lg font-semibold text-white mb-1">Глобальні ключі проекту</h2>
-                    <p className="text-xs text-gray-500 mb-4">Змінні середовища, доступні всім ботам у проекті.</p>
-
+                    <h2 className="text-lg font-semibold text-white mb-1">лобальні ключі проекту</h2>
+                    <p className="text-xs text-gray-500 mb-4">мінні середовища, доступні всім ботам у проекті.</p>
                     {globalKeys.length === 0 ? (
-                        <div className="text-center text-gray-400 py-8">Немає налаштованих ключів</div>
+                        <div className="text-center text-gray-500 py-8 text-sm">емає налаштованих ключів</div>
                     ) : (
-                        <div className="space-y-4">
+                        <div className="space-y-3">
                             {globalKeys.map(item => (
                                 <div key={item.key} className="bg-gray-900 rounded-lg p-4 border border-gray-700">
                                     <div className="flex items-start justify-between gap-4">
                                         <div className="flex-1">
                                             <div className="font-mono text-sm text-blue-400">{item.key}</div>
                                             <div className="text-xs text-gray-400 mt-1">{item.label}</div>
-                                            {item.description && <div className="text-xs text-gray-500 mt-2">{item.description}</div>}
-
+                                            {item.description && <div className="text-xs text-gray-500 mt-1">{item.description}</div>}
                                             {editingKey === item.key ? (
                                                 <div className="mt-3 space-y-2">
-                                                    <textarea
-                                                        value={editValue}
-                                                        onChange={(e) => setEditValue(e.target.value)}
-                                                        className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm text-white"
-                                                        rows={3}
-                                                    />
+                                                    <textarea value={editValue} onChange={e => setEditValue(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm text-white" rows={3} />
                                                     <div className="flex gap-2">
-                                                        <button
-                                                            onClick={handleSaveKey}
-                                                            className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs transition-colors"
-                                                        >
-                                                            Зберегти
-                                                        </button>
-                                                        <button
-                                                            onClick={() => { setEditingKey(null); setEditValue(''); }}
-                                                            className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded text-xs transition-colors"
-                                                        >
-                                                            Скасувати
-                                                        </button>
+                                                        <button onClick={handleSaveKey} className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs">берегти</button>
+                                                        <button onClick={() => { setEditingKey(null); setEditValue(''); }} className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded text-xs">Скасувати</button>
                                                     </div>
                                                 </div>
                                             ) : (
-                                                <div className="text-xs text-gray-600 mt-2 font-mono break-all">
-                                                    {item.isSecret ? '••••••••' : item.value}
-                                                </div>
+                                                <div className="text-xs text-gray-600 mt-2 font-mono">{item.isSecret ? '........' : item.value}</div>
                                             )}
                                         </div>
-
-                                        <div className="flex gap-2 shrink-0">
-                                            {editingKey !== item.key && (
-                                                <>
-                                                    {item.isSecret && (
-                                                        <button
-                                                            onClick={() => handleRevealKey(item.key)}
-                                                            className="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white rounded text-xs transition-colors"
-                                                        >
-                                                            Показати
-                                                        </button>
-                                                    )}
-                                                    <button
-                                                        onClick={() => handleRevealKey(item.key)}
-                                                        className="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white rounded text-xs transition-colors"
-                                                    >
-                                                        Редагувати
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleDeleteKey(item.key)}
-                                                        className="px-3 py-1 bg-red-900/30 hover:bg-red-900/50 text-red-400 rounded text-xs transition-colors"
-                                                    >
-                                                        Видалити
-                                                    </button>
-                                                </>
-                                            )}
-                                        </div>
+                                        {editingKey !== item.key && (
+                                            <div className="flex gap-2 shrink-0">
+                                                {item.isSecret && (
+                                                    <button onClick={() => handleRevealKey(item.key)} className="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white rounded text-xs">оказати</button>
+                                                )}
+                                                <button onClick={() => handleRevealKey(item.key)} className="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white rounded text-xs">едагувати</button>
+                                                <button onClick={() => handleDeleteKey(item.key)} className="px-3 py-1 bg-red-900/30 hover:bg-red-900/50 text-red-400 rounded text-xs">идалити</button>
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             ))}
@@ -433,178 +403,11 @@ export function Connectors() {
             {modal && (
                 <ConnectorModal
                     connector={modal.connector}
+                    connectorDefs={connectorDefs}
                     onClose={() => setModal(null)}
                     onSave={() => { setModal(null); loadData(); }}
                 />
             )}
-        </div>
-    );
-}
-
-    const [globalKeys, setGlobalKeys] = useState([]);
-    const [isLoading, setIsLoading] = useState(false);
-    const [editingKey, setEditingKey] = useState(null);
-    const [editValue, setEditValue] = useState('');
-
-    const projectId = localStorage.getItem('projectId');
-
-    useEffect(() => {
-        loadGlobalKeys();
-    }, []);
-
-    const loadGlobalKeys = async () => {
-        if (!projectId) return;
-        setIsLoading(true);
-        try {
-            const data = await api.getGlobalKeys(projectId);
-            setGlobalKeys(Array.isArray(data) ? data : []);
-        } catch (err) {
-            console.error('Failed to load global keys:', err);
-            setGlobalKeys([]);
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    const handleRevealKey = async (keyName) => {
-        if (!projectId) return;
-        try {
-            const result = await api.revealGlobalKey(projectId, keyName);
-            setEditingKey(keyName);
-            setEditValue(result.value || '');
-        } catch (err) {
-            console.error('Failed to reveal key:', err);
-        }
-    };
-
-    const handleSaveKey = async () => {
-        if (!projectId || !editingKey) return;
-        try {
-            const key = globalKeys.find(k => k.key === editingKey);
-            await api.upsertGlobalKey(
-                projectId,
-                editingKey,
-                key?.label || editingKey,
-                editValue,
-                key?.isSecret || false,
-                key?.description || ''
-            );
-            setEditingKey(null);
-            setEditValue('');
-            await loadGlobalKeys();
-        } catch (err) {
-            console.error('Failed to save key:', err);
-        }
-    };
-
-    const handleDeleteKey = async (keyName) => {
-        if (!projectId) return;
-        if (!window.confirm(`Видалити ключ ${keyName}?`)) return;
-        try {
-            await api.deleteGlobalKey(projectId, keyName);
-            await loadGlobalKeys();
-        } catch (err) {
-            console.error('Failed to delete key:', err);
-        }
-    };
-
-    return (
-        <div className="space-y-6">
-            <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-                <h1 className="text-xl font-semibold text-white">Збережені конектори</h1>
-                <p className="text-sm text-gray-400 mt-2">
-                    Впишіть ключі один раз, а далі використовуйте їх у будь-якій воронці через ноди/конектори.
-                </p>
-            </div>
-
-            {!projectId && (
-                <div className="bg-yellow-900/20 border border-yellow-700 rounded-xl p-4 text-yellow-300 text-sm">
-                    Не обрано проект. Відкрийте будь-яку воронку, щоб projectId зберігся у localStorage.
-                </div>
-            )}
-
-            <div className="bg-gray-800 rounded-lg border border-gray-700 p-6">
-                <h2 className="text-lg font-semibold text-white mb-4">Глобальні ключі проекту</h2>
-
-                {isLoading ? (
-                    <div className="text-center text-gray-400">Завантаження ключів...</div>
-                ) : globalKeys.length === 0 ? (
-                    <div className="text-center text-gray-400 py-8">Немає налаштованих ключів</div>
-                ) : (
-                    <div className="space-y-4">
-                        {globalKeys.map(item => (
-                            <div key={item.key} className="bg-gray-900 rounded-lg p-4 border border-gray-700">
-                                <div className="flex items-start justify-between gap-4">
-                                    <div className="flex-1">
-                                        <div className="font-mono text-sm text-brand-light">{item.key}</div>
-                                        <div className="text-xs text-gray-400 mt-1">{item.label}</div>
-                                        {item.description && <div className="text-xs text-gray-500 mt-2">{item.description}</div>}
-
-                                        {editingKey === item.key ? (
-                                            <div className="mt-3 space-y-2">
-                                                <textarea
-                                                    value={editValue}
-                                                    onChange={(e) => setEditValue(e.target.value)}
-                                                    className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm text-white"
-                                                    rows={3}
-                                                />
-                                                <div className="flex gap-2">
-                                                    <button
-                                                        onClick={handleSaveKey}
-                                                        className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs transition-colors"
-                                                    >
-                                                        Зберегти
-                                                    </button>
-                                                    <button
-                                                        onClick={() => {
-                                                            setEditingKey(null);
-                                                            setEditValue('');
-                                                        }}
-                                                        className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded text-xs transition-colors"
-                                                    >
-                                                        Скасувати
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        ) : (
-                                            <div className="text-xs text-gray-600 mt-2 font-mono break-all">
-                                                {item.isSecret ? '••••••••' : item.value}
-                                            </div>
-                                        )}
-                                    </div>
-
-                                    <div className="flex gap-2 shrink-0">
-                                        {editingKey !== item.key && (
-                                            <>
-                                                {item.isSecret && (
-                                                    <button
-                                                        onClick={() => handleRevealKey(item.key)}
-                                                        className="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white rounded text-xs transition-colors"
-                                                    >
-                                                        Показати
-                                                    </button>
-                                                )}
-                                                <button
-                                                    onClick={() => handleRevealKey(item.key)}
-                                                    className="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white rounded text-xs transition-colors"
-                                                >
-                                                    Редагувати
-                                                </button>
-                                                <button
-                                                    onClick={() => handleDeleteKey(item.key)}
-                                                    className="px-3 py-1 bg-red-900/30 hover:bg-red-900/50 text-red-400 rounded text-xs transition-colors"
-                                                >
-                                                    Видалити
-                                                </button>
-                                            </>
-                                        )}
-                                    </div>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                )}
-            </div>
         </div>
     );
 }

@@ -18,8 +18,8 @@ const { TOOLS: DEBUG_TOOLS, callTool: debugCallTool } = require('./tools-debug')
 const TOOLS = [...FLOWS_TOOLS, ...DEBUG_TOOLS];
 
 const flowsToolNames = ['list_funnels', 'get_funnel', 'create_funnel', 'update_node', 'add_node', 'delete_node', 'create_edge',
-                        'update_funnel_key', 'delete_funnel_key', 'list_connectors', 'get_connector',
-                        'create_connector', 'update_connector', 'delete_connector', 'get_node_stats', 'get_api_logs'];
+    'update_funnel_key', 'delete_funnel_key', 'list_connectors', 'get_connector',
+    'create_connector', 'update_connector', 'delete_connector', 'get_node_stats', 'get_api_logs'];
 
 async function callTool(name, args = {}) {
     if (flowsToolNames.includes(name)) return flowsCallTool(name, args);

@@ -16,6 +16,7 @@
         "db:migrate:deploy": "yarn workspace @platform/db migrate:deploy",
         "db:studio": "yarn workspace @platform/db studio",
         "seed:apps-script-keys": "node scripts/seed_apps_script_funnel_keys.js",
+        "seed:connector-defs": "node scripts/seed_connector_defs.js",
         "test:regression": "node scripts/run_full_regression.js",
         "test:regression:project": "node -e \"require('./apps/api/src/services/regressionRunner').runProjectRegressions(process.argv[1]||'finance-course').then(r=>{console.log(JSON.stringify(r,null,2)); process.exit(r.failed?1:0);}).catch(e=>{console.error(e);process.exit(1);})\""
     },

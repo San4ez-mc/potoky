@@ -26,6 +26,22 @@ const TOOLS = [
         },
     },
     {
+        name: 'create_funnel',
+        description: 'Create a new bot and an empty default funnel definition',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                projectSlug: { type: 'string', description: 'Project slug, default: finance-course' },
+                name: { type: 'string', description: 'Bot display name' },
+                slug: { type: 'string', description: 'Bot slug unique inside project' },
+                description: { type: 'string' },
+                trigger: { type: 'string' },
+                isActive: { type: 'boolean', default: true },
+            },
+            required: ['name', 'slug'],
+        },
+    },
+    {
         name: 'update_node',
         description: 'Update data on an existing node in the funnel',
         inputSchema: {
@@ -226,6 +242,100 @@ async function getFunnel({ botId }) {
     };
 }
 
+function buildDefaultFlow() {
+    return {
+        nodes: [
+            {
+                id: 'start_1',
+                type: 'start',
+                position: { x: 80, y: 80 },
+                data: { label: 'Start', trigger: '/start' },
+            },
+            {
+                id: 'msg_intro',
+                type: 'message',
+                position: { x: 80, y: 240 },
+                data: { label: 'Intro', text: 'Привіт! Опиши, будь ласка, свою задачу.' },
+            },
+        ],
+        edges: [
+            { id: 'e_start_intro', source: 'start_1', target: 'msg_intro', animated: true },
+        ],
+        viewport: { x: 0, y: 0, zoom: 1 },
+    };
+}
+
+async function createFunnel({
+    projectSlug = 'finance-course',
+    name,
+    slug,
+    description,
+    trigger,
+    isActive = true,
+}) {
+    if (!name || !slug) {
+        throw new Error('name and slug are required');
+    }
+
+    const project = await prisma.project.findUnique({ where: { slug: projectSlug } });
+    if (!project) {
+        throw new Error(`Project not found: ${projectSlug}`);
+    }
+
+    const exists = await prisma.bot.findFirst({
+        where: {
+            projectId: project.id,
+            slug,
+        },
+    });
+    if (exists) {
+        throw new Error(`Bot already exists in project: ${slug}`);
+    }
+
+    const flow = buildDefaultFlow();
+
+    const result = await prisma.$transaction(async (tx) => {
+        const bot = await tx.bot.create({
+            data: {
+                projectId: project.id,
+                name,
+                slug,
+                description: description || null,
+                trigger: trigger || null,
+                isActive: isActive ?? true,
+                settings: {},
+            },
+        });
+
+        const flowDefinition = await tx.flowDefinition.create({
+            data: {
+                botId: bot.id,
+                nodes: flow.nodes,
+                edges: flow.edges,
+                viewport: flow.viewport,
+            },
+        });
+
+        return { bot, flowDefinition };
+    });
+
+    return {
+        created: true,
+        bot: {
+            id: result.bot.id,
+            name: result.bot.name,
+            slug: result.bot.slug,
+            projectSlug,
+            isActive: result.bot.isActive,
+        },
+        flow: {
+            id: result.flowDefinition.id,
+            nodes: flow.nodes.length,
+            edges: flow.edges.length,
+        },
+    };
+}
+
 async function updateNode({ botId, nodeId, data }) {
     const flow = await prisma.flowDefinition.findUnique({ where: { botId } });
     if (!flow) throw new Error(`No flow found for botId: ${botId}`);
@@ -362,7 +472,7 @@ async function getNodeStats({ botId, nodeId, period = '24h' }) {
     const sessionsPassedThrough = await prisma.session.count({
         where: {
             botId,
-            createdAt: { gte: timeFrom },
+            startedAt: { gte: timeFrom },
         },
     });
 
@@ -401,6 +511,7 @@ async function callTool(name, args = {}) {
     switch (name) {
         case 'list_funnels': return listFunnels();
         case 'get_funnel': return getFunnel(args);
+        case 'create_funnel': return createFunnel(args);
         case 'update_node': return updateNode(args);
         case 'add_node': return addNode(args);
         case 'delete_node': return deleteNode(args);

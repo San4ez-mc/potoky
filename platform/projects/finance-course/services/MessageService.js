@@ -10,6 +10,10 @@ class MessageService {
         });
     }
 
+    static async getHistory(sessionId) {
+        return MessageService.getAll(sessionId);
+    }
+
     static async getAll(sessionId) {
         return db.message.findMany({
             where: { sessionId },

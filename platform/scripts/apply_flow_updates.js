@@ -163,7 +163,32 @@ async function fixBot21EdgeRouting() {
         return;
     }
 
+    const nodes = Array.isArray(flow.nodes) ? [...flow.nodes] : [];
     const edges = Array.isArray(flow.edges) ? [...flow.edges] : [];
+
+    const saveResultIndex = nodes.findIndex((n) => n.id === 'save_result');
+    const plSaveIndex = nodes.findIndex((n) => n.id === 'node_1778531261129');
+
+    if (saveResultIndex < 0 || plSaveIndex < 0) {
+        console.log(`SKIP: required saveFile nodes not found for botId ${botId}`);
+        return;
+    }
+
+    nodes[saveResultIndex] = {
+        ...nodes[saveResultIndex],
+        data: {
+            ...(nodes[saveResultIndex].data || {}),
+            fileType: 'cashflow_articles',
+        },
+    };
+
+    nodes[plSaveIndex] = {
+        ...nodes[plSaveIndex],
+        data: {
+            ...(nodes[plSaveIndex].data || {}),
+            fileType: 'pl_articles',
+        },
+    };
 
     const filtered = edges.filter((e) => {
         if (e.source === 'claude_main' && e.target === 'msg_done') return false;
@@ -177,7 +202,7 @@ async function fixBot21EdgeRouting() {
 
     await prisma.flowDefinition.update({
         where: { botId },
-        data: { edges: filtered },
+        data: { nodes, edges: filtered },
     });
 
     console.log(`OK: fixed routing for botId ${botId}`);

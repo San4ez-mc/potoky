@@ -150,7 +150,7 @@ class Bot33Handler {
         await MessageService.save(session.id, 'user', text);
 
         const context = session.context || {};
-        const dbMessages = await MessageService.getHistory(session.id);
+        const dbMessages = await MessageService.getAll(session.id);
 
         const systemPrompt = DIAGNOSTICS_PROMPT
             .replace('{{business_process_context}}', (context.businessProcess || '').slice(0, 3000))

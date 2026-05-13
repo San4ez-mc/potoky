@@ -124,7 +124,7 @@ class Bot45Handler {
 
     async _generate(user, chatId, session) {
         const context = session.context || {};
-        const dbMessages = await MessageService.getHistory(session.id);
+        const dbMessages = await MessageService.getAll(session.id);
         const systemPrompt = SYSTEM_PROMPT
             .replace('{{business_process_v2}}', (context.businessProcessV2 || '').slice(0, 2000))
             .replace('{{salary_processes}}', (context.salaryProcesses || '').slice(0, 1000))

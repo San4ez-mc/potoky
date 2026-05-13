@@ -127,7 +127,7 @@ class Bot42Handler {
 
         await MessageService.save(session.id, 'user', text);
         const context = session.context || {};
-        const dbMessages = await MessageService.getHistory(session.id);
+        const dbMessages = await MessageService.getAll(session.id);
 
         const systemPrompt = SYSTEM_PROMPT
             .replace('{{salary_articles}}', context.salaryArticles || 'Не визначено')

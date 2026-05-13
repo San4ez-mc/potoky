@@ -38,7 +38,7 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
     }
-    location /health { proxy_pass http://127.0.0.1:8000; }
+    location /health { proxy_pass http://127.0.0.1:3000; }
     location / { try_files $uri $uri/ /index.html; }
 }
 EOF

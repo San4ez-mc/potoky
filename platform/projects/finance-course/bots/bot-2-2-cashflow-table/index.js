@@ -87,7 +87,7 @@ class Bot22Handler {
             return;
         }
 
-        const dbMessages = await MessageService.getHistory(session.id);
+        const dbMessages = await MessageService.getAll(session.id);
         const messages = buildMessages(dbMessages);
         const systemPrompt = buildSystemPrompt(articles, context.tableSession || {});
 

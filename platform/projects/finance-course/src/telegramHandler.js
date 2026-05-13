@@ -7,6 +7,24 @@ const { DEEP_LINK_MAP, BOT_SLUGS } = require('../constants');
 const { checkPrerequisites } = require('../config/prerequisites');
 const { db } = require('@platform/db');
 
+async function recordAppError({ sessionId = null, botId = null, userId = null, error, context = {} }) {
+    try {
+        await db.appError.create({
+            data: {
+                sessionId,
+                botId,
+                userId,
+                errorType: 'bot_runtime_error',
+                message: error?.message || 'Unknown bot runtime error',
+                stack: error?.stack || null,
+                context,
+            },
+        });
+    } catch (createErr) {
+        logger.error('Failed to persist app error', { message: createErr.message });
+    }
+}
+
 /**
  * Main entry point for all Telegram updates in the finance-course bot.
  */
@@ -92,9 +110,20 @@ async function startBot(user, chatId, botSlug) {
         return;
     }
 
-    const { getHandler } = require(`../bots/${botSlug}/index`);
-    const handler = getHandler();
-    await handler.start(user, chatId, bot);
+    try {
+        const { getHandler } = require(`../bots/${botSlug}/index`);
+        const handler = getHandler();
+        await handler.start(user, chatId, bot);
+    } catch (error) {
+        await recordAppError({
+            botId: bot.id,
+            userId: user.id,
+            error,
+            context: { botSlug, phase: 'startBot' },
+        });
+        logger.error('Bot start failed', { botSlug, userId: user.id, error: error.message });
+        await sendMessage(chatId, '⚠️ Сталася помилка при запуску уроку. Спробуйте ще раз трохи пізніше.');
+    }
 }
 
 async function sendMainMenu(user, chatId) {
@@ -163,9 +192,29 @@ async function routeToActiveSession(user, chatId, text) {
         return;
     }
 
-    const { getHandler } = require(`../bots/${activeSession.bot.slug}/index`);
-    const handler = getHandler();
-    await handler.handleMessage(user, chatId, text, activeSession);
+    try {
+        const { getHandler } = require(`../bots/${activeSession.bot.slug}/index`);
+        const handler = getHandler();
+        await handler.handleMessage(user, chatId, text, activeSession);
+    } catch (error) {
+        await recordAppError({
+            sessionId: activeSession.id,
+            botId: activeSession.bot.id,
+            userId: user.id,
+            error,
+            context: {
+                botSlug: activeSession.bot.slug,
+                phase: 'handleMessage',
+                textPreview: (text || '').slice(0, 200),
+            },
+        });
+        logger.error('Bot message handling failed', {
+            botSlug: activeSession.bot.slug,
+            sessionId: activeSession.id,
+            error: error.message,
+        });
+        await sendMessage(chatId, '⚠️ Сталася технічна помилка. Спробуйте ще раз.');
+    }
 }
 
 async function routeCallbackToActiveSession(user, chatId, data) {
@@ -177,10 +226,30 @@ async function routeCallbackToActiveSession(user, chatId, data) {
 
     if (!activeSession) return;
 
-    const { getHandler } = require(`../bots/${activeSession.bot.slug}/index`);
-    const handler = getHandler();
-    if (handler.handleCallback) {
-        await handler.handleCallback(user, chatId, data, activeSession);
+    try {
+        const { getHandler } = require(`../bots/${activeSession.bot.slug}/index`);
+        const handler = getHandler();
+        if (handler.handleCallback) {
+            await handler.handleCallback(user, chatId, data, activeSession);
+        }
+    } catch (error) {
+        await recordAppError({
+            sessionId: activeSession.id,
+            botId: activeSession.bot.id,
+            userId: user.id,
+            error,
+            context: {
+                botSlug: activeSession.bot.slug,
+                phase: 'handleCallback',
+                callbackData: data,
+            },
+        });
+        logger.error('Bot callback handling failed', {
+            botSlug: activeSession.bot.slug,
+            sessionId: activeSession.id,
+            error: error.message,
+        });
+        await sendMessage(chatId, '⚠️ Сталася технічна помилка. Спробуйте ще раз.');
     }
 }
 

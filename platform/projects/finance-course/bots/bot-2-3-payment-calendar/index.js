@@ -78,7 +78,7 @@ class Bot23Handler {
             return;
         }
 
-        const dbMessages = await MessageService.getHistory(session.id);
+        const dbMessages = await MessageService.getAll(session.id);
         const systemPrompt = PAYMENT_CALENDAR_PROMPT
             .replace('{{business_name}}', articles.businessName)
             .replace('{{inflows}}', articles.inflows.join(', ') || '—')

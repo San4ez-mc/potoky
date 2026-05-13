@@ -133,7 +133,7 @@ class Bot53Handler {
 
         await MessageService.save(session.id, 'user', text);
         const context = session.context || {};
-        const dbMessages = await MessageService.getHistory(session.id);
+        const dbMessages = await MessageService.getAll(session.id);
 
         const systemPrompt = SYSTEM_PROMPT
             .replace('{{balance_articles}}', (context.balanceArticles || '').slice(0, 2000))

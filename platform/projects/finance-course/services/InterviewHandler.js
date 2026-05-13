@@ -49,7 +49,7 @@ function createInterviewHandler({ botConfig, systemPromptFn, sessionTag, greetin
             await MessageService.save(session.id, 'user', text);
 
             const context = session.context || {};
-            const dbMessages = await MessageService.getHistory(session.id);
+            const dbMessages = await MessageService.getAll(session.id);
             const systemPrompt = await systemPromptFn(context, user);
 
             let responseText;

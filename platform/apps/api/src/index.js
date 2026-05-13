@@ -92,6 +92,36 @@ app.use('/api/mcp-debug', mcpDebugRouter);
 // Legacy MCP endpoint (kept for backward compatibility)
 app.use('/mcp', mcpRouter);
 
+// Body-parser throws before the MCP route handlers run when the incoming JSON is malformed.
+// For MCP clients, return a JSON-RPC parse error instead of a generic 500 so the handshake
+// can fail cleanly and the client can retry with a fresh request.
+app.use((err, req, res, next) => {
+    const isJsonParseError = err && (
+        err.type === 'entity.parse.failed' ||
+        err instanceof SyntaxError
+    );
+    const isMcpRequest = typeof req?.originalUrl === 'string' && (
+        req.originalUrl.startsWith('/api/mcp') ||
+        req.originalUrl.startsWith('/mcp')
+    );
+
+    if (!isJsonParseError || !isMcpRequest) return next(err);
+
+    logger.warn('MCP JSON parse error', {
+        path: req.originalUrl,
+        message: err.message,
+    });
+
+    return res.status(400).json({
+        jsonrpc: '2.0',
+        id: null,
+        error: {
+            code: -32700,
+            message: 'Parse error',
+        },
+    });
+});
+
 // Health check (public)
 app.get('/health', asyncHandler(async (_req, res) => {
     await db.$queryRaw`SELECT 1`;

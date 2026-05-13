@@ -91,7 +91,7 @@ async function handleJsonRpc(msg) {
     }
 
     if (method === 'notifications/initialized') {
-        return null;
+        return { jsonrpc: '2.0', id: id ?? null, result: { acknowledged: true } };
     }
 
     return { jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } };
@@ -117,11 +117,7 @@ router.post('/', async (req, res) => {
             res.json(results.filter(Boolean));
         } else {
             const result = await handleJsonRpc(body);
-            if (result === null) {
-                res.status(204).end();
-            } else {
-                res.json(result);
-            }
+            res.json(result);
         }
     } catch (err) {
         res.json({ jsonrpc: '2.0', id: body?.id ?? null, error: { code: -32603, message: err.message } });

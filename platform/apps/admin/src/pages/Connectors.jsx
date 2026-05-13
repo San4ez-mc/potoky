@@ -1,34 +1,35 @@
-﻿import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client.js';
 
-// ── ConnectorModal — creates/edits a SavedConnector (instance with real keys) ──
-
-function ConnectorModal({ connector, connectorDefs, onClose, onSave }) {
+function ConnectorModal({ connector, connectorDefs, onClose, onSaved }) {
     const isEdit = Boolean(connector?.id);
-    const defaultType = connector?.type || (connectorDefs[0]?.type ?? '');
+    const initialType = connector?.type || connectorDefs[0]?.type || '';
 
     const [form, setForm] = useState({
         name: connector?.name || '',
-        type: connector?.type || defaultType,
+        type: initialType,
         description: connector?.description || '',
         config: connector?.config || {},
     });
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
 
-    const def = connectorDefs.find(d => d.type === form.type);
+    const def = connectorDefs.find((d) => d.type === form.type);
     const fields = def?.schema?.fields || [];
 
-    const setField = (key, value) => setForm(f => ({ ...f, [key]: value }));
-    const setConfig = (key, value) => setForm(f => ({ ...f, config: { ...f.config, [key]: value } }));
+    const setField = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
+    const setConfig = (key, value) => setForm((prev) => ({ ...prev, config: { ...prev.config, [key]: value } }));
 
-    const handleTypeChange = (newType) => {
-        setForm(f => ({ ...f, type: newType, config: {} }));
-    };
+    const save = async () => {
+        if (!form.name.trim()) {
+            setError('Назва конектора обовʼязкова');
+            return;
+        }
+        if (!form.type) {
+            setError('Оберіть тип конектора');
+            return;
+        }
 
-    const handleSave = async () => {
-        if (!form.name.trim()) { setError("азва обов'язкова"); return; }
-        if (!form.type) { setError("Тип конектора обов'язковий"); return; }
         setSaving(true);
         setError('');
         try {
@@ -37,132 +38,103 @@ function ConnectorModal({ connector, connectorDefs, onClose, onSave }) {
             } else {
                 await api.createSavedConnector(form);
             }
-            onSave();
+            onSaved();
         } catch (err) {
-            setError(err.message || 'омилка збереження');
+            setError(err.message || 'Не вдалося зберегти конектор');
         } finally {
             setSaving(false);
         }
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-            <div className="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-lg mx-4 shadow-2xl max-h-[90vh] flex flex-col">
-                <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800 shrink-0">
-                    <h2 className="text-lg font-semibold text-white">
-                        {isEdit ? 'едагувати збережений конектор' : 'берегти новий конектор'}
-                    </h2>
-                    <button onClick={onClose} className="text-gray-400 hover:text-white text-xl leading-none">x</button>
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+            <div className="w-full max-w-xl bg-gray-900 border border-gray-700 rounded-xl shadow-2xl max-h-[90vh] flex flex-col">
+                <div className="px-5 py-4 border-b border-gray-800 flex items-center justify-between">
+                    <h3 className="text-white font-semibold">{isEdit ? 'Редагувати конектор' : 'Додати конектор'}</h3>
+                    <button onClick={onClose} className="text-gray-400 hover:text-white">Закрити</button>
                 </div>
 
-                <div className="px-6 py-4 space-y-4 overflow-y-auto flex-1">
+                <div className="p-5 overflow-y-auto space-y-4">
                     <div>
-                        <label className="text-xs text-gray-400 block mb-1">Тип конектора (шаблон)</label>
-                        <select
-                            value={form.type}
-                            onChange={e => handleTypeChange(e.target.value)}
-                            disabled={isEdit}
-                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 disabled:opacity-60"
-                        >
-                            {connectorDefs.map(d => (
-                                <option key={d.type} value={d.type}>{d.icon} {d.name}</option>
-                            ))}
-                        </select>
-                        {def && def.description && (
-                            <p className="text-xs text-gray-500 mt-1">{def.description}</p>
-                        )}
-                        {def && def.schema && def.schema.docs_url && (
-                            <a href={def.schema.docs_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-400 hover:text-blue-300 mt-0.5 block">
-                                окументація API
-                            </a>
-                        )}
-                    </div>
-
-                    <div>
-                        <label className="text-xs text-gray-400 block mb-1">азва *</label>
+                        <label className="text-xs text-gray-400 block mb-1">Назва</label>
                         <input
                             value={form.name}
-                            onChange={e => setField('name', e.target.value)}
-                            placeholder={def ? def.name + " основний" : "азва конектора"}
-                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                            onChange={(e) => setField('name', e.target.value)}
+                            placeholder="Наприклад: Sonnet основний"
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white"
                         />
-                        <p className="text-xs text-gray-600 mt-1">е ім'я відображатиметься при виборі у воронці</p>
                     </div>
 
                     <div>
-                        <label className="text-xs text-gray-400 block mb-1">отатка (необов'язково)</label>
+                        <label className="text-xs text-gray-400 block mb-1">Тип конектора</label>
+                        <select
+                            value={form.type}
+                            onChange={(e) => setField('type', e.target.value)}
+                            disabled={isEdit}
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white disabled:opacity-60"
+                        >
+                            {connectorDefs.map((item) => (
+                                <option key={item.type} value={item.type}>{item.icon} {item.name}</option>
+                            ))}
+                        </select>
+                        {def?.description && (
+                            <p className="text-xs text-gray-500 mt-1">{def.description}</p>
+                        )}
+                    </div>
+
+                    <div>
+                        <label className="text-xs text-gray-400 block mb-1">Опис (необовʼязково)</label>
                         <input
                             value={form.description}
-                            onChange={e => setField('description', e.target.value)}
-                            placeholder="априклад: для основних ботів, ліміт $50/міс"
-                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                            onChange={(e) => setField('description', e.target.value)}
+                            placeholder="Коротка нотатка"
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white"
                         />
                     </div>
 
-                    {fields.length > 0 && (
-                        <div className="space-y-3">
-                            <div className="text-xs text-gray-400 font-medium uppercase tracking-wider border-t border-gray-800 pt-3">
-                                блікові дані / ключі
+                    <div className="pt-2 border-t border-gray-800">
+                        <div className="text-xs text-gray-400 uppercase tracking-wider mb-3">Поля типу</div>
+                        {fields.length === 0 ? (
+                            <div className="text-sm text-gray-500">Для цього типу не задано полів.</div>
+                        ) : (
+                            <div className="space-y-3">
+                                {fields.map((field) => (
+                                    <div key={field.key}>
+                                        <label className="text-xs text-gray-400 block mb-1">{field.label}</label>
+                                        {field.multiline ? (
+                                            <textarea
+                                                rows={4}
+                                                value={form.config[field.key] || ''}
+                                                onChange={(e) => setConfig(field.key, e.target.value)}
+                                                placeholder={field.placeholder || ''}
+                                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white font-mono"
+                                            />
+                                        ) : (
+                                            <input
+                                                type={field.secret ? 'password' : 'text'}
+                                                value={form.config[field.key] || ''}
+                                                onChange={(e) => setConfig(field.key, e.target.value)}
+                                                placeholder={field.placeholder || ''}
+                                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono"
+                                            />
+                                        )}
+                                    </div>
+                                ))}
                             </div>
-                            {fields.map(field => (
-                                <div key={field.key}>
-                                    <label className="text-xs text-gray-400 block mb-1">{field.label}</label>
-                                    {field.multiline ? (
-                                        <textarea
-                                            value={form.config[field.key] || ''}
-                                            onChange={e => setConfig(field.key, e.target.value)}
-                                            placeholder={field.placeholder || ''}
-                                            rows={4}
-                                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500 font-mono focus:outline-none focus:border-blue-500 resize-y"
-                                        />
-                                    ) : (
-                                        <input
-                                            type={field.secret ? 'password' : 'text'}
-                                            value={form.config[field.key] || ''}
-                                            onChange={e => setConfig(field.key, e.target.value)}
-                                            placeholder={field.placeholder || ''}
-                                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 font-mono focus:outline-none focus:border-blue-500"
-                                        />
-                                    )}
-                                </div>
-                            ))}
-                        </div>
-                    )}
+                        )}
+                    </div>
 
-                    {fields.length === 0 && (
-                        <div className="space-y-3">
-                            <div className="text-xs text-gray-400 font-medium uppercase tracking-wider border-t border-gray-800 pt-3">
-                                овільні поля конфігурації
-                            </div>
-                            {Object.entries(form.config).map(([k, v]) => (
-                                <div key={k} className="flex gap-2 items-center">
-                                    <input readOnly value={k} className="w-32 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-300 font-mono" />
-                                    <input value={v} onChange={e => setConfig(k, e.target.value)} className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white" />
-                                    <button onClick={() => { const c = { ...form.config }; delete c[k]; setField('config', c); }} className="text-red-400 hover:text-red-300 px-2 text-sm">x</button>
-                                </div>
-                            ))}
-                            <button
-                                onClick={() => { const key = prompt('азва поля (ключ):'); if (key) setConfig(key, ''); }}
-                                className="w-full py-1.5 border border-dashed border-gray-600 rounded-lg text-gray-400 hover:text-white hover:border-gray-400 text-xs transition-colors"
-                            >
-                                + одати поле
-                            </button>
-                        </div>
-                    )}
-
-                    {error && <div className="text-red-400 text-sm bg-red-900/20 rounded px-3 py-2">{error}</div>}
+                    {error && <div className="text-sm text-red-400 bg-red-900/20 border border-red-900/40 rounded px-3 py-2">{error}</div>}
                 </div>
 
-                <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-800 shrink-0">
-                    <button onClick={onClose} className="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors">
-                        Скасувати
-                    </button>
+                <div className="px-5 py-4 border-t border-gray-800 flex justify-end gap-2">
+                    <button onClick={onClose} className="px-3 py-2 text-sm text-gray-300 hover:text-white">Скасувати</button>
                     <button
-                        onClick={handleSave}
+                        onClick={save}
                         disabled={saving}
-                        className="px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors"
+                        className="px-4 py-2 text-sm rounded bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white"
                     >
-                        {saving ? 'береження...' : isEdit ? 'берегти зміни' : 'берегти конектор'}
+                        {saving ? 'Збереження...' : 'Зберегти'}
                     </button>
                 </div>
             </div>
@@ -170,229 +142,97 @@ function ConnectorModal({ connector, connectorDefs, onClose, onSave }) {
     );
 }
 
-// ── Main page ──────────────────────────────────────────────────────────────────
-
 export function Connectors() {
+    const [activeTab, setActiveTab] = useState('types');
     const [connectorDefs, setConnectorDefs] = useState([]);
     const [savedConnectors, setSavedConnectors] = useState([]);
-    const [globalKeys, setGlobalKeys] = useState([]);
-    const [isLoading, setIsLoading] = useState(false);
-    const [editingKey, setEditingKey] = useState(null);
-    const [editValue, setEditValue] = useState('');
-    const [modal, setModal] = useState(null);
+    const [loading, setLoading] = useState(false);
+    const [modalConnector, setModalConnector] = useState(undefined);
 
-    const projectId = localStorage.getItem('projectId');
-
-    useEffect(() => { loadData(); }, []);
-
-    const loadData = async () => {
-        setIsLoading(true);
+    const load = async () => {
+        setLoading(true);
         try {
-            const [defsRes, savedRes, keysRes] = await Promise.allSettled([
+            const [defsRes, savedRes] = await Promise.allSettled([
                 api.getConnectors(),
                 api.getSavedConnectors(),
-                projectId ? api.getGlobalKeys(projectId) : Promise.resolve([]),
             ]);
             setConnectorDefs(defsRes.status === 'fulfilled' ? (defsRes.value?.data || []) : []);
             setSavedConnectors(savedRes.status === 'fulfilled' ? (savedRes.value?.data || []) : []);
-            setGlobalKeys(keysRes.status === 'fulfilled' && Array.isArray(keysRes.value) ? keysRes.value : []);
-        } catch (err) {
-            console.error('Failed to load data:', err);
         } finally {
-            setIsLoading(false);
+            setLoading(false);
         }
     };
 
-    const handleRevealKey = async (keyName) => {
-        if (!projectId) return;
-        try {
-            const result = await api.revealGlobalKey(projectId, keyName);
-            setEditingKey(keyName);
-            setEditValue(result.value || '');
-        } catch (err) { console.error(err); }
-    };
+    useEffect(() => {
+        load();
+    }, []);
 
-    const handleSaveKey = async () => {
-        if (!projectId || !editingKey) return;
-        try {
-            const key = globalKeys.find(k => k.key === editingKey);
-            await api.upsertGlobalKey(projectId, editingKey, key?.label || editingKey, editValue, key?.isSecret || false, key?.description || '');
-            setEditingKey(null);
-            setEditValue('');
-            await loadData();
-        } catch (err) { console.error(err); }
-    };
+    const byType = useMemo(() => {
+        return savedConnectors.reduce((acc, item) => {
+            if (!acc[item.type]) acc[item.type] = [];
+            acc[item.type].push(item);
+            return acc;
+        }, {});
+    }, [savedConnectors]);
 
-    const handleDeleteKey = async (keyName) => {
-        if (!projectId || !window.confirm('идалити ключ ' + keyName + '?')) return;
-        try { await api.deleteGlobalKey(projectId, keyName); await loadData(); } catch (err) { console.error(err); }
+    const deleteOne = async (item) => {
+        if (!window.confirm(`Видалити конектор "${item.name}"?`)) return;
+        await api.deleteSavedConnector(item.id);
+        await load();
     };
-
-    const handleDeleteConnector = async (id, name) => {
-        if (!window.confirm('идалити збережений конектор "' + name + '"?')) return;
-        try { await api.deleteSavedConnector(id); await loadData(); } catch (err) { console.error(err); }
-    };
-
-    const savedByType = savedConnectors.reduce((acc, sc) => {
-        if (!acc[sc.type]) acc[sc.type] = [];
-        acc[sc.type].push(sc);
-        return acc;
-    }, {});
 
     return (
-        <div className="space-y-6">
-            <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-                <h1 className="text-xl font-semibold text-white">онектори</h1>
-                <p className="text-sm text-gray-400 mt-2">
-                    <strong className="text-gray-300">Шаблон конектора</strong> — тип інтеграції (наприклад, "Claude Sonnet"), який описує потрібні поля та як відправляти запити.{' '}
-                    <strong className="text-gray-300">бережений конектор</strong> — ваш екземпляр із заповненими ключами. априклад, "Sonnet основний" та "Sonnet додатковий" — два збережені конектори одного типу з різними API ключами.
+        <div className="p-6 max-w-6xl mx-auto space-y-5">
+            <div>
+                <h1 className="text-2xl font-bold text-white">Конектори</h1>
+                <p className="text-sm text-gray-400 mt-1">
+                    Тип конектора — це шаблон інтеграції. Збережений конектор — це ваш екземпляр типу з власними ключами.
                 </p>
             </div>
 
-            <div className="bg-gray-800 rounded-lg border border-gray-700 p-6">
-                <h2 className="text-lg font-semibold text-white mb-1">оступні типи конекторів</h2>
-                <p className="text-xs text-gray-500 mb-4">Системні шаблони. беріть тип щоб зберегти свій конектор із ключами.</p>
-
-                {isLoading ? (
-                    <div className="text-center text-gray-400 py-8">авантаження...</div>
-                ) : connectorDefs.length === 0 ? (
-                    <div className="text-center text-gray-500 py-8 text-sm">
-                        емає шаблонів. апустіть: <code className="font-mono bg-gray-700 px-1 rounded">yarn seed:connector-defs</code>
-                    </div>
-                ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                        {connectorDefs.map(def => {
-                            const count = savedByType[def.type]?.length || 0;
-                            return (
-                                <div key={def.type} className="bg-gray-900 rounded-xl border border-gray-700 p-4 flex flex-col gap-2 hover:border-gray-500 transition-colors">
-                                    <div className="flex items-center gap-3">
-                                        <div className="text-2xl">{def.icon || '?'}</div>
-                                        <div className="flex-1 min-w-0">
-                                            <div className="font-medium text-white text-sm">{def.name}</div>
-                                            <div className="text-xs text-gray-500 font-mono">{def.type}</div>
-                                        </div>
-                                        {count > 0 && (
-                                            <span className="text-xs bg-blue-900/40 text-blue-400 border border-blue-800 rounded-full px-2 py-0.5">{count}</span>
-                                        )}
-                                    </div>
-                                    {def.description && (
-                                        <p className="text-xs text-gray-400 leading-relaxed line-clamp-2">{def.description}</p>
-                                    )}
-                                    {def.schema && def.schema.fields && def.schema.fields.length > 0 && (
-                                        <div className="text-xs text-gray-600">
-                                            оля: {def.schema.fields.map(f => f.label).join(', ')}
-                                        </div>
-                                    )}
-                                    <button
-                                        onClick={() => setModal({ connector: { type: def.type } })}
-                                        className="mt-auto w-full py-1.5 rounded-lg border border-dashed border-gray-600 text-gray-400 hover:text-white hover:border-blue-500 hover:bg-blue-950/30 text-xs transition-colors"
-                                    >
-                                        + берегти конектор цього типу
-                                    </button>
-                                </div>
-                            );
-                        })}
-                    </div>
-                )}
+            <div className="flex items-center gap-2 border-b border-gray-800">
+                <button
+                    onClick={() => setActiveTab('types')}
+                    className={`px-4 py-2 text-sm border-b-2 -mb-px ${activeTab === 'types' ? 'border-blue-500 text-blue-300' : 'border-transparent text-gray-400 hover:text-white'}`}
+                >
+                    Типи конекторів
+                </button>
+                <button
+                    onClick={() => setActiveTab('mine')}
+                    className={`px-4 py-2 text-sm border-b-2 -mb-px ${activeTab === 'mine' ? 'border-blue-500 text-blue-300' : 'border-transparent text-gray-400 hover:text-white'}`}
+                >
+                    Мої конектори
+                </button>
             </div>
 
-            <div className="bg-gray-800 rounded-lg border border-gray-700 p-6">
-                <div className="flex items-center justify-between mb-4">
-                    <div>
-                        <h2 className="text-lg font-semibold text-white">бережені конектори</h2>
-                        <p className="text-xs text-gray-500 mt-0.5">аші екземпляри з заповненими ключами</p>
-                    </div>
-                    {connectorDefs.length > 0 && (
-                        <button
-                            onClick={() => setModal({ connector: null })}
-                            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
-                        >
-                            + овий
-                        </button>
-                    )}
-                </div>
-
-                {isLoading ? (
-                    <div className="text-center text-gray-400">авантаження...</div>
-                ) : savedConnectors.length === 0 ? (
-                    <div className="text-center py-8">
-                        <div className="text-3xl mb-3">🔑</div>
-                        <div className="text-gray-400 text-sm">Ще немає збережених конекторів</div>
-                        <div className="text-gray-600 text-xs mt-1">беріть тип вище і збережіть ваші ключі</div>
-                    </div>
-                ) : (
-                    <div className="space-y-6">
-                        {connectorDefs.filter(d => savedByType[d.type] && savedByType[d.type].length > 0).map(def => (
-                            <div key={def.type}>
-                                <div className="flex items-center gap-2 mb-2">
-                                    <span className="text-base">{def.icon || '?'}</span>
-                                    <span className="text-xs text-gray-500 uppercase tracking-wider font-medium">{def.name}</span>
-                                    <span className="bg-gray-700 text-gray-400 rounded-full px-2 py-0.5 text-xs">{savedByType[def.type].length}</span>
-                                </div>
-                                <div className="space-y-2 pl-1">
-                                    {savedByType[def.type].map(item => (
-                                        <div key={item.id} className="bg-gray-900 rounded-lg p-3 border border-gray-700 flex items-center gap-3">
-                                            <div className="flex-1 min-w-0">
-                                                <div className="font-medium text-white text-sm">{item.name}</div>
-                                                {item.description && <div className="text-xs text-gray-500 mt-0.5">{item.description}</div>}
-                                                <div className="text-xs text-gray-700 mt-1 font-mono">
-                                                    {Object.keys(item.config || {}).map(k => k + ': ...').join(' | ') || 'емає полів'}
-                                                </div>
-                                            </div>
-                                            <div className="flex gap-2 shrink-0">
-                                                <button onClick={() => setModal({ connector: item })} className="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white rounded text-xs transition-colors">
-                                                    едагувати
-                                                </button>
-                                                <button onClick={() => handleDeleteConnector(item.id, item.name)} className="px-3 py-1 bg-red-900/30 hover:bg-red-900/50 text-red-400 rounded text-xs transition-colors">
-                                                    идалити
-                                                </button>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                )}
-            </div>
-
-            {projectId && (
-                <div className="bg-gray-800 rounded-lg border border-gray-700 p-6">
-                    <h2 className="text-lg font-semibold text-white mb-1">лобальні ключі проекту</h2>
-                    <p className="text-xs text-gray-500 mb-4">мінні середовища, доступні всім ботам у проекті.</p>
-                    {globalKeys.length === 0 ? (
-                        <div className="text-center text-gray-500 py-8 text-sm">емає налаштованих ключів</div>
+            {activeTab === 'types' && (
+                <div className="space-y-3">
+                    <p className="text-sm text-gray-500">Системні шаблони — описують як підключитися до сервісу.</p>
+                    {loading ? (
+                        <div className="text-gray-400">Завантаження...</div>
+                    ) : connectorDefs.length === 0 ? (
+                        <div className="bg-gray-900 border border-gray-700 rounded-lg p-4 text-sm text-gray-400">
+                            Немає типів конекторів. Запустіть seed: <span className="font-mono">yarn seed:connector-defs</span>
+                        </div>
                     ) : (
-                        <div className="space-y-3">
-                            {globalKeys.map(item => (
-                                <div key={item.key} className="bg-gray-900 rounded-lg p-4 border border-gray-700">
-                                    <div className="flex items-start justify-between gap-4">
-                                        <div className="flex-1">
-                                            <div className="font-mono text-sm text-blue-400">{item.key}</div>
-                                            <div className="text-xs text-gray-400 mt-1">{item.label}</div>
-                                            {item.description && <div className="text-xs text-gray-500 mt-1">{item.description}</div>}
-                                            {editingKey === item.key ? (
-                                                <div className="mt-3 space-y-2">
-                                                    <textarea value={editValue} onChange={e => setEditValue(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm text-white" rows={3} />
-                                                    <div className="flex gap-2">
-                                                        <button onClick={handleSaveKey} className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs">берегти</button>
-                                                        <button onClick={() => { setEditingKey(null); setEditValue(''); }} className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded text-xs">Скасувати</button>
-                                                    </div>
-                                                </div>
-                                            ) : (
-                                                <div className="text-xs text-gray-600 mt-2 font-mono">{item.isSecret ? '........' : item.value}</div>
-                                            )}
-                                        </div>
-                                        {editingKey !== item.key && (
-                                            <div className="flex gap-2 shrink-0">
-                                                {item.isSecret && (
-                                                    <button onClick={() => handleRevealKey(item.key)} className="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white rounded text-xs">оказати</button>
-                                                )}
-                                                <button onClick={() => handleRevealKey(item.key)} className="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white rounded text-xs">едагувати</button>
-                                                <button onClick={() => handleDeleteKey(item.key)} className="px-3 py-1 bg-red-900/30 hover:bg-red-900/50 text-red-400 rounded text-xs">идалити</button>
-                                            </div>
-                                        )}
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                            {connectorDefs.map((def) => (
+                                <div key={def.type} className="bg-gray-900 border border-gray-700 rounded-lg p-4 flex flex-col">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-xl">{def.icon || '🔌'}</span>
+                                        <div className="text-white font-semibold">{def.name}</div>
                                     </div>
+                                    <div className="text-xs text-gray-500 font-mono mt-1">{def.type}</div>
+                                    <div className="text-sm text-gray-400 mt-2">{def.description || 'Без опису'}</div>
+                                    <div className="text-xs text-gray-600 mt-2">
+                                        Поля: {(def.schema?.fields || []).map((f) => f.label).join(', ') || 'немає'}
+                                    </div>
+                                    <button
+                                        onClick={() => setModalConnector({ type: def.type })}
+                                        className="mt-3 px-3 py-1.5 text-xs rounded border border-blue-800 text-blue-300 hover:bg-blue-900/30"
+                                    >
+                                        + Зберегти
+                                    </button>
                                 </div>
                             ))}
                         </div>
@@ -400,12 +240,77 @@ export function Connectors() {
                 </div>
             )}
 
-            {modal && (
+            {activeTab === 'mine' && (
+                <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                        <p className="text-sm text-gray-500">Екземпляри з заповненими ключами.</p>
+                        <button
+                            onClick={() => setModalConnector(null)}
+                            className="px-3 py-1.5 text-sm rounded bg-blue-600 hover:bg-blue-700 text-white"
+                        >
+                            + Додати конектор
+                        </button>
+                    </div>
+
+                    {loading ? (
+                        <div className="text-gray-400">Завантаження...</div>
+                    ) : savedConnectors.length === 0 ? (
+                        <div className="bg-gray-900 border border-gray-700 rounded-lg p-6 text-center text-gray-500">
+                            Ще немає збережених конекторів.
+                        </div>
+                    ) : (
+                        <div className="space-y-4">
+                            {connectorDefs.map((def) => {
+                                const items = byType[def.type] || [];
+                                if (items.length === 0) return null;
+                                return (
+                                    <div key={def.type}>
+                                        <div className="text-sm text-gray-400 mb-2 flex items-center gap-2">
+                                            <span>{def.icon || '🔌'}</span>
+                                            <span>{def.name}</span>
+                                            <span className="text-xs text-gray-600">({items.length})</span>
+                                        </div>
+                                        <div className="space-y-2">
+                                            {items.map((item) => (
+                                                <div key={item.id} className="bg-gray-900 border border-gray-700 rounded-lg p-3 flex items-center justify-between gap-3">
+                                                    <div>
+                                                        <div className="text-white font-medium">{item.name}</div>
+                                                        <div className="text-xs text-gray-500 mt-1">Тип: {def.name} · {item.isActive ? 'Активний' : 'Неактивний'}</div>
+                                                    </div>
+                                                    <div className="flex gap-2">
+                                                        <button
+                                                            onClick={() => setModalConnector(item)}
+                                                            className="px-3 py-1 text-xs rounded border border-gray-600 text-gray-300 hover:bg-gray-800"
+                                                        >
+                                                            Редагувати
+                                                        </button>
+                                                        <button
+                                                            onClick={() => deleteOne(item)}
+                                                            className="px-3 py-1 text-xs rounded border border-red-800 text-red-400 hover:bg-red-900/30"
+                                                        >
+                                                            Видалити
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {(modalConnector !== undefined) && (
                 <ConnectorModal
-                    connector={modal.connector}
+                    connector={modalConnector}
                     connectorDefs={connectorDefs}
-                    onClose={() => setModal(null)}
-                    onSave={() => { setModal(null); loadData(); }}
+                    onClose={() => setModalConnector(undefined)}
+                    onSaved={() => {
+                        setModalConnector(undefined);
+                        load();
+                    }}
                 />
             )}
         </div>

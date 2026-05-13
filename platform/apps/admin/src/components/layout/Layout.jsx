@@ -13,7 +13,8 @@ function routeMeta(pathname) {
     if (pathname.startsWith('/users')) return { title: 'Юзери' };
     if (pathname.startsWith('/api-logs')) return { title: 'API логи' };
     if (pathname.startsWith('/errors')) return { title: 'Помилки' };
-    if (pathname.startsWith('/mcp')) return { title: 'MCP Servers' };
+    if (pathname.startsWith('/connectors')) return { title: 'Конектори' };
+    if (pathname.startsWith('/settings')) return { title: 'Налаштування' };
     return { title: 'Платформа' };
 }
 

@@ -1,11 +1,11 @@
 'use strict';
 
 /**
- * MCP HTTP route — FLOWS server
- * Exposes read/navigation tools for funnels, connectors, and logs
- * (6 tools)
+ * MCP HTTP route — FLOWS EDIT server
+ * Exposes write/edit tools for bots, nodes, keys, and connectors
+ * (~10 tools)
  *
- * Endpoint: POST https://flows.fineko.space/api/mcp
+ * Endpoint: POST https://flows.fineko.space/api/mcp-edit
  * Auth: Authorization: Bearer <MCP_SECRET> OR ?token=<user.mcpToken>
  */
 
@@ -16,18 +16,21 @@ const { TOOLS, callTool, safeJsonStringify } = require('../../../../apps/mcp/src
 const router = express.Router();
 const prisma = new PrismaClient();
 
-const READ_TOOL_NAMES = new Set([
-    'list_funnels',
-    'get_funnel',
-    'get_node_stats',
-    'get_api_logs',
-    'list_connectors',
-    'get_connector',
+const EDIT_TOOL_NAMES = new Set([
+    'new_bot',
+    'create_funnel',
+    'add_node',
+    'update_node',
+    'delete_node',
+    'create_edge',
+    'update_funnel_key',
+    'delete_funnel_key',
+    'create_connector',
+    'update_connector',
+    'delete_connector',
 ]);
 
-const READ_TOOLS = TOOLS.filter((tool) => READ_TOOL_NAMES.has(tool.name));
-
-// ─── Auth ──────────────────────────────────────────────────────────────────────
+const EDIT_TOOLS = TOOLS.filter((tool) => EDIT_TOOL_NAMES.has(tool.name));
 
 async function checkAuth(req, res) {
     const globalSecret = process.env.MCP_SECRET;
@@ -36,15 +39,13 @@ async function checkAuth(req, res) {
     const candidate = bearer || queryToken;
 
     if (!candidate) {
-        if (!globalSecret) return true; // no auth configured — open
+        if (!globalSecret) return true;
         res.status(401).json({ error: 'Unauthorized' });
         return false;
     }
 
-    // Check global secret first
     if (globalSecret && candidate === globalSecret) return true;
 
-    // Check per-user token in DB
     try {
         const user = await prisma.user.findUnique({ where: { mcpToken: candidate } });
         if (user) return true;
@@ -54,8 +55,6 @@ async function checkAuth(req, res) {
     return false;
 }
 
-// ─── MCP JSON-RPC handler ──────────────────────────────────────────────────────
-
 async function handleJsonRpc(msg) {
     const { id, method, params } = msg;
 
@@ -64,20 +63,21 @@ async function handleJsonRpc(msg) {
             jsonrpc: '2.0', id, result: {
                 protocolVersion: '2024-11-05',
                 capabilities: { tools: {} },
-                serverInfo: { name: 'platform-flows-mcp', version: '2.0.0' },
+                serverInfo: { name: 'platform-flows-edit-mcp', version: '2.0.0' },
             }
         };
     }
 
     if (method === 'tools/list') {
-        return { jsonrpc: '2.0', id, result: { tools: READ_TOOLS } };
+        return { jsonrpc: '2.0', id, result: { tools: EDIT_TOOLS } };
     }
 
     if (method === 'tools/call') {
         const { name, arguments: args } = params;
-        if (!READ_TOOL_NAMES.has(name)) {
-            return { jsonrpc: '2.0', id, error: { code: -32601, message: `Tool not available on mcp: ${name}` } };
+        if (!EDIT_TOOL_NAMES.has(name)) {
+            return { jsonrpc: '2.0', id, error: { code: -32601, message: `Tool not available on mcp-edit: ${name}` } };
         }
+
         try {
             const result = await callTool(name, args || {});
             return {
@@ -91,45 +91,34 @@ async function handleJsonRpc(msg) {
     }
 
     if (method === 'notifications/initialized') {
-        return null; // no response needed
+        return null;
     }
 
     return { jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } };
 }
 
-// ─── Routes ───────────────────────────────────────────────────────────────────
-
-/**
- * GET /api/mcp — SSE endpoint for MCP Streamable HTTP transport
- * Claude.ai connects here first for capability discovery.
- */
 router.get('/', async (req, res) => {
     if (!await checkAuth(req, res)) return;
     res.json({
-        name: 'platform-flows-mcp',
+        name: 'platform-flows-edit-mcp',
         version: '2.0.0',
         protocolVersion: '2024-11-05',
         capabilities: { tools: {} },
     });
 });
 
-/**
- * POST /api/mcp — JSON-RPC over HTTP (Streamable HTTP transport)
- * Claude.ai sends tool calls here.
- */
 router.post('/', async (req, res) => {
     if (!await checkAuth(req, res)) return;
 
     const body = req.body;
     try {
-        // Handle batch (array) or single request
         if (Array.isArray(body)) {
             const results = await Promise.all(body.map(handleJsonRpc));
             res.json(results.filter(Boolean));
         } else {
             const result = await handleJsonRpc(body);
             if (result === null) {
-                res.status(204).end(); // notification — no response
+                res.status(204).end();
             } else {
                 res.json(result);
             }

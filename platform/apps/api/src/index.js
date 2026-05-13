@@ -24,6 +24,7 @@ const connectorsRouter = require('./routes/connectors');
 const savedConnectorsRouter = require('./routes/saved-connectors');
 const mcpRouter = require('./routes/mcp');
 const mcpFlowsRouter = require('./routes/mcp-flows');
+const mcpFlowsEditRouter = require('./routes/mcp-flows-edit');
 const mcpDebugRouter = require('./routes/mcp-debug');
 
 const app = express();
@@ -84,8 +85,9 @@ app.use('/api/connectors', authMiddleware, connectorsRouter);
 app.use('/api/saved-connectors', authMiddleware, savedConnectorsRouter);
 app.use('/api/admin', adminRouter);
 
-// MCP endpoints: split into flows (manage funnels) and debug (sessions, logs, test)
+// MCP endpoints: split into flows read-only, flows-edit write, and debug
 app.use('/api/mcp', mcpFlowsRouter);
+app.use('/api/mcp-edit', mcpFlowsEditRouter);
 app.use('/api/mcp-debug', mcpDebugRouter);
 // Legacy MCP endpoint (kept for backward compatibility)
 app.use('/mcp', mcpRouter);

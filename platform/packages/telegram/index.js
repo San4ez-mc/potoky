@@ -2,20 +2,20 @@
 
 const { getBot } = require('./src/bot');
 const {
-	sendMessage,
-	sendInlineKeyboard,
-	notifyOwner,
-	enableTestChat,
-	disableTestChat,
-	consumeTestMessages,
+    sendMessage,
+    sendInlineKeyboard,
+    notifyOwner,
+    enableTestChat,
+    disableTestChat,
+    consumeTestMessages,
 } = require('./src/sender');
 
 module.exports = {
-	getBot,
-	sendMessage,
-	sendInlineKeyboard,
-	notifyOwner,
-	enableTestChat,
-	disableTestChat,
-	consumeTestMessages,
+    getBot,
+    sendMessage,
+    sendInlineKeyboard,
+    notifyOwner,
+    enableTestChat,
+    disableTestChat,
+    consumeTestMessages,
 };

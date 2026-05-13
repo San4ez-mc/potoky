@@ -72,8 +72,8 @@ export const api = {
     sendSessionMessage: (id, text) => req('POST', `/sessions/${id}/send`, { text }),
     deleteSession: (id) => req('DELETE', `/sessions/${id}`),
     deleteSessionsBulk: (ids) => req('POST', '/sessions/bulk-delete', { ids }),
-    getBotSessions: (botId, page = 0) => {
-        const q = new URLSearchParams({ page, limit: 50 }).toString();
+    getBotSessions: (botId, page = 0, params = {}) => {
+        const q = new URLSearchParams({ page, limit: 50, ...params }).toString();
         return reqWithMeta('GET', `/bots/${botId}/sessions${q ? '?' + q : ''}`);
     },
 

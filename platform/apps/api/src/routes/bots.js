@@ -12,6 +12,7 @@ const router = Router();
 const paginationSchema = z.object({
     page: z.coerce.number().int().min(0).default(0),
     limit: z.coerce.number().int().min(1).max(100).default(50),
+    hasErrors: z.enum(['true', 'false']).optional(),
 });
 
 // GET /api/bots/:id
@@ -31,10 +32,15 @@ router.get('/:id/sessions',
         query: paginationSchema,
     }),
     asyncHandler(async (req, res) => {
-        const { page, limit } = req.query;
+        const { page, limit, hasErrors } = req.query;
+        const where = { botId: req.params.id };
+        if (hasErrors !== undefined) {
+            where.errors = hasErrors === 'true' ? { some: {} } : { none: {} };
+        }
+
         const [sessions, total] = await Promise.all([
             db.session.findMany({
-                where: { botId: req.params.id },
+                where,
                 orderBy: { startedAt: 'desc' },
                 take: limit,
                 skip: page * limit,
@@ -48,10 +54,10 @@ router.get('/:id/sessions',
                             username: true,
                         } 
                     },
-                    _count: { select: { messages: true, apiCalls: true } },
+                    _count: { select: { messages: true, apiCalls: true, errors: true } },
                 },
             }),
-            db.session.count({ where: { botId: req.params.id } }),
+            db.session.count({ where }),
         ]);
         res.json({ ok: true, data: sessions, meta: { total, page, limit } });
     })

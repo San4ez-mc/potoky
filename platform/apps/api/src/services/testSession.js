@@ -2,6 +2,7 @@
 
 const { db } = require('@platform/db');
 const { BOT_REQUIREMENTS } = require('../../../../projects/finance-course/config/prerequisites');
+const { enableTestChat, disableTestChat, consumeTestMessages } = require('@platform/telegram');
 
 const { handleTelegramUpdate } = require('../../../../projects/finance-course/src/telegramHandler');
 
@@ -148,9 +149,13 @@ async function startTestSession({ botId, botSlug, userId }) {
 
     for (const message of attempts) {
         try {
+            enableTestChat(identity.telegramId);
             await handleTelegramUpdate(buildUpdate(identity, message));
         } catch (error) {
             warning = error.message;
+        } finally {
+            disableTestChat(identity.telegramId);
+            consumeTestMessages(identity.telegramId);
         }
 
         const existingUser = await db.user.findUnique({ where: { telegramId: BigInt(identity.telegramId) } });
@@ -223,17 +228,23 @@ async function sendTestMessage({ sessionId, message }) {
 
     let warning = null;
     try {
+        enableTestChat(identity.telegramId);
         await handleTelegramUpdate(buildUpdate(identity, message));
     } catch (error) {
         warning = error.message;
+    } finally {
+        disableTestChat(identity.telegramId);
     }
+
+    const sentMessages = consumeTestMessages(identity.telegramId);
+    const lastSent = sentMessages.length > 0 ? sentMessages[sentMessages.length - 1] : null;
 
     const latestAssistantMessage = await getLatestAssistantMessage(session.id);
     const updatedSession = await db.session.findUnique({ where: { id: session.id } });
 
     return {
         sessionId: session.id,
-        botResponse: latestAssistantMessage?.content || null,
+        botResponse: lastSent?.text || latestAssistantMessage?.content || null,
         currentState: updatedSession?.state || session.state,
         contextSnapshot: updatedSession?.context || session.context,
         slotsSnapshot: (updatedSession?.context || session.context)?.slots || {},
@@ -262,7 +273,7 @@ async function getTestSessionState({ sessionId }) {
         user: session.user,
         isActive: session.isActive,
         currentState: session.state,
-        currentNode: session.context?.currentNode || null,
+        currentNode: session.context?.currentNode || session.context?.currentNodeId || session.state || null,
         context: session.context,
         slots: session.context?.slots || {},
         history: session.messages,

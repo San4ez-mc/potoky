@@ -98,15 +98,19 @@ router.get('/sessions',
         query: z.object({
             botId: z.string().uuid().optional(),
             isActive: z.enum(['true', 'false']).optional(),
+            hasErrors: z.enum(['true', 'false']).optional(),
             page: z.coerce.number().int().min(0).default(0),
             limit: z.coerce.number().int().min(1).max(100).default(50),
         }),
     }),
     asyncHandler(async (req, res) => {
-        const { botId, isActive, page, limit } = req.query;
+        const { botId, isActive, hasErrors, page, limit } = req.query;
         const where = {};
         if (botId) where.botId = botId;
         if (isActive !== undefined) where.isActive = isActive === 'true';
+        if (hasErrors !== undefined) {
+            where.errors = hasErrors === 'true' ? { some: {} } : { none: {} };
+        }
 
         const [sessions, total] = await Promise.all([
             db.session.findMany({
@@ -125,7 +129,7 @@ router.get('/sessions',
                         } 
                     },
                     bot: { select: { id: true, name: true, slug: true } },
-                    _count: { select: { messages: true, apiCalls: true } },
+                    _count: { select: { messages: true, apiCalls: true, errors: true } },
                 },
             }),
             db.session.count({ where }),

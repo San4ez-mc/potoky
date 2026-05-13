@@ -23,7 +23,7 @@ class SessionService {
         }
 
         const session = await db.session.create({
-            data: { userId, botId, state: initialState, context: {} },
+            data: { userId, botId, state: initialState, context: { currentNode: initialState } },
         });
 
         logger.info('Session created', { sessionId: session.id, userId, botId });
@@ -39,7 +39,8 @@ class SessionService {
 
     static async updateState(sessionId, state, contextPatch = {}) {
         const session = await db.session.findUnique({ where: { id: sessionId } });
-        const newContext = { ...session.context, ...contextPatch };
+        const nextNode = contextPatch.currentNode || contextPatch.currentNodeId || state;
+        const newContext = { ...session.context, ...contextPatch, currentNode: nextNode };
 
         return db.session.update({
             where: { id: sessionId },

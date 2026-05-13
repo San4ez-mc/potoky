@@ -12,13 +12,14 @@ export function Sessions() {
     const [selectedIds, setSelectedIds] = useState([]);
     const [deleting, setDeleting] = useState(false);
     const [errorsModal, setErrorsModal] = useState(null);
+    const [errorsOnly, setErrorsOnly] = useState(false);
 
     const loadSessions = () => {
         setLoading(true);
 
         const promise = botId
-            ? api.getBotSessions(botId, page)
-            : api.getAllSessions({ page });
+            ? api.getBotSessions(botId, page, errorsOnly ? { hasErrors: 'true' } : {})
+            : api.getAllSessions({ page, ...(errorsOnly ? { hasErrors: 'true' } : {}) });
 
         return promise
             .then(res => {
@@ -35,7 +36,7 @@ export function Sessions() {
 
     useEffect(() => {
         loadSessions();
-    }, [botId, page]);
+    }, [botId, page, errorsOnly]);
 
     const visibleIds = sessions.map(s => s.id);
     const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.includes(id));
@@ -130,6 +131,12 @@ export function Sessions() {
                     {meta.total > 0 && <div className="text-sm text-gray-500 mt-0.5">Всього: {meta.total}</div>}
                 </div>
                 <div className="flex items-center gap-3">
+                    <button
+                        onClick={() => { setPage(0); setErrorsOnly(v => !v); }}
+                        className={`px-3 py-2 text-xs rounded-lg border transition-colors ${errorsOnly ? 'border-amber-700 text-amber-300 bg-amber-900/20' : 'border-gray-700 text-gray-300 hover:bg-gray-800'}`}
+                    >
+                        {errorsOnly ? 'Лише з помилками: ON' : 'Лише з помилками'}
+                    </button>
                     <label className="text-xs text-gray-400 flex items-center gap-2">
                         <input
                             type="checkbox"
@@ -162,6 +169,7 @@ export function Sessions() {
                         const tgId = s.user?.telegramId ? String(s.user.telegramId) : '—';
                         const msgCount = s._count?.messages ?? '—';
                         const apiCount = s._count?.apiCalls ?? '—';
+                        const errCount = s._count?.errors ?? 0;
                         const isSelected = selectedIds.includes(s.id);
                         return (
                             <div
@@ -187,6 +195,9 @@ export function Sessions() {
                                             <span className="text-xs text-gray-500 font-mono shrink-0">/{s.bot.slug}</span>
                                         )}
                                         <span className="text-xs text-gray-600 shrink-0">💬 {msgCount} · 📡 {apiCount}</span>
+                                        {errCount > 0 && (
+                                            <span className="text-xs text-red-300 bg-red-900/30 border border-red-800 rounded-full px-2 py-0.5 shrink-0">⚠ {errCount}</span>
+                                        )}
                                     </div>
                                     <div className="flex items-center gap-2 shrink-0">
                                         <span className="text-xs text-gray-500 shrink-0">

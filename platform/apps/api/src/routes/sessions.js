@@ -16,6 +16,24 @@ const {
 
 const router = Router();
 
+async function deleteSessionCascade(sessionId) {
+    return db.$transaction(async (tx) => {
+        const exists = await tx.session.findUnique({
+            where: { id: sessionId },
+            select: { id: true },
+        });
+        if (!exists) {
+            throw new NotFoundError('Session', sessionId);
+        }
+
+        await tx.message.deleteMany({ where: { sessionId } });
+        await tx.apiCall.deleteMany({ where: { sessionId } });
+        await tx.file.deleteMany({ where: { sessionId } });
+        await tx.appError.deleteMany({ where: { sessionId } });
+        await tx.session.delete({ where: { id: sessionId } });
+    });
+}
+
 // POST /api/sessions/test/start
 router.post('/test/start',
     validateParams({
@@ -82,6 +100,33 @@ router.get('/:id',
     })
 );
 
+// GET /api/sessions/:id/errors
+router.get('/:id/errors',
+    validateParams({ params: z.object({ id: z.string().uuid() }) }),
+    asyncHandler(async (req, res) => {
+        const [appErrors, failedApiCalls] = await Promise.all([
+            db.appError.findMany({
+                where: { sessionId: req.params.id },
+                orderBy: { createdAt: 'desc' },
+                take: 100,
+            }),
+            db.apiCall.findMany({
+                where: {
+                    sessionId: req.params.id,
+                    OR: [
+                        { error: { not: null } },
+                        { statusCode: { gte: 400 } },
+                    ],
+                },
+                orderBy: { createdAt: 'desc' },
+                take: 100,
+            }),
+        ]);
+
+        res.json({ ok: true, data: { appErrors, failedApiCalls } });
+    })
+);
+
 // GET /api/sessions/:id/messages
 router.get('/:id/messages',
     validateParams({ params: z.object({ id: z.string().uuid() }) }),
@@ -133,6 +178,37 @@ router.post('/:id/send',
         });
 
         res.json({ ok: true });
+    })
+);
+
+// DELETE /api/sessions/:id
+router.delete('/:id',
+    validateParams({ params: z.object({ id: z.string().uuid() }) }),
+    asyncHandler(async (req, res) => {
+        await deleteSessionCascade(req.params.id);
+        res.json({ ok: true });
+    })
+);
+
+// POST /api/sessions/bulk-delete
+router.post('/bulk-delete',
+    validateParams({
+        body: z.object({
+            ids: z.array(z.string().uuid()).min(1).max(200),
+        }),
+    }),
+    asyncHandler(async (req, res) => {
+        const ids = Array.from(new Set(req.body.ids));
+
+        await db.$transaction(async (tx) => {
+            await tx.message.deleteMany({ where: { sessionId: { in: ids } } });
+            await tx.apiCall.deleteMany({ where: { sessionId: { in: ids } } });
+            await tx.file.deleteMany({ where: { sessionId: { in: ids } } });
+            await tx.appError.deleteMany({ where: { sessionId: { in: ids } } });
+            await tx.session.deleteMany({ where: { id: { in: ids } } });
+        });
+
+        res.json({ ok: true, data: { deleted: ids.length } });
     })
 );
 

@@ -29,6 +29,72 @@ const mcpDebugRouter = require('./routes/mcp-debug');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const MCP_PATH_PREFIXES = ['/api/mcp', '/api/mcp-edit', '/api/mcp-debug', '/mcp'];
+
+function isMcpRequestPath(pathname) {
+    return typeof pathname === 'string' && MCP_PATH_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+}
+
+function truncateForLog(value, maxLength = 2000) {
+    if (typeof value !== 'string') return value;
+    return value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
+}
+
+function summarizeMcpBody(body) {
+    if (!body || typeof body !== 'object') {
+        return { type: typeof body };
+    }
+
+    if (Array.isArray(body)) {
+        return {
+            type: 'batch',
+            size: body.length,
+            methods: body.map((item) => item?.method).filter(Boolean).slice(0, 10),
+        };
+    }
+
+    return {
+        type: 'single',
+        id: body.id ?? null,
+        method: body.method ?? null,
+        hasParams: Boolean(body.params),
+    };
+}
+
+function mcpRequestLogger(req, res, next) {
+    if (!isMcpRequestPath(req.originalUrl)) return next();
+
+    const startedAt = process.hrtime.bigint();
+    const requestSummary = req.body && typeof req.body === 'object'
+        ? summarizeMcpBody(req.body)
+        : { type: 'unparsed' };
+
+    logger.info('MCP request started', {
+        path: req.originalUrl,
+        method: req.method,
+        remoteAddress: req.ip,
+        userAgent: req.get('user-agent'),
+        requestSummary,
+    });
+
+    res.on('finish', () => {
+        const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+        logger.info('MCP request finished', {
+            path: req.originalUrl,
+            method: req.method,
+            statusCode: res.statusCode,
+            durationMs: Math.round(durationMs),
+            requestSummary,
+        });
+    });
+
+    next();
+}
+
+function captureRawBody(req, _res, buffer) {
+    if (!isMcpRequestPath(req.originalUrl)) return;
+    req.rawBody = buffer.toString('utf8');
+}
 
 // Prevent JSON serialization crashes for DB bigint fields (e.g. telegramId).
 app.set('json replacer', (_key, value) => (typeof value === 'bigint' ? value.toString() : value));
@@ -37,7 +103,7 @@ app.set('json replacer', (_key, value) => (typeof value === 'bigint' ? value.toS
 app.set('trust proxy', 1);
 
 // ── Body parsing ────────────────────────────────────────────
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '1mb', verify: captureRawBody }));
 app.use(express.urlencoded({ extended: true }));
 
 // ── Session ──────────────────────────────────────────────────
@@ -86,6 +152,7 @@ app.use('/api/saved-connectors', authMiddleware, savedConnectorsRouter);
 app.use('/api/admin', adminRouter);
 
 // MCP endpoints: split into flows read-only, flows-edit write, and debug
+app.use(mcpRequestLogger);
 app.use('/api/mcp', mcpFlowsRouter);
 app.use('/api/mcp-edit', mcpFlowsEditRouter);
 app.use('/api/mcp-debug', mcpDebugRouter);
@@ -110,6 +177,7 @@ app.use((err, req, res, next) => {
     logger.warn('MCP JSON parse error', {
         path: req.originalUrl,
         message: err.message,
+        rawBody: truncateForLog(req.rawBody || ''),
     });
 
     return res.status(400).json({

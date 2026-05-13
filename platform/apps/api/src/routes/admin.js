@@ -186,4 +186,24 @@ router.post('/projects/:slug/run-regressions',
     })
 );
 
+// GET /api/admin/mcp-config — ready-to-copy MCP URLs for admin UI
+router.get('/mcp-config',
+    asyncHandler(async (_req, res) => {
+        const token = process.env.MCP_SECRET || null;
+        const baseUrl = process.env.PUBLIC_URL || 'https://flows.fineko.space';
+        const withToken = (path) => token ? `${baseUrl}${path}?token=${token}` : `${baseUrl}${path}`;
+
+        res.json({
+            ok: true,
+            data: {
+                token,
+                baseUrl,
+                flowsUrl: withToken('/api/mcp'),
+                flowsEditUrl: withToken('/api/mcp-edit'),
+                debugUrl: withToken('/api/mcp-debug'),
+            },
+        });
+    })
+);
+
 module.exports = router;

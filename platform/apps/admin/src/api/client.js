@@ -102,6 +102,7 @@ export const api = {
         return req('GET', `/admin/api-logs${q ? '?' + q : ''}`);
     },
     getLogs: (tab = 'all') => req('GET', `/admin/logs?tab=${tab}`),
+    getMcpConfig: () => req('GET', '/admin/mcp-config'),
     runBotRegression: (botId) => req('POST', `/admin/bots/${botId}/run-regression`),
     runProjectRegressions: (projectSlug) => req('POST', `/admin/projects/${projectSlug}/run-regressions`),
 

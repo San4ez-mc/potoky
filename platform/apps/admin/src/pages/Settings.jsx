@@ -1,10 +1,16 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
+import { api } from '../api/client.js';
 
 export function Settings() {
     const [copied, setCopied] = useState('');
     const [activeSection, setActiveSection] = useState('mcp');
+    const [mcpConfig, setMcpConfig] = useState(null);
 
-    const mcpToken = localStorage.getItem('mcpToken') || '<YOUR_MCP_TOKEN>';
+    useEffect(() => {
+        api.getMcpConfig()
+            .then((data) => setMcpConfig(data || null))
+            .catch(() => setMcpConfig(null));
+    }, []);
 
     const endpoints = useMemo(() => ([
         {
@@ -13,7 +19,7 @@ export function Settings() {
             name: 'Flows MCP',
             description: 'Читання воронок, нод, конекторів, статистики',
             tools: 6,
-            url: `https://flows.fineko.space/api/mcp?token=${mcpToken}`,
+            url: mcpConfig?.flowsUrl || 'https://flows.fineko.space/api/mcp',
         },
         {
             id: 'flows-edit',
@@ -21,7 +27,7 @@ export function Settings() {
             name: 'Flows Edit MCP',
             description: 'Створення і редагування ботів, нод, ключів',
             tools: 10,
-            url: `https://flows.fineko.space/api/mcp-edit?token=${mcpToken}`,
+            url: mcpConfig?.flowsEditUrl || 'https://flows.fineko.space/api/mcp-edit',
         },
         {
             id: 'debug',
@@ -29,9 +35,9 @@ export function Settings() {
             name: 'Debug MCP',
             description: 'Сесії, логи помилок, тест-сесії, історія повідомлень',
             tools: 10,
-            url: `https://flows.fineko.space/api/mcp-debug?token=${mcpToken}`,
+            url: mcpConfig?.debugUrl || 'https://flows.fineko.space/api/mcp-debug',
         },
-    ]), [mcpToken]);
+    ]), [mcpConfig]);
 
     const copyToClipboard = (text) => {
         navigator.clipboard.writeText(text);

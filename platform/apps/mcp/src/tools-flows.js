@@ -26,8 +26,8 @@ const TOOLS = [
         },
     },
     {
-        name: 'create_funnel',
-        description: 'Create a new bot or funnel in a project. Use this to add a new bot, create a new flow, register a new funnel, or start a new automation workflow.',
+        name: 'new_bot',
+        description: 'Instantiates a new bot record with an empty FlowDefinition in PostgreSQL for the finance-course project.',
         inputSchema: {
             type: 'object',
             properties: {
@@ -511,6 +511,7 @@ async function callTool(name, args = {}) {
     switch (name) {
         case 'list_funnels': return listFunnels();
         case 'get_funnel': return getFunnel(args);
+        case 'new_bot': return createFunnel(args);
         case 'create_funnel': return createFunnel(args);
         case 'update_node': return updateNode(args);
         case 'add_node': return addNode(args);

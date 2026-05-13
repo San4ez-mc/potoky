@@ -1,5 +1,6 @@
-import React, { lazy, Suspense } from 'react';
+import React, { lazy, Suspense, useEffect, useState } from 'react';
 import { useFunnelStore } from '../../stores/funnelStore.js';
+import { api } from '../../api/client.js';
 
 const MonacoEditor = lazy(() => import('@monaco-editor/react'));
 
@@ -164,7 +165,42 @@ function ConditionNodeEditor({ data, update }) {
 }
 
 function ConnectorNodeEditor({ data, update, connectors }) {
+    const [savedConnectors, setSavedConnectors] = useState([]);
+    const [useMode, setUseMode] = useState(data.savedConnectorId ? 'saved' : 'manual');
+
+    useEffect(() => {
+        api.getSavedConnectors()
+            .then(res => setSavedConnectors(res?.data || []))
+            .catch(() => setSavedConnectors([]));
+    }, []);
+
     const connector = connectors.find(c => c.type === data.connectorType);
+    const filteredSaved = data.connectorType
+        ? savedConnectors.filter(s => s.type === data.connectorType)
+        : savedConnectors;
+
+    const handleSelectSaved = (id) => {
+        const sc = savedConnectors.find(s => s.id === id);
+        if (sc) {
+            update({
+                savedConnectorId: sc.id,
+                savedConnectorName: sc.name,
+                connectorType: sc.type,
+                config: sc.config,
+                label: sc.name,
+            });
+        } else {
+            update({ savedConnectorId: null, savedConnectorName: null });
+        }
+    };
+
+    const handleModeSwitch = (mode) => {
+        setUseMode(mode);
+        if (mode === 'manual') {
+            update({ savedConnectorId: null, savedConnectorName: null });
+        }
+    };
+
     return (
         <div className="space-y-3">
             <Field label="Тип конектора">
@@ -172,7 +208,7 @@ function ConnectorNodeEditor({ data, update, connectors }) {
                     value={data.connectorType || ''}
                     onChange={e => {
                         const c = connectors.find(x => x.type === e.target.value);
-                        update({ connectorType: e.target.value, connectorIcon: c?.icon, label: c?.name });
+                        update({ connectorType: e.target.value, connectorIcon: c?.icon, label: c?.name, savedConnectorId: null, savedConnectorName: null });
                     }}
                     className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
                 >
@@ -182,7 +218,50 @@ function ConnectorNodeEditor({ data, update, connectors }) {
                     ))}
                 </select>
             </Field>
-            {connector && (
+
+            {/* Mode toggle */}
+            <div className="flex rounded-lg overflow-hidden border border-gray-700 text-xs">
+                <button
+                    onClick={() => handleModeSwitch('saved')}
+                    className={`flex-1 py-2 transition-colors ${useMode === 'saved' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
+                >
+                    📁 Збережений конектор
+                </button>
+                <button
+                    onClick={() => handleModeSwitch('manual')}
+                    className={`flex-1 py-2 transition-colors ${useMode === 'manual' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
+                >
+                    ✏️ Ввести вручну
+                </button>
+            </div>
+
+            {useMode === 'saved' && (
+                <Field label="Оберіть збережений конектор">
+                    {filteredSaved.length === 0 ? (
+                        <div className="text-xs text-gray-500 bg-gray-800 rounded-lg px-3 py-3 border border-gray-700">
+                            {data.connectorType
+                                ? `Немає збережених конекторів типу "${data.connectorType}". Спершу створіть їх на сторінці Конектори.`
+                                : 'Спочатку оберіть тип конектора.'}
+                        </div>
+                    ) : (
+                        <select
+                            value={data.savedConnectorId || ''}
+                            onChange={e => handleSelectSaved(e.target.value)}
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+                        >
+                            <option value="">— Оберіть конектор —</option>
+                            {filteredSaved.map(sc => (
+                                <option key={sc.id} value={sc.id}>{sc.name}</option>
+                            ))}
+                        </select>
+                    )}
+                    {data.savedConnectorId && (
+                        <div className="text-xs text-green-400 mt-1">✓ Конектор: {data.savedConnectorName}</div>
+                    )}
+                </Field>
+            )}
+
+            {(useMode === 'manual' || (useMode === 'saved' && !data.savedConnectorId)) && connector && (
                 <Field label="Конфігурація (JSON)">
                     <CodeBlock
                         value={data.config ? JSON.stringify(data.config, null, 2) : '{}'}
@@ -192,6 +271,12 @@ function ConnectorNodeEditor({ data, update, connectors }) {
                         language="json"
                     />
                 </Field>
+            )}
+
+            {useMode === 'saved' && data.savedConnectorId && (
+                <div className="text-xs text-gray-500 bg-gray-800 rounded-lg px-3 py-2 border border-gray-700">
+                    Конфігурація підтягується автоматично зі збереженого конектора
+                </div>
             )}
         </div>
     );

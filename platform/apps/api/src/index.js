@@ -21,6 +21,7 @@ const adminRouter = require('./routes/admin');
 const webhookRouter = require('./routes/webhook');
 const funnelsRouter = require('./routes/funnels');
 const connectorsRouter = require('./routes/connectors');
+const savedConnectorsRouter = require('./routes/saved-connectors');
 const mcpRouter = require('./routes/mcp');
 const mcpFlowsRouter = require('./routes/mcp-flows');
 const mcpDebugRouter = require('./routes/mcp-debug');
@@ -80,6 +81,7 @@ app.use('/api/sessions', authMiddleware, sessionsRouter);
 app.use('/api/users', authMiddleware, usersRouter);
 app.use('/api/funnels', authMiddleware, funnelsRouter);
 app.use('/api/connectors', authMiddleware, connectorsRouter);
+app.use('/api/saved-connectors', authMiddleware, savedConnectorsRouter);
 app.use('/api/admin', adminRouter);
 
 // MCP endpoints: split into flows (manage funnels) and debug (sessions, logs, test)

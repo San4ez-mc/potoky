@@ -266,6 +266,20 @@ model ConnectorDef {
   @@map("connector_defs")
 }
 
+model SavedConnector {
+  id          String   @id @default(uuid())
+  name        String   @db.VarChar(100)
+  type        String   @db.VarChar(50)
+  description String?  @db.Text
+  config      Json     @default("{}")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([type])
+  @@map("saved_connectors")
+}
+
 // ============================================================
 // GLOBAL KEYS (проектные ключи и токены)
 // ============================================================

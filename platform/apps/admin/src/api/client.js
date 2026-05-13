@@ -54,8 +54,15 @@ export const api = {
     deleteFunnelKey: (botId, key) => req('DELETE', `/funnels/${botId}/keys/${key}`),
     revealFunnelKey: (botId, key) => req('GET', `/funnels/${botId}/keys/${key}/reveal`),
 
-    // Connectors
+    // Connectors (type definitions)
     getConnectors: () => req('GET', '/connectors'),
+
+    // Saved Connectors (instances with real credentials)
+    getSavedConnectors: () => req('GET', '/saved-connectors'),
+    getSavedConnector: (id) => req('GET', `/saved-connectors/${id}`),
+    createSavedConnector: (data) => req('POST', '/saved-connectors', data),
+    updateSavedConnector: (id, data) => req('PUT', `/saved-connectors/${id}`, data),
+    deleteSavedConnector: (id) => req('DELETE', `/saved-connectors/${id}`),
 
     // Sessions
     getSession: (id) => req('GET', `/sessions/${id}`),

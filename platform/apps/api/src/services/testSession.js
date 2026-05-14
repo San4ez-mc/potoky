@@ -794,6 +794,51 @@ ${sourceContent || '(немає даних)'}
             continue;
         }
 
+        if (node.type === 'fetchTelegramProfile') {
+            // Fetch Telegram bio and profile photo for the current user (silent node)
+            try {
+                const user = session.user || await db.user.findUnique({ where: { id: session.userId }, select: { telegramId: true } });
+                const telegramId = user?.telegramId;
+
+                if (telegramId) {
+                    // Load bot token from funnelKey
+                    const tokenKey = await db.funnelKey.findUnique({
+                        where: { botId_key: { botId: session.botId, key: 'TELEGRAM_BOT_TOKEN' } },
+                        select: { value: true },
+                    });
+                    const token = tokenKey?.value || process.env.TELEGRAM_BOT_TOKEN || '';
+
+                    if (token) {
+                        const tgApiBase = `https://api.telegram.org/bot${token}`;
+
+                        // Get chat info for bio
+                        const chatRes = await fetch(`${tgApiBase}/getChat?chat_id=${telegramId}`);
+                        const chatData = await chatRes.json();
+                        ctx.tg_bio = chatData?.result?.bio || null;
+
+                        // Get profile photo
+                        const photoRes = await fetch(`${tgApiBase}/getUserProfilePhotos?user_id=${telegramId}&limit=1`);
+                        const photoData = await photoRes.json();
+                        const fileId = photoData?.result?.photos?.[0]?.[0]?.file_id;
+
+                        if (fileId) {
+                            const fileRes = await fetch(`${tgApiBase}/getFile?file_id=${fileId}`);
+                            const fileData = await fileRes.json();
+                            const filePath = fileData?.result?.file_path;
+                            if (filePath) {
+                                ctx.tg_photo_url = `https://api.telegram.org/file/bot${token}/${filePath}`;
+                            }
+                        }
+                    }
+                }
+            } catch (tgError) {
+                console.warn('[fetchTelegramProfile] Error (non-fatal):', tgError.message);
+            }
+
+            runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
+            continue;
+        }
+
         if (node.type === 'connector') {
             const connectorType = data.connectorType || '';
             const action = data.action || '';

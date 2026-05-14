@@ -391,6 +391,22 @@ function ConnectorNodeEditor({ data, update, connectors }) {
     );
 }
 
+function FetchTelegramProfileNodeEditor() {
+    return (
+        <div className="space-y-2">
+            <div className="text-xs text-gray-400 bg-gray-800 rounded-lg px-3 py-3 border border-gray-700">
+                <div className="font-medium text-sky-400 mb-1">👤 Отримання профілю Telegram</div>
+                <div>Тихо завантажує дані профілю користувача:</div>
+                <ul className="mt-1 space-y-0.5 text-gray-500">
+                    <li>• <code className="text-sky-300">context.tg_bio</code> — опис профілю</li>
+                    <li>• <code className="text-sky-300">context.tg_photo_url</code> — URL фото профілю</li>
+                </ul>
+                <div className="mt-2 text-gray-500">Потребує ключ <code>TELEGRAM_BOT_TOKEN</code> у налаштуваннях бота.</div>
+            </div>
+        </div>
+    );
+}
+
 function StartNodeEditor({ data, update }) {
     return (
         <div className="space-y-3">
@@ -739,6 +755,7 @@ export function NodeEditor({ embedded = false, onClose }) {
             case 'tag': return <TagNodeEditor data={data} update={update} />;
             case 'abtest': return <ABTestNodeEditor data={data} update={update} />;
             case 'generateDocument': return <GenerateDocumentNodeEditor data={data} update={update} />;
+            case 'fetchTelegramProfile': return <FetchTelegramProfileNodeEditor />;
             default: return <div className="text-gray-500 text-sm">Немає налаштувань для цього вузла</div>;
         }
     };

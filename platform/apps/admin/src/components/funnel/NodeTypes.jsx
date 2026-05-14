@@ -249,6 +249,13 @@ export const HttpEncodeNode = memo(({ id, selected, data }) => (
     </BaseNode>
 ));
 
+// ─── Fetch Telegram Profile Node ──────────────────────────────────────────────
+export const FetchTelegramProfileNode = memo(({ id, selected, data }) => (
+    <BaseNode id={id} selected={selected} color="bg-sky-700" icon="👤" label={data.label || 'TG профіль'}>
+        <div className="text-sky-300 text-[11px]">→ tg_bio, tg_photo_url</div>
+    </BaseNode>
+));
+
 // ─── HTTP Request Node ─────────────────────────────────────────────────────────
 export const HttpRequestNode = memo(({ id, selected, data }) => (
     <BaseNode id={id} selected={selected} color="bg-teal-700" icon="🌐" label={data.label || 'HTTP запит'}>
@@ -282,6 +289,7 @@ export const NODE_TYPES = {
     tag: TagNode,
     abtest: ABTestNode,
     generateDocument: GenerateDocumentNode,
+    fetchTelegramProfile: FetchTelegramProfileNode,
 };
 
 // ─── Node palette items (for drag sidebar) ────────────────────────────────────
@@ -301,4 +309,5 @@ export const NODE_PALETTE = [
     { type: 'tag', icon: '🏷️', label: 'Тег', color: 'border-red-700', defaultData: { tag: '', action: 'add' } },
     { type: 'abtest', icon: '🧪', label: 'A/B тест', color: 'border-purple-700', defaultData: { variantA: '', variantB: '', percentA: 50, percentB: 50 } },
     { type: 'generateDocument', icon: '📄', label: 'Генерувати документ', color: 'border-emerald-700', defaultData: { template: 'student_profile', sourceVar: 'context.onboarding_result', filename: 'document.docx', sendToUser: true } },
+    { type: 'fetchTelegramProfile', icon: '👤', label: 'TG профіль', color: 'border-sky-700', defaultData: {} },
 ];

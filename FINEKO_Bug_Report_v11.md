@@ -359,7 +359,7 @@ start_onboarding
 ```json
 {
   "name": "...",
-  "role": "...",
+**Статус:** ✅ Виправлено  
   "company_description": "...",
   "main_problem": "...",
   "tg_bio": "{{context.tg_bio}}",

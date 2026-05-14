@@ -159,6 +159,29 @@ export function FunnelEditor() {
     const [testResult, setTestResult] = useState(null);
     const [isSavingEdit, setIsSavingEdit] = useState(false);
     const [missingSystemKeys, setMissingSystemKeys] = useState([]);
+    const [isCompactLayout, setIsCompactLayout] = useState(false);
+
+    useEffect(() => {
+        const media = window.matchMedia('(max-width: 1200px)');
+        const apply = () => setIsCompactLayout(media.matches);
+        apply();
+        if (typeof media.addEventListener === 'function') {
+            media.addEventListener('change', apply);
+            return () => media.removeEventListener('change', apply);
+        }
+        media.addListener(apply);
+        return () => media.removeListener(apply);
+    }, []);
+
+    const openLeftPanel = () => {
+        setLeftPanelOpen(true);
+        if (isCompactLayout) setRightPanelOpen(false);
+    };
+
+    const openRightPanel = () => {
+        setRightPanelOpen(true);
+        if (isCompactLayout) setLeftPanelOpen(false);
+    };
 
     const loadSystemKeysStatus = async () => {
         try {
@@ -284,7 +307,7 @@ export function FunnelEditor() {
     }, []);
 
     useEffect(() => {
-        if (selectedNode) setRightPanelOpen(true);
+        if (selectedNode) openRightPanel();
     }, [selectedNode?.id]);
 
     if (isLoading) return (
@@ -319,14 +342,14 @@ export function FunnelEditor() {
                 />
                 <div className="relative flex flex-1 overflow-hidden">
                     {!isLeftPanelOpen && (
-                        <PanelToggle side="left" onClick={() => setLeftPanelOpen(true)} />
+                        <PanelToggle side="left" onClick={openLeftPanel} />
                     )}
                     {!isRightPanelOpen && (
-                        <PanelToggle side="right" onClick={() => setRightPanelOpen(true)} />
+                        <PanelToggle side="right" onClick={openRightPanel} />
                     )}
 
                     {isLeftPanelOpen && (
-                        <div className="w-80 shrink-0 bg-gray-950 border-r border-gray-800 flex flex-col overflow-hidden">
+                        <div className="absolute inset-y-0 left-0 z-20 w-[320px] max-w-[92vw] bg-gray-950 border-r border-gray-800 flex flex-col overflow-hidden shadow-2xl shadow-black/40 xl:static xl:z-auto xl:w-80 xl:max-w-none xl:shadow-none">
                             <div className="px-4 py-3 border-b border-gray-800 flex items-start justify-between gap-3">
                                 <div>
                                     <div className="text-sm font-semibold text-white">Панель</div>
@@ -357,10 +380,10 @@ export function FunnelEditor() {
                         </div>
                     )}
 
-                    <FunnelCanvas onNodeClick={() => setRightPanelOpen(true)} />
+                    <FunnelCanvas onNodeClick={openRightPanel} />
 
                     {isRightPanelOpen && (
-                        <div className="w-80 shrink-0 bg-gray-950 border-l border-gray-800 flex flex-col overflow-hidden">
+                        <div className="absolute inset-y-0 right-0 z-20 w-[320px] max-w-[92vw] bg-gray-950 border-l border-gray-800 flex flex-col overflow-hidden shadow-2xl shadow-black/40 xl:static xl:z-auto xl:w-80 xl:max-w-none xl:shadow-none">
                             <div className="px-4 py-3 border-b border-gray-800 flex items-start justify-between gap-3">
                                 <div>
                                     <div className="text-sm font-semibold text-white">{selectedNode ? 'Налаштування ноди' : 'Панель ноди'}</div>

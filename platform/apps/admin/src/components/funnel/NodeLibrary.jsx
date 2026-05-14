@@ -14,7 +14,7 @@ function PaletteItem({ item }) {
             draggable
             onDragStart={onDragStart}
             className={clsx(
-                'flex items-center gap-2 px-3 py-2 rounded-lg border cursor-grab active:cursor-grabbing',
+                'w-full flex items-center gap-2 px-3 py-2 rounded-lg border cursor-grab active:cursor-grabbing',
                 'bg-gray-900 hover:bg-gray-800 transition-colors',
                 item.color
             )}
@@ -41,7 +41,7 @@ function ConnectorItem({ connector }) {
         <div
             draggable
             onDragStart={onDragStart}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-cyan-900 bg-gray-900 hover:bg-gray-800 transition-colors cursor-grab active:cursor-grabbing"
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-cyan-900 bg-gray-900 hover:bg-gray-800 transition-colors cursor-grab active:cursor-grabbing"
             title={connector.description}
         >
             <span>{connector.icon || '🔌'}</span>

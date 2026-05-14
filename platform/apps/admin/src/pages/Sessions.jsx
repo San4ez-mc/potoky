@@ -170,20 +170,19 @@ export function Sessions() {
             ) : (
                 <div className="w-full rounded-xl border border-gray-800 overflow-hidden bg-gray-900">
                     <div className="overflow-x-auto">
-                        <table className="min-w-full text-sm">
+                        <table className="w-full table-fixed text-xs">
                             <thead className="bg-gray-950 border-b border-gray-800 text-xs uppercase tracking-wider text-gray-400">
                                 <tr>
-                                    <th className="px-3 py-2 text-left w-10">✓</th>
-                                    <th className="px-3 py-2 text-left">Статус</th>
-                                    <th className="px-3 py-2 text-left">Користувач</th>
-                                    <th className="px-3 py-2 text-left">Бот</th>
-                                    <th className="px-3 py-2 text-left">Стан</th>
-                                    <th className="px-3 py-2 text-right">Повідомл.</th>
-                                    <th className="px-3 py-2 text-right">API</th>
-                                    <th className="px-3 py-2 text-right">Помилки</th>
-                                    <th className="px-3 py-2 text-left">Початок</th>
-                                    <th className="px-3 py-2 text-left">Session ID</th>
-                                    <th className="px-3 py-2 text-right">Дії</th>
+                                    <th className="px-2 py-2 text-left w-8">✓</th>
+                                    <th className="px-2 py-2 text-left w-24">Статус</th>
+                                    <th className="px-2 py-2 text-left">Користувач</th>
+                                    <th className="px-2 py-2 text-left w-16">Бот</th>
+                                    <th className="px-2 py-2 text-left w-20">Стан</th>
+                                    <th className="px-2 py-2 text-right w-20">Пов./API</th>
+                                    <th className="px-2 py-2 text-right w-16">Пом.</th>
+                                    <th className="px-2 py-2 text-left w-24">Початок</th>
+                                    <th className="px-2 py-2 text-left w-16">ID</th>
+                                    <th className="px-2 py-2 text-right w-48">Дії</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -202,7 +201,7 @@ export function Sessions() {
 
                                     return (
                                         <tr key={s.id} className={`border-b border-gray-800/80 hover:bg-gray-800/40 ${isSelected ? 'bg-blue-900/10' : ''}`}>
-                                            <td className="px-3 py-2 align-top">
+                                            <td className="px-2 py-2 align-top">
                                                 <input
                                                     type="checkbox"
                                                     checked={isSelected}
@@ -210,50 +209,49 @@ export function Sessions() {
                                                     className="rounded border-gray-600 bg-gray-800"
                                                 />
                                             </td>
-                                            <td className="px-3 py-2 align-top">
+                                            <td className="px-2 py-2 align-top">
                                                 <span className={`inline-flex text-xs px-2 py-0.5 rounded-full border ${s.isActive ? 'text-emerald-400 bg-emerald-900/30 border-emerald-800' : 'text-gray-400 bg-gray-900 border-gray-700'}`}>
                                                     {s.isActive ? 'активна' : 'завершена'}
                                                 </span>
                                             </td>
-                                            <td className="px-3 py-2 align-top">
-                                                <div className="text-sm text-white font-medium">{fullName}</div>
-                                                <div className="text-xs text-gray-500">{tgHandle} · ID: {tgId}</div>
+                                            <td className="px-2 py-2 align-top">
+                                                <div className="text-sm text-white font-medium truncate" title={fullName}>{fullName}</div>
+                                                <div className="text-xs text-gray-500 truncate" title={`${tgHandle} · ID: ${tgId}`}>{tgHandle} · ID: {tgId}</div>
                                             </td>
-                                            <td className="px-3 py-2 align-top text-xs text-gray-400 font-mono">
+                                            <td className="px-2 py-2 align-top text-xs text-gray-400 font-mono truncate" title={s.bot?.slug ? `/${s.bot.slug}` : '—'}>
                                                 {s.bot?.slug ? `/${s.bot.slug}` : '—'}
                                             </td>
-                                            <td className="px-3 py-2 align-top text-xs text-gray-400 font-mono">{s.state || '—'}</td>
-                                            <td className="px-3 py-2 align-top text-right text-gray-300">{msgCount}</td>
-                                            <td className="px-3 py-2 align-top text-right text-gray-300">{apiCount}</td>
-                                            <td className="px-3 py-2 align-top text-right">
+                                            <td className="px-2 py-2 align-top text-xs text-gray-400 font-mono truncate" title={s.state || '—'}>{s.state || '—'}</td>
+                                            <td className="px-2 py-2 align-top text-right text-gray-300">{msgCount} / {apiCount}</td>
+                                            <td className="px-2 py-2 align-top text-right">
                                                 {errCount > 0 ? (
                                                     <span className="text-xs text-red-300 bg-red-900/30 border border-red-800 rounded-full px-2 py-0.5">{errCount}</span>
                                                 ) : (
                                                     <span className="text-xs text-gray-600">0</span>
                                                 )}
                                             </td>
-                                            <td className="px-3 py-2 align-top text-xs text-gray-500 whitespace-nowrap">
-                                                {s.startedAt ? format(new Date(s.startedAt), 'dd.MM.yyyy HH:mm') : '—'}
+                                            <td className="px-2 py-2 align-top text-xs text-gray-500 whitespace-nowrap">
+                                                {s.startedAt ? format(new Date(s.startedAt), 'dd.MM HH:mm') : '—'}
                                             </td>
-                                            <td className="px-3 py-2 align-top text-xs text-gray-600 font-mono whitespace-nowrap">{s.id.slice(0, 8)}…</td>
-                                            <td className="px-3 py-2 align-top">
-                                                <div className="flex items-center justify-end gap-1.5">
+                                            <td className="px-2 py-2 align-top text-xs text-gray-600 font-mono whitespace-nowrap">{s.id.slice(0, 6)}…</td>
+                                            <td className="px-2 py-2 align-top">
+                                                <div className="flex items-center justify-end gap-1">
                                                     <button
                                                         onClick={() => handleOpenErrors(s)}
-                                                        className="px-2 py-1 text-xs rounded border border-amber-800 text-amber-400 hover:bg-amber-900/30"
+                                                        className="px-1.5 py-1 text-[11px] rounded border border-amber-800 text-amber-400 hover:bg-amber-900/30"
                                                     >
                                                         Помилки
                                                     </button>
                                                     <button
                                                         onClick={() => handleDeleteOne(s)}
                                                         disabled={deleting}
-                                                        className="px-2 py-1 text-xs rounded border border-red-800 text-red-400 hover:bg-red-900/30 disabled:opacity-50"
+                                                        className="px-1.5 py-1 text-[11px] rounded border border-red-800 text-red-400 hover:bg-red-900/30 disabled:opacity-50"
                                                     >
                                                         Видалити
                                                     </button>
                                                     <Link
                                                         to={`/sessions/${s.id}?back=${encodeURIComponent(backTo)}`}
-                                                        className="px-2 py-1 text-xs rounded border border-gray-700 text-gray-300 hover:bg-gray-800"
+                                                        className="px-1.5 py-1 text-[11px] rounded border border-gray-700 text-gray-300 hover:bg-gray-800"
                                                     >
                                                         Відкрити
                                                     </Link>

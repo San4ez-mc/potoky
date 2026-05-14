@@ -1,6 +1,196 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { api } from '../api/client.js';
 
+function KeysSection() {
+    const [keys, setKeys] = useState([]);
+    const [selectedKey, setSelectedKey] = useState('CLAUDE_API_KEY');
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+    const [error, setError] = useState('');
+    const [saved, setSaved] = useState(false);
+    const [showValue, setShowValue] = useState(false);
+    const [form, setForm] = useState({
+        key: 'CLAUDE_API_KEY',
+        label: '',
+        description: '',
+        isSecret: true,
+        value: '',
+    });
+
+    const applySelectedKey = (keyName, list) => {
+        const item = (list || []).find((x) => x.key === keyName) || (list || [])[0] || null;
+        if (!item) return;
+        setSelectedKey(item.key);
+        setShowValue(false);
+        setForm({
+            key: item.key,
+            label: item.label || item.key,
+            description: item.description || '',
+            isSecret: item.isSecret !== false,
+            value: '',
+        });
+    };
+
+    const loadKeys = async () => {
+        setLoading(true);
+        setError('');
+        try {
+            const data = await api.getSystemKeys();
+            const list = data || [];
+            setKeys(list);
+            applySelectedKey(selectedKey, list);
+        } catch (err) {
+            setError(err.message || 'Не вдалося завантажити системні ключі');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        loadKeys();
+    }, []);
+
+    const reveal = async () => {
+        setError('');
+        try {
+            const res = await api.revealSystemKey(form.key);
+            setForm((prev) => ({ ...prev, value: res.value || '' }));
+            setShowValue(true);
+        } catch (err) {
+            setError(err.message || 'Не вдалося показати значення ключа');
+        }
+    };
+
+    const save = async () => {
+        if (!form.value.trim()) {
+            setError('Введіть значення ключа');
+            return;
+        }
+        setSaving(true);
+        setError('');
+        setSaved(false);
+        try {
+            await api.upsertSystemKey(form.key, form.value.trim(), form.label, form.description, true);
+            setSaved(true);
+            setTimeout(() => setSaved(false), 1500);
+            await loadKeys();
+            setShowValue(false);
+            setForm((prev) => ({ ...prev, value: '' }));
+        } catch (err) {
+            setError(err.message || 'Не вдалося зберегти ключ');
+        } finally {
+            setSaving(false);
+        }
+    };
+    const current = keys.find((item) => item.key === form.key);
+
+    return (
+        <div className="space-y-6">
+            <div className="bg-gray-800 rounded-lg border border-gray-700 p-6">
+                <h2 className="text-lg font-semibold text-white mb-1">Ключі системних конекторів</h2>
+                <p className="text-sm text-gray-400 mb-4">
+                    Ці ключі використовуються платформою глобально. Тут налаштовуються Claude API, Telegram ID адміна та ціна курсу.
+                </p>
+
+                {loading ? (
+                    <div className="text-gray-400">Завантаження...</div>
+                ) : (
+                    <div className="mb-4 rounded-lg border border-gray-700 bg-gray-900 p-3 space-y-2">
+                        {keys.map((item) => (
+                            <button
+                                key={item.key}
+                                onClick={() => applySelectedKey(item.key, keys)}
+                                className={`w-full text-left rounded-lg border px-3 py-2 transition-colors ${selectedKey === item.key ? 'border-brand bg-gray-800' : 'border-gray-700 hover:border-gray-500 bg-gray-900'}`}
+                            >
+                                <div className="flex items-center justify-between gap-2">
+                                    <div>
+                                        <div className="text-sm text-white font-medium">{item.key}</div>
+                                        <div className="text-xs text-gray-500">{item.description}</div>
+                                    </div>
+                                    <span className={`text-xs px-2 py-0.5 rounded-full border ${item.exists ? 'text-emerald-300 border-emerald-800 bg-emerald-900/30' : 'text-red-300 border-red-800 bg-red-900/30'}`}>
+                                        {item.exists ? 'Налаштовано' : 'Не налаштовано'}
+                                    </span>
+                                </div>
+                            </button>
+                        ))}
+                    </div>
+                )}
+
+                <div className="space-y-3">
+                    <div>
+                        <label className="text-xs text-gray-400 block mb-1">Ключ</label>
+                        <input
+                            value={form.key}
+                            disabled
+                            className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-400 font-mono"
+                        />
+                    </div>
+                    <div>
+                        <label className="text-xs text-gray-400 block mb-1">Назва</label>
+                        <input
+                            value={form.label}
+                            onChange={(e) => setForm((prev) => ({ ...prev, label: e.target.value }))}
+                            className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white"
+                        />
+                    </div>
+                    <div>
+                        <label className="text-xs text-gray-400 block mb-1">Значення</label>
+                        <div className="flex gap-2">
+                            <input
+                                type={form.isSecret && !showValue ? 'password' : 'text'}
+                                value={form.value}
+                                onChange={(e) => setForm((prev) => ({ ...prev, value: e.target.value }))}
+                                placeholder={form.key === 'CLAUDE_API_KEY' ? 'sk-ant-api03-...' : 'Введіть значення'}
+                                className="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono"
+                            />
+                            {form.isSecret && (
+                                <button
+                                    onClick={() => setShowValue((v) => !v)}
+                                    className="px-3 py-2 text-xs rounded border border-gray-600 text-gray-300 hover:bg-gray-700"
+                                >
+                                    {showValue ? 'Сховати' : 'Показати'}
+                                </button>
+                            )}
+                            <button
+                                onClick={reveal}
+                                className="px-3 py-2 text-xs rounded border border-gray-600 text-gray-300 hover:bg-gray-700"
+                                title="Підтягнути поточне значення з БД у поле"
+                            >
+                                Підтягнути з БД
+                            </button>
+                        </div>
+                    </div>
+                    <div>
+                        <label className="text-xs text-gray-400 block mb-1">Опис</label>
+                        <input
+                            value={form.description}
+                            onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
+                            className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white"
+                        />
+                    </div>
+
+                    {current?.updatedAt && (
+                        <div className="text-xs text-gray-500">Оновлено: {new Date(current.updatedAt).toLocaleString('uk-UA')}</div>
+                    )}
+
+                    {error && <div className="text-sm text-red-400 bg-red-900/20 border border-red-900/40 rounded px-3 py-2">{error}</div>}
+                    {saved && <div className="text-sm text-emerald-300 bg-emerald-900/20 border border-emerald-900/40 rounded px-3 py-2">Ключ збережено</div>}
+
+                    <div className="flex justify-end">
+                        <button
+                            onClick={save}
+                            disabled={saving}
+                            className="px-4 py-2 text-sm rounded bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white"
+                        >
+                            {saving ? 'Збереження...' : 'Зберегти ключ'}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 export function Settings() {
     const [copied, setCopied] = useState('');
     const [activeSection, setActiveSection] = useState('mcp');
@@ -56,6 +246,7 @@ export function Settings() {
             <div className="flex gap-4 mb-6 border-b border-gray-700">
                 {[
                     { id: 'mcp', label: '🧠 MCP' },
+                    { id: 'keys', label: '🔑 Ключі' },
                     { id: 'account', label: '👤 Акаунт', desc: 'Мій профіль' },
                 ].map(tab => (
                     <button
@@ -111,6 +302,8 @@ export function Settings() {
                     </div>
                 </div>
             )}
+
+            {activeSection === 'keys' && <KeysSection />}
 
             {/* Account Section */}
             {activeSection === 'account' && (

@@ -320,6 +320,27 @@ async function persistUserMessage(sessionId, content) {
     });
 }
 
+async function getSystemKeyValue(keyName) {
+    const typeByKey = {
+        CLAUDE_API_KEY: 'system_claude_api',
+        ADMIN_TELEGRAM_ID: 'system_admin_telegram_id',
+        COURSE_PRICE: 'system_course_price',
+        COURSE_PRICE_INT: 'system_course_price_int',
+    };
+    const connectorType = typeByKey[keyName];
+    if (!connectorType) return null;
+
+    const connector = await db.savedConnector.findFirst({
+        where: { type: connectorType, isActive: true },
+        orderBy: { updatedAt: 'desc' },
+        select: { config: true },
+    });
+
+    if (!connector?.config || typeof connector.config !== 'object') return null;
+    if (keyName === 'CLAUDE_API_KEY') return connector.config.apiKey || null;
+    return connector.config.value || null;
+}
+
 async function executeFlowStep({ sessionId, incomingUserMessage = null }) {
     const session = await db.session.findUnique({
         where: { id: sessionId },
@@ -748,6 +769,39 @@ ${sourceContent || '(немає даних)'}
             continue;
         }
 
+        if (node.type === 'wait_payment') {
+            const paid = String(ctx.wfp_payment_status || '').toLowerCase() === 'approved'
+                || String(ctx.wfp_transaction_status || '').toLowerCase() === 'approved';
+
+            if (paid) {
+                runtime.waitPaymentUntil = null;
+                runtime.waitPaymentNodeId = null;
+                runtime.currentNodeId = pickNextNodeId(flow.edges, node.id, 'paid') || pickNextNodeId(flow.edges, node.id, 'true');
+                continue;
+            }
+
+            const timeoutHours = Math.max(1, Number(data.timeoutHours || 24));
+            const timeoutMs = timeoutHours * 60 * 60 * 1000;
+            const now = Date.now();
+
+            if (!runtime.waitPaymentUntil || runtime.waitPaymentNodeId !== node.id) {
+                runtime.waitPaymentUntil = now + timeoutMs;
+                runtime.waitPaymentNodeId = node.id;
+                runtime.waitingForUser = false;
+                break;
+            }
+
+            if (now < Number(runtime.waitPaymentUntil)) {
+                runtime.waitingForUser = false;
+                break;
+            }
+
+            runtime.waitPaymentUntil = null;
+            runtime.waitPaymentNodeId = null;
+            runtime.currentNodeId = pickNextNodeId(flow.edges, node.id, 'unpaid') || pickNextNodeId(flow.edges, node.id, 'false') || pickNextNodeId(flow.edges, node.id);
+            continue;
+        }
+
         if (node.type === 'httpEncode') {
             const sourceVar = data.sourceVar ? String(data.sourceVar).replace(/^context\./, '') : '';
             const outputVar = data.outputVar ? String(data.outputVar).replace(/^context\./, '') : '';
@@ -845,6 +899,67 @@ ${sourceContent || '(немає даних)'}
             continue;
         }
 
+        if (node.type === 'sendDocument') {
+            const fileType = data.fileType ? String(data.fileType).trim() : '';
+            const fileVar = data.fileVar ? String(data.fileVar).replace(/^context\./, '') : '';
+            const caption = renderTemplate(data.caption || '', scope);
+
+            try {
+                let fileName = data.fileName ? renderTemplate(data.fileName, scope) : '';
+                let attachment = null;
+
+                if (fileVar) {
+                    const source = getByPath(ctx, fileVar);
+                    if (typeof source === 'string' && source.startsWith('http')) {
+                        attachment = { type: 'document', url: source, fileName: fileName || 'document.pdf' };
+                    } else if (source) {
+                        attachment = {
+                            type: 'document',
+                            fileName: fileName || 'document.txt',
+                            content: typeof source === 'string' ? source : JSON.stringify(source, null, 2),
+                        };
+                    }
+                }
+
+                if (!attachment && fileType) {
+                    const latestFile = await db.file.findFirst({
+                        where: {
+                            userId: session.userId,
+                            botId: session.botId,
+                            fileType,
+                        },
+                        orderBy: { createdAt: 'desc' },
+                        select: { fileName: true, filePath: true, fileType: true, content: true },
+                    });
+
+                    if (latestFile) {
+                        attachment = {
+                            type: 'document',
+                            fileName: fileName || latestFile.fileName,
+                            fileType: latestFile.fileType,
+                            filePath: latestFile.filePath,
+                            content: latestFile.content,
+                        };
+                    }
+                }
+
+                if (attachment) {
+                    const messageText = caption || `📄 Документ: ${attachment.fileName || 'document'}`;
+                    await persistAssistantMessage(session.id, messageText, {
+                        nodeId: node.id,
+                        nodeType: node.type,
+                        attachment,
+                    });
+                    lastAssistant = messageText;
+                }
+            } catch (sendDocumentError) {
+                console.error('[sendDocument] Error:', sendDocumentError.message);
+            }
+
+            runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
+            continue;
+        }
+
         if (node.type === 'fetchTelegramProfile') {
             // Fetch Telegram bio and profile photo for the current user (silent node)
             try {
@@ -892,22 +1007,16 @@ ${sourceContent || '(немає даних)'}
 
         if (node.type === 'notifyAdmin') {
             try {
-                const [adminKey, coursePriceKey] = await Promise.all([
-                    db.funnelKey.findUnique({
-                        where: { botId_key: { botId: session.botId, key: 'ADMIN_TELEGRAM_ID' } },
-                        select: { value: true },
-                    }),
-                    db.funnelKey.findUnique({
-                        where: { botId_key: { botId: session.botId, key: 'COURSE_PRICE' } },
-                        select: { value: true },
-                    }),
+                const [adminTelegramIdValue, coursePriceValue] = await Promise.all([
+                    getSystemKeyValue('ADMIN_TELEGRAM_ID'),
+                    getSystemKeyValue('COURSE_PRICE'),
                 ]);
 
                 const enrichedScope = {
                     ...scope,
                     env: {
-                        ADMIN_TELEGRAM_ID: adminKey?.value || process.env.ADMIN_TELEGRAM_ID || '',
-                        COURSE_PRICE: coursePriceKey?.value || process.env.COURSE_PRICE || '',
+                        ADMIN_TELEGRAM_ID: adminTelegramIdValue || process.env.ADMIN_TELEGRAM_ID || '',
+                        COURSE_PRICE: coursePriceValue || process.env.COURSE_PRICE || '',
                     },
                     timestamp: new Date().toISOString(),
                 };

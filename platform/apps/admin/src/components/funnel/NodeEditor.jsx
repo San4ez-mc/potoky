@@ -12,11 +12,13 @@ const EDITORS = {
     connector: [],
     saveFile: [],
     wait: [],
+    wait_payment: [],
     start: [],
     generateDocument: [],
     httpEncode: [],
     httpRequest: [],
     sendPhoto: [],
+    sendDocument: [],
     notifyAdmin: [],
 };
 
@@ -523,6 +525,27 @@ function WaitNodeEditor({ data, update }) {
     );
 }
 
+function WaitPaymentNodeEditor({ data, update }) {
+    return (
+        <div className="space-y-3">
+            <Field label="Таймаут оплати (години)">
+                <input
+                    type="number"
+                    min="1"
+                    value={data.timeoutHours || 24}
+                    onChange={e => update({ timeoutHours: Math.max(1, Number(e.target.value || 24)) })}
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-white"
+                />
+            </Field>
+            <div className="text-xs text-gray-500 bg-gray-800 rounded-lg px-3 py-2 border border-gray-700">
+                Вихід <span className="text-emerald-400">PAID</span> спрацьовує, коли
+                <code className="mx-1 text-emerald-300">context.wfp_payment_status === 'approved'</code>.
+                Інакше після таймауту піде у <span className="text-red-400">UNPAID</span>.
+            </div>
+        </div>
+    );
+}
+
 function HttpEncodeNodeEditor({ data, update }) {
     return (
         <div className="space-y-3">
@@ -576,6 +599,28 @@ function SendPhotoNodeEditor({ data, update }) {
             </Field>
             <Field label="Підпис до фото (caption)">
                 <TextInput value={data.caption} onChange={v => update({ caption: v })} placeholder="Ось ваша схема бізнес-процесу" multiline />
+            </Field>
+        </div>
+    );
+}
+
+function SendDocumentNodeEditor({ data, update }) {
+    return (
+        <div className="space-y-3">
+            <Field label="Назва ноди">
+                <TextInput value={data.label} onChange={v => update({ label: v })} placeholder="Відправити документ" />
+            </Field>
+            <Field label="Тип файлу (опційно)">
+                <TextInput value={data.fileType} onChange={v => update({ fileType: v })} placeholder="presentation_pdf" />
+            </Field>
+            <Field label="Змінна з документом/URL (опційно)">
+                <TextInput value={data.fileVar} onChange={v => update({ fileVar: v })} placeholder="context.presentation_url" />
+            </Field>
+            <Field label="Ім'я файлу (опційно)">
+                <TextInput value={data.fileName} onChange={v => update({ fileName: v })} placeholder="presentation.pdf" />
+            </Field>
+            <Field label="Підпис">
+                <TextInput value={data.caption} onChange={v => update({ caption: v })} placeholder="Ось презентація курсу" multiline />
             </Field>
         </div>
     );
@@ -790,10 +835,12 @@ export function NodeEditor({ embedded = false, onClose }) {
             case 'connector': return <ConnectorNodeEditor data={data} update={update} connectors={connectors} />;
             case 'saveFile': return <SaveFileNodeEditor data={data} update={update} />;
             case 'wait': return <WaitNodeEditor data={data} update={update} />;
+            case 'wait_payment': return <WaitPaymentNodeEditor data={data} update={update} />;
             case 'loadFile': return <LoadFileNodeEditor data={data} update={update} />;
             case 'httpEncode': return <HttpEncodeNodeEditor data={data} update={update} />;
             case 'httpRequest': return <HttpRequestNodeEditor data={data} update={update} />;
             case 'sendPhoto': return <SendPhotoNodeEditor data={data} update={update} />;
+            case 'sendDocument': return <SendDocumentNodeEditor data={data} update={update} />;
             case 'notifyAdmin': return <NotifyAdminNodeEditor data={data} update={update} />;
             case 'tag': return <TagNodeEditor data={data} update={update} />;
             case 'abtest': return <ABTestNodeEditor data={data} update={update} />;

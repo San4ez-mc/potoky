@@ -168,6 +168,40 @@ export const WaitNode = memo(({ id, selected, data }) => (
     </BaseNode>
 ));
 
+export const WaitPaymentNode = memo(({ id, selected, data }) => (
+    <div
+        className={clsx(
+            'min-w-[200px] rounded-xl border-2 bg-gray-900 shadow-xl transition-all',
+            selected ? 'border-brand shadow-brand/20' : 'border-gray-700 hover:border-gray-500'
+        )}
+    >
+        <div className="flex items-center gap-2 px-3 py-2 rounded-t-lg bg-lime-700">
+            <span>💳</span>
+            <span className="text-sm font-semibold text-white">{data.label || 'Очікування оплати'}</span>
+        </div>
+        <div className="px-3 py-2 text-xs text-lime-200">Timeout: {data.timeoutHours || 24}h</div>
+        <Handle type="target" position={Position.Top} className="!w-3 !h-3 !bg-gray-600 !border-2 !border-gray-400" />
+        <Handle
+            type="source"
+            id="paid"
+            position={Position.Bottom}
+            style={{ left: '30%' }}
+            className="!w-3 !h-3 !bg-emerald-500 !border-2 !border-emerald-300"
+        />
+        <Handle
+            type="source"
+            id="unpaid"
+            position={Position.Bottom}
+            style={{ left: '70%' }}
+            className="!w-3 !h-3 !bg-red-500 !border-2 !border-red-300"
+        />
+        <div className="flex justify-between px-2 pb-1.5 text-[10px]">
+            <span className="text-emerald-400">PAID</span>
+            <span className="text-red-400">UNPAID</span>
+        </div>
+    </div>
+));
+
 // ─── Load File Node (Gap #1) ────────────────────────────────────────────────────
 export const LoadFileNode = memo(({ id, selected, data }) => (
     <BaseNode id={id} selected={selected} color="bg-indigo-700" icon="📂" label={data.label || 'Завантажити файл'}>
@@ -264,6 +298,13 @@ export const SendPhotoNode = memo(({ id, selected, data }) => (
     </BaseNode>
 ));
 
+export const SendDocumentNode = memo(({ id, selected, data }) => (
+    <BaseNode id={id} selected={selected} color="bg-fuchsia-700" icon="📎" label={data.label || 'Відправити документ'}>
+        {data.fileType && <div className="text-fuchsia-300 text-[11px]">Тип: {data.fileType}</div>}
+        {data.fileVar && <div className="text-fuchsia-200 text-[11px]">Змінна: {data.fileVar}</div>}
+    </BaseNode>
+));
+
 // ─── Notify Admin Node ─────────────────────────────────────────────────────────
 export const NotifyAdminNode = memo(({ id, selected, data }) => (
     <BaseNode id={id} selected={selected} color="bg-amber-700" icon="📣" label={data.label || 'Сповістити адміна'}>
@@ -283,9 +324,11 @@ export const NODE_TYPES = {
     saveFile: SaveFileNode,
     loadFile: LoadFileNode,
     wait: WaitNode,
+    wait_payment: WaitPaymentNode,
     httpRequest: HttpRequestNode,
     httpEncode: HttpEncodeNode,
     sendPhoto: SendPhotoNode,
+    sendDocument: SendDocumentNode,
     tag: TagNode,
     abtest: ABTestNode,
     generateDocument: GenerateDocumentNode,
@@ -304,9 +347,11 @@ export const NODE_PALETTE = [
     { type: 'saveFile', icon: '💾', label: 'Зберегти файл', color: 'border-pink-700', defaultData: { fileType: 'report' } },
     { type: 'loadFile', icon: '📂', label: 'Завантажити файл', color: 'border-indigo-700', defaultData: { fileType: '', onMissing: 'ask', outputVar: 'context.file' } },
     { type: 'wait', icon: '⏳', label: 'Очікування', color: 'border-gray-600', defaultData: { duration: '5m', hint: '' } },
+    { type: 'wait_payment', icon: '💳', label: 'Очікування оплати', color: 'border-lime-700', defaultData: { timeoutHours: 24 } },
     { type: 'httpEncode', icon: '🔒', label: 'Кодування Base64', color: 'border-cyan-700', defaultData: { sourceVar: 'context.data', outputVar: 'context.encoded' } },
     { type: 'httpRequest', icon: '🌐', label: 'HTTP запит', color: 'border-teal-700', defaultData: { url: '', method: 'GET', outputVar: 'context.response' } },
     { type: 'sendPhoto', icon: '📸', label: 'Відправити фото', color: 'border-pink-700', defaultData: { photoVar: 'context.photo', caption: '' } },
+    { type: 'sendDocument', icon: '📎', label: 'Відправити документ', color: 'border-fuchsia-700', defaultData: { fileType: '', fileVar: '', caption: '' } },
     { type: 'tag', icon: '🏷️', label: 'Тег', color: 'border-red-700', defaultData: { tag: '', action: 'add' } },
     { type: 'abtest', icon: '🧪', label: 'A/B тест', color: 'border-purple-700', defaultData: { variantA: '', variantB: '', percentA: 50, percentB: 50 } },
     { type: 'generateDocument', icon: '📄', label: 'Генерувати документ', color: 'border-emerald-700', defaultData: { template: 'student_profile', sourceVar: 'context.onboarding_result', filename: 'document.docx', sendToUser: true } },

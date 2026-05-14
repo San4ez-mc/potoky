@@ -17,6 +17,7 @@ const EDITORS = {
     httpEncode: [],
     httpRequest: [],
     sendPhoto: [],
+    notifyAdmin: [],
 };
 
 function Field({ label, children }) {
@@ -230,6 +231,47 @@ function ConditionNodeEditor({ data, update }) {
             <Field label="Умова (JavaScript)">
                 <CodeBlock value={data.condition} onChange={v => update({ condition: v })} />
             </Field>
+        </div>
+    );
+}
+
+function NotifyAdminNodeEditor({ data, update }) {
+    return (
+        <div className="space-y-3">
+            <Field label="Telegram ID адміна">
+                <TextInput
+                    value={data.telegramId}
+                    onChange={v => update({ telegramId: v })}
+                    placeholder="{{env.ADMIN_TELEGRAM_ID}}"
+                />
+            </Field>
+            <Field label="Повідомлення адміну">
+                <CodeBlock
+                    value={data.message || ''}
+                    onChange={v => update({ message: v })}
+                    language="markdown"
+                />
+            </Field>
+            <Field label="Додатково надіслати повідомлення студенту">
+                <label className="flex items-center gap-2">
+                    <input
+                        type="checkbox"
+                        checked={data.notifyUser === true}
+                        onChange={e => update({ notifyUser: e.target.checked })}
+                        className="accent-brand"
+                    />
+                    <span className="text-sm text-gray-300">Надсилати підтвердження оплати студенту</span>
+                </label>
+            </Field>
+            {data.notifyUser && (
+                <Field label="Текст для студента">
+                    <CodeBlock
+                        value={data.userMessage || ''}
+                        onChange={v => update({ userMessage: v })}
+                        language="markdown"
+                    />
+                </Field>
+            )}
         </div>
     );
 }
@@ -752,6 +794,7 @@ export function NodeEditor({ embedded = false, onClose }) {
             case 'httpEncode': return <HttpEncodeNodeEditor data={data} update={update} />;
             case 'httpRequest': return <HttpRequestNodeEditor data={data} update={update} />;
             case 'sendPhoto': return <SendPhotoNodeEditor data={data} update={update} />;
+            case 'notifyAdmin': return <NotifyAdminNodeEditor data={data} update={update} />;
             case 'tag': return <TagNodeEditor data={data} update={update} />;
             case 'abtest': return <ABTestNodeEditor data={data} update={update} />;
             case 'generateDocument': return <GenerateDocumentNodeEditor data={data} update={update} />;

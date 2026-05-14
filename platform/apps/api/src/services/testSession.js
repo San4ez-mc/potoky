@@ -3,7 +3,7 @@
 const { db } = require('@platform/db');
 const { callClaude } = require('@platform/claude');
 const { BOT_REQUIREMENTS } = require('../../../../projects/finance-course/config/prerequisites');
-const { enableTestChat, disableTestChat, consumeTestMessages } = require('@platform/telegram');
+const { enableTestChat, disableTestChat, consumeTestMessages, sendMessage } = require('@platform/telegram');
 const crypto = require('crypto');
 const https = require('https');
 
@@ -697,10 +697,61 @@ ${sourceContent || '(немає даних)'}
             continue;
         }
 
+        if (node.type === 'wait') {
+            const toWaitMs = () => {
+                const unitRaw = String(data.unit || 'minutes').toLowerCase();
+                const unit = unitRaw.endsWith('s') ? unitRaw : `${unitRaw}s`;
+
+                if (typeof data.duration === 'string') {
+                    const m = data.duration.trim().match(/^(\d+)\s*([mhdw])$/i);
+                    if (m) {
+                        const amount = Number(m[1]);
+                        const short = m[2].toLowerCase();
+                        if (short === 'm') return amount * 60 * 1000;
+                        if (short === 'h') return amount * 60 * 60 * 1000;
+                        if (short === 'd') return amount * 24 * 60 * 60 * 1000;
+                        if (short === 'w') return amount * 7 * 24 * 60 * 60 * 1000;
+                    }
+                }
+
+                const amount = Math.max(1, Number(data.duration || 1));
+                const unitToMs = {
+                    minutes: 60 * 1000,
+                    hours: 60 * 60 * 1000,
+                    days: 24 * 60 * 60 * 1000,
+                    weeks: 7 * 24 * 60 * 60 * 1000,
+                };
+                return amount * (unitToMs[unit] || unitToMs.minutes);
+            };
+
+            const now = Date.now();
+            const waitMs = toWaitMs();
+
+            // First pass: arm wait timer and persist in DB context.
+            if (!runtime.waitUntil || runtime.waitNodeId !== node.id) {
+                runtime.waitUntil = now + waitMs;
+                runtime.waitNodeId = node.id;
+                runtime.waitingForUser = false;
+                break;
+            }
+
+            // Keep waiting until target timestamp.
+            if (now < Number(runtime.waitUntil)) {
+                runtime.waitingForUser = false;
+                break;
+            }
+
+            // Wait is over, continue flow.
+            runtime.waitUntil = null;
+            runtime.waitNodeId = null;
+            runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
+            continue;
+        }
+
         if (node.type === 'httpEncode') {
             const sourceVar = data.sourceVar ? String(data.sourceVar).replace(/^context\./, '') : '';
             const outputVar = data.outputVar ? String(data.outputVar).replace(/^context\./, '') : '';
-            
+
             if (!sourceVar || !outputVar) {
                 runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
                 continue;
@@ -723,7 +774,7 @@ ${sourceContent || '(немає даних)'}
             const url = renderTemplate(data.url || '', ctx);
             const method = (data.method || 'GET').toUpperCase();
             const outputVar = data.outputVar ? String(data.outputVar).replace(/^context\./, '') : '';
-            
+
             if (!url) {
                 runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
                 continue;
@@ -755,7 +806,7 @@ ${sourceContent || '(немає даних)'}
         if (node.type === 'sendPhoto') {
             const photoVar = data.photoVar ? String(data.photoVar).replace(/^context\./, '') : '';
             const caption = renderTemplate(data.caption || '', ctx);
-            
+
             if (!photoVar) {
                 runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
                 continue;
@@ -833,6 +884,50 @@ ${sourceContent || '(немає даних)'}
                 }
             } catch (tgError) {
                 console.warn('[fetchTelegramProfile] Error (non-fatal):', tgError.message);
+            }
+
+            runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
+            continue;
+        }
+
+        if (node.type === 'notifyAdmin') {
+            try {
+                const [adminKey, coursePriceKey] = await Promise.all([
+                    db.funnelKey.findUnique({
+                        where: { botId_key: { botId: session.botId, key: 'ADMIN_TELEGRAM_ID' } },
+                        select: { value: true },
+                    }),
+                    db.funnelKey.findUnique({
+                        where: { botId_key: { botId: session.botId, key: 'COURSE_PRICE' } },
+                        select: { value: true },
+                    }),
+                ]);
+
+                const enrichedScope = {
+                    ...scope,
+                    env: {
+                        ADMIN_TELEGRAM_ID: adminKey?.value || process.env.ADMIN_TELEGRAM_ID || '',
+                        COURSE_PRICE: coursePriceKey?.value || process.env.COURSE_PRICE || '',
+                    },
+                    timestamp: new Date().toISOString(),
+                };
+
+                const adminTelegramId = renderTemplate(data.telegramId || '{{env.ADMIN_TELEGRAM_ID}}', enrichedScope);
+                const adminMessage = renderTemplate(data.message || 'Нова подія в системі.', enrichedScope);
+
+                if (adminTelegramId && adminMessage) {
+                    await sendMessage(String(adminTelegramId), adminMessage, {}, session.id);
+                }
+
+                // Optional student confirmation from the same node
+                if (data.notifyUser && data.userMessage && session.user?.telegramId) {
+                    const studentMessage = renderTemplate(data.userMessage, enrichedScope);
+                    if (studentMessage) {
+                        await sendMessage(String(session.user.telegramId), studentMessage, {}, session.id);
+                    }
+                }
+            } catch (notifyError) {
+                console.error('[notifyAdmin] Error:', notifyError.message);
             }
 
             runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);

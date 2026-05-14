@@ -176,14 +176,6 @@ export const LoadFileNode = memo(({ id, selected, data }) => (
     </BaseNode>
 ));
 
-// ─── HTTP Request Node (Gap #3) ─────────────────────────────────────────────────
-export const HttpRequestNode = memo(({ id, selected, data }) => (
-    <BaseNode id={id} selected={selected} color="bg-teal-700" icon="🌐" label={data.label || 'HTTP запит'}>
-        {data.url && <div className="text-teal-400 text-[11px] truncate">{data.url}</div>}
-        {data.method && <div className="text-teal-300 text-[11px]">{data.method}</div>}
-    </BaseNode>
-));
-
 // ─── Tag Node (new) ─────────────────────────────────────────────────────────────
 export const TagNode = memo(({ id, selected, data }) => (
     <BaseNode id={id} selected={selected} color="bg-red-700" icon="🏷️" label={data.label || 'Тег'}>
@@ -272,6 +264,14 @@ export const SendPhotoNode = memo(({ id, selected, data }) => (
     </BaseNode>
 ));
 
+// ─── Notify Admin Node ─────────────────────────────────────────────────────────
+export const NotifyAdminNode = memo(({ id, selected, data }) => (
+    <BaseNode id={id} selected={selected} color="bg-amber-700" icon="📣" label={data.label || 'Сповістити адміна'}>
+        {data.telegramId && <div className="text-amber-300 text-[11px]">ID: {data.telegramId}</div>}
+        {data.notifyUser && <div className="text-amber-200 text-[11px]">+ Повідомити студента</div>}
+    </BaseNode>
+));
+
 // ─── Node type map (for React Flow) ───────────────────────────────────────────
 export const NODE_TYPES = {
     start: StartNode,
@@ -290,6 +290,7 @@ export const NODE_TYPES = {
     abtest: ABTestNode,
     generateDocument: GenerateDocumentNode,
     fetchTelegramProfile: FetchTelegramProfileNode,
+    notifyAdmin: NotifyAdminNode,
 };
 
 // ─── Node palette items (for drag sidebar) ────────────────────────────────────
@@ -310,4 +311,5 @@ export const NODE_PALETTE = [
     { type: 'abtest', icon: '🧪', label: 'A/B тест', color: 'border-purple-700', defaultData: { variantA: '', variantB: '', percentA: 50, percentB: 50 } },
     { type: 'generateDocument', icon: '📄', label: 'Генерувати документ', color: 'border-emerald-700', defaultData: { template: 'student_profile', sourceVar: 'context.onboarding_result', filename: 'document.docx', sendToUser: true } },
     { type: 'fetchTelegramProfile', icon: '👤', label: 'TG профіль', color: 'border-sky-700', defaultData: {} },
+    { type: 'notifyAdmin', icon: '📣', label: 'Сповістити адміна', color: 'border-amber-700', defaultData: { telegramId: '{{env.ADMIN_TELEGRAM_ID}}', message: '💰 Нова оплата!', notifyUser: true, userMessage: '✅ Оплату отримано! Дякую, що обрав курс.' } },
 ];

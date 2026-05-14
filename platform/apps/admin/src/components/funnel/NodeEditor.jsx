@@ -562,32 +562,6 @@ function HttpEncodeNodeEditor({ data, update }) {
     );
 }
 
-function HttpRequestNodeEditor({ data, update }) {
-    return (
-        <div className="space-y-3">
-            <Field label="Назва ноди">
-                <TextInput value={data.label} onChange={v => update({ label: v })} placeholder="HTTP запит" />
-            </Field>
-            <Field label="URL (з шаблонізацією)">
-                <TextInput value={data.url} onChange={v => update({ url: v })} placeholder="https://mermaid.ink/img/[base64_code]" multiline />
-            </Field>
-            <Field label="HTTP метод">
-                <select
-                    value={data.method || 'GET'}
-                    onChange={e => update({ method: e.target.value })}
-                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
-                >
-                    <option value="GET">GET</option>
-                    <option value="POST">POST</option>
-                </select>
-            </Field>
-            <Field label="Вивести відповідь в змінну (outputVar)">
-                <TextInput value={data.outputVar} onChange={v => update({ outputVar: v })} placeholder="context.pngData" />
-            </Field>
-        </div>
-    );
-}
-
 function SendPhotoNodeEditor({ data, update }) {
     return (
         <div className="space-y-3">

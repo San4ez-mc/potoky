@@ -208,15 +208,24 @@ async function listFunnels() {
     const bots = await prisma.bot.findMany({
         include: { project: true, flowDefinition: { select: { updatedAt: true } }, _count: { select: { funnelKeys: true } } },
     });
-    return bots.map((bot) => ({
-        id: bot.id,
-        name: bot.name,
-        slug: bot.slug,
-        project: bot.project.name,
-        hasFlow: !!bot.flowDefinition,
-        flowUpdatedAt: bot.flowDefinition?.updatedAt,
-        keysCount: bot._count.funnelKeys,
-    }));
+    return bots.map((bot) => {
+        const settings = bot.settings && typeof bot.settings === 'object' && !Array.isArray(bot.settings)
+            ? bot.settings
+            : {};
+
+        return {
+            id: bot.id,
+            name: bot.name,
+            slug: bot.slug,
+            project: bot.project.name,
+            description: bot.description || settings.description || null,
+            goal: settings.goal || null,
+            outputFiles: Array.isArray(settings.outputFiles) ? settings.outputFiles : [],
+            hasFlow: !!bot.flowDefinition,
+            flowUpdatedAt: bot.flowDefinition?.updatedAt,
+            keysCount: bot._count.funnelKeys,
+        };
+    });
 }
 
 async function getFunnel({ botId }) {
@@ -228,11 +237,29 @@ async function getFunnel({ botId }) {
 
     if (!bot) throw new Error(`Bot not found: ${botId}`);
 
+    const settings = bot.settings && typeof bot.settings === 'object' && !Array.isArray(bot.settings)
+        ? bot.settings
+        : {};
+
     return {
-        bot: { id: bot.id, name: bot.name, slug: bot.slug, project: bot.project.name },
+        bot: {
+            id: bot.id,
+            name: bot.name,
+            slug: bot.slug,
+            project: bot.project.name,
+            description: bot.description || settings.description || null,
+            goal: settings.goal || null,
+            outputFiles: Array.isArray(settings.outputFiles) ? settings.outputFiles : [],
+        },
         nodes: flow?.nodes || [],
         edges: flow?.edges || [],
         viewport: flow?.viewport || { x: 0, y: 0, zoom: 1 },
+        keySource: {
+            scope: 'bot',
+            table: 'funnel_keys',
+            botId,
+            inheritedFromProject: false,
+        },
         keys: (keys || []).map((key) => ({
             key: key.key,
             label: key.label,
@@ -403,7 +430,28 @@ async function deleteFunnelKey({ botId, key }) {
     return { deleted: key };
 }
 
+function mapConnectorInstance(instance) {
+    return {
+        id: instance.id,
+        label: instance.name,
+    };
+}
+
+async function getConnectorInstancesMap() {
+    const instances = await prisma.savedConnector.findMany({
+        where: { isActive: true },
+        orderBy: [{ type: 'asc' }, { name: 'asc' }],
+    });
+
+    return instances.reduce((acc, item) => {
+        if (!acc[item.type]) acc[item.type] = [];
+        acc[item.type].push(mapConnectorInstance(item));
+        return acc;
+    }, {});
+}
+
 async function listConnectors() {
+    const instancesByType = await getConnectorInstancesMap();
     const connectors = await prisma.connectorDef.findMany({ orderBy: { name: 'asc' } });
     return connectors.map((connector) => ({
         id: connector.id,
@@ -414,6 +462,7 @@ async function listConnectors() {
         color: connector.color,
         isBuiltin: connector.isBuiltin,
         isActive: connector.isActive,
+        instances: instancesByType[connector.type] || [],
     }));
 }
 
@@ -421,7 +470,11 @@ async function getConnector({ id, type }) {
     if (!id && !type) throw new Error('Provide either id or type');
     const connector = await prisma.connectorDef.findUnique({ where: id ? { id } : { type } });
     if (!connector) throw new Error('Connector not found');
-    return connector;
+    const instancesByType = await getConnectorInstancesMap();
+    return {
+        ...connector,
+        instances: instancesByType[connector.type] || [],
+    };
 }
 
 async function createConnector({ name, type, description, icon, color, schema }) {

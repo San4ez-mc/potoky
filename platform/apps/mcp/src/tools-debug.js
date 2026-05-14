@@ -89,6 +89,11 @@ const TOOLS = [
                 botId: { type: 'string' },
                 botSlug: { type: 'string' },
                 userId: { type: 'string' },
+                contextOverride: {
+                    type: 'object',
+                    description: 'Optional context variables preloaded into flow test runtime (keys with or without context. prefix)',
+                    additionalProperties: true,
+                },
             },
             required: [],
         },

@@ -112,6 +112,24 @@ const connectorDefs = [
         },
     },
     {
+        type: 'wayforpay',
+        name: 'WayForPay',
+        description: 'WayForPay API — створення інвойсів та обробка webhook подій оплати.',
+        icon: '💳',
+        color: '#2563EB',
+        schema: {
+            api_url: 'https://api.wayforpay.com/api',
+            docs_url: 'https://wiki.wayforpay.com/en/view/852131',
+            actions: ['create_invoice'],
+            fields: [
+                { key: 'merchant_account', label: 'Merchant Account (логін)', secret: false, placeholder: 'merchant_account' },
+                { key: 'merchant_secret', label: 'Secret Key (секретний ключ)', secret: true, placeholder: '********' },
+                { key: 'merchant_domain', label: 'Домен магазину (yourdomain.com)', secret: false, placeholder: 'yourdomain.com' },
+                { key: 'merchant_name', label: 'Назва магазину (відображається покупцю)', secret: false, placeholder: 'FINEKO' },
+            ],
+        },
+    },
+    {
         type: 'webhook_generic',
         name: 'Generic Webhook',
         description: 'HTTP запит на довільний URL — POST/GET з JSON body. Для інтеграцій з будь-якими API.',

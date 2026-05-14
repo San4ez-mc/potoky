@@ -6,7 +6,7 @@ const { db } = require('@platform/db');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const { validateParams } = require('../middleware/validateParams');
 const { NotFoundError } = require('@platform/errors');
-const { sendMessage } = require('@platform/telegram');
+const { sendMessage, sendPhoto } = require('@platform/telegram');
 const {
     startTestSession,
     sendTestMessage,
@@ -41,15 +41,16 @@ router.post('/test/start',
             botId: z.string().uuid().optional(),
             botSlug: z.string().min(1).optional(),
             userId: z.string().uuid().optional(),
+            contextOverride: z.record(z.any()).optional(),
         }),
     }),
     asyncHandler(async (req, res) => {
-        const { botId, botSlug, userId } = req.body;
+        const { botId, botSlug, userId, contextOverride } = req.body;
         if (!botId && !botSlug) {
             return res.status(400).json({ ok: false, error: 'Provide botId or botSlug' });
         }
 
-        const data = await startTestSession({ botId, botSlug, userId });
+        const data = await startTestSession({ botId, botSlug, userId, contextOverride });
         res.json({ ok: true, data });
     })
 );
@@ -153,10 +154,7 @@ router.get('/:id/api-calls',
 
 // POST /api/sessions/:id/send — manual message from admin
 router.post('/:id/send',
-    validateParams({
-        params: z.object({ id: z.string().uuid() }),
-        body: z.object({ text: z.string().min(1).max(4096) }),
-    }),
+    validateParams({ params: z.object({ id: z.string().uuid() }) }),
     asyncHandler(async (req, res) => {
         const session = await db.session.findUnique({
             where: { id: req.params.id },
@@ -164,16 +162,49 @@ router.post('/:id/send',
         });
         if (!session) throw new NotFoundError('Session', req.params.id);
 
-        const { text } = req.body;
+        const rawText = typeof req.body?.text === 'string' ? req.body.text : '';
+        const text = rawText.trim();
+        const photoBase64 = typeof req.body?.photoBase64 === 'string' ? req.body.photoBase64 : '';
+        const photoName = typeof req.body?.photoName === 'string' ? req.body.photoName : 'image';
+        const photoMimeType = typeof req.body?.photoMimeType === 'string' ? req.body.photoMimeType : 'image/jpeg';
 
-        await sendMessage(Number(session.user.telegramId), text, {}, session.id);
+        if (!text && !photoBase64) {
+            return res.status(400).json({ ok: false, error: { message: 'Надішліть текст або фото' } });
+        }
+
+        let photoBuffer = null;
+        if (photoBase64) {
+            const normalized = photoBase64.includes(',') ? photoBase64.split(',')[1] : photoBase64;
+            try {
+                photoBuffer = Buffer.from(normalized, 'base64');
+            } catch {
+                return res.status(400).json({ ok: false, error: { message: 'Некоректний формат фото' } });
+            }
+            if (!photoBuffer || photoBuffer.length === 0) {
+                return res.status(400).json({ ok: false, error: { message: 'Порожнє фото' } });
+            }
+            if (photoBuffer.length > 8 * 1024 * 1024) {
+                return res.status(400).json({ ok: false, error: { message: 'Фото завелике (макс 8MB)' } });
+            }
+        }
+
+        if (photoBuffer) {
+            await sendPhoto(Number(session.user.telegramId), photoBuffer, text || '', {}, session.id);
+        } else {
+            await sendMessage(Number(session.user.telegramId), text, {}, session.id);
+        }
 
         await db.message.create({
             data: {
                 sessionId: session.id,
                 role: 'assistant',
-                content: text,
-                metadata: { source: 'admin_manual' },
+                content: text || '📷 Фото',
+                metadata: {
+                    source: 'admin_manual',
+                    hasPhoto: Boolean(photoBuffer),
+                    photoName: photoBuffer ? photoName : null,
+                    photoMimeType: photoBuffer ? photoMimeType : null,
+                },
             },
         });
 

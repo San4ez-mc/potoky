@@ -348,6 +348,45 @@ function ConnectorNodeEditor({ data, update, connectors }) {
                     Конфігурація підтягується автоматично зі збереженого конектора
                 </div>
             )}
+
+            {/* WayForPay-specific action fields */}
+            {data.connectorType === 'wayforpay' && (
+                <>
+                    <Field label="Дія">
+                        <select
+                            value={data.action || 'create_invoice'}
+                            onChange={e => update({ action: e.target.value })}
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+                        >
+                            <option value="create_invoice">create_invoice — Створити інвойс</option>
+                        </select>
+                    </Field>
+                    <Field label="Сума (amount)" hint="Число або змінна: {{context.price}}">
+                        <input
+                            value={data.amount || ''}
+                            onChange={e => update({ amount: e.target.value })}
+                            placeholder="{{context.course_price}}"
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+                        />
+                    </Field>
+                    <Field label="Назва продукту" hint="Відображається покупцю">
+                        <input
+                            value={data.productName || ''}
+                            onChange={e => update({ productName: e.target.value })}
+                            placeholder="Курс «Гроші в бізнесі»"
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+                        />
+                    </Field>
+                    <Field label="Output var" hint="Куди зберегти URL оплати">
+                        <input
+                            value={data.outputVar || ''}
+                            onChange={e => update({ outputVar: e.target.value })}
+                            placeholder="context.invoice_url"
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+                        />
+                    </Field>
+                </>
+            )}
         </div>
     );
 }

@@ -4,6 +4,8 @@ const { db } = require('@platform/db');
 const { callClaude } = require('@platform/claude');
 const { BOT_REQUIREMENTS } = require('../../../../projects/finance-course/config/prerequisites');
 const { enableTestChat, disableTestChat, consumeTestMessages } = require('@platform/telegram');
+const crypto = require('crypto');
+const https = require('https');
 
 const { handleTelegramUpdate } = require('../../../../projects/finance-course/src/telegramHandler');
 
@@ -728,7 +730,6 @@ ${sourceContent || '(немає даних)'}
             }
 
             try {
-                const https = require('https');
                 const response = await new Promise((resolve, reject) => {
                     https.get(url, (res) => {
                         let data = Buffer.alloc(0);
@@ -787,6 +788,113 @@ ${sourceContent || '(немає даних)'}
                 }
             } catch (_error) {
                 // Silently skip on error
+            }
+
+            runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
+            continue;
+        }
+
+        if (node.type === 'connector') {
+            const connectorType = data.connectorType || '';
+            const action = data.action || '';
+            const outputVar = data.outputVar ? String(data.outputVar).replace(/^context\./, '') : '';
+
+            try {
+                // Load connector config from DB
+                const savedConnector = await db.savedConnector.findFirst({
+                    where: { type: connectorType, isActive: true },
+                });
+
+                if (!savedConnector) {
+                    console.warn(`[connector] Connector type "${connectorType}" not found or inactive`);
+                    runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
+                    continue;
+                }
+
+                const config = savedConnector.config || {};
+
+                if (connectorType === 'wayforpay' && action === 'create_invoice') {
+                    const merchantAccount = config.merchant_account || '';
+                    const merchantSecret = config.merchant_secret || '';
+                    const merchantDomainName = config.merchant_domain || '';
+                    const merchantName = config.merchant_name || merchantDomainName;
+
+                    // Resolve dynamic params from context / data fields
+                    const amount = String(renderTemplate(data.amount || '0', scope));
+                    const productName = renderTemplate(data.productName || 'Course', scope);
+                    const orderReference = `order_${session.id}_${Date.now()}`;
+                    const orderDate = Math.floor(Date.now() / 1000);
+                    const currency = 'UAH';
+                    const productCount = 1;
+
+                    // Build HMAC MD5 signature
+                    const signatureString = [
+                        merchantAccount,
+                        merchantDomainName,
+                        orderReference,
+                        orderDate,
+                        amount,
+                        currency,
+                        productName,
+                        productCount,
+                        amount,
+                    ].join(';');
+
+                    const merchantSignature = crypto
+                        .createHmac('md5', merchantSecret)
+                        .update(signatureString)
+                        .digest('hex');
+
+                    const payload = JSON.stringify({
+                        transactionType: 'CREATE_INVOICE',
+                        merchantAccount,
+                        merchantDomainName,
+                        merchantName,
+                        orderReference,
+                        orderDate,
+                        amount,
+                        currency,
+                        productName: [productName],
+                        productPrice: [amount],
+                        productCount: [productCount],
+                        merchantSignature,
+                    });
+
+                    // POST to WayForPay API
+                    const wfpResponse = await new Promise((resolve, reject) => {
+                        const options = {
+                            hostname: 'api.wayforpay.com',
+                            path: '/api',
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Content-Length': Buffer.byteLength(payload),
+                            },
+                        };
+                        const req = https.request(options, (res) => {
+                            let body = '';
+                            res.on('data', (chunk) => { body += chunk; });
+                            res.on('end', () => {
+                                try { resolve(JSON.parse(body)); } catch { resolve({}); }
+                            });
+                        });
+                        req.on('error', reject);
+                        req.write(payload);
+                        req.end();
+                    });
+
+                    const invoiceUrl = wfpResponse.invoiceUrl || '';
+                    if (outputVar && invoiceUrl) {
+                        setByPath(ctx, outputVar, invoiceUrl);
+                    }
+
+                    // Store orderReference for webhook matching
+                    ctx.wfp_order_reference = orderReference;
+
+                    console.log(`[connector:wayforpay] Invoice created: ${invoiceUrl || 'no url'}, reason: ${wfpResponse.reason}`);
+                }
+            } catch (connectorError) {
+                console.error(`[connector:${connectorType}] Error:`, connectorError.message);
             }
 
             runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);

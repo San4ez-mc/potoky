@@ -144,12 +144,12 @@ export const ConnectorNode = memo(({ id, selected, data }) => (
         id={id}
         selected={selected}
         color="bg-cyan-700"
-        icon={data.connectorIcon || '🔌'}
+        icon={data.connectorType === 'wayforpay' ? '💳' : (data.connectorIcon || '🔌')}
         label={data.label || data.connectorType || 'Конектор'}
     >
-        {data.config && (
-            <div className="text-cyan-400">{JSON.stringify(data.config).slice(0, 60)}…</div>
-        )}
+        {data.connectorType && <div className="text-cyan-400 text-[11px]">{data.connectorType}</div>}
+        {data.action && <div className="text-cyan-300 text-[11px]">{data.action}</div>}
+        {data.outputVar && <div className="text-cyan-200 text-[11px]">→ {data.outputVar}</div>}
     </BaseNode>
 ));
 

@@ -127,4 +127,100 @@ router.post('/instagram/:botId',
     })
 );
 
+// POST /webhook/wayforpay — WayForPay payment notification
+router.post('/wayforpay',
+    asyncHandler(async (req, res) => {
+        const body = req.body || {};
+        const {
+            merchantAccount,
+            orderReference,
+            merchantSignature,
+            transactionStatus,
+            amount,
+            currency,
+        } = body;
+
+        // Load WayForPay connector config to verify signature
+        const savedConnector = await db.savedConnector.findFirst({
+            where: { type: 'wayforpay', isActive: true },
+        });
+
+        if (!savedConnector) {
+            logger.warn('[wayforpay webhook] Connector not found');
+            return res.status(200).json({ orderReference, status: 'decline', time: Math.floor(Date.now() / 1000), signature: '' });
+        }
+
+        const config = savedConnector.config || {};
+        const merchantSecret = config.merchant_secret || '';
+
+        // Verify incoming signature: HMAC MD5 of "merchantAccount;orderReference;amount;currency;authCode;cardPan;transactionStatus;reasonCode"
+        const signatureFields = [
+            body.merchantAccount,
+            body.orderReference,
+            body.amount,
+            body.currency,
+            body.authCode || '',
+            body.cardPan || '',
+            body.transactionStatus || '',
+            body.reasonCode || '',
+        ].join(';');
+
+        const expectedSignature = crypto
+            .createHmac('md5', merchantSecret)
+            .update(signatureFields)
+            .digest('hex');
+
+        if (merchantSignature !== expectedSignature) {
+            logger.warn('[wayforpay webhook] Signature mismatch', { orderReference });
+            return res.status(200).json({ orderReference, status: 'decline', time: Math.floor(Date.now() / 1000), signature: '' });
+        }
+
+        logger.info('[wayforpay webhook] Payment received', { orderReference, transactionStatus, amount, currency });
+
+        // Find the session by orderReference stored in context.wfp_order_reference
+        if (transactionStatus === 'Approved') {
+            try {
+                const sessions = await db.session.findMany({
+                    where: { state: { not: 'completed' } },
+                    select: { id: true, context: true, botId: true },
+                });
+
+                const matchedSession = sessions.find((s) => {
+                    const ctx = s.context || {};
+                    return ctx.wfp_order_reference === orderReference;
+                });
+
+                if (matchedSession) {
+                    await db.session.update({
+                        where: { id: matchedSession.id },
+                        data: {
+                            context: {
+                                ...matchedSession.context,
+                                wfp_payment_status: 'approved',
+                                wfp_transaction_status: transactionStatus,
+                            },
+                        },
+                    });
+                    logger.info('[wayforpay webhook] Session updated with payment status', { sessionId: matchedSession.id });
+                }
+            } catch (dbError) {
+                logger.error('[wayforpay webhook] DB error', { error: dbError.message });
+            }
+        }
+
+        // Respond to WayForPay with accept confirmation
+        const responseSignature = crypto
+            .createHmac('md5', merchantSecret)
+            .update([orderReference, 'accept'].join(';'))
+            .digest('hex');
+
+        return res.status(200).json({
+            orderReference,
+            status: 'accept',
+            time: Math.floor(Date.now() / 1000),
+            signature: responseSignature,
+        });
+    })
+);
+
 module.exports = router;

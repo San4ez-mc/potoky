@@ -1,6 +1,6 @@
 'use strict';
 
-const { getClient } = require('./client');
+const { getClient, createClient } = require('./client');
 const { db } = require('@platform/db');
 const logger = require('@platform/logger');
 const { ClaudeError } = require('@platform/errors');
@@ -8,6 +8,58 @@ const { ClaudeError } = require('@platform/errors');
 const MODEL = process.env.CLAUDE_MODEL || 'claude-haiku-4-5';
 const MAX_TOKENS = parseInt(process.env.CLAUDE_MAX_TOKENS || '4096', 10);
 const TIMEOUT_MS = parseInt(process.env.CLAUDE_TIMEOUT_MS || '30000', 10);
+
+function normalizeApiKey(value) {
+    if (typeof value !== 'string') return '';
+    return value.trim();
+}
+
+function extractApiKeyFromConnector(connector) {
+    const config = connector?.config || {};
+    const candidates = [config.api_key, config.apiKey, config.key, config.token];
+    for (const candidate of candidates) {
+        const normalized = normalizeApiKey(candidate);
+        if (normalized) return normalized;
+    }
+    return '';
+}
+
+async function resolveFunnelClaudeKey(sessionId) {
+    if (!sessionId) return '';
+
+    const session = await db.session.findUnique({
+        where: { id: sessionId },
+        select: { botId: true },
+    });
+    if (!session?.botId) return '';
+
+    const keys = await db.funnelKey.findMany({
+        where: {
+            botId: session.botId,
+            key: { in: ['CLAUDE_API_KEY', 'ANTHROPIC_API_KEY', 'CLAUDE_CONNECTOR_ID'] },
+        },
+        select: { key: true, value: true },
+    });
+
+    const keyMap = keys.reduce((acc, item) => {
+        acc[item.key] = item.value;
+        return acc;
+    }, {});
+
+    const direct = normalizeApiKey(keyMap.CLAUDE_API_KEY) || normalizeApiKey(keyMap.ANTHROPIC_API_KEY);
+    if (direct) return direct;
+
+    const connectorId = normalizeApiKey(keyMap.CLAUDE_CONNECTOR_ID);
+    if (!connectorId) return '';
+
+    const connector = await db.savedConnector.findUnique({
+        where: { id: connectorId },
+        select: { id: true, type: true, isActive: true, config: true },
+    });
+    if (!connector || !connector.isActive) return '';
+
+    return extractApiKeyFromConnector(connector);
+}
 
 /**
  * Calls Claude API, logs the call to api_calls table.
@@ -19,7 +71,16 @@ const TIMEOUT_MS = parseInt(process.env.CLAUDE_TIMEOUT_MS || '30000', 10);
  * @returns {Promise<string>} - text response
  */
 async function callClaude({ sessionId, systemPrompt, messages, options = {} }) {
-    const client = getClient();
+    const resolvedFunnelKey = options.apiKey ? '' : await resolveFunnelClaudeKey(sessionId);
+    const effectiveApiKey = normalizeApiKey(options.apiKey) || resolvedFunnelKey;
+    if (!effectiveApiKey) {
+        const message = sessionId
+            ? 'Не знайдено Claude ключ для цієї воронки. Додайте CLAUDE_API_KEY або CLAUDE_CONNECTOR_ID у Ключі воронки.'
+            : 'Не знайдено Claude API key для виклику. Передайте options.apiKey або налаштуйте ключ в контексті воронки.';
+        throw new ClaudeError(message, { sessionId });
+    }
+
+    const client = createClient(effectiveApiKey);
     const startTime = Date.now();
 
     const requestBody = {

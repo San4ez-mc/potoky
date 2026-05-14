@@ -114,6 +114,53 @@ async function sendMessage(chatId, text, options = {}, sessionId = null) {
 }
 
 /**
+ * Send photo with optional caption.
+ */
+async function sendPhoto(chatId, photo, caption = '', options = {}, sessionId = null) {
+    const bot = getBot();
+    const startTime = Date.now();
+    const defaultOptions = { parse_mode: 'Markdown', ...options };
+
+    try {
+        if (isTestChat(chatId)) {
+            pushTestMessage(chatId, {
+                method: 'sendPhoto',
+                text: caption || '',
+                hasPhoto: true,
+                options: defaultOptions,
+                createdAt: new Date().toISOString(),
+            });
+            await _logApiCall({
+                sessionId,
+                method: 'sendPhoto[test]',
+                chatId,
+                statusCode: 200,
+                durationMs: Date.now() - startTime,
+            });
+            return;
+        }
+
+        await bot.sendPhoto(chatId, photo, {
+            caption,
+            ...defaultOptions,
+        });
+
+        await _logApiCall({ sessionId, method: 'sendPhoto', chatId, statusCode: 200, durationMs: Date.now() - startTime });
+    } catch (error) {
+        logger.error('Telegram sendPhoto failed', { chatId, error: error.message });
+        await _logApiCall({
+            sessionId,
+            method: 'sendPhoto',
+            chatId,
+            statusCode: normalizeStatusCode(error.response?.statusCode || error.code || 500),
+            durationMs: Date.now() - startTime,
+            error: error.message,
+        });
+        throw new TelegramError(error.message, { chatId });
+    }
+}
+
+/**
  * Send inline keyboard message.
  */
 async function sendInlineKeyboard(chatId, text, buttons, sessionId = null) {
@@ -194,6 +241,7 @@ async function _logApiCall({ sessionId, method, chatId, statusCode, durationMs, 
 
 module.exports = {
     sendMessage,
+    sendPhoto,
     sendInlineKeyboard,
     notifyOwner,
     enableTestChat,

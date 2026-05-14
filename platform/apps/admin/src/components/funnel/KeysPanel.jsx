@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useFunnelStore } from '../../stores/funnelStore.js';
+import { api } from '../../api/client.js';
 
 const CHANNELS_KEY = 'FUNNEL_CHANNELS';
 
@@ -97,7 +98,7 @@ function parseSelectedChannels(rawValue) {
         .filter(Boolean);
 }
 
-function KeyRow({ k, onEdit, onDelete, onReveal }) {
+function KeyRow({ k, onEdit, onDelete, onReveal, isRequired = false }) {
     const [revealed, setRevealed] = useState(false);
     const [revealedValue, setRevealedValue] = useState('');
     const [isRevealing, setIsRevealing] = useState(false);
@@ -122,16 +123,19 @@ function KeyRow({ k, onEdit, onDelete, onReveal }) {
         }
     };
 
+    const isMissing = isRequired && !k.value;
+
     return (
-        <div className="bg-gray-900 rounded-lg p-3 border border-gray-800">
+        <div className={`rounded-lg p-3 border ${isMissing ? 'bg-red-900/10 border-red-900/40' : 'bg-gray-900 border-gray-800'}`}>
             <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                        <code className="text-sm text-brand-light font-mono">{k.key}</code>
+                        <code className={`text-sm font-mono ${isMissing ? 'text-red-400' : 'text-brand-light'}`}>{k.key}</code>
                         {k.isSecret && <span className="text-[10px] bg-yellow-900/40 text-yellow-400 border border-yellow-800 rounded px-1.5 py-0.5">SECRET</span>}
+                        {isMissing && <span className="text-[10px] bg-red-900/40 text-red-400 border border-red-800 rounded px-1.5 py-0.5">⚠ БРАКУЄ</span>}
                     </div>
                     {k.label && <div className="text-xs text-gray-400 mt-0.5">{k.label}</div>}
-                    <div className="text-sm text-gray-300 mt-1 font-mono break-all">
+                    <div className={`text-sm mt-1 font-mono break-all ${isMissing ? 'text-red-300' : 'text-gray-300'}`}>
                         {revealed ? revealedValue : (k.isSecret ? '••••••••' : k.value)}
                     </div>
                 </div>
@@ -236,32 +240,61 @@ function KeyForm({ initial, onSave, onCancel }) {
     );
 }
 
-export function KeysPanel() {
+export function KeysPanel({ embedded = false }) {
     const { bot, keys, upsertKey, deleteKey, revealKey } = useFunnelStore();
     const [editing, setEditing] = useState(null); // null | {} (new) | existing key
     const [isNew, setIsNew] = useState(false);
-    const [selectedChannels, setSelectedChannels] = useState([]);
-    const [isApplyingChannels, setIsApplyingChannels] = useState(false);
-    const [linkCounts, setLinkCounts] = useState({ telegram: 1, instagram: 1 });
-
-    const channelsKey = useMemo(
-        () => keys.find(k => k.key === CHANNELS_KEY),
-        [keys]
-    );
+    const [savedClaudeConnectors, setSavedClaudeConnectors] = useState([]);
+    const [selectedConnectorId, setSelectedConnectorId] = useState('');
+    const [loadingConnectors, setLoadingConnectors] = useState(false);
+    const visibleKeys = useMemo(() => keys, [keys]);
 
     useEffect(() => {
-        setSelectedChannels(parseSelectedChannels(channelsKey?.value));
-    }, [channelsKey?.value]);
+        setLoadingConnectors(true);
+        api.getSavedConnectors()
+            .then((list) => {
+                const normalized = Array.isArray(list) ? list : (list?.data || []);
+                const claudeItems = normalized.filter((item) => String(item.type || '').startsWith('claude_'));
+                setSavedClaudeConnectors(claudeItems);
+            })
+            .catch(() => setSavedClaudeConnectors([]))
+            .finally(() => setLoadingConnectors(false));
+    }, []);
 
-    const keyMap = useMemo(() => toKeyMap(keys), [keys]);
-    const visibleKeys = useMemo(
-        () => keys.filter(k => k.key !== CHANNELS_KEY),
-        [keys]
-    );
-    const generatedLinks = useMemo(
-        () => buildChannelLinks({ channels: selectedChannels, keyMap, bot, counts: linkCounts }),
-        [selectedChannels, keyMap, bot, linkCounts]
-    );
+    useEffect(() => {
+        const current = keys.find((item) => item.key === 'CLAUDE_CONNECTOR_ID');
+        if (current?.value) setSelectedConnectorId(String(current.value));
+    }, [keys]);
+
+    // Get required keys based on enabled channels
+    const getRequiredKeys = () => {
+        const keyMap = {};
+        keys.forEach(k => { keyMap[k.key] = k.value; });
+
+        const channelsKey = keys.find(k => k.key === 'FUNNEL_CHANNELS');
+        let channels = [];
+        if (channelsKey?.value) {
+            try {
+                channels = JSON.parse(channelsKey.value);
+            } catch {
+                channels = channelsKey.value.split(',').map(v => v.trim());
+            }
+        }
+
+        const required = [];
+        if (channels.includes('telegram')) {
+            required.push('TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_USERNAME');
+        }
+        if (channels.includes('instagram')) {
+            required.push('INSTAGRAM_ACCESS_TOKEN', 'INSTAGRAM_APP_SECRET', 'INSTAGRAM_VERIFY_TOKEN', 'INSTAGRAM_BUSINESS_ID', 'INSTAGRAM_USERNAME');
+        }
+
+        return required;
+    };
+
+    const requiredKeys = getRequiredKeys();
+    const existingKeyNames = new Set(visibleKeys.map((k) => k.key));
+    const missingRequiredKeys = requiredKeys.filter((key) => !existingKeyNames.has(key));
 
     const handleSave = async (form) => {
         await upsertKey(form.key, form.value, form.label, form.isSecret);
@@ -276,34 +309,14 @@ export function KeysPanel() {
         await deleteKey(key);
     };
 
-    const handleToggleChannel = async (channelId) => {
-        const next = selectedChannels.includes(channelId)
-            ? selectedChannels.filter(c => c !== channelId)
-            : [...selectedChannels, channelId];
-
-        setSelectedChannels(next);
-        setIsApplyingChannels(true);
-
-        try {
-            await upsertKey(CHANNELS_KEY, JSON.stringify(next), 'Канали запуску воронки', false);
-
-            const existing = new Set(keys.map(k => k.key));
-            const required = CHANNEL_PRESETS
-                .filter(preset => next.includes(preset.id))
-                .flatMap(preset => preset.keys);
-
-            const missing = required.filter(item => !existing.has(item.key));
-
-            for (const item of missing) {
-                await upsertKey(item.key, '', item.label, item.isSecret);
-            }
-        } finally {
-            setIsApplyingChannels(false);
-        }
+    const handleUseSavedClaudeConnector = async () => {
+        if (!selectedConnectorId) return;
+        await upsertKey('CLAUDE_CONNECTOR_ID', selectedConnectorId, 'Claude Connector ID', false);
     };
 
-    const addGeneratedLink = (channelId) => {
-        setLinkCounts(prev => ({ ...prev, [channelId]: (prev[channelId] || 1) + 1 }));
+    const handleUseManualClaudeKey = () => {
+        setEditing({ key: 'CLAUDE_API_KEY', value: '', label: 'Claude API Key', isSecret: true });
+        setIsNew(true);
     };
 
     const copyToClipboard = async (text) => {
@@ -315,7 +328,9 @@ export function KeysPanel() {
     };
 
     return (
-        <div className="w-72 shrink-0 bg-gray-950 border-l border-gray-800 flex flex-col overflow-hidden">
+        <div className={embedded
+            ? 'h-full flex flex-col overflow-hidden'
+            : 'w-72 shrink-0 bg-gray-950 border-l border-gray-800 flex flex-col overflow-hidden'}>
             <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
                 <div>
                     <div className="text-sm font-semibold text-white">Ключі воронки</div>
@@ -330,85 +345,62 @@ export function KeysPanel() {
             </div>
 
             <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
-                <div className="bg-gray-900 rounded-lg p-3 border border-gray-800 space-y-2">
-                    <div className="text-sm font-medium text-white">Де працює воронка</div>
-                    <div className="text-xs text-gray-400">Оберіть 1+ каналів. Потрібні ключі з'являться автоматично.</div>
-
-                    <div className="space-y-1.5 pt-1">
-                        {CHANNEL_PRESETS.map(channel => (
-                            <label key={channel.id} className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
-                                <input
-                                    type="checkbox"
-                                    checked={selectedChannels.includes(channel.id)}
-                                    onChange={() => handleToggleChannel(channel.id)}
-                                    disabled={isApplyingChannels}
-                                    className="accent-brand"
-                                />
-                                <span>{channel.label}</span>
-                            </label>
-                        ))}
+                <div className="rounded-lg p-3 border bg-blue-900/10 border-blue-900/40 space-y-2">
+                    <div className="text-xs text-blue-300 font-medium">Claude для цієї воронки</div>
+                    <div className="text-xs text-gray-400">
+                        Можна або зберегти ключ напряму в CLAUDE_API_KEY, або вибрати існуючий Claude-конектор.
                     </div>
-
-                    <div className="text-[11px] text-gray-500">
-                        {isApplyingChannels
-                            ? 'Оновлюю список ключів...'
-                            : 'Ключі не видаляються автоматично після зняття чекбоксу, щоб не втратити дані.'}
+                    <div className="flex flex-wrap gap-2">
+                        <button
+                            onClick={handleUseManualClaudeKey}
+                            className="text-xs px-2 py-1 rounded bg-blue-900/30 hover:bg-blue-900/50 text-blue-200 border border-blue-800"
+                        >
+                            Ввести CLAUDE_API_KEY
+                        </button>
                     </div>
+                    <div className="flex gap-2">
+                        <select
+                            value={selectedConnectorId}
+                            onChange={(e) => setSelectedConnectorId(e.target.value)}
+                            className="flex-1 bg-gray-900 border border-gray-700 rounded px-2.5 py-1.5 text-xs text-white"
+                            disabled={loadingConnectors || savedClaudeConnectors.length === 0}
+                        >
+                            <option value="">{loadingConnectors ? 'Завантаження...' : 'Оберіть Claude-конектор'}</option>
+                            {savedClaudeConnectors.map((item) => (
+                                <option key={item.id} value={item.id}>{item.name}</option>
+                            ))}
+                        </select>
+                        <button
+                            onClick={handleUseSavedClaudeConnector}
+                            disabled={!selectedConnectorId}
+                            className="text-xs px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 disabled:opacity-50"
+                        >
+                            Використати
+                        </button>
+                    </div>
+                </div>
 
-                    {selectedChannels.length > 0 && (
-                        <div className="mt-2 pt-2 border-t border-gray-800 space-y-2">
-                            <div className="text-xs text-gray-300 font-medium">Посилання на цю воронку</div>
-
-                            {generatedLinks.map(item => (
-                                <div key={item.id} className="bg-gray-950 border border-gray-800 rounded-lg p-2 space-y-1">
-                                    <div className="text-[11px] text-gray-400">{item.title}</div>
-                                    {item.missing ? (
-                                        <div className="text-[11px] text-yellow-400">{item.hint}</div>
-                                    ) : (
-                                        <>
-                                            <a
-                                                href={item.url}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                className="block text-[11px] text-brand-light hover:text-white break-all font-mono"
-                                            >
-                                                {item.url}
-                                            </a>
-                                            <button
-                                                type="button"
-                                                onClick={() => copyToClipboard(item.url)}
-                                                className="text-[11px] px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 transition-colors"
-                                            >
-                                                Копіювати
-                                            </button>
-                                        </>
-                                    )}
+                {missingRequiredKeys.length > 0 && (
+                    <div className="rounded-lg p-3 border bg-red-900/10 border-red-900/40">
+                        <div className="text-xs text-red-300 mb-2">Бракує обов'язкових ключів для каналів:</div>
+                        <div className="space-y-2">
+                            {missingRequiredKeys.map((key) => (
+                                <div key={key} className="flex items-center justify-between gap-2">
+                                    <code className="text-xs text-red-200 font-mono">{key}</code>
+                                    <button
+                                        onClick={() => {
+                                            setEditing({ key, value: '', label: key, isSecret: key.includes('TOKEN') || key.includes('SECRET') });
+                                            setIsNew(true);
+                                        }}
+                                        className="text-xs px-2 py-1 rounded bg-red-900/30 hover:bg-red-900/50 text-red-200 border border-red-800"
+                                    >
+                                        Додати
+                                    </button>
                                 </div>
                             ))}
-
-                            <div className="flex gap-2">
-                                {selectedChannels.includes('telegram') && (
-                                    <button
-                                        type="button"
-                                        onClick={() => addGeneratedLink('telegram')}
-                                        className="text-[11px] px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 transition-colors"
-                                    >
-                                        + Лінк Telegram
-                                    </button>
-                                )}
-                                {selectedChannels.includes('instagram') && (
-                                    <button
-                                        type="button"
-                                        onClick={() => addGeneratedLink('instagram')}
-                                        className="text-[11px] px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 transition-colors"
-                                    >
-                                        + Лінк Instagram
-                                    </button>
-                                )}
-                            </div>
                         </div>
-                    )}
-                </div>
+                    </div>
+                )}
 
                 {isNew && editing && (
                     <KeyForm initial={editing} onSave={handleSave} onCancel={() => { setEditing(null); setIsNew(false); }} />
@@ -418,7 +410,14 @@ export function KeysPanel() {
                     editing?.key === k.key && !isNew ? (
                         <KeyForm key={k.key} initial={editing} onSave={handleSave} onCancel={() => setEditing(null)} />
                     ) : (
-                        <KeyRow key={k.key} k={k} onEdit={handleEdit} onDelete={handleDelete} onReveal={revealKey} />
+                        <KeyRow
+                            key={k.key}
+                            k={k}
+                            onEdit={handleEdit}
+                            onDelete={handleDelete}
+                            onReveal={revealKey}
+                            isRequired={requiredKeys.includes(k.key)}
+                        />
                     )
                 ))}
 

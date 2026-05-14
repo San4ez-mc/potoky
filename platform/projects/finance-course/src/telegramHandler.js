@@ -141,6 +141,7 @@ async function sendMainMenu(user, chatId) {
         `👋 Привіт, ${name}!\n\n` +
         `📊 *Фінансова система малого бізнесу*\n\n` +
         `*Блок 1 — Бізнес-процес*\n` +
+        `${statusEmoji('1.1')} Урок 1.1 — Онбординг\n` +
         `${statusEmoji('1.2')} Урок 1.2 — Бізнес-процес (swimlane)\n\n` +
         `*Блок 2 — Cashflow*\n` +
         `${statusEmoji('2.1')} Урок 2.1 — Статті Cashflow і P&L\n` +

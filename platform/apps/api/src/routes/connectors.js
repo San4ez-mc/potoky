@@ -11,12 +11,96 @@ const { NotFoundError } = require('@platform/errors');
 const router = Router();
 router.use(authMiddleware);
 
+const BUILTIN_CONNECTORS = [
+    {
+        type: 'claude_haiku',
+        name: 'Claude Haiku',
+        description: 'Anthropic Claude Haiku - швидка модель для простих задач.',
+        icon: '⚡',
+        color: '#D4A800',
+        schema: { fields: [{ key: 'api_key', label: 'Anthropic API Key', secret: true }] },
+    },
+    {
+        type: 'claude_sonnet',
+        name: 'Claude Sonnet',
+        description: 'Anthropic Claude Sonnet - основна модель для складних задач.',
+        icon: '🎭',
+        color: '#7C3AED',
+        schema: { fields: [{ key: 'api_key', label: 'Anthropic API Key', secret: true }] },
+    },
+    {
+        type: 'claude_opus',
+        name: 'Claude Opus',
+        description: 'Anthropic Claude Opus - максимальна якість для важких задач.',
+        icon: '🧠',
+        color: '#5B21B6',
+        schema: { fields: [{ key: 'api_key', label: 'Anthropic API Key', secret: true }] },
+    },
+    {
+        type: 'openai_gpt4',
+        name: 'OpenAI GPT-4',
+        description: 'OpenAI GPT-4o - мультимодальна модель OpenAI.',
+        icon: '🤖',
+        color: '#059669',
+        schema: { fields: [{ key: 'api_key', label: 'OpenAI API Key', secret: true }] },
+    },
+    {
+        type: 'telegram_bot',
+        name: 'Telegram Bot',
+        description: 'Telegram Bot API - повідомлення та медіа через Telegram.',
+        icon: '✈️',
+        color: '#0088CC',
+        schema: { fields: [{ key: 'token', label: 'Bot Token', secret: true }] },
+    },
+    {
+        type: 'google_sheets',
+        name: 'Google Sheets',
+        description: 'Google Sheets API через Service Account.',
+        icon: '📊',
+        color: '#1E7E34',
+        schema: {
+            fields: [
+                { key: 'service_account_json', label: 'Service Account JSON', secret: true, multiline: true },
+                { key: 'spreadsheet_id', label: 'Spreadsheet ID', secret: false },
+            ],
+        },
+    },
+    {
+        type: 'apps_script',
+        name: 'Google Apps Script',
+        description: 'Виклик Google Apps Script Web App.',
+        icon: '📝',
+        color: '#3B82F6',
+        schema: { fields: [{ key: 'url', label: 'Web App URL', secret: false }] },
+    },
+    {
+        type: 'webhook_generic',
+        name: 'Generic Webhook',
+        description: 'Довільний HTTP endpoint для інтеграцій.',
+        icon: '🔗',
+        color: '#6B7280',
+        schema: {
+            fields: [
+                { key: 'url', label: 'URL ендпоінта', secret: false },
+                { key: 'secret_header', label: 'Secret Header', secret: true },
+            ],
+        },
+    },
+];
+
 // GET /api/connectors — list all active connectors
 router.get('/', asyncHandler(async (_req, res) => {
-    const connectors = await db.connectorDef.findMany({
+    const connectorsFromDb = await db.connectorDef.findMany({
         where: { isActive: true },
         orderBy: { name: 'asc' },
     });
+
+    const mapByType = new Map(BUILTIN_CONNECTORS.map((item) => [item.type, { ...item, isActive: true, isBuiltin: true }]));
+    for (const item of connectorsFromDb) {
+        mapByType.set(item.type, item);
+    }
+
+    const connectors = Array.from(mapByType.values()).sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
     res.json({ ok: true, data: connectors });
 }));
 

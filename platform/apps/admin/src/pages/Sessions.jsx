@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { format } from 'date-fns';
@@ -13,6 +13,15 @@ export function Sessions() {
     const [deleting, setDeleting] = useState(false);
     const [errorsModal, setErrorsModal] = useState(null);
     const [errorsOnly, setErrorsOnly] = useState(false);
+
+    const backTo = useMemo(() => {
+        const params = new URLSearchParams();
+        params.set('page', String(page));
+        if (errorsOnly) params.set('hasErrors', 'true');
+        return botId
+            ? `/bots/${botId}/sessions?${params.toString()}`
+            : `/sessions?${params.toString()}`;
+    }, [botId, page, errorsOnly]);
 
     const loadSessions = () => {
         setLoading(true);
@@ -122,7 +131,7 @@ export function Sessions() {
     };
 
     return (
-        <div className="p-6 max-w-5xl">
+        <div className="p-6 w-full max-w-none">
             <div className="flex items-center justify-between mb-6">
                 <div>
                     <h1 className="text-xl font-semibold text-white">
@@ -159,76 +168,107 @@ export function Sessions() {
             {loading ? (
                 <div className="text-gray-400">Завантаження...</div>
             ) : (
-                <div className="space-y-2">
-                    {sessions.map(s => {
-                        const fullName = [
-                            s.user?.firstName || '',
-                            s.user?.lastName || ''
-                        ].filter(Boolean).join(' ') || s.user?.username || `id:${s.user?.telegramId || '?'}`;
-                        const tgHandle = s.user?.username || '—';
-                        const tgId = s.user?.telegramId ? String(s.user.telegramId) : '—';
-                        const msgCount = s._count?.messages ?? '—';
-                        const apiCount = s._count?.apiCalls ?? '—';
-                        const errCount = s._count?.errors ?? 0;
-                        const isSelected = selectedIds.includes(s.id);
-                        return (
-                            <div
-                                key={s.id}
-                                className={`bg-gray-900 border rounded-xl px-4 py-3 transition-colors ${isSelected ? 'border-blue-600/60' : 'border-gray-800 hover:border-gray-600'}`}
-                            >
-                                <div className="flex items-center justify-between gap-4">
-                                    <div className="flex items-center gap-3 min-w-0 flex-wrap">
-                                        <input
-                                            type="checkbox"
-                                            checked={isSelected}
-                                            onChange={() => toggleSelected(s.id)}
-                                            className="rounded border-gray-600 bg-gray-800"
-                                        />
-                                        <span className={`shrink-0 text-xs px-2 py-0.5 rounded-full border ${s.isActive ? 'text-emerald-400 bg-emerald-900/30 border-emerald-800' : 'text-gray-400 bg-gray-900 border-gray-700'}`}>
-                                            {s.isActive ? 'активна' : 'завершена'}
-                                        </span>
-                                        <div className="flex flex-col min-w-0">
-                                            <span className="text-sm text-white font-semibold truncate">{fullName}</span>
-                                            <span className="text-xs text-gray-500 truncate">@{tgHandle} · ID: {tgId}</span>
-                                        </div>
-                                        {s.bot && (
-                                            <span className="text-xs text-gray-500 font-mono shrink-0">/{s.bot.slug}</span>
-                                        )}
-                                        <span className="text-xs text-gray-600 shrink-0">💬 {msgCount} · 📡 {apiCount}</span>
-                                        {errCount > 0 && (
-                                            <span className="text-xs text-red-300 bg-red-900/30 border border-red-800 rounded-full px-2 py-0.5 shrink-0">⚠ {errCount}</span>
-                                        )}
-                                    </div>
-                                    <div className="flex items-center gap-2 shrink-0">
-                                        <span className="text-xs text-gray-500 shrink-0">
-                                            {s.startedAt ? format(new Date(s.startedAt), 'dd.MM.yyyy HH:mm') : ''}
-                                        </span>
-                                        <button
-                                            onClick={() => handleOpenErrors(s)}
-                                            className="px-2.5 py-1 text-xs rounded border border-amber-800 text-amber-400 hover:bg-amber-900/30"
-                                        >
-                                            Помилки
-                                        </button>
-                                        <button
-                                            onClick={() => handleDeleteOne(s)}
-                                            disabled={deleting}
-                                            className="px-2.5 py-1 text-xs rounded border border-red-800 text-red-400 hover:bg-red-900/30 disabled:opacity-50"
-                                        >
-                                            Видалити
-                                        </button>
-                                        <Link
-                                            to={`/sessions/${s.id}`}
-                                            className="px-2.5 py-1 text-xs rounded border border-gray-700 text-gray-300 hover:bg-gray-800"
-                                        >
-                                            Відкрити
-                                        </Link>
-                                    </div>
-                                </div>
-                                <div className="text-xs text-gray-600 mt-1 font-mono">{s.id.slice(0, 8)}…  стан: {s.state}</div>
-                            </div>
-                        );
-                    })}
-                    {sessions.length === 0 && <div className="text-gray-500 py-8 text-center">Немає сесій</div>}
+                <div className="w-full rounded-xl border border-gray-800 overflow-hidden bg-gray-900">
+                    <div className="overflow-x-auto">
+                        <table className="min-w-full text-sm">
+                            <thead className="bg-gray-950 border-b border-gray-800 text-xs uppercase tracking-wider text-gray-400">
+                                <tr>
+                                    <th className="px-3 py-2 text-left w-10">✓</th>
+                                    <th className="px-3 py-2 text-left">Статус</th>
+                                    <th className="px-3 py-2 text-left">Користувач</th>
+                                    <th className="px-3 py-2 text-left">Бот</th>
+                                    <th className="px-3 py-2 text-left">Стан</th>
+                                    <th className="px-3 py-2 text-right">Повідомл.</th>
+                                    <th className="px-3 py-2 text-right">API</th>
+                                    <th className="px-3 py-2 text-right">Помилки</th>
+                                    <th className="px-3 py-2 text-left">Початок</th>
+                                    <th className="px-3 py-2 text-left">Session ID</th>
+                                    <th className="px-3 py-2 text-right">Дії</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {sessions.map((s) => {
+                                    const fullName = [
+                                        s.user?.firstName || '',
+                                        s.user?.lastName || '',
+                                    ].filter(Boolean).join(' ') || s.user?.username || `id:${s.user?.telegramId || '?'}`;
+
+                                    const tgHandle = s.user?.username ? `@${s.user.username}` : '—';
+                                    const tgId = s.user?.telegramId ? String(s.user.telegramId) : '—';
+                                    const msgCount = s._count?.messages ?? 0;
+                                    const apiCount = s._count?.apiCalls ?? 0;
+                                    const errCount = s._count?.errors ?? 0;
+                                    const isSelected = selectedIds.includes(s.id);
+
+                                    return (
+                                        <tr key={s.id} className={`border-b border-gray-800/80 hover:bg-gray-800/40 ${isSelected ? 'bg-blue-900/10' : ''}`}>
+                                            <td className="px-3 py-2 align-top">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={isSelected}
+                                                    onChange={() => toggleSelected(s.id)}
+                                                    className="rounded border-gray-600 bg-gray-800"
+                                                />
+                                            </td>
+                                            <td className="px-3 py-2 align-top">
+                                                <span className={`inline-flex text-xs px-2 py-0.5 rounded-full border ${s.isActive ? 'text-emerald-400 bg-emerald-900/30 border-emerald-800' : 'text-gray-400 bg-gray-900 border-gray-700'}`}>
+                                                    {s.isActive ? 'активна' : 'завершена'}
+                                                </span>
+                                            </td>
+                                            <td className="px-3 py-2 align-top">
+                                                <div className="text-sm text-white font-medium">{fullName}</div>
+                                                <div className="text-xs text-gray-500">{tgHandle} · ID: {tgId}</div>
+                                            </td>
+                                            <td className="px-3 py-2 align-top text-xs text-gray-400 font-mono">
+                                                {s.bot?.slug ? `/${s.bot.slug}` : '—'}
+                                            </td>
+                                            <td className="px-3 py-2 align-top text-xs text-gray-400 font-mono">{s.state || '—'}</td>
+                                            <td className="px-3 py-2 align-top text-right text-gray-300">{msgCount}</td>
+                                            <td className="px-3 py-2 align-top text-right text-gray-300">{apiCount}</td>
+                                            <td className="px-3 py-2 align-top text-right">
+                                                {errCount > 0 ? (
+                                                    <span className="text-xs text-red-300 bg-red-900/30 border border-red-800 rounded-full px-2 py-0.5">{errCount}</span>
+                                                ) : (
+                                                    <span className="text-xs text-gray-600">0</span>
+                                                )}
+                                            </td>
+                                            <td className="px-3 py-2 align-top text-xs text-gray-500 whitespace-nowrap">
+                                                {s.startedAt ? format(new Date(s.startedAt), 'dd.MM.yyyy HH:mm') : '—'}
+                                            </td>
+                                            <td className="px-3 py-2 align-top text-xs text-gray-600 font-mono whitespace-nowrap">{s.id.slice(0, 8)}…</td>
+                                            <td className="px-3 py-2 align-top">
+                                                <div className="flex items-center justify-end gap-1.5">
+                                                    <button
+                                                        onClick={() => handleOpenErrors(s)}
+                                                        className="px-2 py-1 text-xs rounded border border-amber-800 text-amber-400 hover:bg-amber-900/30"
+                                                    >
+                                                        Помилки
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleDeleteOne(s)}
+                                                        disabled={deleting}
+                                                        className="px-2 py-1 text-xs rounded border border-red-800 text-red-400 hover:bg-red-900/30 disabled:opacity-50"
+                                                    >
+                                                        Видалити
+                                                    </button>
+                                                    <Link
+                                                        to={`/sessions/${s.id}?back=${encodeURIComponent(backTo)}`}
+                                                        className="px-2 py-1 text-xs rounded border border-gray-700 text-gray-300 hover:bg-gray-800"
+                                                    >
+                                                        Відкрити
+                                                    </Link>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    {sessions.length === 0 && (
+                        <div className="text-gray-500 py-8 text-center border-t border-gray-800">Немає сесій</div>
+                    )}
                 </div>
             )}
 

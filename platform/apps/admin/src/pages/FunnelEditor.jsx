@@ -6,19 +6,49 @@ import { FunnelCanvas } from '../components/funnel/FunnelCanvas.jsx';
 import { NodeLibrary } from '../components/funnel/NodeLibrary.jsx';
 import { NodeEditor } from '../components/funnel/NodeEditor.jsx';
 import { KeysPanel } from '../components/funnel/KeysPanel.jsx';
+import { EnvironmentPanel } from '../components/funnel/EnvironmentPanel.jsx';
+import { FunnelEditModal } from '../components/funnel/FunnelEditModal.jsx';
+import { FunnelTestModal } from '../components/funnel/FunnelTestModal.jsx';
+import { api } from '../api/client.js';
+
+function PanelToggle({ side, onClick }) {
+    return (
+        <button
+            onClick={onClick}
+            className={`fixed top-16 z-30 flex items-center gap-2 rounded-full border border-gray-800 bg-gray-950/95 px-3 py-2 text-xs text-gray-300 shadow-lg shadow-black/40 hover:bg-gray-900 hover:text-white transition-colors ${side === 'left' ? 'left-3' : 'right-3'}`}
+            title={side === 'left' ? 'Відкрити ліву панель' : 'Відкрити праву панель'}
+        >
+            <span className="text-base leading-none">{side === 'left' ? '☰' : '⚙'}</span>
+        </button>
+    );
+}
+
+function TabButton({ active, children, onClick }) {
+    return (
+        <button
+            onClick={onClick}
+            className={`flex-1 rounded-lg px-3 py-2 text-xs font-medium transition-colors ${active
+                ? 'bg-brand text-white'
+                : 'bg-gray-900 text-gray-400 hover:bg-gray-800 hover:text-white border border-gray-800'}`}
+        >
+            {children}
+        </button>
+    );
+}
 
 function TopBar({
     bot,
     isDirty,
     isSaving,
-    isLeftPanelOpen,
-    isRightPanelOpen,
-    onToggleLeftPanel,
-    onToggleRightPanel,
     onSave,
     onExport,
     onImport,
     onBack,
+    onEdit,
+    onTest,
+    isTesting,
+    missingKeys,
+    missingSystemKeys,
 }) {
     const importRef = useRef(null);
 
@@ -55,23 +85,19 @@ function TopBar({
                 </span>
             )}
 
-            <button
-                onClick={onToggleLeftPanel}
-                className={`text-sm px-3 py-1.5 rounded-lg transition-colors ${isLeftPanelOpen
-                    ? 'bg-gray-800 hover:bg-gray-700 text-white'
-                    : 'bg-gray-900 hover:bg-gray-800 text-gray-400 border border-gray-800'}`}
-            >
-                {isLeftPanelOpen ? '◧ Ліва панель' : '◨ Ліва панель'}
-            </button>
+            {missingKeys && missingKeys.length > 0 && (
+                <span className="text-xs text-red-400 bg-red-900/30 px-2 py-0.5 rounded-full border border-red-800 flex items-center gap-1.5">
+                    <span>⚠</span>
+                    <span>Бракує {missingKeys.length} ключів</span>
+                </span>
+            )}
 
-            <button
-                onClick={onToggleRightPanel}
-                className={`text-sm px-3 py-1.5 rounded-lg transition-colors ${isRightPanelOpen
-                    ? 'bg-gray-800 hover:bg-gray-700 text-white'
-                    : 'bg-gray-900 hover:bg-gray-800 text-gray-400 border border-gray-800'}`}
-            >
-                {isRightPanelOpen ? '◧ Права панель' : '◨ Права панель'}
-            </button>
+            {missingSystemKeys && missingSystemKeys.length > 0 && (
+                <span className="text-xs text-amber-300 bg-amber-900/30 px-2 py-0.5 rounded-full border border-amber-800 flex items-center gap-1.5">
+                    <span>⚠</span>
+                    <span>Системні ключі: {missingSystemKeys.length}</span>
+                </span>
+            )}
 
             <div className="flex-1" />
 
@@ -92,6 +118,23 @@ function TopBar({
             </button>
 
             <button
+                onClick={onEdit}
+                title="Редагувати назву та опис"
+                className="text-sm px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors"
+            >
+                ✏ Редагувати
+            </button>
+
+            <button
+                onClick={onTest}
+                disabled={isTesting}
+                title='Запустити тест воронки'
+                className="text-sm px-3 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+                {isTesting ? '⟳ Тестується...' : '🧪 Тест'}
+            </button>
+
+            <button
                 onClick={onSave}
                 disabled={isSaving || !isDirty}
                 className="text-sm px-4 py-1.5 rounded-lg bg-brand hover:bg-brand-dark disabled:opacity-40 text-white font-medium transition-colors"
@@ -105,23 +148,143 @@ function TopBar({
 export function FunnelEditor() {
     const { botId } = useParams();
     const navigate = useNavigate();
-    const { bot, connectors, isDirty, isSaving, isLoading, error, selectedNode, loadFunnel, saveFunnel, exportFunnel, importFunnel } = useFunnelStore();
+    const { bot, connectors, isDirty, isSaving, isLoading, error, selectedNode, keys, loadFunnel, saveFunnel, exportFunnel, importFunnel } = useFunnelStore();
 
     const [isLeftPanelOpen, setLeftPanelOpen] = useState(true);
     const [isRightPanelOpen, setRightPanelOpen] = useState(true);
-    const [rightPanel, setRightPanel] = useState('keys'); // 'keys' | 'node'
+    const [activeLeftTab, setActiveLeftTab] = useState('nodes'); // 'nodes' | 'keys' | 'env'
+    const [editModalOpen, setEditModalOpen] = useState(false);
+    const [testModalOpen, setTestModalOpen] = useState(false);
+    const [isTesting, setIsTesting] = useState(false);
+    const [testResult, setTestResult] = useState(null);
+    const [isSavingEdit, setIsSavingEdit] = useState(false);
+    const [missingSystemKeys, setMissingSystemKeys] = useState([]);
+
+    const loadSystemKeysStatus = async () => {
+        try {
+            const systemKeys = await api.getSystemKeys();
+            const missing = (systemKeys || []).filter((item) => !item.exists).map((item) => item.key);
+            setMissingSystemKeys(missing);
+        } catch {
+            setMissingSystemKeys(['CLAUDE_API_KEY']);
+        }
+    };
 
     const handleBack = () => {
         navigate('/funnels');
+    };
+
+    const handleOpenTestSession = () => {
+        const sessionId = testResult?.sessionId;
+        if (!sessionId) return;
+        const backToEditor = encodeURIComponent(`/funnel/${botId}`);
+        navigate(`/sessions/${sessionId}?back=${backToEditor}`);
+    };
+
+    // Get required keys based on enabled channels
+    const getRequiredKeys = () => {
+        const keyMap = {};
+        keys.forEach(k => { keyMap[k.key] = k.value; });
+        
+        const channelsKey = keys.find(k => k.key === 'FUNNEL_CHANNELS');
+        let channels = [];
+        if (channelsKey?.value) {
+            try {
+                channels = JSON.parse(channelsKey.value);
+            } catch {
+                channels = channelsKey.value.split(',').map(v => v.trim());
+            }
+        }
+
+        const required = [];
+        if (channels.includes('telegram')) {
+            required.push('TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_USERNAME');
+        }
+        if (channels.includes('instagram')) {
+            required.push('INSTAGRAM_ACCESS_TOKEN', 'INSTAGRAM_APP_SECRET', 'INSTAGRAM_VERIFY_TOKEN', 'INSTAGRAM_BUSINESS_ID', 'INSTAGRAM_USERNAME');
+        }
+
+        return required.filter(k => !keyMap[k]);
+    };
+
+    const missingKeys = getRequiredKeys();
+
+    const handleRunTest = async () => {
+        const localMissing = getRequiredKeys();
+        const allMissing = [...localMissing];
+        if (missingSystemKeys.length > 0) {
+            allMissing.push(...missingSystemKeys);
+        }
+
+        if (allMissing.length > 0) {
+            setLeftPanelOpen(true);
+            setActiveLeftTab('keys');
+            setTestModalOpen(true);
+            setTestResult({
+                ok: false,
+                missingKeys: localMissing,
+                missingSystemKeys,
+                errors: [{
+                    step: 'Валідація ключів',
+                    message: missingSystemKeys.length > 0
+                        ? 'Перед тестом заповніть ключі воронки та системний Claude API key (Налаштування -> Ключі).'
+                        : 'Перед тестом заповніть обов\'язкові ключі воронки.',
+                }],
+            });
+            return;
+        }
+
+        setTestModalOpen(true);
+        setIsTesting(true);
+        setTestResult(null);
+        try {
+            const result = await api.runBotRegression(botId);
+            setTestResult({
+                ok: true,
+                sessionId: result.sessionId,
+                finalState: result.finalState,
+                historyCount: result.historyCount,
+                outputFile: result.outputFile,
+                logs: result.logs,
+            });
+        } catch (err) {
+            setTestResult({
+                ok: false,
+                error: err.message,
+                missingKeys: missingKeys,
+                errors: [{ step: 'Тест', message: err.message }],
+            });
+        } finally {
+            setIsTesting(false);
+        }
+    };
+
+    const handleSaveEdit = async (form) => {
+        setIsSavingEdit(true);
+        try {
+            // API call to update bot name and description
+            await api.updateBot(botId, form.name, form.description);
+            
+            // Update local store
+            loadFunnel(botId);
+            setEditModalOpen(false);
+        } catch (e) {
+            console.error('Error saving funnel:', e);
+        } finally {
+            setIsSavingEdit(false);
+        }
     };
 
     useEffect(() => {
         if (botId) loadFunnel(botId);
     }, [botId]);
 
-    // Switch right panel based on selection
     useEffect(() => {
-        setRightPanel(selectedNode ? 'node' : 'keys');
+        loadSystemKeysStatus();
+    }, []);
+
+    useEffect(() => {
+        if (selectedNode) setRightPanelOpen(true);
     }, [selectedNode?.id]);
 
     if (isLoading) return (
@@ -144,25 +307,105 @@ export function FunnelEditor() {
                     bot={bot}
                     isDirty={isDirty}
                     isSaving={isSaving}
-                    isLeftPanelOpen={isLeftPanelOpen}
-                    isRightPanelOpen={isRightPanelOpen}
-                    onToggleLeftPanel={() => setLeftPanelOpen(value => !value)}
-                    onToggleRightPanel={() => setRightPanelOpen(value => !value)}
                     onSave={saveFunnel}
                     onExport={exportFunnel}
                     onImport={importFunnel}
                     onBack={handleBack}
+                    onEdit={() => setEditModalOpen(true)}
+                    onTest={handleRunTest}
+                    isTesting={isTesting}
+                    missingKeys={missingKeys}
+                    missingSystemKeys={missingSystemKeys}
                 />
-                <div className="flex flex-1 overflow-hidden">
-                    {/* Left: Node library */}
-                    {isLeftPanelOpen && <NodeLibrary connectors={connectors} />}
+                <div className="relative flex flex-1 overflow-hidden">
+                    {!isLeftPanelOpen && (
+                        <PanelToggle side="left" onClick={() => setLeftPanelOpen(true)} />
+                    )}
+                    {!isRightPanelOpen && (
+                        <PanelToggle side="right" onClick={() => setRightPanelOpen(true)} />
+                    )}
 
-                    {/* Center: Canvas */}
-                    <FunnelCanvas />
+                    {isLeftPanelOpen && (
+                        <div className="w-80 shrink-0 bg-gray-950 border-r border-gray-800 flex flex-col overflow-hidden">
+                            <div className="px-4 py-3 border-b border-gray-800 flex items-start justify-between gap-3">
+                                <div>
+                                    <div className="text-sm font-semibold text-white">Панель</div>
+                                    <div className="text-xs text-gray-500">Ноди, ключі та середовища</div>
+                                </div>
+                                <button
+                                    onClick={() => setLeftPanelOpen(false)}
+                                    className="h-8 w-8 rounded-lg border border-gray-800 bg-gray-900 text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+                                    title="Закрити ліву панель"
+                                >
+                                    ✕
+                                </button>
+                            </div>
 
-                    {/* Right: Keys or Node editor */}
-                    {isRightPanelOpen && (rightPanel === 'node' && selectedNode ? <NodeEditor /> : <KeysPanel />)}
+                            <div className="px-4 py-3 border-b border-gray-800 space-y-2">
+                                <div className="grid grid-cols-3 gap-2">
+                                    <TabButton active={activeLeftTab === 'nodes'} onClick={() => setActiveLeftTab('nodes')}>Ноди і конектори</TabButton>
+                                    <TabButton active={activeLeftTab === 'keys'} onClick={() => setActiveLeftTab('keys')}>Ключі</TabButton>
+                                    <TabButton active={activeLeftTab === 'env'} onClick={() => setActiveLeftTab('env')}>Середовища</TabButton>
+                                </div>
+                            </div>
+
+                            <div className="flex-1 min-h-0">
+                                {activeLeftTab === 'nodes' && <NodeLibrary connectors={connectors} embedded />}
+                                {activeLeftTab === 'keys' && <KeysPanel embedded />}
+                                {activeLeftTab === 'env' && <EnvironmentPanel embedded />}
+                            </div>
+                        </div>
+                    )}
+
+                    <FunnelCanvas onNodeClick={() => setRightPanelOpen(true)} />
+
+                    {isRightPanelOpen && (
+                        <div className="w-80 shrink-0 bg-gray-950 border-l border-gray-800 flex flex-col overflow-hidden">
+                            <div className="px-4 py-3 border-b border-gray-800 flex items-start justify-between gap-3">
+                                <div>
+                                    <div className="text-sm font-semibold text-white">{selectedNode ? 'Налаштування ноди' : 'Панель ноди'}</div>
+                                    <div className="text-xs text-gray-500 font-mono">{selectedNode?.id || 'Виберіть ноду на полотні'}</div>
+                                </div>
+                                <button
+                                    onClick={() => setRightPanelOpen(false)}
+                                    className="h-8 w-8 rounded-lg border border-gray-800 bg-gray-900 text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+                                    title="Закрити праву панель"
+                                >
+                                    ✕
+                                </button>
+                            </div>
+
+                            <div className="flex-1 min-h-0 overflow-y-auto">
+                                {selectedNode ? (
+                                    <NodeEditor embedded onClose={() => setRightPanelOpen(false)} />
+                                ) : (
+                                    <div className="h-full flex items-center justify-center px-6 text-center">
+                                        <div>
+                                            <div className="text-sm text-gray-300">Клікни на ноду, щоб відкрити її налаштування</div>
+                                            <div className="text-xs text-gray-500 mt-2">Панель лишається закритою, доки не вибереш ноду або не відкриєш її вручну.</div>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
                 </div>
+
+                <FunnelEditModal
+                    isOpen={editModalOpen}
+                    bot={bot}
+                    onClose={() => setEditModalOpen(false)}
+                    onSave={handleSaveEdit}
+                    isSaving={isSavingEdit}
+                />
+
+                <FunnelTestModal
+                    isOpen={testModalOpen}
+                    onClose={() => setTestModalOpen(false)}
+                    isLoading={isTesting}
+                    result={testResult}
+                    onOpenSession={handleOpenTestSession}
+                />
             </div>
         </ReactFlowProvider>
     );

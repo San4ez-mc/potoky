@@ -5,6 +5,7 @@ import { useAuthStore } from '../stores/authStore.js';
 export function Login() {
     const [loginVal, setLoginVal] = useState('');
     const [password, setPassword] = useState('');
+    const [rememberMe, setRememberMe] = useState(true);
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
     const { login, isAuthenticated } = useAuthStore();
@@ -16,7 +17,7 @@ export function Login() {
         setError('');
         setLoading(true);
         try {
-            await login(loginVal, password);
+            await login(loginVal, password, rememberMe);
         } catch (err) {
             setError(err.message || 'Невірний логін або пароль');
         } finally {
@@ -61,6 +62,16 @@ export function Login() {
                             autoComplete="current-password"
                         />
                     </div>
+
+                    <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer select-none">
+                        <input
+                            type="checkbox"
+                            checked={rememberMe}
+                            onChange={(e) => setRememberMe(e.target.checked)}
+                            className="accent-brand"
+                        />
+                        Запам'ятати мене
+                    </label>
 
                     {error && (
                         <div className="bg-red-900/30 border border-red-700 rounded-lg px-3 py-2 text-red-300 text-sm">

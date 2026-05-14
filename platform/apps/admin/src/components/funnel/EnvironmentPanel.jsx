@@ -1,0 +1,246 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { useFunnelStore } from '../../stores/funnelStore.js';
+
+const CHANNELS_KEY = 'FUNNEL_CHANNELS';
+
+const CHANNEL_PRESETS = [
+    {
+        id: 'telegram',
+        label: 'Telegram бот',
+        keys: [
+            { key: 'TELEGRAM_BOT_TOKEN', label: 'Telegram Bot Token', isSecret: true },
+            { key: 'TELEGRAM_BOT_USERNAME', label: 'Telegram Bot Username', isSecret: false },
+        ],
+    },
+    {
+        id: 'instagram',
+        label: 'Instagram',
+        keys: [
+            { key: 'INSTAGRAM_ACCESS_TOKEN', label: 'Instagram Access Token', isSecret: true },
+            { key: 'INSTAGRAM_APP_SECRET', label: 'Instagram App Secret', isSecret: true },
+            { key: 'INSTAGRAM_VERIFY_TOKEN', label: 'Instagram Verify Token', isSecret: true },
+            { key: 'INSTAGRAM_BUSINESS_ID', label: 'Instagram Business ID', isSecret: false },
+            { key: 'INSTAGRAM_USERNAME', label: 'Instagram Username (without @)', isSecret: false },
+        ],
+    },
+];
+
+function toKeyMap(keys) {
+    return keys.reduce((acc, item) => {
+        acc[item.key] = item.value;
+        return acc;
+    }, {});
+}
+
+function normalizeUsername(raw) {
+    if (!raw) return '';
+    return String(raw).trim().replace(/^@/, '');
+}
+
+function parseSelectedChannels(rawValue) {
+    if (!rawValue) return [];
+    try {
+        const parsed = JSON.parse(rawValue);
+        if (Array.isArray(parsed)) return parsed.filter(Boolean);
+    } catch {
+        // fall through to CSV mode
+    }
+    return String(rawValue)
+        .split(',')
+        .map(v => v.trim())
+        .filter(Boolean);
+}
+
+function buildChannelLinks({ channels, keyMap, bot, counts }) {
+    if (!bot) return [];
+
+    const links = [];
+
+    if (channels.includes('telegram')) {
+        const username = normalizeUsername(keyMap.TELEGRAM_BOT_USERNAME);
+        const total = Math.max(1, counts.telegram || 1);
+        for (let i = 0; i < total; i += 1) {
+            const suffix = i === 0 ? '' : `__l${i + 1}`;
+            const payload = `${bot.slug || bot.id}${suffix}`;
+            links.push({
+                id: `telegram-${i}`,
+                channel: 'Telegram',
+                title: `Telegram #${i + 1}`,
+                missing: !username,
+                hint: 'Заповніть TELEGRAM_BOT_USERNAME, щоб згенерувати посилання.',
+                url: username ? `https://t.me/${username}?start=${encodeURIComponent(payload)}` : '',
+            });
+        }
+    }
+
+    if (channels.includes('instagram')) {
+        const username = normalizeUsername(keyMap.INSTAGRAM_USERNAME);
+        const total = Math.max(1, counts.instagram || 1);
+        for (let i = 0; i < total; i += 1) {
+            const ref = `${bot.slug || bot.id}_l${i + 1}`;
+            links.push({
+                id: `instagram-${i}`,
+                channel: 'Instagram',
+                title: `Instagram #${i + 1}`,
+                missing: !username,
+                hint: 'Заповніть INSTAGRAM_USERNAME, щоб згенерувати посилання.',
+                url: username ? `https://ig.me/m/${username}?ref=${encodeURIComponent(ref)}` : '',
+            });
+        }
+    }
+
+    return links;
+}
+
+export function EnvironmentPanel({ embedded = false }) {
+    const { bot, keys, upsertKey } = useFunnelStore();
+    const [selectedChannels, setSelectedChannels] = useState([]);
+    const [isApplyingChannels, setIsApplyingChannels] = useState(false);
+    const [linkCounts, setLinkCounts] = useState({ telegram: 1, instagram: 1 });
+
+    const channelsKey = useMemo(
+        () => keys.find(k => k.key === CHANNELS_KEY),
+        [keys]
+    );
+
+    useEffect(() => {
+        setSelectedChannels(parseSelectedChannels(channelsKey?.value));
+    }, [channelsKey?.value]);
+
+    const keyMap = useMemo(() => toKeyMap(keys), [keys]);
+    const generatedLinks = useMemo(
+        () => buildChannelLinks({ channels: selectedChannels, keyMap, bot, counts: linkCounts }),
+        [selectedChannels, keyMap, bot, linkCounts]
+    );
+
+    const handleToggleChannel = async (channelId) => {
+        const next = selectedChannels.includes(channelId)
+            ? selectedChannels.filter(c => c !== channelId)
+            : [...selectedChannels, channelId];
+
+        setSelectedChannels(next);
+        setIsApplyingChannels(true);
+
+        try {
+            await upsertKey(CHANNELS_KEY, JSON.stringify(next), 'Канали запуску воронки', false);
+
+            const existing = new Set(keys.map(k => k.key));
+            const required = CHANNEL_PRESETS
+                .filter(preset => next.includes(preset.id))
+                .flatMap(preset => preset.keys);
+
+            const missing = required.filter(item => !existing.has(item.key));
+
+            for (const item of missing) {
+                await upsertKey(item.key, '', item.label, item.isSecret);
+            }
+        } finally {
+            setIsApplyingChannels(false);
+        }
+    };
+
+    const addGeneratedLink = (channelId) => {
+        setLinkCounts(prev => ({ ...prev, [channelId]: (prev[channelId] || 1) + 1 }));
+    };
+
+    const copyToClipboard = async (text) => {
+        try {
+            await navigator.clipboard.writeText(text);
+        } catch {
+            // no-op
+        }
+    };
+
+    return (
+        <div className={embedded
+            ? 'h-full flex flex-col overflow-hidden'
+            : 'w-72 shrink-0 bg-gray-950 border-l border-gray-800 flex flex-col overflow-hidden'}>
+            <div className="px-4 py-3 border-b border-gray-800">
+                <div className="text-sm font-semibold text-white">Середовища</div>
+                <div className="text-xs text-gray-500">Де працює воронка і які канали увімкнені</div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
+                <div className="bg-gray-900 rounded-lg p-3 border border-gray-800 space-y-2">
+                    <div className="text-sm font-medium text-white">Де працює воронка</div>
+                    <div className="text-xs text-gray-400">Оберіть 1+ каналів. Потрібні ключі з'являться автоматично.</div>
+
+                    <div className="space-y-1.5 pt-1">
+                        {CHANNEL_PRESETS.map(channel => (
+                            <label key={channel.id} className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={selectedChannels.includes(channel.id)}
+                                    onChange={() => handleToggleChannel(channel.id)}
+                                    disabled={isApplyingChannels}
+                                    className="accent-brand"
+                                />
+                                <span>{channel.label}</span>
+                            </label>
+                        ))}
+                    </div>
+
+                    <div className="text-[11px] text-gray-500">
+                        {isApplyingChannels
+                            ? 'Оновлюю список ключів...'
+                            : 'Ключі не видаляються автоматично після зняття чекбоксу, щоб не втратити дані.'}
+                    </div>
+
+                    {selectedChannels.length > 0 && (
+                        <div className="mt-2 pt-2 border-t border-gray-800 space-y-2">
+                            <div className="text-xs text-gray-300 font-medium">Посилання на цю воронку</div>
+
+                            {generatedLinks.map(item => (
+                                <div key={item.id} className="bg-gray-950 border border-gray-800 rounded-lg p-2 space-y-1">
+                                    <div className="text-[11px] text-gray-400">{item.title}</div>
+                                    {item.missing ? (
+                                        <div className="text-[11px] text-yellow-400">{item.hint}</div>
+                                    ) : (
+                                        <>
+                                            <a
+                                                href={item.url}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="block text-[11px] text-brand-light hover:text-white break-all font-mono"
+                                            >
+                                                {item.url}
+                                            </a>
+                                            <button
+                                                type="button"
+                                                onClick={() => copyToClipboard(item.url)}
+                                                className="text-[11px] px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 transition-colors"
+                                            >
+                                                Копіювати
+                                            </button>
+                                        </>
+                                    )}
+                                </div>
+                            ))}
+
+                            <div className="flex gap-2">
+                                {selectedChannels.includes('telegram') && (
+                                    <button
+                                        type="button"
+                                        onClick={() => addGeneratedLink('telegram')}
+                                        className="text-[11px] px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 transition-colors"
+                                    >
+                                        + Лінк Telegram
+                                    </button>
+                                )}
+                                {selectedChannels.includes('instagram') && (
+                                    <button
+                                        type="button"
+                                        onClick={() => addGeneratedLink('instagram')}
+                                        className="text-[11px] px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 transition-colors"
+                                    >
+                                        + Лінк Instagram
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}

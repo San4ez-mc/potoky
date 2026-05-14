@@ -21,7 +21,7 @@ function authMiddleware(req, res, next) {
  * Login handler — verify password and set session.
  */
 async function loginHandler(req, res) {
-    const { login, password } = req.body;
+    const { login, password, rememberMe } = req.body;
     if (!login || !password) {
         return res.status(400).json({ ok: false, error: { code: 'MISSING_CREDENTIALS', message: 'Login and password required' } });
     }
@@ -41,7 +41,26 @@ async function loginHandler(req, res) {
         return res.status(401).json({ ok: false, error: { code: 'INVALID_CREDENTIALS', message: 'Invalid login or password' } });
     }
 
+    await new Promise((resolve, reject) => {
+        req.session.regenerate((error) => {
+            if (error) return reject(error);
+            return resolve();
+        });
+    });
+
     req.session.isAdmin = true;
+    req.session.rememberMe = Boolean(rememberMe);
+    req.session.cookie.maxAge = Boolean(rememberMe)
+        ? 30 * 24 * 60 * 60 * 1000
+        : 8 * 60 * 60 * 1000;
+
+    await new Promise((resolve, reject) => {
+        req.session.save((error) => {
+            if (error) return reject(error);
+            return resolve();
+        });
+    });
+
     res.json({ ok: true });
 }
 

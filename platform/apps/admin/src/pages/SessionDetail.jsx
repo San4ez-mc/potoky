@@ -66,6 +66,13 @@ function MessageContent({ content, metadata }) {
 
     return (
         <div className="whitespace-pre-wrap">
+            {metadata?.hasPhoto && (
+                <div className="mb-1.5 inline-flex items-center gap-1.5 px-2 py-0.5 bg-purple-900/30 text-purple-300 rounded border border-purple-800 text-xs">
+                    <span>📷</span>
+                    <span>{metadata?.photoName || 'Фото'}</span>
+                </div>
+            )}
+
             {parts.map((part, i) => {
                 if (part.type === 'text') return <span key={i}>{part.value}</span>;
 
@@ -184,6 +191,10 @@ export function SessionDetail() {
     const [apiCalls, setApiCalls] = useState([]);
     const [tab, setTab] = useState('chat');
     const [loading, setLoading] = useState(true);
+    const [draft, setDraft] = useState('');
+    const [photoFile, setPhotoFile] = useState(null);
+    const [sending, setSending] = useState(false);
+    const [sendError, setSendError] = useState('');
 
     useEffect(() => {
         Promise.all([api.getSession(id), api.getSessionMessages(id), api.getSessionApiCalls(id)])
@@ -195,6 +206,41 @@ export function SessionDetail() {
     if (!session) return <div className="p-6 text-red-400">Сесія не знайдена</div>;
 
     const userName = session.user?.firstName || session.user?.username || `TG:${session.user?.telegramId || '?'}`;
+
+    const fileToBase64 = (file) => new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(new Error('Не вдалося прочитати файл'));
+        reader.readAsDataURL(file);
+    });
+
+    const sendManualMessage = async () => {
+        if (!draft.trim() && !photoFile) {
+            setSendError('Введіть повідомлення або додайте фото');
+            return;
+        }
+
+        setSending(true);
+        setSendError('');
+        try {
+            const payload = { text: draft.trim() };
+            if (photoFile) {
+                payload.photoBase64 = await fileToBase64(photoFile);
+                payload.photoName = photoFile.name;
+                payload.photoMimeType = photoFile.type || 'image/jpeg';
+            }
+            await api.sendSessionMessage(id, payload);
+
+            const refreshed = await api.getSessionMessages(id);
+            setMessages(refreshed.data || refreshed);
+            setDraft('');
+            setPhotoFile(null);
+        } catch (err) {
+            setSendError(err.message || 'Не вдалося надіслати повідомлення');
+        } finally {
+            setSending(false);
+        }
+    };
 
     return (
         <div className="flex flex-col h-screen">
@@ -249,6 +295,47 @@ export function SessionDetail() {
                     </div>
                 )}
             </div>
+
+            {tab === 'chat' && (
+                <div className="border-t border-gray-800 bg-gray-900 p-3">
+                    <div className="max-w-2xl mx-auto space-y-2">
+                        {sendError && (
+                            <div className="text-xs text-red-300 bg-red-900/20 border border-red-900/40 rounded px-2 py-1.5">{sendError}</div>
+                        )}
+                        <div className="flex items-center gap-2">
+                            <input
+                                type="text"
+                                value={draft}
+                                onChange={(e) => setDraft(e.target.value)}
+                                placeholder="Написати повідомлення..."
+                                className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white"
+                            />
+                            <label className="px-3 py-2 text-xs rounded border border-gray-600 text-gray-300 hover:bg-gray-800 cursor-pointer">
+                                📷 Фото
+                                <input
+                                    type="file"
+                                    accept="image/*"
+                                    className="hidden"
+                                    onChange={(e) => setPhotoFile(e.target.files?.[0] || null)}
+                                />
+                            </label>
+                            <button
+                                onClick={sendManualMessage}
+                                disabled={sending}
+                                className="px-4 py-2 text-sm rounded bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white"
+                            >
+                                {sending ? 'Надсилання...' : 'Надіслати'}
+                            </button>
+                        </div>
+                        {photoFile && (
+                            <div className="text-xs text-gray-400 flex items-center justify-between">
+                                <span>Обрано: {photoFile.name}</span>
+                                <button onClick={() => setPhotoFile(null)} className="text-gray-300 hover:text-white">Прибрати</button>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

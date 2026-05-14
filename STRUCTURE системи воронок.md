@@ -1,682 +1,293 @@
 # FINEKO Flows Platform — Структура проекту
 
-> Актуально на: травень 2026  
-> Production URL: https://flows.fineko.space  
+> Актуально на: травень 2026
+> Production URL: https://flows.fineko.space
 > Git repo: https://github.com/San4ez-mc/potoky.git
-
----
-
-## Зміст
-
-1. [Загальний огляд](#1-загальний-огляд)
-2. [Технологічний стек](#2-технологічний-стек)
-3. [Файлова структура](#3-файлова-структура)
-4. [Apps — Застосунки](#4-apps--застосунки)
-5. [Packages — Пакети](#5-packages--пакети)
-6. [MCP Сервери](#6-mcp-сервери)
-7. [База даних — схема](#7-база-даних--схема)
-8. [API Routes](#8-api-routes)
-9. [Автентифікація](#9-автентифікація)
-10. [Деплой та інфраструктура](#10-деплой-та-інфраструктура)
-11. [Потоки даних](#11-потоки-даних)
 
 ---
 
 ## 1. Загальний огляд
 
-AI Bots Platform — монорепо для управління чат-ботами з:
-- Візуальним редактором воронок (аналог n8n)
-- Інтеграцією з Telegram та Instagram
-- AI-бекендом на Claude (Anthropic)
-- Адмін-панеллю для моніторингу
-- MCP (Model Context Protocol) для роботи з Claude.ai
+Платформа складається з монорепо `platform` і додаткових директорій з legacy/суміжними модулями.
+
+Ключові можливості:
+- Візуальний редактор воронок (React Flow)
+- Запуск бот-логіки через API та Telegram webhook
+- MCP HTTP endpoints для керування/дебагу
+- Системні ключі та ключі конекторів
+- Черги повідомлень через Bull + Redis
 
 ---
 
-## 2. Технологічний стек
+## 2. Коренева структура
 
-| Шар | Технологія |
-|-----|-----------|
-| Runtime | Node.js 18+ |
-| API | Express.js |
-| ORM | Prisma |
-| БД | PostgreSQL 14+ |
-| Черга | Bull + Redis |
-| AI | Anthropic Claude API |
-| Frontend | React 18 + Vite + Tailwind CSS |
-| Flow Editor | React Flow |
-| State (admin) | Zustand |
-| Process Manager | PM2 |
-| Reverse Proxy | Nginx |
-| Монорепо | Yarn Workspaces |
-
----
-
-## 3. Файлова структура
-
-```
+```text
 /
-├── platform/                        ← Основна платформа
-│   ├── package.json                 ← Yarn Workspaces root
-│   ├── ecosystem.config.js          ← PM2 конфіг (3 процеси)
-│   ├── deploy.sh                    ← Деплой скрипт
-│   ├── README.md                    ← Документація розгортання
-│   │
+├── platform/                         # основний monorepo
 │   ├── apps/
-│   │   ├── api/                     ← Express API сервер (port 3000)
-│   │   ├── admin/                   ← React адмін-панель
-│   │   ├── worker/                  ← Bull jobs worker
-│   │   └── mcp/                     ← MCP stdio сервер
-│   │
+│   │   ├── api/
+│   │   ├── admin/
+│   │   ├── worker/
+│   │   └── mcp/
 │   ├── packages/
-│   │   ├── db/                      ← Prisma клієнт + schema
-│   │   ├── claude/                  ← Anthropic API обгортка
-│   │   ├── telegram/                ← Telegram Bot API
-│   │   ├── storage/                 ← Файлова система + DB
-│   │   ├── logger/                  ← Winston логер
-│   │   └── errors/                  ← Кастомні класи помилок
-│   │
+│   │   ├── db/
+│   │   ├── claude/
+│   │   ├── telegram/
+│   │   ├── storage/
+│   │   ├── logger/
+│   │   └── errors/
 │   ├── projects/
-│   │   └── finance-course/          ← Фінансовий курс (боти)
-│   │
-│   └── scripts/
-│       ├── seed_funnels.js
-│       ├── seed_finance_course.js
-│       ├── seed_global_keys.js
-│       ├── apply_flow_updates.js
-│       ├── resync_all_channels.js
-│       └── run_full_regression.js
-│
-├── michael-bot/                     ← Legacy PHP бот (окремий)
-│   ├── config.php
-│   ├── db.php
-│   ├── models/
-│   └── migrations/
-│
-├── боти/                            ← Окремі боти (Google Sheets, бізнес-процес)
-│   ├── Google Sheets AI agent/
-│   └── бізнес процес агента/
-│
-├── доступи.md                       ← Креди сервера та сервісів
-├── fix_nginx.sh                     ← Nginx конфіг
-└── STRUCTURE.md                     ← Цей файл
+│   │   └── finance-course/
+│   ├── scripts/
+│   ├── ecosystem.config.js
+│   └── package.json
+├── michael-bot/                      # legacy PHP модуль
+└── боти/                             # окремі зовнішні підпроекти
 ```
 
 ---
 
-## 4. Apps — Застосунки
+## 3. Apps
 
-### 4.1 API (`platform/apps/api/`)
+### 3.1 API (`platform/apps/api`)
 
-Основний Express сервер. Запускається через PM2 як `platform-api`.
+Точка входу: `src/index.js`
 
-**Точка входу:** `src/index.js`
+Що є важливого зараз:
+- `express-session` з Redis store (`src/lib/sessionStore`)
+- `authMiddleware` + підтримка `x-api-secret`/`API_SECRET`
+- окремі HTTP MCP маршрути: `/api/mcp`, `/api/mcp-edit`, `/api/mcp-debug`
+- webhook endpoint для WayForPay: `POST /webhook/wayforpay`
 
-**Middleware:**
-```
-src/middleware/
-├── auth.js           ← Session + Bearer token автентифікація
-├── asyncHandler.js   ← Обгортка для async route handlers
-├── errorHandler.js   ← Глобальна обробка помилок
-└── validateParams.js ← Zod валідація body/params/query
-```
+Підключені роутери:
+- `/api/projects`
+- `/api/bots`
+- `/api/sessions`
+- `/api/users`
+- `/api/funnels`
+- `/api/connectors`
+- `/api/saved-connectors`
+- `/api/system-keys`
+- `/api/admin`
+- `/webhook`
 
-**Routes (`src/routes/`):**
+### 3.2 Admin (`platform/apps/admin`)
 
-| Файл | Prefix | Захист |
-|------|--------|--------|
-| `projects.js` | `/api/projects` | authMiddleware |
-| `bots.js` | `/api/bots` | authMiddleware |
-| `sessions.js` | `/api/sessions` | authMiddleware |
-| `users.js` | `/api/users` | authMiddleware |
-| `funnels.js` | `/api/funnels` | authMiddleware |
-| `connectors.js` | `/api/connectors` | authMiddleware |
-| `admin.js` | `/api/admin` | bcrypt login (власна) |
-| `webhook.js` | `/webhook` | open (Telegram/Meta) |
-| `mcp-flows.js` | `/api/mcp` | Bearer/token |
-| `mcp-debug.js` | `/api/mcp-debug` | Bearer/token |
-| `mcp.js` | `/mcp` | Bearer/token (legacy) |
+SPA на React + Vite.
 
-**Services (`src/services/`):**
-- `testSession.js` — Симульована Telegram сесія для тестування
-- `regressionRunner.js` — Запуск регресійних тестів ботів
-- `channelSync.js` — Синхронізація воронок з Telegram каналами
+Основні сторінки/роути:
+- `/login`
+- `/funnels` (рендериться сторінка `Bots.jsx`)
+- `/funnel/:botId`
+- `/projects`
+- `/dashboard`
+- `/connectors`
+- `/sessions`, `/sessions/:id`
+- `/users`, `/users/:id`
+- `/settings`
 
----
+Примітка: окрема сторінка MCP settings відсутня; `/mcp` редіректить на `/settings`.
 
-### 4.2 Admin (`platform/apps/admin/`)
+### 3.3 Worker (`platform/apps/worker`)
 
-React SPA, збирається у `public/admin/`. Serve через Nginx.
+Черги:
+- `telegram-messages`
+- `notifications`
 
-**Сторінки:**
+Використовує `@platform/telegram` для фактичної відправки повідомлень.
 
-| Route | Файл | Опис |
-|-------|------|------|
-| `/login` | `Login.jsx` | Авторизація |
-| `/funnel/:botId` | `FunnelEditor.jsx` | Візуальний редактор (React Flow, full-screen) |
-| `/funnels` | `Bots.jsx` | Список воронок/ботів |
-| `/projects` | `Projects.jsx` | Управління проектами |
-| `/dashboard` | `Dashboard.jsx` | Аналітика платформи |
-| `/connectors` | `Connectors.jsx` | Бібліотека конекторів |
-| `/sessions` | `Sessions.jsx` | Список сесій (global або per-bot) |
-| `/sessions/:id` | `SessionDetail.jsx` | Деталі сесії (messages, API calls) |
-| `/users` | `Users.jsx` | Список користувачів |
-| `/users/:id` | `UserDetail.jsx` | Профіль користувача |
-| `/api-logs` | `ApiLogs.jsx` | Логи API викликів |
-| `/errors` | `Errors.jsx` | Трекінг помилок |
-| `/logs` | `Logs.jsx` | Системні логи |
-| `/mcp` | `MCPSettings.jsx` | MCP налаштування (два endpoint'и) |
-| `/settings` | `Settings.jsx` | Налаштування адмінки |
+### 3.4 MCP stdio app (`platform/apps/mcp`)
 
-**Layout:**
-- `components/layout/Sidebar.jsx` — Бокове меню навігації
-- `components/layout/Layout.jsx` — Основна обгортка з header
-- `stores/authStore.js` — Zustand auth стор
+Має stdio сервер (`src/index.js`) для локальних/desktop інтеграцій.
+HTTP MCP для production реалізований через API роутери (`apps/api/src/routes/mcp*.js`).
 
 ---
 
-### 4.3 Worker (`platform/apps/worker/`)
-
-Bull jobs processor. PM2: `platform-worker`.
-
-**Черги:**
-- `telegram-messages` — Відправка Telegram повідомлень через `@platform/telegram`
-- `notifications` — Сповіщення власника
-
-**Конфіг:** Redis на `REDIS_URL` env var.
-
----
-
-### 4.4 MCP (`platform/apps/mcp/`)
-
-Stdio транспорт MCP для Claude Desktop.
-
-**Точка входу:** `src/index.js`
-- Читає JSON-RPC з stdin
-- Обробляє: `initialize`, `tools/list`, `tools/call`
-
-**Файли інструментів:**
-- `src/tools.js` — Комбінований (25 tools, для legacy `/mcp`)
-- `src/tools-flows.js` — 15 tools для управління воронками
-- `src/tools-debug.js` — 10 tools для дебагу сесій
-
----
-
-## 5. Packages — Пакети
+## 4. Packages
 
 ### `@platform/db`
-Prisma клієнт. Singleton з query logging у dev режимі.
-```js
-const { db } = require('@platform/db');
-await db.session.findMany({ where: { isActive: true } });
-```
+- Prisma schema: `platform/packages/db/schema.prisma`
+- Основні моделі: `Project`, `Bot`, `User`, `Session`, `Message`, `ApiCall`, `File`, `UserProgress`, `FlowDefinition`, `FunnelKey`, `ConnectorDef`, `SavedConnector`, `GlobalKey`, `AppError`, `UserData`
+- У `Bot` є поля `goal`, `outputFiles`
 
 ### `@platform/claude`
-Anthropic SDK обгортка.
-```js
-const { callClaude, buildMessages, extractTag } = require('@platform/claude');
-```
+- Обгортки для викликів Claude моделей
 
 ### `@platform/telegram`
-Telegram Bot API.
-```js
-const { sendMessage, sendInlineKeyboard, notifyOwner } = require('@platform/telegram');
-```
+- Відправка повідомлень/нотифікацій у Telegram
 
 ### `@platform/storage`
-Файлова система + DB зберігання артефактів.
-```js
-await FileStorage.save({ userId, botId, fileType: 'cashflow_articles', content });
-await FileStorage.getLatest(userId, 'cashflow_articles');
-```
-Шлях: `FILES_BASE_PATH / projectSlug / userId / fileType_vN.md`
+- Робота з файловими артефактами користувачів
 
 ### `@platform/logger`
-Winston логер з sanitization секретів.
-```js
-const logger = require('@platform/logger');
-logger.info('Сесія створена', { sessionId, userId });
-logger.error('Помилка Claude', { error: err.message });
-```
+- Структуровані логи для API/worker
 
 ### `@platform/errors`
-Кастомні класи помилок:
-```js
-PlatformError → StorageError, BotError, PrerequisiteError,
-                ClaudeError, TelegramError, AuthError,
-                ValidationError, NotFoundError
-```
+- Єдині класи помилок (`AuthError`, `NotFoundError`, тощо)
 
 ---
 
-## 6. MCP Сервери
+## 5. Projects
 
-Два HTTP MCP сервери для Claude.ai (причина розподілу: Claude.ai має ліміт ~12 tools на сервер via tool_search).
+`platform/projects/finance-course`
 
-### Flows MCP — управління воронками
-**URL:** `https://flows.fineko.space/api/mcp?token=<token>`
-
-| Tool | Опис |
-|------|------|
-| `list_funnels` | Список всіх ботів та статус воронок |
-| `get_funnel` | Повна воронка (nodes, edges, keys) |
-| `update_node` | Оновити дані ноди |
-| `add_node` | Додати ноду на canvas |
-| `delete_node` | Видалити ноду |
-| `create_edge` | З'єднати ноди |
-| `update_funnel_key` | Створити/оновити змінну середовища |
-| `delete_funnel_key` | Видалити змінну |
-| `list_connectors` | Список конекторів |
-| `get_connector` | Деталі конектора |
-| `create_connector` | Створити конектор |
-| `update_connector` | Оновити конектор |
-| `delete_connector` | Видалити конектор |
-| `get_node_stats` | Статистика ноди (помилки, сесії) |
-| `get_api_logs` | Логи API викликів |
-
-### Debug MCP — дебаг сесій
-**URL:** `https://flows.fineko.space/api/mcp-debug?token=<token>`
-
-| Tool | Опис |
-|------|------|
-| `get_session_logs` | Список сесій з историею повідомлень |
-| `get_session` | Деталі сесії |
-| `get_session_messages` | Всі повідомлення сесії |
-| `get_session_api_calls` | API виклики в сесії |
-| `get_session_context` | Контекст (файли з попередніх сесій) |
-| `get_errors` | Лог помилок зі стектрейсами |
-| `start_test_session` | Запустити симульовану Telegram сесію |
-| `send_test_message` | Відправити повідомлення в тест-сесію |
-| `get_test_session_state` | Стан тест-сесії |
-| `end_test_session` | Завершити тест-сесію |
-
-**Автентифікація обох:** Bearer token або `?token=<mcpToken>`
-
-**Legacy URL (25 tools):** `https://flows.fineko.space/mcp?token=<token>`
+Поточний стан:
+- `src/telegramHandler.js` — головний обробник Telegram подій
+- `services/` — бізнес-сервіси проекту
+- `bots/` — сценарії/конфіги окремих ботів
 
 ---
 
-## 7. База даних — схема
+## 6. API (коротка карта)
 
-PostgreSQL. Prisma schema: `platform/packages/db/schema.prisma`
+### Auth/admin
+- `POST /api/admin/login`
+- `POST /api/admin/logout`
+- `GET /api/admin/analytics`
+- `GET /api/admin/sessions`
+- `GET /api/admin/errors`
+- `PATCH /api/admin/errors/:id/resolve`
+- `GET /api/admin/api-logs`
+- `POST /api/admin/bots/:id/run-regression`
+- `POST /api/admin/projects/:slug/run-regressions`
+- `GET /api/admin/mcp-config`
 
-### Моделі
+### Projects/Bots
+- `GET /api/projects`
+- `POST /api/projects`
+- `GET /api/projects/:id`
+- `PUT /api/projects/:id`
+- `DELETE /api/projects/:id`
+- `GET /api/projects/:id/bots`
+- `POST /api/projects/:id/bots`
+- `GET /api/projects/:id/stats`
 
-```
-Project
-├── id (UUID)
-├── name, slug (unique), description
-├── isActive, settings (JSON)
-└── → Bot[], GlobalKey[]
+### Keys
+- `GET /api/projects/:id/global-keys`
+- `PUT /api/projects/:id/global-keys/:key`
+- `DELETE /api/projects/:id/global-keys/:key`
+- `GET /api/projects/:id/global-keys/:key/reveal`
+- `GET /api/system-keys`
+- `PUT /api/system-keys/:key`
+- `GET /api/system-keys/:key/reveal`
 
-Bot
-├── id (UUID)
-├── projectId → Project
-├── name, slug (unique per project), description
-├── trigger, isActive, settings (JSON)
-└── → Session[], File[], UserProgress[], AppError[]
-    FlowDefinition (1:1), FunnelKey[]
+### Funnels
+- `GET /api/funnels/:botId`
+- `PUT /api/funnels/:botId`
+- `GET /api/funnels/:botId/export`
+- `POST /api/funnels/:botId/import`
+- `GET /api/funnels/:botId/keys`
+- `PUT /api/funnels/:botId/keys`
+- `DELETE /api/funnels/:botId/keys/:key`
+- `GET /api/funnels/:botId/keys/:key/reveal`
+- `POST /api/funnels/:botId/sync-channels`
+- `POST /api/funnels/:botId/edges`
+- `PUT /api/funnels/:botId/edges`
+- `DELETE /api/funnels/:botId/edges/:edgeId`
+- `GET /api/funnels/:botId/nodes/:nodeId/stats`
+- `POST /api/funnels/:botId/check-prerequisites`
 
-User
-├── id (UUID)
-├── telegramId (BigInt, unique)
-├── username, firstName, lastName, languageCode
-├── projectId → Project
-├── mcpToken (unique, 64-char hex)
-├── metadata (JSON)
-└── → Session[], File[], UserProgress[], AppError[]
+### Sessions/Users
+- `POST /api/sessions/test/start`
+- `POST /api/sessions/test/:id/send`
+- `GET /api/sessions/test/:id/state`
+- `POST /api/sessions/test/:id/end`
+- `GET /api/sessions/:id`
+- `GET /api/sessions/:id/messages`
+- `GET /api/sessions/:id/api-calls`
+- `GET /api/sessions/:id/errors`
+- `POST /api/sessions/:id/send`
+- `DELETE /api/sessions/:id`
+- `POST /api/sessions/bulk-delete`
+- `GET /api/sessions/:sessionId/context`
+- `GET /api/users`
+- `GET /api/users/:id`
+- `GET /api/users/:id/progress`
+- `GET /api/users/:id/files`
+- `GET /api/users/:id/sessions`
+- `POST /api/users/:id/mcp-token`
+- `GET /api/users/:id/mcp-token`
 
-Session
-├── id (UUID)
-├── userId → User, botId → Bot
-├── state (VARCHAR 100) ← поточний стан у воронці
-├── context (JSON) ← змінні сесії
-├── startedAt, lastActive, completedAt, isActive
-└── → Message[], ApiCall[], File[], AppError[]
+### Connectors
+- `GET /api/connectors`
+- `GET /api/connectors/:id`
+- `GET /api/saved-connectors`
+- `GET /api/saved-connectors/:id`
+- `POST /api/saved-connectors`
+- `PUT /api/saved-connectors/:id`
+- `DELETE /api/saved-connectors/:id`
 
-Message
-├── id (UUID), sessionId → Session
-├── role ('user' | 'assistant' | 'system')
-├── content (Text), metadata (JSON)
-└── createdAt
+### MCP HTTP
+- `GET/POST /api/mcp`
+- `GET/POST /api/mcp-edit`
+- `GET/POST /api/mcp-debug`
+- `GET/POST /mcp` (legacy)
 
-ApiCall
-├── id (UUID), sessionId → Session (nullable)
-├── service ('claude' | 'telegram' | 'google_sheets' | 'apps_script')
-├── method, requestData (JSON), responseData (JSON)
-├── statusCode, durationMs, error (Text)
-└── createdAt
-
-File
-├── id (UUID)
-├── userId → User, botId → Bot, sessionId → Session
-├── fileType (enum: cashflow_articles, pl_articles, business_process, ...)
-├── fileName, filePath, content (Text)
-├── version (auto-increment per userId+fileType)
-└── createdAt, updatedAt
-
-UserProgress
-├── id (UUID)
-├── userId → User, projectId → Project, botId → Bot
-├── blockNumber, lessonNumber (e.g. '2.1', '4.2')
-├── status ('locked' | 'available' | 'in_progress' | 'completed')
-├── completedAt, artifactFileId → File
-└── Unique: (userId, projectId, lessonNumber)
-
-FlowDefinition (1:1 з Bot)
-├── id (UUID), botId → Bot (unique)
-├── nodes (JSON), edges (JSON), viewport (JSON)
-└── updatedAt
-
-FunnelKey
-├── id (UUID), botId → Bot
-├── key (VARCHAR 100), value (Text)
-├── label, isSecret
-└── Unique: (botId, key)
-
-GlobalKey
-├── id (UUID), projectId → Project
-├── key (VARCHAR 100), value (Text)
-├── label, description, isSecret
-└── Unique: (projectId, key)
-
-ConnectorDef
-├── id (UUID)
-├── name, type (unique), description
-├── icon, color, schema (JSON)
-├── isBuiltin, isActive
-└── createdAt
-
-AppError
-├── id (UUID)
-├── sessionId → Session (nullable)
-├── botId → Bot (nullable)
-├── userId → User (nullable)
-├── errorType, message (Text), stack (Text)
-├── context (JSON), resolved (boolean)
-└── createdAt
-```
+### Webhook
+- `POST /webhook/telegram`
+- `POST /webhook/telegram/:botId`
+- `GET /webhook/instagram/:botId`
+- `POST /webhook/instagram/:botId`
+- `POST /webhook/wayforpay`
 
 ---
 
-## 8. API Routes
+## 7. Деплой та runtime
 
-### `GET /health` (public)
-Перевірка стану сервера. Повертає `{ ok: true, status: 'healthy' }`.
+### PM2 конфіг (`platform/ecosystem.config.js`)
+- `platform-api`
+- `platform-worker`
+- `platform-mcp`
 
-### `POST /api/admin/login`
-Авторизація адміна. Body: `{ password }`. Bcrypt перевірка.
+### Часті команди
 
-### `/api/projects`
-- `GET /` — Список активних проектів
-- `GET /:id` — Деталі проекту
-- `GET /:id/bots` — Боти з метриками (сесії, помилки, юзери)
-- `GET /:id/stats` — 7d активні юзери, 24h помилки
-- `GET/PUT/DELETE /:id/global-keys/:key` — CRUD глобальних ключів
-- `GET /:id/global-keys/:key/reveal` — Показати секретний ключ
-
-### `/api/bots`
-- `GET /:id` — Дані бота
-- `GET /:id/sessions` — Сесії бота (пагінація, дані юзера)
-
-### `/api/sessions`
-- `POST /test/start` — Створити тест-сесію
-- `POST /test/:id/send` — Відправити повідомлення
-- `GET /test/:id/state` — Стан тест-сесії
-- `POST /test/:id/end` — Завершити тест-сесію
-- `GET /:id` — Деталі сесії
-- `GET /:id/messages` — Всі повідомлення
-- `GET /:id/api-calls` — Лог API викликів
-- `GET /:sessionId/context` — Контекст з файлів юзера
-
-### `/api/users`
-- `GET /` — Список (пагінація)
-- `GET /:id` — Деталі юзера
-- `GET /:id/progress` — Прогрес по урокам
-- `GET /:id/files` — Файли-артефакти
-- `GET /:id/sessions` — Сесії юзера
-- `POST /:id/mcp-token` — Згенерувати MCP токен
-- `GET /:id/mcp-token` — Отримати MCP токен
-
-### `/api/funnels`
-- `GET /:botId` — Воронка (nodes + edges + keys)
-- `PUT /:botId` — Зберегти воронку
-- `GET /:botId/export` — Експорт JSON
-- `POST /:botId/import` — Імпорт JSON
-- `GET/PUT/DELETE /:botId/keys/:key` — CRUD ключів воронки
-- `POST /:botId/sync-channels` — Синхронізація каналів
-
-### `/api/admin`
-- `GET /analytics` — Загальна статистика платформи
-- `GET /errors` — Лог помилок
-- `PATCH /errors/:id/resolve` — Позначити помилку вирішеною
-- `GET /sessions` — Всі сесії (з даними юзера: firstName, lastName, username, telegramId)
-- `GET /api-logs` — Лог API викликів
-- `POST /bots/:id/run-regression` — Регресійні тести бота
-
-### `/webhook`
-- `POST /telegram` — Головний Telegram webhook
-- `POST /telegram/:botId` — Бот-специфічний Telegram webhook
-- `GET /instagram/:botId` — Meta challenge verification
-- `POST /instagram/:botId` — Instagram events
-
----
-
-## 9. Автентифікація
-
-### Адмін-панель (session-based)
-1. `POST /api/admin/login` з паролем
-2. Bcrypt перевірка проти `ADMIN_PASSWORD_HASH` env
-3. `req.session.isAdmin = true` (24h cookie)
-
-### API запити (Bearer token)
-- `Authorization: Bearer <API_SECRET>` — для автоматизованих систем
-- Або `x-api-secret: <API_SECRET>` header
-
-### MCP токени (per-user)
-- 64-char hex у полі `User.mcpToken`
-- Передається через `?token=<mcpToken>` або `Authorization: Bearer <token>`
-- Генерується через `POST /api/users/:id/mcp-token`
-
----
-
-## 10. Деплой та інфраструктура
-
-### Сервер
-- **VPS:** 173.242.62.180
-- **OS:** Ubuntu/Debian
-- **Domain:** flows.fineko.space
-- **Nginx:** reverse proxy → localhost:3000
-
-### PM2 процеси
-| Name | Script | Max Memory |
-|------|--------|-----------|
-| `platform-api` | `apps/api/src/index.js` | 500MB |
-| `platform-worker` | `apps/worker/src/index.js` | 300MB |
-| `platform-mcp` | `apps/mcp/src/index.js` | 200MB |
-
-### Environment Variables (`.env` у `platform/`)
-```env
-DATABASE_URL=postgresql://platform:***@localhost:5432/platform
-REDIS_URL=redis://localhost:6379
-PORT=3000
-NODE_ENV=production
-SESSION_SECRET=...
-API_SECRET=...
-ADMIN_PASSWORD_HASH=$2b$12$...
-ANTHROPIC_API_KEY=...
-CLAUDE_MODEL=claude-haiku-4-5
-FILES_BASE_PATH=/var/www/flows.fineko.space/files
-LOG_LEVEL=info
-MCP_SECRET=...
-```
-
-### Деплой команди
 ```bash
-# Локально:
-git add -A && git commit -m "..." && git push origin main
+# dependencies
+yarn install --production=false
 
-# На сервері:
-ssh root@173.242.62.180 "
-  cd /var/www/flows.fineko.space &&
-  git pull origin main &&
-  cd platform &&
-  yarn workspace @platform/admin build &&   # якщо змінений frontend
-  pm2 restart platform-api &&
-  pm2 status
-"
+# admin build
+yarn build:admin
+
+# db
+yarn db:migrate:deploy
+
+# process
+pm2 restart all
+pm2 status
 ```
 
-### Структура файлів на сервері
-```
-/var/www/flows.fineko.space/
-├── platform/           ← git repo
-├── files/              ← FILES_BASE_PATH (артефакти юзерів)
-└── public/
-    └── admin/          ← Зібраний React build
-```
+### Важлива примітка по БД
+
+Після змін Prisma schema обов'язково застосовувати міграції до перевірки UI/API.
+Критичний приклад: відсутність колонок `bots.goal`/`bots.outputFiles` ламала `GET /api/projects/:id/bots` і воронки зникали в UI.
 
 ---
 
-## 11. Потоки даних
+## 8. Потоки даних (коротко)
 
-### Telegram → Бот
-```
-Telegram User
-    ↓ повідомлення
-POST /webhook/telegram[:botId]
-    ↓
-webhook.js → telegramHandler.js (finance-course)
-    ↓
-Claude API (@platform/claude) → генерує відповідь
-    ↓
-Bull Queue (telegram-messages)
-    ↓
-Worker → @platform/telegram → Telegram API
-    ↓
-Користувач отримує відповідь
+### Admin -> Funnels
+
+```text
+Admin UI
+  -> /api/projects/:id/bots (список воронок)
+  -> /api/funnels/:botId (деталі flow)
+  -> Prisma (Bot + FlowDefinition + FunnelKey)
 ```
 
-### Адмін → Редагування воронки
-```
-Admin UI (React)
-    ↓ PUT /api/funnels/:botId
-API → funnels.js route
-    ↓
-Prisma → FlowDefinition.update (nodes + edges JSON)
-    ↓
-Збережено в PostgreSQL
+### Telegram -> Session runtime
+
+```text
+Telegram webhook
+  -> finance-course telegramHandler
+  -> session/state logic
+  -> queue/send via worker + @platform/telegram
 ```
 
-### Claude.ai → MCP
+### Claude.ai -> MCP
+
+```text
+Claude.ai
+  -> /api/mcp | /api/mcp-edit | /api/mcp-debug
+  -> tools-flows/tools-debug
+  -> Prisma/API operations
 ```
-Claude.ai (браузер)
-    ↓ POST /api/mcp?token=<token>  (або /api/mcp-debug)
-mcp-flows.js (або mcp-debug.js) route
-    ↓ auth check (global secret або User.mcpToken)
-tools-flows.js (або tools-debug.js)
-    ↓
-Prisma + бізнес-логіка
-    ↓
-JSON відповідь → Claude.ai
-```
-
-### Юзер → Прогрес по курсу
-```
-Bot session
-    ↓ юзер виконує завдання
-telegramHandler.js → services
-    ↓
-FileStorage.save() → файл на диск + File у DB
-    ↓
-UserProgress.update() → статус 'completed'
-    ↓
-Наступний урок розблоковується
-```
-
----
-
-## Корисні посилання
-
-| Ресурс | URL |
-|--------|-----|
-| Адмін-панель | https://flows.fineko.space/admin |
-| MCP Flows | https://flows.fineko.space/api/mcp |
-| MCP Debug | https://flows.fineko.space/api/mcp-debug |
-| Health check | https://flows.fineko.space/health |
-| Prisma Studio | `yarn workspace @platform/db studio` |
-| PM2 статус | `pm2 status` (на сервері) |
-
-
----
-
-## 9. онектори — архітектура та концепція
-
-### ва рівні: шаблон і екземпляр
-
-Система конекторів побудована на двох незалежних сутностях.
-
-#### ConnectorDef — системний шаблон типу конектора
-
-Таблиця connector_defs. азвичай isBuiltin: true. писує:
-- **type** — унікальний slug (наприклад, claude_sonnet, 	elegram_bot)
-- **name** — людська назва (Claude Sonnet, Telegram Bot)
-- **icon** — емодзі для UI
-- **description** — пояснення, коли використовувати
-- **schema.fields** — масив полів, які потрібно заповнити:
-  - key — ключ у config JSON
-  - label — відображувана назва
-  - secret: true — поле рендериться як password
-  - multiline: true — textarea (наприклад, JSON ключа)
-  - placeholder — підказка
-- **schema.docs_url** — посилання на офіційну документацію API
-
-ConnectorDef **не містить реальних ключів**. е лише інструкція "які поля треба заповнити і як відправляти запити".
-
-#### SavedConnector — збережений екземпляр із ключами
-
-Таблиця saved_connectors. істить:
-- **name** — ваша назва (Sonnet основний, Fineko main bot)
-- **type** — посилання на ConnectorDef.type
-- **config** — JSON з реальними значеннями ключів, які ввів користувач
-- **description** — необов'язкова нотатка
-
-#### риклад розподілу
-
-`
-ConnectorDef: claude_sonnet
-  └── SavedConnector: "Sonnet основний"   { api_key: "sk-ant-..." }
-  └── SavedConnector: "Sonnet додатковий" { api_key: "sk-ant-..." }
-
-ConnectorDef: telegram_bot
-  └── SavedConnector: "Fineko main bot"   { token: "7123456789:AAH..." }
-  └── SavedConnector: "Test bot"          { token: "9876543210:AAB..." }
-`
-
-дин ConnectorDef може мати **необмежену кількість** SavedConnector із різними ключами.
-
-### Сторінка онектори (admin UI)
-
-Сторінка /connectors має три секції:
-1. **оступні типи конекторів** — картки ConnectorDef із бази, кожна з кнопкою "+ берегти конектор цього типу"
-2. **бережені конектори** — список SavedConnector, згрупований за типом, з редагуванням і видаленням
-3. **лобальні ключі проекту** — змінні середовища для ботів (окремий механізм)
-
-### аповнення шаблонів
-
-ля заповнення connector_defs використовується seed-скрипт:
-`ash
-yarn seed:connector-defs
-# або напряму:
-node scripts/seed_connector_defs.js
-`
-
-оточні шаблони: claude_haiku, claude_sonnet, claude_opus, openai_gpt4, 	elegram_bot, google_sheets, pps_script, webhook_generic.
-
-### икористання у воронці (NodeEditor)
-
-оли редагується нода типу connector у NodeEditor, є два режими:
-- **бережений** — вибір зі списку SavedConnector (автоматично заповнює config)
-- **учний** — пряме введення параметрів
-
-Список у NodeEditor фільтрується за типом ноди (наприклад, для Claude-ноди показуються лише claude_* конектори).

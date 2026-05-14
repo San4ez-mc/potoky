@@ -29,6 +29,12 @@ router.get('/:botId',
             data: {
                 bot,
                 flow: flow || { nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 } },
+                keySource: {
+                    scope: 'bot',
+                    table: 'funnel_keys',
+                    botId: req.params.botId,
+                    inheritedFromProject: false,
+                },
                 keys: keys.map(k => ({
                     ...k,
                     value: k.isSecret ? '••••••••' : k.value,

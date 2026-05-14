@@ -1,5 +1,19 @@
 const BASE = '/api';
 
+async function parseResponse(res) {
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+        return res.json();
+    }
+
+    const text = await res.text();
+    const message = res.status === 401
+        ? 'Сесія завершилась. Увійдіть знову.'
+        : `Сервер повернув не-JSON відповідь (${res.status})`;
+
+    throw new Error(text ? `${message}` : message);
+}
+
 async function req(method, path, body) {
     const res = await fetch(`${BASE}${path}`, {
         method,
@@ -7,7 +21,7 @@ async function req(method, path, body) {
         credentials: 'include',
         body: body ? JSON.stringify(body) : undefined,
     });
-    const data = await res.json();
+    const data = await parseResponse(res);
     if (!data.ok) throw new Error(data.error?.message || 'Request failed');
     return data.data ?? data;
 }
@@ -19,14 +33,14 @@ async function reqWithMeta(method, path, body) {
         credentials: 'include',
         body: body ? JSON.stringify(body) : undefined,
     });
-    const data = await res.json();
+    const data = await parseResponse(res);
     if (!data.ok) throw new Error(data.error?.message || 'Request failed');
     return data;
 }
 
 export const api = {
     // Auth
-    login: (login, password) => req('POST', '/admin/login', { login, password }),
+    login: (login, password, rememberMe = false) => req('POST', '/admin/login', { login, password, rememberMe }),
     logout: () => req('POST', '/admin/logout'),
 
     // Projects
@@ -39,7 +53,9 @@ export const api = {
 
     // Bots
     getBot: (id) => req('GET', `/bots/${id}`),
+    updateBot: (id, name, description) => req('PATCH', `/bots/${id}`, { name, description }),
     getBotSessions: (id, page = 0) => req('GET', `/bots/${id}/sessions?page=${page}`),
+    createFunnel: (projectId, data) => req('POST', `/projects/${projectId}/bots`, data),
 
     // Funnels
     getFunnel: (botId) => req('GET', `/funnels/${botId}`),
@@ -69,7 +85,7 @@ export const api = {
     getSessionMessages: (id) => req('GET', `/sessions/${id}/messages`),
     getSessionApiCalls: (id) => req('GET', `/sessions/${id}/api-calls`),
     getSessionErrors: (id) => req('GET', `/sessions/${id}/errors`),
-    sendSessionMessage: (id, text) => req('POST', `/sessions/${id}/send`, { text }),
+    sendSessionMessage: (id, payload) => req('POST', `/sessions/${id}/send`, payload),
     deleteSession: (id) => req('DELETE', `/sessions/${id}`),
     deleteSessionsBulk: (ids) => req('POST', '/sessions/bulk-delete', { ids }),
     getBotSessions: (botId, page = 0, params = {}) => {
@@ -105,6 +121,12 @@ export const api = {
     getMcpConfig: () => req('GET', '/admin/mcp-config'),
     runBotRegression: (botId) => req('POST', `/admin/bots/${botId}/run-regression`),
     runProjectRegressions: (projectSlug) => req('POST', `/admin/projects/${projectSlug}/run-regressions`),
+
+    // System Keys (settings-level, not funnel-level)
+    getSystemKeys: () => req('GET', '/system-keys'),
+    upsertSystemKey: (key, value, label, description, isSecret = true) =>
+        req('PUT', `/system-keys/${key}`, { value, label, description, isSecret }),
+    revealSystemKey: (key) => req('GET', `/system-keys/${key}/reveal`),
 
     // Global Keys
     getGlobalKeys: (projectId) => req('GET', `/projects/${projectId}/global-keys`),

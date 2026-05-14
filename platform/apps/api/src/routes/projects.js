@@ -78,6 +78,47 @@ router.get('/:id/bots',
     })
 );
 
+// POST /api/projects/:id/bots — create a new funnel/bot in the project
+router.post('/:id/bots',
+    validateParams({
+        params: z.object({ id: z.string().uuid() }),
+        body: z.object({
+            name: z.string().min(1).max(255),
+            slug: z.string().min(1).max(100),
+            description: z.string().max(1000).optional(),
+            trigger: z.string().max(255).optional(),
+        }),
+    }),
+    asyncHandler(async (req, res) => {
+        const { id: projectId } = req.params;
+        const { name, slug, description, trigger } = req.body;
+
+        const project = await db.project.findUnique({ where: { id: projectId } });
+        if (!project) throw new NotFoundError('Project', projectId);
+
+        const existingBot = await db.bot.findUnique({
+            where: { projectId_slug: { projectId, slug } },
+        });
+        if (existingBot) {
+            return res.status(409).json({ ok: false, error: { message: 'Воронка з таким slug вже існує в проєкті' } });
+        }
+
+        const bot = await db.bot.create({
+            data: {
+                projectId,
+                name,
+                slug,
+                description: description || null,
+                trigger: trigger || null,
+                isActive: true,
+                settings: {},
+            },
+        });
+
+        res.status(201).json({ ok: true, data: bot });
+    })
+);
+
 // GET /api/projects/:id/stats
 router.get('/:id/stats',
     validateParams({ params: z.object({ id: z.string().uuid() }) }),

@@ -13,12 +13,14 @@ function ConnectorModal({ connector, connectorDefs, onClose, onSaved }) {
     });
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
+    const [visibleSecrets, setVisibleSecrets] = useState({});
 
     const def = connectorDefs.find((d) => d.type === form.type);
     const fields = def?.schema?.fields || [];
 
     const setField = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
     const setConfig = (key, value) => setForm((prev) => ({ ...prev, config: { ...prev.config, [key]: value } }));
+    const toggleSecretVisibility = (key) => setVisibleSecrets((prev) => ({ ...prev, [key]: !prev[key] }));
 
     const save = async () => {
         if (!form.name.trim()) {
@@ -84,7 +86,8 @@ function ConnectorModal({ connector, connectorDefs, onClose, onSaved }) {
 
                     <div>
                         <label className="text-xs text-gray-400 block mb-1">Опис (необовʼязково)</label>
-                        <input
+                        <textarea
+                            rows={3}
                             value={form.description}
                             onChange={(e) => setField('description', e.target.value)}
                             placeholder="Коротка нотатка"
@@ -102,21 +105,54 @@ function ConnectorModal({ connector, connectorDefs, onClose, onSaved }) {
                                     <div key={field.key}>
                                         <label className="text-xs text-gray-400 block mb-1">{field.label}</label>
                                         {field.multiline ? (
-                                            <textarea
-                                                rows={4}
-                                                value={form.config[field.key] || ''}
-                                                onChange={(e) => setConfig(field.key, e.target.value)}
-                                                placeholder={field.placeholder || ''}
-                                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white font-mono"
-                                            />
+                                            <div className="relative">
+                                                <textarea
+                                                    rows={4}
+                                                    value={form.config[field.key] || ''}
+                                                    onChange={(e) => setConfig(field.key, e.target.value)}
+                                                    placeholder={field.placeholder || ''}
+                                                    style={field.secret && !visibleSecrets[field.key] ? { WebkitTextSecurity: 'disc' } : undefined}
+                                                    className={`w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white font-mono ${field.secret ? 'pr-10' : ''}`}
+                                                />
+                                                {field.secret && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => toggleSecretVisibility(field.key)}
+                                                        className="absolute top-2 right-2 text-gray-400 hover:text-white"
+                                                        title={visibleSecrets[field.key] ? 'Сховати значення' : 'Показати значення'}
+                                                        aria-label={visibleSecrets[field.key] ? 'Сховати значення' : 'Показати значення'}
+                                                    >
+                                                        <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                                            <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z" />
+                                                            <circle cx="12" cy="12" r="3" />
+                                                        </svg>
+                                                    </button>
+                                                )}
+                                            </div>
                                         ) : (
-                                            <input
-                                                type={field.secret ? 'password' : 'text'}
-                                                value={form.config[field.key] || ''}
-                                                onChange={(e) => setConfig(field.key, e.target.value)}
-                                                placeholder={field.placeholder || ''}
-                                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono"
-                                            />
+                                            <div className="relative">
+                                                <input
+                                                    type={field.secret && !visibleSecrets[field.key] ? 'password' : 'text'}
+                                                    value={form.config[field.key] || ''}
+                                                    onChange={(e) => setConfig(field.key, e.target.value)}
+                                                    placeholder={field.placeholder || ''}
+                                                    className={`w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono ${field.secret ? 'pr-10' : ''}`}
+                                                />
+                                                {field.secret && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => toggleSecretVisibility(field.key)}
+                                                        className="absolute top-1/2 -translate-y-1/2 right-2 text-gray-400 hover:text-white"
+                                                        title={visibleSecrets[field.key] ? 'Сховати значення' : 'Показати значення'}
+                                                        aria-label={visibleSecrets[field.key] ? 'Сховати значення' : 'Показати значення'}
+                                                    >
+                                                        <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                                            <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z" />
+                                                            <circle cx="12" cy="12" r="3" />
+                                                        </svg>
+                                                    </button>
+                                                )}
+                                            </div>
                                         )}
                                     </div>
                                 ))}
@@ -156,8 +192,8 @@ export function Connectors() {
                 api.getConnectors(),
                 api.getSavedConnectors(),
             ]);
-            setConnectorDefs(defsRes.status === 'fulfilled' ? (defsRes.value?.data || []) : []);
-            setSavedConnectors(savedRes.status === 'fulfilled' ? (savedRes.value?.data || []) : []);
+            setConnectorDefs(defsRes.status === 'fulfilled' ? (Array.isArray(defsRes.value) ? defsRes.value : (defsRes.value?.data || [])) : []);
+            setSavedConnectors(savedRes.status === 'fulfilled' ? (Array.isArray(savedRes.value) ? savedRes.value : (savedRes.value?.data || [])) : []);
         } finally {
             setLoading(false);
         }

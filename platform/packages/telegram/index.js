@@ -3,6 +3,7 @@
 const { getBot } = require('./src/bot');
 const {
     sendMessage,
+    sendPhoto,
     sendInlineKeyboard,
     notifyOwner,
     enableTestChat,
@@ -13,6 +14,7 @@ const {
 module.exports = {
     getBot,
     sendMessage,
+    sendPhoto,
     sendInlineKeyboard,
     notifyOwner,
     enableTestChat,

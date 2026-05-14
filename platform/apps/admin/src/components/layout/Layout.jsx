@@ -2,12 +2,16 @@ import React from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Sidebar } from './Sidebar.jsx';
 
-function routeMeta(pathname) {
+function routeMeta(pathname, search) {
+    const params = new URLSearchParams(search || '');
+    const requestedBack = params.get('back');
+    const safeBack = requestedBack && requestedBack.startsWith('/') ? requestedBack : null;
+
     if (pathname.startsWith('/funnels')) return { title: 'Воронки' };
     if (pathname.startsWith('/projects')) return { title: 'Проєкти' };
     if (pathname.startsWith('/dashboard')) return { title: 'Дашборд' };
     if (pathname.startsWith('/bots/') && pathname.endsWith('/sessions')) return { title: 'Сесії бота', backTo: '/funnels' };
-    if (pathname.startsWith('/sessions/')) return { title: 'Деталі сесії', backTo: '/sessions' };
+    if (pathname.startsWith('/sessions/')) return { title: 'Деталі сесії', backTo: safeBack || '/sessions' };
     if (pathname.startsWith('/sessions')) return { title: 'Сесії' };
     if (pathname.startsWith('/users/')) return { title: 'Деталі юзера', backTo: '/users' };
     if (pathname.startsWith('/users')) return { title: 'Юзери' };
@@ -21,7 +25,7 @@ function routeMeta(pathname) {
 export function Layout() {
     const location = useLocation();
     const navigate = useNavigate();
-    const meta = routeMeta(location.pathname);
+    const meta = routeMeta(location.pathname, location.search);
 
     const handleBack = () => {
         if (meta.backTo) {

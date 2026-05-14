@@ -9,6 +9,7 @@ const session = require('express-session');
 const logger = require('@platform/logger');
 const { db } = require('@platform/db');
 
+const { sessionStore, redisConnectPromise } = require('./lib/sessionStore');
 const { asyncHandler } = require('./middleware/asyncHandler');
 const { authMiddleware } = require('./middleware/auth');
 const { errorHandler } = require('./middleware/errorHandler');
@@ -22,6 +23,7 @@ const webhookRouter = require('./routes/webhook');
 const funnelsRouter = require('./routes/funnels');
 const connectorsRouter = require('./routes/connectors');
 const savedConnectorsRouter = require('./routes/saved-connectors');
+const systemKeysRouter = require('./routes/system-keys');
 const mcpRouter = require('./routes/mcp');
 const mcpFlowsRouter = require('./routes/mcp-flows');
 const mcpFlowsEditRouter = require('./routes/mcp-flows-edit');
@@ -103,18 +105,23 @@ app.set('json replacer', (_key, value) => (typeof value === 'bigint' ? value.toS
 app.set('trust proxy', 1);
 
 // ── Body parsing ────────────────────────────────────────────
-app.use(express.json({ limit: '1mb', verify: captureRawBody }));
+app.use(express.json({ limit: '12mb', verify: captureRawBody }));
 app.use(express.urlencoded({ extended: true }));
 
 // ── Session ──────────────────────────────────────────────────
 app.use(session({
+    name: 'platform.sid',
     secret: process.env.SESSION_SECRET || 'change-me-in-production',
+    store: sessionStore,
     resave: false,
     saveUninitialized: false,
+    rolling: true,
+    proxy: true,
     cookie: {
-        secure: process.env.NODE_ENV === 'production',
+        secure: 'auto',
         httpOnly: true,
-        maxAge: 24 * 60 * 60 * 1000, // 24h
+        sameSite: 'lax',
+        maxAge: 8 * 60 * 60 * 1000, // 8h default session window
     },
 }));
 
@@ -149,6 +156,7 @@ app.use('/api/users', authMiddleware, usersRouter);
 app.use('/api/funnels', authMiddleware, funnelsRouter);
 app.use('/api/connectors', authMiddleware, connectorsRouter);
 app.use('/api/saved-connectors', authMiddleware, savedConnectorsRouter);
+app.use('/api/system-keys', authMiddleware, systemKeysRouter);
 app.use('/api/admin', adminRouter);
 
 // MCP endpoints: split into flows read-only, flows-edit write, and debug
@@ -200,6 +208,10 @@ app.get('/health', asyncHandler(async (_req, res) => {
 app.use(errorHandler);
 
 // ── Start ─────────────────────────────────────────────────────
+redisConnectPromise.catch(() => {
+    // Connection errors are already logged by the client; the app can still start and retry.
+});
+
 app.listen(PORT, () => {
     logger.info(`Platform API started`, { port: PORT, env: process.env.NODE_ENV });
 });

@@ -55,9 +55,11 @@ function ConnectorItem({ connector }) {
     );
 }
 
-export function NodeLibrary({ connectors = [] }) {
+export function NodeLibrary({ connectors = [], embedded = false }) {
     return (
-        <div className="w-56 shrink-0 bg-gray-950 border-r border-gray-800 flex flex-col overflow-y-auto">
+        <div className={embedded
+            ? 'h-full flex flex-col overflow-y-auto'
+            : 'w-56 shrink-0 bg-gray-950 border-r border-gray-800 flex flex-col overflow-y-auto'}>
             {/* Node types */}
             <div className="p-3 border-b border-gray-800">
                 <div className="text-xs text-gray-500 uppercase tracking-wide mb-2 px-1">Ноди</div>

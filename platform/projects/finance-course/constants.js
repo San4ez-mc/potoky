@@ -1,6 +1,7 @@
 'use strict';
 
 const FILE_TYPES = {
+    USER_ONBOARDING_DATA: 'user_onboarding_data',
     CASHFLOW_ARTICLES: 'cashflow_articles',
     PL_ARTICLES: 'pl_articles',
     BUSINESS_PROCESS: 'business_process',
@@ -14,6 +15,7 @@ const FILE_TYPES = {
 };
 
 const FILE_DISPLAY_NAMES = {
+    user_onboarding_data: 'Профіль студента (онбординг)',
     cashflow_articles: 'Статті Cashflow',
     pl_articles: 'Статті P&L',
     business_process: 'Бізнес-процес компанії',
@@ -43,6 +45,7 @@ const SESSION_STATES = {
 };
 
 const BOT_SLUGS = {
+    BOT_1_1: 'bot-1-1-onboarding',
     BOT_1_2: 'bot-1-2-business-process',
     BOT_2_1: 'bot-2-1-articles',
     BOT_2_2: 'bot-2-2-cashflow-table',
@@ -60,6 +63,7 @@ const BOT_SLUGS = {
 };
 
 const DEEP_LINK_MAP = {
+    lesson_1_1: BOT_SLUGS.BOT_1_1,
     lesson_1_2: BOT_SLUGS.BOT_1_2,
     lesson_2_1: BOT_SLUGS.BOT_2_1,
     lesson_2_2: BOT_SLUGS.BOT_2_2,

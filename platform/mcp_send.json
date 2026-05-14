@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"send_test_message","arguments":{"sessionId":"eac34b32-3058-4c16-9dec-be214cc17596","message":"Так, починаємо"}}}

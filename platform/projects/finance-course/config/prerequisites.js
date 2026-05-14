@@ -4,6 +4,7 @@ const { FileStorage } = require('@platform/storage');
 const { FILE_DISPLAY_NAMES } = require('../constants');
 
 const BOT_REQUIREMENTS = {
+    'bot-1-1-onboarding': { files: [] },
     'bot-1-2-business-process': { files: [] },
     'bot-2-1-articles': { files: [] },
     'bot-2-2-cashflow-table': { files: ['cashflow_articles'] },

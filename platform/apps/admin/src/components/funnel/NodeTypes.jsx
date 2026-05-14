@@ -241,6 +241,30 @@ export const GenerateDocumentNode = memo(({ id, selected, data }) => (
     </BaseNode>
 ));
 
+// ─── HTTP Encode Node ──────────────────────────────────────────────────────────
+export const HttpEncodeNode = memo(({ id, selected, data }) => (
+    <BaseNode id={id} selected={selected} color="bg-cyan-700" icon="🔒" label={data.label || 'Кодування Base64'}>
+        {data.sourceVar && <div className="text-cyan-400 text-[11px]">Джерело: {data.sourceVar}</div>}
+        {data.outputVar && <div className="text-cyan-300 text-[11px]">→ {data.outputVar}</div>}
+    </BaseNode>
+));
+
+// ─── HTTP Request Node ─────────────────────────────────────────────────────────
+export const HttpRequestNode = memo(({ id, selected, data }) => (
+    <BaseNode id={id} selected={selected} color="bg-teal-700" icon="🌐" label={data.label || 'HTTP запит'}>
+        {data.url && <div className="text-teal-400 text-[11px] truncate">{data.url}</div>}
+        {data.method && <div className="text-teal-300 text-[11px]">{data.method}</div>}
+    </BaseNode>
+));
+
+// ─── Send Photo Node ────────────────────────────────────────────────────────────
+export const SendPhotoNode = memo(({ id, selected, data }) => (
+    <BaseNode id={id} selected={selected} color="bg-pink-700" icon="📸" label={data.label || 'Відправити фото'}>
+        {data.photoVar && <div className="text-pink-400 text-[11px]">Фото: {data.photoVar}</div>}
+        {data.caption && <div className="text-pink-300 text-[11px] line-clamp-1">{data.caption}</div>}
+    </BaseNode>
+));
+
 // ─── Node type map (for React Flow) ───────────────────────────────────────────
 export const NODE_TYPES = {
     start: StartNode,
@@ -253,6 +277,8 @@ export const NODE_TYPES = {
     loadFile: LoadFileNode,
     wait: WaitNode,
     httpRequest: HttpRequestNode,
+    httpEncode: HttpEncodeNode,
+    sendPhoto: SendPhotoNode,
     tag: TagNode,
     abtest: ABTestNode,
     generateDocument: GenerateDocumentNode,
@@ -269,7 +295,9 @@ export const NODE_PALETTE = [
     { type: 'saveFile', icon: '💾', label: 'Зберегти файл', color: 'border-pink-700', defaultData: { fileType: 'report' } },
     { type: 'loadFile', icon: '📂', label: 'Завантажити файл', color: 'border-indigo-700', defaultData: { fileType: '', onMissing: 'ask', outputVar: 'context.file' } },
     { type: 'wait', icon: '⏳', label: 'Очікування', color: 'border-gray-600', defaultData: { duration: '5m', hint: '' } },
-    { type: 'httpRequest', icon: '🌐', label: 'HTTP запит', color: 'border-teal-700', defaultData: { url: '', method: 'POST', bodyTemplate: {} } },
+    { type: 'httpEncode', icon: '🔒', label: 'Кодування Base64', color: 'border-cyan-700', defaultData: { sourceVar: 'context.data', outputVar: 'context.encoded' } },
+    { type: 'httpRequest', icon: '🌐', label: 'HTTP запит', color: 'border-teal-700', defaultData: { url: '', method: 'GET', outputVar: 'context.response' } },
+    { type: 'sendPhoto', icon: '📸', label: 'Відправити фото', color: 'border-pink-700', defaultData: { photoVar: 'context.photo', caption: '' } },
     { type: 'tag', icon: '🏷️', label: 'Тег', color: 'border-red-700', defaultData: { tag: '', action: 'add' } },
     { type: 'abtest', icon: '🧪', label: 'A/B тест', color: 'border-purple-700', defaultData: { variantA: '', variantB: '', percentA: 50, percentB: 50 } },
     { type: 'generateDocument', icon: '📄', label: 'Генерувати документ', color: 'border-emerald-700', defaultData: { template: 'student_profile', sourceVar: 'context.onboarding_result', filename: 'document.docx', sendToUser: true } },

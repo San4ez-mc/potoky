@@ -375,7 +375,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null }) {
             const mode = String(data.mode || 'single');
             const exitCondition = data.exitCondition || 'json_output';
             const isUserConfirmExit = exitCondition === 'user_confirms';
-            
+
             // Check if we need user input (not in finalization stage for user_confirms)
             const inFinalizationStage = isUserConfirmExit && runtime.userConfirmationReceived;
             if (!runtime.lastUserMessage && !inFinalizationStage) {
@@ -461,7 +461,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null }) {
                         const outputPath = String(data.outputVar).replace(/^context\./, '');
                         setByPath(ctx, outputPath, exit.parsed !== null ? exit.parsed : responseText);
                     }
-                    
+
                     // For user_confirms: flag for finalization on next iteration
                     if (isUserConfirmExit) {
                         runtime.userConfirmationReceived = true;
@@ -469,7 +469,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null }) {
                         runtime.waitingForUser = false;
                         continue;
                     }
-                    
+
                     // Regular exit
                     runtime.lastUserMessage = '';
                     runtime.waitingForUser = false;
@@ -629,6 +629,104 @@ ${new Date().toLocaleDateString('uk-UA')}
             }
 
             runtime.currentNodeId = pickNextNodeId(flow.edges, node.id, result ? 'true' : 'false');
+            continue;
+        }
+
+        if (node.type === 'httpEncode') {
+            const sourceVar = data.sourceVar ? String(data.sourceVar).replace(/^context\./, '') : '';
+            const outputVar = data.outputVar ? String(data.outputVar).replace(/^context\./, '') : '';
+            
+            if (!sourceVar || !outputVar) {
+                runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
+                continue;
+            }
+
+            try {
+                const sourceValue = getByPath(ctx, sourceVar);
+                const textToEncode = typeof sourceValue === 'string' ? sourceValue : JSON.stringify(sourceValue || '');
+                const encoded = Buffer.from(textToEncode).toString('base64');
+                setByPath(ctx, outputVar, encoded);
+            } catch (_error) {
+                // Silently skip encoding on error
+            }
+
+            runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
+            continue;
+        }
+
+        if (node.type === 'httpRequest') {
+            const url = renderTemplate(data.url || '', ctx);
+            const method = (data.method || 'GET').toUpperCase();
+            const outputVar = data.outputVar ? String(data.outputVar).replace(/^context\./, '') : '';
+            
+            if (!url) {
+                runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
+                continue;
+            }
+
+            try {
+                const https = require('https');
+                const response = await new Promise((resolve, reject) => {
+                    https.get(url, (res) => {
+                        let data = Buffer.alloc(0);
+                        res.on('data', (chunk) => {
+                            data = Buffer.concat([data, chunk]);
+                        });
+                        res.on('end', () => resolve(data));
+                        res.on('error', reject);
+                    }).on('error', reject);
+                });
+
+                if (outputVar) {
+                    setByPath(ctx, outputVar, response.toString('base64'));
+                }
+            } catch (_error) {
+                // Silently skip HTTP request on error
+            }
+
+            runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
+            continue;
+        }
+
+        if (node.type === 'sendPhoto') {
+            const photoVar = data.photoVar ? String(data.photoVar).replace(/^context\./, '') : '';
+            const caption = renderTemplate(data.caption || '', ctx);
+            
+            if (!photoVar) {
+                runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
+                continue;
+            }
+
+            try {
+                const photoData = getByPath(ctx, photoVar);
+                let photoUrl = '';
+
+                // If photoData is base64, convert to data URL
+                if (typeof photoData === 'string' && photoData.length > 0) {
+                    if (photoData.startsWith('http')) {
+                        photoUrl = photoData;
+                    } else {
+                        photoUrl = `data:image/png;base64,${photoData}`;
+                    }
+                }
+
+                if (photoUrl) {
+                    // Store as metadata for later telegram send
+                    await persistAssistantMessage(session.id, caption || '📸 Фото', {
+                        nodeId: node.id,
+                        nodeType: node.type,
+                        attachment: { type: 'photo', url: photoUrl, caption },
+                    });
+
+                    if (caption) {
+                        lastAssistant = caption;
+                    }
+                }
+            } catch (_error) {
+                // Silently skip on error
+            }
+
+            runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
             continue;
         }
 

@@ -14,6 +14,9 @@ const EDITORS = {
     wait: [],
     start: [],
     generateDocument: [],
+    httpEncode: [],
+    httpRequest: [],
+    sendPhoto: [],
 };
 
 function Field({ label, children }) {
@@ -423,6 +426,64 @@ function WaitNodeEditor({ data, update }) {
     );
 }
 
+function HttpEncodeNodeEditor({ data, update }) {
+    return (
+        <div className="space-y-3">
+            <Field label="Назва ноди">
+                <TextInput value={data.label} onChange={v => update({ label: v })} placeholder="Кодування Base64" />
+            </Field>
+            <Field label="Джерело даних (sourceVar)">
+                <TextInput value={data.sourceVar} onChange={v => update({ sourceVar: v })} placeholder="context.mermaidCode" />
+            </Field>
+            <Field label="Вивести в змінну (outputVar)">
+                <TextInput value={data.outputVar} onChange={v => update({ outputVar: v })} placeholder="context.encodedCode" />
+            </Field>
+        </div>
+    );
+}
+
+function HttpRequestNodeEditor({ data, update }) {
+    return (
+        <div className="space-y-3">
+            <Field label="Назва ноди">
+                <TextInput value={data.label} onChange={v => update({ label: v })} placeholder="HTTP запит" />
+            </Field>
+            <Field label="URL (з шаблонізацією)">
+                <TextInput value={data.url} onChange={v => update({ url: v })} placeholder="https://mermaid.ink/img/[base64_code]" multiline />
+            </Field>
+            <Field label="HTTP метод">
+                <select
+                    value={data.method || 'GET'}
+                    onChange={e => update({ method: e.target.value })}
+                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+                >
+                    <option value="GET">GET</option>
+                    <option value="POST">POST</option>
+                </select>
+            </Field>
+            <Field label="Вивести відповідь в змінну (outputVar)">
+                <TextInput value={data.outputVar} onChange={v => update({ outputVar: v })} placeholder="context.pngData" />
+            </Field>
+        </div>
+    );
+}
+
+function SendPhotoNodeEditor({ data, update }) {
+    return (
+        <div className="space-y-3">
+            <Field label="Назва ноди">
+                <TextInput value={data.label} onChange={v => update({ label: v })} placeholder="Відправити фото" />
+            </Field>
+            <Field label="Змінна з фото (photoVar)">
+                <TextInput value={data.photoVar} onChange={v => update({ photoVar: v })} placeholder="context.pngData" />
+            </Field>
+            <Field label="Підпис до фото (caption)">
+                <TextInput value={data.caption} onChange={v => update({ caption: v })} placeholder="Ось ваша схема бізнес-процесу" multiline />
+            </Field>
+        </div>
+    );
+}
+
 function SaveFileNodeEditor({ data, update }) {
     return (
         <div className="space-y-3">
@@ -591,17 +652,15 @@ function GenerateDocumentNodeEditor({ data, update }) {
                 <div className="flex gap-2">
                     <button
                         onClick={() => update({ sendToUser: true })}
-                        className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                            data.sendToUser ? 'bg-blue-600 text-white' : 'bg-gray-800 border border-gray-700 text-gray-400 hover:text-white'
-                        }`}
+                        className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${data.sendToUser ? 'bg-blue-600 text-white' : 'bg-gray-800 border border-gray-700 text-gray-400 hover:text-white'
+                            }`}
                     >
                         Так ✓
                     </button>
                     <button
                         onClick={() => update({ sendToUser: false })}
-                        className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                            !data.sendToUser ? 'bg-blue-600 text-white' : 'bg-gray-800 border border-gray-700 text-gray-400 hover:text-white'
-                        }`}
+                        className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${!data.sendToUser ? 'bg-blue-600 text-white' : 'bg-gray-800 border border-gray-700 text-gray-400 hover:text-white'
+                            }`}
                     >
                         Ні ✕
                     </button>
@@ -635,7 +694,9 @@ export function NodeEditor({ embedded = false, onClose }) {
             case 'saveFile': return <SaveFileNodeEditor data={data} update={update} />;
             case 'wait': return <WaitNodeEditor data={data} update={update} />;
             case 'loadFile': return <LoadFileNodeEditor data={data} update={update} />;
+            case 'httpEncode': return <HttpEncodeNodeEditor data={data} update={update} />;
             case 'httpRequest': return <HttpRequestNodeEditor data={data} update={update} />;
+            case 'sendPhoto': return <SendPhotoNodeEditor data={data} update={update} />;
             case 'tag': return <TagNodeEditor data={data} update={update} />;
             case 'abtest': return <ABTestNodeEditor data={data} update={update} />;
             case 'generateDocument': return <GenerateDocumentNodeEditor data={data} update={update} />;

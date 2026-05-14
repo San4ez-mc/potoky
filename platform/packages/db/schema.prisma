@@ -38,6 +38,8 @@ model Bot {
   name        String   @db.VarChar(255)
   slug        String   @db.VarChar(100)
   description String?  @db.Text
+  goal        String?  @db.Text
+  outputFiles String?  @db.Text // JSON array of output file types
   trigger     String?  @db.VarChar(255)
   isActive    Boolean  @default(true)
   settings    Json     @default("{}")
@@ -50,6 +52,7 @@ model Bot {
   errors          AppError[]
   flowDefinition  FlowDefinition?
   funnelKeys      FunnelKey[]
+  userData        UserData[]
 
   @@unique([projectId, slug])
   @@index([projectId])
@@ -78,6 +81,7 @@ model User {
   files        File[]
   userProgress UserProgress[]
   errors       AppError[]
+  userData     UserData[]
 
   @@index([projectId])
   @@map("users")
@@ -170,11 +174,11 @@ model File {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user    User    @relation(fields: [userId], references: [id])
-  bot     Bot     @relation(fields: [botId], references: [id])
-  session Session? @relation(fields: [sessionId], references: [id])
-
+  user         User          @relation(fields: [userId], references: [id])
+  bot          Bot           @relation(fields: [botId], references: [id])
+  session      Session?      @relation(fields: [sessionId], references: [id])
   userProgress UserProgress[]
+  userData     UserData[]
 
   @@index([userId, fileType])
   @@index([userId, version])
@@ -327,4 +331,33 @@ model AppError {
   @@index([resolved])
   @@index([createdAt])
   @@map("app_errors")
+}
+
+// ============================================================
+// USER DATA (responses from onboarding bots)
+// ============================================================
+
+model UserData {
+  id                 String   @id @default(uuid())
+  userId             String
+  telegramId         BigInt?
+  botId              String
+  name               String?  @db.VarChar(255)
+  role               String?  @db.VarChar(255)
+  company            String?  @db.Text
+  financialProblem   String?  @db.Text
+  outputFileId       String?
+  metadata           Json     @default("{}")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  user         User     @relation(fields: [userId], references: [id])
+  bot          Bot      @relation(fields: [botId], references: [id])
+  outputFile   File?    @relation(fields: [outputFileId], references: [id])
+
+  @@unique([userId, botId])
+  @@index([userId])
+  @@index([telegramId])
+  @@index([botId])
+  @@map("user_data")
 }

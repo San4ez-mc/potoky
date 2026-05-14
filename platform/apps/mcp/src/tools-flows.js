@@ -34,7 +34,9 @@ const TOOLS = [
                 projectSlug: { type: 'string', description: 'Project slug, default: finance-course' },
                 name: { type: 'string', description: 'Bot display name' },
                 slug: { type: 'string', description: 'Bot slug unique inside project' },
-                description: { type: 'string' },
+                description: { type: 'string', description: 'Short description of what this bot does' },
+                goal: { type: 'string', description: 'What the student receives on completion (output goal)' },
+                outputFiles: { type: 'array', items: { type: 'string' }, description: 'List of output file types this bot creates, e.g. ["student_profile", "business_process"]' },
                 trigger: { type: 'string' },
                 isActive: { type: 'boolean', default: true },
             },
@@ -213,14 +215,24 @@ async function listFunnels() {
             ? bot.settings
             : {};
 
+        // Parse outputFiles JSON array if stored as string
+        let outputFiles = [];
+        if (bot.outputFiles) {
+            try {
+                outputFiles = typeof bot.outputFiles === 'string' ? JSON.parse(bot.outputFiles) : bot.outputFiles;
+            } catch (_error) {
+                outputFiles = [];
+            }
+        }
+
         return {
             id: bot.id,
             name: bot.name,
             slug: bot.slug,
             project: bot.project.name,
             description: bot.description || settings.description || null,
-            goal: settings.goal || null,
-            outputFiles: Array.isArray(settings.outputFiles) ? settings.outputFiles : [],
+            goal: bot.goal || settings.goal || null,
+            outputFiles: outputFiles.length > 0 ? outputFiles : [],
             hasFlow: !!bot.flowDefinition,
             flowUpdatedAt: bot.flowDefinition?.updatedAt,
             keysCount: bot._count.funnelKeys,
@@ -241,6 +253,16 @@ async function getFunnel({ botId }) {
         ? bot.settings
         : {};
 
+    // Parse outputFiles JSON array if stored as string
+    let outputFiles = [];
+    if (bot.outputFiles) {
+        try {
+            outputFiles = typeof bot.outputFiles === 'string' ? JSON.parse(bot.outputFiles) : bot.outputFiles;
+        } catch (_error) {
+            outputFiles = [];
+        }
+    }
+
     return {
         bot: {
             id: bot.id,
@@ -248,8 +270,8 @@ async function getFunnel({ botId }) {
             slug: bot.slug,
             project: bot.project.name,
             description: bot.description || settings.description || null,
-            goal: settings.goal || null,
-            outputFiles: Array.isArray(settings.outputFiles) ? settings.outputFiles : [],
+            goal: bot.goal || settings.goal || null,
+            outputFiles: outputFiles.length > 0 ? outputFiles : [],
         },
         nodes: flow?.nodes || [],
         edges: flow?.edges || [],
@@ -297,6 +319,8 @@ async function createFunnel({
     name,
     slug,
     description,
+    goal,
+    outputFiles,
     trigger,
     isActive = true,
 }) {
@@ -321,6 +345,9 @@ async function createFunnel({
 
     const flow = buildDefaultFlow();
 
+    // Serialize outputFiles array to JSON if provided
+    const outputFilesJson = Array.isArray(outputFiles) ? JSON.stringify(outputFiles) : null;
+
     const result = await prisma.$transaction(async (tx) => {
         const bot = await tx.bot.create({
             data: {
@@ -328,6 +355,8 @@ async function createFunnel({
                 name,
                 slug,
                 description: description || null,
+                goal: goal || null,
+                outputFiles: outputFilesJson,
                 trigger: trigger || null,
                 isActive: isActive ?? true,
                 settings: {},

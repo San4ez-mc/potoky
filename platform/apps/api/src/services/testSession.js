@@ -572,7 +572,70 @@ ${new Date().toLocaleDateString('uk-UA')}
 Зберігається у вашому профілі та доступний на всіх наступних заняттях.
                 `.trim();
             } else if (template === 'business_process') {
-                documentContent = sourceContent || 'Business process document';
+                // Parse Mermaid swimlane or Markdown business process document
+                const parseMermaidSwimlane = (text) => {
+                    if (!text || typeof text !== 'string') return null;
+
+                    // Find Mermaid code block
+                    const mermaidMatch = text.match(/```(?:mermaid)?\s*([\s\S]*?)```/i);
+                    const mermaidCode = mermaidMatch ? mermaidMatch[1].trim() : text;
+
+                    // Extract subgraph sections
+                    const subgraphPattern = /subgraph\s+["']?([^"'\n]+)["']?\s*\n([\s\S]*?)end/gi;
+                    const sections = [];
+                    let match;
+                    while ((match = subgraphPattern.exec(mermaidCode)) !== null) {
+                        const sectionName = match[1].trim();
+                        const sectionBody = match[2].trim();
+
+                        // Extract node labels from body: A[Label], B{"Label"}, etc.
+                        const nodePattern = /\[["']?([^"'\[\]]+)["']?\]/g;
+                        const steps = [];
+                        let nodeMatch;
+                        while ((nodeMatch = nodePattern.exec(sectionBody)) !== null) {
+                            const step = nodeMatch[1].trim();
+                            if (step && !steps.includes(step)) {
+                                steps.push(step);
+                            }
+                        }
+
+                        if (sectionName) {
+                            sections.push({ name: sectionName, steps });
+                        }
+                    }
+
+                    return sections.length > 0 ? sections : null;
+                };
+
+                const sections = parseMermaidSwimlane(sourceContent);
+                const dateStr = new Date().toLocaleDateString('uk-UA');
+
+                if (sections && sections.length > 0) {
+                    const sectionsText = sections.map((s) => {
+                        const stepsText = s.steps.length > 0
+                            ? s.steps.map((st, i) => `  ${i + 1}. ${st}`).join('\n')
+                            : '  (кроки не визначені)';
+                        return `${s.name.toUpperCase()}\n${stepsText}`;
+                    }).join('\n\n');
+
+                    documentContent = `БІЗНЕС-ПРОЦЕС КОМПАНІЇ — Урок 1.2
+${dateStr}
+
+${sectionsText}
+
+---
+Документ згенеровано автоматично системою курсу.
+Схема процесу збережена окремим файлом.`.trim();
+                } else {
+                    // Fallback: use source content as-is (already structured Markdown)
+                    documentContent = `БІЗНЕС-ПРОЦЕС КОМПАНІЇ — Урок 1.2
+${dateStr}
+
+${sourceContent || '(немає даних)'}
+
+---
+Документ згенеровано автоматично системою курсу.`.trim();
+                }
             } else {
                 documentContent = sourceContent || 'Generated document';
             }

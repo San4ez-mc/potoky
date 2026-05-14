@@ -13,6 +13,7 @@ const EDITORS = {
     saveFile: [],
     wait: [],
     start: [],
+    generateDocument: [],
 };
 
 function Field({ label, children }) {
@@ -114,6 +115,33 @@ function MessageNodeEditor({ data, update }) {
 }
 
 function ClaudeNodeEditor({ data, update }) {
+    const mode = data.mode || 'single';
+    const exitCondition = data.exitCondition || 'json_output';
+    const isKeywordExit = exitCondition.startsWith('keyword:');
+    const keywordValue = isKeywordExit ? exitCondition.slice('keyword:'.length).trim() : '';
+    const exitConditionType = isKeywordExit ? 'keyword' : exitCondition;
+
+    const handleModeChange = (value) => {
+        if (value === 'dialog') {
+            update({ mode: value, exitCondition: data.exitCondition || 'json_output' });
+            return;
+        }
+        update({ mode: value });
+    };
+
+    const handleExitConditionChange = (value) => {
+        if (value === 'keyword') {
+            const nextKeyword = keywordValue || 'DONE';
+            update({ exitCondition: `keyword:${nextKeyword}` });
+            return;
+        }
+        update({ exitCondition: value });
+    };
+
+    const handleKeywordChange = (value) => {
+        update({ exitCondition: `keyword:${value}` });
+    };
+
     return (
         <div className="space-y-3">
             <Field label="Модель">
@@ -127,12 +155,51 @@ function ClaudeNodeEditor({ data, update }) {
                     <option value="claude-opus-4-5">claude-opus-4-5</option>
                 </select>
             </Field>
+            <Field label="Тип запиту до ШІ">
+                <select
+                    value={mode}
+                    onChange={e => handleModeChange(e.target.value)}
+                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+                >
+                    <option value="single">Одиночний запит</option>
+                    <option value="dialog">Діалог</option>
+                </select>
+                <div className="mt-1 text-[11px] text-gray-500">
+                    Одиночний: один виклик і перехід далі. Діалог: бот спілкується поки не виконається умова завершення.
+                </div>
+            </Field>
             <Field label="System Prompt">
                 <CodeBlock value={data.systemPrompt} onChange={v => update({ systemPrompt: v })} language="markdown" />
             </Field>
             <Field label="Messages Template (JSON)">
                 <CodeBlock value={data.messagesTemplate} onChange={v => update({ messagesTemplate: v })} language="json" />
             </Field>
+            {mode === 'dialog' && (
+                <Field label="Умова завершення діалогу">
+                    <select
+                        value={exitConditionType}
+                        onChange={e => handleExitConditionChange(e.target.value)}
+                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+                    >
+                        <option value="json_output">JSON у відповіді</option>
+                        <option value="markdown_output">Markdown у відповіді</option>
+                        <option value="user_confirms">Підтвердження користувача</option>
+                        <option value="keyword">Ключове слово</option>
+                    </select>
+                    <div className="mt-1 text-[11px] text-gray-500">
+                        Коли умова спрацює, бот збереже результат у змінну та перейде до наступної ноди.
+                    </div>
+                    {exitConditionType === 'keyword' && (
+                        <div className="mt-2">
+                            <TextInput
+                                value={keywordValue}
+                                onChange={handleKeywordChange}
+                                placeholder="Наприклад: DONE"
+                            />
+                        </div>
+                    )}
+                </Field>
+            )}
             <Field label="Зберегти відповідь у змінну">
                 <TextInput value={data.outputVar} onChange={v => update({ outputVar: v })} placeholder="context.aiResponse" />
             </Field>
@@ -356,6 +423,22 @@ function WaitNodeEditor({ data, update }) {
     );
 }
 
+function SaveFileNodeEditor({ data, update }) {
+    return (
+        <div className="space-y-3">
+            <Field label="Назва ноди">
+                <TextInput value={data.label} onChange={v => update({ label: v })} placeholder="Зберегти файл" />
+            </Field>
+            <Field label="Тип файлу (fileType)">
+                <TextInput value={data.fileType} onChange={v => update({ fileType: v })} placeholder="cashflow_articles" />
+            </Field>
+            <Field label="Змінна для контенту (contentVar)">
+                <TextInput value={data.contentVar} onChange={v => update({ contentVar: v })} placeholder="context.articles_result" />
+            </Field>
+        </div>
+    );
+}
+
 function LoadFileNodeEditor({ data, update }) {
     return (
         <div className="space-y-3">
@@ -479,7 +562,56 @@ function ABTestNodeEditor({ data, update }) {
     );
 }
 
-export function NodeEditor() {
+function GenerateDocumentNodeEditor({ data, update }) {
+    return (
+        <div className="space-y-3">
+            <Field label="Назва ноди">
+                <TextInput value={data.label} onChange={v => update({ label: v })} placeholder="Генерувати документ" />
+            </Field>
+            <Field label="Шаблон документу">
+                <select
+                    value={data.template || 'student_profile'}
+                    onChange={e => update({ template: e.target.value })}
+                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+                >
+                    <option value="student_profile">Профіль студента (student_profile)</option>
+                    <option value="business_process">Бізнес-процес (business_process)</option>
+                    <option value="cashflow_table">Таблиця Cashflow (cashflow_table)</option>
+                    <option value="pl_table">P&L звіт (pl_table)</option>
+                    <option value="balance_table">Баланс (balance_table)</option>
+                </select>
+            </Field>
+            <Field label="Джерело даних (context змінна)">
+                <TextInput value={data.sourceVar} onChange={v => update({ sourceVar: v })} placeholder="context.onboarding_result" />
+            </Field>
+            <Field label="Назва файлу">
+                <TextInput value={data.filename} onChange={v => update({ filename: v })} placeholder="document.docx" />
+            </Field>
+            <Field label="Відправити користувачу?">
+                <div className="flex gap-2">
+                    <button
+                        onClick={() => update({ sendToUser: true })}
+                        className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                            data.sendToUser ? 'bg-blue-600 text-white' : 'bg-gray-800 border border-gray-700 text-gray-400 hover:text-white'
+                        }`}
+                    >
+                        Так ✓
+                    </button>
+                    <button
+                        onClick={() => update({ sendToUser: false })}
+                        className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                            !data.sendToUser ? 'bg-blue-600 text-white' : 'bg-gray-800 border border-gray-700 text-gray-400 hover:text-white'
+                        }`}
+                    >
+                        Ні ✕
+                    </button>
+                </div>
+            </Field>
+        </div>
+    );
+}
+
+export function NodeEditor({ embedded = false, onClose }) {
     const { selectedNode, updateNodeData, connectors, deleteNode } = useFunnelStore();
 
     if (!selectedNode) return null;
@@ -500,23 +632,36 @@ export function NodeEditor() {
             case 'js': return <JsNodeEditor data={data} update={update} />;
             case 'condition': return <ConditionNodeEditor data={data} update={update} />;
             case 'connector': return <ConnectorNodeEditor data={data} update={update} connectors={connectors} />;
+            case 'saveFile': return <SaveFileNodeEditor data={data} update={update} />;
             case 'wait': return <WaitNodeEditor data={data} update={update} />;
             case 'loadFile': return <LoadFileNodeEditor data={data} update={update} />;
             case 'httpRequest': return <HttpRequestNodeEditor data={data} update={update} />;
             case 'tag': return <TagNodeEditor data={data} update={update} />;
             case 'abtest': return <ABTestNodeEditor data={data} update={update} />;
+            case 'generateDocument': return <GenerateDocumentNodeEditor data={data} update={update} />;
             default: return <div className="text-gray-500 text-sm">Немає налаштувань для цього вузла</div>;
         }
     };
 
     return (
-        <div className="w-80 shrink-0 bg-gray-950 border-l border-gray-800 flex flex-col overflow-hidden">
+        <div className={embedded
+            ? 'h-full flex flex-col overflow-hidden'
+            : 'w-80 shrink-0 bg-gray-950 border-l border-gray-800 flex flex-col overflow-hidden'}>
             {/* Header */}
-            <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
+            <div className="px-4 py-3 border-b border-gray-800 flex items-start justify-between gap-3">
                 <div>
                     <div className="text-sm font-semibold text-white capitalize">{type} node</div>
                     <div className="text-xs text-gray-500 font-mono">{selectedNode.id}</div>
                 </div>
+                {onClose && (
+                    <button
+                        onClick={onClose}
+                        className="h-8 w-8 rounded-lg border border-gray-800 bg-gray-900 text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+                        title="Закрити панель"
+                    >
+                        ✕
+                    </button>
+                )}
             </div>
 
             {/* Label */}

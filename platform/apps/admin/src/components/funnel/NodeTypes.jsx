@@ -59,14 +59,38 @@ export const MessageNode = memo(({ id, selected, data }) => (
 ));
 
 // ─── Claude Node ───────────────────────────────────────────────────────────────
-export const ClaudeNode = memo(({ id, selected, data }) => (
-    <BaseNode id={id} selected={selected} color="bg-violet-700" icon="🧠" label={data.label || 'Claude AI'}>
-        {data.systemPrompt && (
-            <p className="line-clamp-2 text-gray-300">{data.systemPrompt}</p>
-        )}
-        {data.model && <div className="mt-1 text-violet-400">{data.model}</div>}
-    </BaseNode>
-));
+export const ClaudeNode = memo(({ id, selected, data }) => {
+    const exitConditionLabel = () => {
+        if (!data.exitCondition) return '';
+        if (data.exitCondition === 'json_output') return '📋 JSON';
+        if (data.exitCondition === 'markdown_output') return '📝 Markdown';
+        if (data.exitCondition === 'user_confirms') return '✅ Підтвердження';
+        if (data.exitCondition.startsWith('keyword:')) {
+            const kw = data.exitCondition.slice('keyword:'.length);
+            return `🔑 ${kw}`;
+        }
+        return '';
+    };
+
+    return (
+        <BaseNode id={id} selected={selected} color="bg-violet-700" icon="🧠" label={data.label || 'Claude AI'}>
+            <div className="mb-1 flex gap-1 flex-wrap">
+                {data.mode === 'dialog' ? (
+                    <span className="inline-flex items-center rounded bg-violet-900/70 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-200">💬 діалог</span>
+                ) : (
+                    <span className="inline-flex items-center rounded bg-violet-900/70 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-200">1×</span>
+                )}
+                {data.mode === 'dialog' && exitConditionLabel() && (
+                    <span className="inline-flex items-center rounded bg-violet-900/50 px-2 py-0.5 text-[10px] text-violet-300">{exitConditionLabel()}</span>
+                )}
+            </div>
+            {data.systemPrompt && (
+                <p className="line-clamp-2 text-gray-300">{data.systemPrompt}</p>
+            )}
+            {data.model && <div className="mt-1 text-violet-400 text-[11px]">{data.model}</div>}
+        </BaseNode>
+    );
+});
 
 // ─── JS Node ───────────────────────────────────────────────────────────────────
 export const JsNode = memo(({ id, selected, data }) => (
@@ -208,6 +232,15 @@ export const ABTestNode = memo(({ id, selected, data }) => (
     </div>
 ));
 
+// ─── Generate Document Node ────────────────────────────────────────────────────
+export const GenerateDocumentNode = memo(({ id, selected, data }) => (
+    <BaseNode id={id} selected={selected} color="bg-emerald-700" icon="📄" label={data.label || 'Генерувати документ'}>
+        {data.template && <div className="text-emerald-400 text-[11px]">Шаблон: {data.template}</div>}
+        {data.sourceVar && <div className="text-emerald-300 text-[11px]">Дані: {data.sourceVar}</div>}
+        {data.sendToUser && <div className="text-emerald-300 text-[11px]">✉️ Відправити користувачу</div>}
+    </BaseNode>
+));
+
 // ─── Node type map (for React Flow) ───────────────────────────────────────────
 export const NODE_TYPES = {
     start: StartNode,
@@ -222,13 +255,14 @@ export const NODE_TYPES = {
     httpRequest: HttpRequestNode,
     tag: TagNode,
     abtest: ABTestNode,
+    generateDocument: GenerateDocumentNode,
 };
 
 // ─── Node palette items (for drag sidebar) ────────────────────────────────────
 export const NODE_PALETTE = [
     { type: 'start', icon: '🚀', label: 'Start', color: 'border-emerald-700', defaultData: { trigger: '/start' } },
     { type: 'message', icon: '💬', label: 'Повідомлення', color: 'border-blue-700', defaultData: { text: 'Привіт!', keyboard: [] } },
-    { type: 'claude', icon: '🧠', label: 'Claude AI', color: 'border-violet-700', defaultData: { systemPrompt: '', model: 'claude-haiku-4-5', temperature: 0.7, maxTokens: 1000 } },
+    { type: 'claude', icon: '🧠', label: 'Claude AI', color: 'border-violet-700', defaultData: { systemPrompt: '', model: 'claude-haiku-4-5', temperature: 0.7, maxTokens: 1000, mode: 'single', exitCondition: 'json_output' } },
     { type: 'js', icon: '⚡', label: 'JavaScript', color: 'border-yellow-700', defaultData: { code: '// your code\nreturn context;' } },
     { type: 'condition', icon: '🔀', label: 'Умова', color: 'border-orange-700', defaultData: { condition: 'context.score > 50' } },
     { type: 'connector', icon: '🔌', label: 'Конектор', color: 'border-cyan-700', defaultData: {} },
@@ -238,4 +272,5 @@ export const NODE_PALETTE = [
     { type: 'httpRequest', icon: '🌐', label: 'HTTP запит', color: 'border-teal-700', defaultData: { url: '', method: 'POST', bodyTemplate: {} } },
     { type: 'tag', icon: '🏷️', label: 'Тег', color: 'border-red-700', defaultData: { tag: '', action: 'add' } },
     { type: 'abtest', icon: '🧪', label: 'A/B тест', color: 'border-purple-700', defaultData: { variantA: '', variantB: '', percentA: 50, percentB: 50 } },
+    { type: 'generateDocument', icon: '📄', label: 'Генерувати документ', color: 'border-emerald-700', defaultData: { template: 'student_profile', sourceVar: 'context.onboarding_result', filename: 'document.docx', sendToUser: true } },
 ];

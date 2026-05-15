@@ -265,9 +265,14 @@ class Bot11OnboardingHandler {
         const existingProfile = normalizeSession(context.existingProfile || {});
         const dbMessages = await MessageService.getAll(session.id);
 
+        const bigIntReplacer = (key, value) => {
+            if (typeof value === 'bigint') return value.toString();
+            return value;
+        };
+
         const systemPrompt = SYSTEM_PROMPT
-            .replace('{{existing_profile_json}}', JSON.stringify(existingProfile, null, 2))
-            .replace('{{session_json}}', JSON.stringify(currentSession, null, 2));
+            .replace('{{existing_profile_json}}', JSON.stringify(existingProfile, bigIntReplacer, 2))
+            .replace('{{session_json}}', JSON.stringify(currentSession, bigIntReplacer, 2));
 
         let responseText;
         let merged;

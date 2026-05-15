@@ -123,10 +123,105 @@ async function buildPaymentCalendar({ businessName, telegramId, articles, spread
     });
 }
 
+/**
+ * Validate a table for errors (REF, NAME, VALUE errors, formula issues, etc)
+ * @param {{ spreadsheetId: string }} params
+ */
+async function validateTable({ spreadsheetId }) {
+    return callAppsScript({
+        action: 'validate_table',
+        spreadsheet_id: spreadsheetId,
+    });
+}
+
+/**
+ * Repair formulas and table structure
+ * @param {{ spreadsheetId: string, repairType?: 'formulas' | 'protection' | 'all' }} params
+ */
+async function repairTable({ spreadsheetId, repairType = 'all' }) {
+    return callAppsScript({
+        action: 'update_table',
+        operation: 'repair_formulas',
+        spreadsheet_id: spreadsheetId,
+        repair_type: repairType,
+    });
+}
+
+/**
+ * List all tables for a user
+ * @param {{ telegramId: string }} params
+ */
+async function listUserTables({ telegramId }) {
+    return callAppsScript({
+        action: 'list_tables',
+        telegram_id: String(telegramId),
+    });
+}
+
+/**
+ * Validate then repair if needed - returns { valid: boolean, errors: string[], repaired: boolean }
+ * @param {{ spreadsheetId: string }} params
+ */
+async function validateAndRepair({ spreadsheetId }) {
+    try {
+        // First pass: validate
+        const validationResult = await validateTable({ spreadsheetId });
+        
+        if (validationResult.valid === true) {
+            return { valid: true, errors: [], repaired: false };
+        }
+
+        // Second pass: repair
+        const errors = validationResult.errors || [];
+        const repairResult = await repairTable({ spreadsheetId });
+        
+        // Third pass: re-validate
+        const revalidationResult = await validateTable({ spreadsheetId });
+        
+        return {
+            valid: revalidationResult.valid === true,
+            errors: revalidationResult.errors || errors,
+            repaired: true,
+            repairLog: repairResult,
+        };
+    } catch (err) {
+        logger.error('Validate and repair failed', { spreadsheetId, error: err.message });
+        throw err;
+    }
+}
+
+/**
+ * Retry wrapper - attempts action with exponential backoff
+ * @param {Function} action - async function to retry
+ * @param {{ maxAttempts?: number, initialDelayMs?: number }} opts
+ */
+async function withRetry(action, opts = {}) {
+    const maxAttempts = opts.maxAttempts || 3;
+    const initialDelayMs = opts.initialDelayMs || 1000;
+    
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        try {
+            return await action();
+        } catch (err) {
+            if (attempt === maxAttempts) throw err;
+            
+            const delayMs = initialDelayMs * Math.pow(2, attempt - 1);
+            logger.warn(`Retry attempt ${attempt}/${maxAttempts}`, { error: err.message, delayMs });
+            
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
+    }
+}
+
 module.exports = {
     callAppsScript,
     buildCashflowTable,
     buildPlTable,
     buildBalanceTable,
     buildPaymentCalendar,
+    validateTable,
+    repairTable,
+    listUserTables,
+    validateAndRepair,
+    withRetry,
 };

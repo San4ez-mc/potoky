@@ -138,7 +138,10 @@ class Bot43Handler {
 
         const systemPrompt = SYSTEM_PROMPT
             .replace('{{expense_articles}}', context.expenseArticles || 'Не визначено')
-            .replace('{{session_json}}', JSON.stringify(context.interviewSession || {}, null, 2));
+            .replace('{{session_json}}', JSON.stringify(context.interviewSession || {}, (key, value) => {
+                if (typeof value === 'bigint') return value.toString();
+                return value;
+            }, 2));
 
         let responseText;
         try {

@@ -116,7 +116,10 @@ class Bot32Handler {
             .replace('{{business_name}}', articles.businessName)
             .replace('{{inflows}}', articles.inflows.join(', ') || '—')
             .replace('{{outflows}}', articles.outflows.join(', ') || '—')
-            .replace('{{session_json}}', JSON.stringify(context.plSession || {}, null, 2));
+            .replace('{{session_json}}', JSON.stringify(context.plSession || {}, (key, value) => {
+                if (typeof value === 'bigint') return value.toString();
+                return value;
+            }, 2));
 
         let responseText;
         try {

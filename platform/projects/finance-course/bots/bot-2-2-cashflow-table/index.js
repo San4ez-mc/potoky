@@ -1,6 +1,5 @@
 'use strict';
 
-const { callClaude, buildMessages } = require('@platform/claude');
 const { sendMessage } = require('@platform/telegram');
 const { FileStorage } = require('@platform/storage');
 const { SessionService } = require('../../services/SessionService');
@@ -10,7 +9,6 @@ const { AppsScriptService } = require('../../services/AppsScriptService');
 const { parseCashflowArticles, articlesToText } = require('../../services/ArticleParser');
 const logger = require('@platform/logger');
 const BOT_CONFIG = require('./bot.config');
-const { CASHFLOW_TABLE_PROMPT } = require('./prompts');
 
 const GREETING = (businessName, articlesText) =>
     `📊 Урок 2.2 — Таблиця Cashflow
@@ -18,31 +16,11 @@ const GREETING = (businessName, articlesText) =>
 Я бачу твої статті:
 ${articlesText}
 
-Зараз я задам кілька коротких питань про те, як буде вноситись інформація, і після цього автоматично побудую таблицю Cashflow в Google Sheets.
+Зараз я автоматично побудую таблицю Cashflow в Google Sheets на основі цих статей.
 
-Готовий? Почнемо!`;
+Готовий? Натисни "Почати" або напиши що-небудь щоб розпочати.`;
 
-function extractTag(text, tag) {
-    const match = text.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i'));
-    if (match) { try { return JSON.parse(match[1].trim()); } catch { return null; } }
-    return null;
-}
-
-function stripTags(text, ...tags) {
-    let result = text;
-    for (const tag of tags) {
-        result = result.replace(new RegExp(`<${tag}>[\\s\\S]*?<\\/${tag}>`, 'gi'), '');
-    }
-    return result.replace(/\[BUILD_TABLE\]/g, '').trim();
-}
-
-function buildSystemPrompt(articles, sessionJson) {
-    return CASHFLOW_TABLE_PROMPT
-        .replace('{{business_name}}', articles.businessName)
-        .replace('{{inflows}}', articles.inflows.join(', ') || '—')
-        .replace('{{outflows}}', articles.outflows.join(', ') || '—')
-        .replace('{{session_json}}', JSON.stringify(sessionJson, null, 2));
-}
+const MSG_BUILDING = `⏳ Будую таблицю під твій бізнес — це займе 20-30 секунд. Вже скоро!`;
 
 class Bot22Handler {
     async start(user, chatId, bot) {
@@ -56,10 +34,9 @@ class Bot22Handler {
         const articles = parseCashflowArticles(file.content);
         const articlesText = articlesToText(articles);
 
-        const session = await SessionService.getOrCreate(user.id, bot.id, 'collecting');
-        await SessionService.updateState(session.id, 'collecting', {
+        const session = await SessionService.getOrCreate(user.id, bot.id, 'building');
+        await SessionService.updateState(session.id, 'building', {
             articles,
-            tableSession: { status: 'draft', article_settings: [], confirmed: false },
         });
 
         const greeting = GREETING(articles.businessName, articlesText);
@@ -87,43 +64,36 @@ class Bot22Handler {
             return;
         }
 
-        const dbMessages = await MessageService.getAll(session.id);
-        const messages = buildMessages(dbMessages);
-        const systemPrompt = buildSystemPrompt(articles, context.tableSession || {});
-
-        let responseText;
+        // Build the table with retry and validation
+        await sendMessage(chatId, MSG_BUILDING);
         try {
-            responseText = await callClaude({ sessionId: session.id, systemPrompt, messages });
-        } catch (err) {
-            logger.error('Bot 2.2 Claude error', { error: err.message });
-            await sendMessage(chatId, '⚠️ Не вдалося отримати відповідь. Спробуй ще раз.');
-            return;
-        }
-
-        const updatedSession = extractTag(responseText, 'table_session');
-        const botText = stripTags(responseText, 'table_session');
-        const shouldBuild = responseText.includes('[BUILD_TABLE]') || (updatedSession?.status === 'ready' && updatedSession?.confirmed);
-
-        const contextPatch = { articles, tableSession: updatedSession || context.tableSession || {} };
-
-        if (!shouldBuild) {
-            await MessageService.save(session.id, 'assistant', botText);
-            await SessionService.updateState(session.id, 'collecting', contextPatch);
-            if (botText) await sendMessage(chatId, botText);
-            return;
-        }
-
-        // Build the table
-        await sendMessage(chatId, '⏳ Будую таблицю Cashflow в Google Sheets...');
-        try {
-            const result = await AppsScriptService.buildCashflowTable({
-                businessName: articles.businessName,
-                telegramId: user.telegramId,
-                articles: { inflows: articles.inflows, outflows: articles.outflows },
-            });
+            const result = await AppsScriptService.withRetry(async () => {
+                return await AppsScriptService.buildCashflowTable({
+                    businessName: articles.businessName,
+                    telegramId: user.telegramId,
+                    articles: { inflows: articles.inflows, outflows: articles.outflows },
+                });
+            }, { maxAttempts: 3 });
 
             const sheetsUrl = result.spreadsheet_url || result.url || result.spreadsheetUrl;
+            const spreadsheetId = result.spreadsheet_id;
+            
             if (!sheetsUrl) throw new Error('No spreadsheet URL in response');
+
+            // Validate and repair if needed
+            let validationOk = false;
+            if (spreadsheetId) {
+                try {
+                    const valResult = await AppsScriptService.validateAndRepair({ spreadsheetId });
+                    validationOk = valResult.valid;
+                    if (valResult.repaired) {
+                        await sendMessage(chatId, '🔧 Таблиця відремонтована та перевірена.');
+                    }
+                } catch (valErr) {
+                    logger.warn('Table validation/repair skipped', { error: valErr.message });
+                    validationOk = false;
+                }
+            }
 
             // Save URL as file artifact
             const bot = await require('@platform/db').db.bot.findFirst({ where: { slug: BOT_CONFIG.slug } });
@@ -138,13 +108,18 @@ class Bot22Handler {
 
             await SessionService.complete(session.id);
             await ProgressService.markComplete(user.id, BOT_CONFIG.lessonNumber, 'finance-course');
+            
+            const successMsg = validationOk 
+                ? `✅ Таблиця Cashflow побудована й перевірена!\n\n📊 ${sheetsUrl}`
+                : `✅ Таблиця Cashflow побудована!\n\n📊 ${sheetsUrl}`;
+            
             await sendMessage(chatId,
-                `✅ Таблиця Cashflow побудована!\n\n📊 ${sheetsUrl}\n\nВона відкрита для редагування. Поверніться до курсу для наступного уроку.`
+                `${successMsg}\n\nВона відкрита для редагування. Поверніться до курсу для наступного уроку.`
             );
         } catch (err) {
             logger.error('Bot 2.2 Apps Script error', { error: err.message });
             await sendMessage(chatId,
-                `⚠️ Не вдалося побудувати таблицю автоматично.\n\nПричина: ${err.message}\n\nПеревір що APPS_SCRIPT_URL налаштовано і спробуй ще раз командою /start.`
+                `⚠️ Не вдалося побудувати таблицю.\n\nПричина: ${err.message}\n\nПеревір налаштування та спробуй ще раз командою /start або /retry.`
             );
         }
     }
@@ -153,5 +128,3 @@ class Bot22Handler {
 function getHandler() {
     return new Bot22Handler();
 }
-
-module.exports = { getHandler };

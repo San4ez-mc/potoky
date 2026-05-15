@@ -139,7 +139,10 @@ class Bot53Handler {
             .replace('{{balance_articles}}', (context.balanceArticles || '').slice(0, 2000))
             .replace('{{business_process_v2}}', (context.businessProcessV2 || '').slice(0, 1500))
             .replace('{{team_instructions}}', (context.teamInstructions || '').slice(0, 1000))
-            .replace('{{session_json}}', JSON.stringify(context.interviewSession || {}, null, 2));
+            .replace('{{session_json}}', JSON.stringify(context.interviewSession || {}, (key, value) => {
+                if (typeof value === 'bigint') return value.toString();
+                return value;
+            }, 2));
 
         let responseText;
         try {

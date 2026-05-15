@@ -16,10 +16,11 @@ const FILE_TYPE_TO_CONTEXT_VAR = {
     balance_table_url: 'balanceUrl',
     payment_calendar_url: 'calendarUrl',
     team_instructions: 'teamInstructions',
+    user_onboarding_data: 'onboardingResult',
 };
 
 const BOT_LOADFILE_CONFIG = [
-    { idPrefix: 'ef42640d', slug: 'bot-2-2-cashflow-table', fileTypes: ['cashflow_articles'] },
+    { idPrefix: 'ef42640d', slug: 'bot-2-2-cashflow-table', fileTypes: ['cashflow_articles', 'user_onboarding_data'] },
     { idPrefix: 'c1b1103d', slug: 'bot-2-3-payment-calendar', fileTypes: ['cashflow_articles'] },
     { idPrefix: '6adc79da', slug: 'bot-3-2-pl-table', fileTypes: ['pl_articles', 'cashflow_table_url'] },
     { idPrefix: 'bd796da5', slug: 'bot-3-3-diagnostics', fileTypes: ['cashflow_articles', 'pl_articles', 'business_process'] },

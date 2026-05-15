@@ -70,7 +70,7 @@ class Bot22Handler {
             const result = await AppsScriptService.withRetry(async () => {
                 return await AppsScriptService.buildCashflowTable({
                     businessName: articles.businessName,
-                    telegramId: user.telegramId,
+                    telegramId: String(user.telegramId),
                     articles: { inflows: articles.inflows, outflows: articles.outflows },
                 });
             }, { maxAttempts: 3 });

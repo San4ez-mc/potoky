@@ -44,6 +44,21 @@ const TOOLS = [
         },
     },
     {
+        name: 'update_bot',
+        description: 'Update bot metadata fields: name, description, goal, outputFiles',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                botId: { type: 'string', description: 'Bot UUID' },
+                name: { type: 'string', description: 'Bot display name' },
+                description: { type: 'string', description: 'Short bot description' },
+                goal: { type: 'string', description: 'What the student receives on completion' },
+                outputFiles: { type: 'array', items: { type: 'string' }, description: 'List of output file types, e.g. ["student_profile", "business_process"]' },
+            },
+            required: ['botId'],
+        },
+    },
+    {
         name: 'update_node',
         description: 'Update data on an existing node in the funnel',
         inputSchema: {
@@ -405,6 +420,55 @@ async function updateNode({ botId, nodeId, data }) {
     return { updated: nodes[index] };
 }
 
+async function updateBot({ botId, name, description, goal, outputFiles }) {
+    if (!botId) throw new Error('botId is required');
+
+    const updateData = {};
+
+    if (typeof name === 'string') updateData.name = name.trim();
+    if (typeof description === 'string') updateData.description = description.trim() || null;
+    if (typeof goal === 'string') updateData.goal = goal.trim() || null;
+
+    if (outputFiles !== undefined) {
+        if (!Array.isArray(outputFiles)) {
+            throw new Error('outputFiles must be an array of strings');
+        }
+        const normalized = outputFiles.map((item) => String(item).trim()).filter(Boolean);
+        updateData.outputFiles = JSON.stringify(normalized);
+    }
+
+    if (!Object.keys(updateData).length) {
+        throw new Error('No valid fields to update');
+    }
+
+    const updated = await prisma.bot.update({
+        where: { id: botId },
+        data: updateData,
+        include: { project: true },
+    });
+
+    let parsedOutputFiles = [];
+    if (updated.outputFiles) {
+        try {
+            parsedOutputFiles = typeof updated.outputFiles === 'string'
+                ? JSON.parse(updated.outputFiles)
+                : updated.outputFiles;
+        } catch (_error) {
+            parsedOutputFiles = [];
+        }
+    }
+
+    return {
+        id: updated.id,
+        projectSlug: updated.project?.slug || null,
+        name: updated.name,
+        slug: updated.slug,
+        description: updated.description,
+        goal: updated.goal,
+        outputFiles: Array.isArray(parsedOutputFiles) ? parsedOutputFiles : [],
+    };
+}
+
 async function addNode({ botId, type, data, position }) {
     const flow = await prisma.flowDefinition.findUnique({ where: { botId } });
     const newNode = { id: `node_${Date.now()}`, type, position, data };
@@ -595,6 +659,7 @@ async function callTool(name, args = {}) {
         case 'get_funnel': return getFunnel(args);
         case 'new_bot': return createFunnel(args);
         case 'create_funnel': return createFunnel(args);
+        case 'update_bot': return updateBot(args);
         case 'update_node': return updateNode(args);
         case 'add_node': return addNode(args);
         case 'delete_node': return deleteNode(args);

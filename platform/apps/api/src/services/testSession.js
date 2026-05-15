@@ -205,6 +205,19 @@ function containsMarkdown(text) {
     return /```/.test(text) || /^#{1,6}\s+/m.test(text);
 }
 
+function looksLikeGeneratedArtifact(text) {
+    if (!text || typeof text !== 'string') return false;
+    const value = text.trim();
+    if (value.length < 32) return false;
+
+    if (/```(?:mermaid|yaml|json|markdown)?/i.test(value)) return true;
+    if (/^#{1,6}\s+/m.test(value)) return true;
+    if (/\n[-*]\s+/.test(value) && value.length > 120) return true;
+    if (/\n[\w\s\-"']+:\s+.+/.test(value) && value.length > 160) return true;
+
+    return value.length > 1200;
+}
+
 function isUserConfirmation(text) {
     if (!text || typeof text !== 'string') return false;
 
@@ -487,6 +500,19 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null }) {
 
                     // For user_confirms: flag for finalization on next iteration
                     if (isUserConfirmExit) {
+                        const outputPath = data.outputVar ? String(data.outputVar).replace(/^context\./, '') : '';
+
+                        // If Claude already returned a large final artifact on confirmation,
+                        // persist it and proceed immediately to the next node.
+                        if (outputPath && looksLikeGeneratedArtifact(responseText)) {
+                            setByPath(ctx, outputPath, responseText);
+                            runtime.lastUserMessage = '';
+                            runtime.waitingForUser = false;
+                            runtime.userConfirmationReceived = false;
+                            runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
+                            continue;
+                        }
+
                         runtime.userConfirmationReceived = true;
                         runtime.lastUserMessage = '';
                         runtime.waitingForUser = false;

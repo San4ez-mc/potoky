@@ -1,7 +1,16 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { format } from 'date-fns';
+import mermaid from 'mermaid';
+
+let mermaidInitialized = false;
+
+function ensureMermaidInitialized() {
+    if (mermaidInitialized) return;
+    mermaid.initialize({ startOnLoad: false, securityLevel: 'loose', theme: 'dark' });
+    mermaidInitialized = true;
+}
 
 // Detect URLs in text and classify them
 function parseMessageContent(content) {
@@ -29,6 +38,84 @@ function parseMessageContent(content) {
     }
 
     return parts.length > 0 ? parts : [{ type: 'text', value: content }];
+}
+
+function splitMermaidBlocks(content) {
+    if (!content) return [{ type: 'text', value: '' }];
+
+    const parts = [];
+    const mermaidRegex = /```mermaid\s*([\s\S]*?)```/gi;
+    let lastIndex = 0;
+    let match;
+
+    while ((match = mermaidRegex.exec(content)) !== null) {
+        if (match.index > lastIndex) {
+            parts.push({ type: 'text', value: content.slice(lastIndex, match.index) });
+        }
+
+        parts.push({ type: 'mermaid', value: (match[1] || '').trim() });
+        lastIndex = mermaidRegex.lastIndex;
+    }
+
+    if (lastIndex < content.length) {
+        parts.push({ type: 'text', value: content.slice(lastIndex) });
+    }
+
+    return parts.length > 0 ? parts : [{ type: 'text', value: content }];
+}
+
+function MermaidBlock({ code }) {
+    const [svg, setSvg] = useState('');
+    const [error, setError] = useState('');
+    const renderId = useMemo(() => `session-mermaid-${Math.random().toString(36).slice(2)}`, []);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const run = async () => {
+            if (!code) {
+                setSvg('');
+                return;
+            }
+
+            try {
+                ensureMermaidInitialized();
+                const result = await mermaid.render(renderId, code);
+                if (!cancelled) {
+                    setSvg(result.svg || '');
+                    setError('');
+                }
+            } catch (_error) {
+                if (!cancelled) {
+                    setSvg('');
+                    setError('Не вдалося відрендерити Mermaid-діаграму');
+                }
+            }
+        };
+
+        run();
+        return () => { cancelled = true; };
+    }, [code, renderId]);
+
+    if (error) {
+        return (
+            <div className="my-2 rounded-lg border border-amber-700/60 bg-amber-900/20 p-3">
+                <div className="text-xs text-amber-300 mb-2">{error}</div>
+                <pre className="text-xs text-gray-300 font-mono whitespace-pre-wrap">{code}</pre>
+            </div>
+        );
+    }
+
+    if (!svg) {
+        return <div className="my-2 text-xs text-gray-500">Рендер Mermaid...</div>;
+    }
+
+    return (
+        <div
+            className="my-2 rounded-lg border border-gray-700 bg-gray-900/70 p-3 overflow-x-auto"
+            dangerouslySetInnerHTML={{ __html: svg }}
+        />
+    );
 }
 
 // Modal for markdown preview
@@ -62,7 +149,41 @@ function MessageContent({ content, metadata }) {
     const fileUrl = metadata?.fileUrl || metadata?.url || metadata?.sheetsUrl;
     const fileType = metadata?.fileType;
 
-    const parts = parseMessageContent(content);
+    const messageParts = splitMermaidBlocks(content);
+
+    const renderTextPart = (text, prefix) => {
+        const parts = parseMessageContent(text);
+
+        return parts.map((part, i) => {
+            const key = `${prefix}-${i}`;
+            if (part.type === 'text') return <span key={key}>{part.value}</span>;
+
+            if (part.type === 'sheet') {
+                return (
+                    <a key={key} href={part.value} target="_blank" rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 px-2 py-0.5 bg-green-900/40 text-green-300 rounded border border-green-800 hover:bg-green-900/70 transition-colors text-xs font-mono">
+                        📊 Відкрити таблицю ↗
+                    </a>
+                );
+            }
+
+            if (part.type === 'md') {
+                return (
+                    <button key={key} onClick={() => setMdUrl(part.value)}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-900/40 text-blue-300 rounded border border-blue-800 hover:bg-blue-900/70 transition-colors text-xs font-mono">
+                        📄 Переглянути документ
+                    </button>
+                );
+            }
+
+            return (
+                <a key={key} href={part.value} target="_blank" rel="noopener noreferrer"
+                    className="text-brand-light underline underline-offset-2 hover:text-white text-xs break-all">
+                    {part.value}
+                </a>
+            );
+        });
+    };
 
     return (
         <div className="whitespace-pre-wrap">
@@ -73,33 +194,12 @@ function MessageContent({ content, metadata }) {
                 </div>
             )}
 
-            {parts.map((part, i) => {
-                if (part.type === 'text') return <span key={i}>{part.value}</span>;
-
-                if (part.type === 'sheet') {
-                    return (
-                        <a key={i} href={part.value} target="_blank" rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 px-2 py-0.5 bg-green-900/40 text-green-300 rounded border border-green-800 hover:bg-green-900/70 transition-colors text-xs font-mono">
-                            📊 Відкрити таблицю ↗
-                        </a>
-                    );
+            {messageParts.map((part, i) => {
+                if (part.type === 'mermaid') {
+                    return <MermaidBlock key={`mermaid-${i}`} code={part.value} />;
                 }
 
-                if (part.type === 'md') {
-                    return (
-                        <button key={i} onClick={() => setMdUrl(part.value)}
-                            className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-900/40 text-blue-300 rounded border border-blue-800 hover:bg-blue-900/70 transition-colors text-xs font-mono">
-                            📄 Переглянути документ
-                        </button>
-                    );
-                }
-
-                return (
-                    <a key={i} href={part.value} target="_blank" rel="noopener noreferrer"
-                        className="text-brand-light underline underline-offset-2 hover:text-white text-xs break-all">
-                        {part.value}
-                    </a>
-                );
+                return <React.Fragment key={`text-${i}`}>{renderTextPart(part.value, `part-${i}`)}</React.Fragment>;
             })}
 
             {/* Metadata file attachments */}

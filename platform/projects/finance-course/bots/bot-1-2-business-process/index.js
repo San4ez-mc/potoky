@@ -26,6 +26,12 @@ const COMPLETION_MESSAGE = `Відмінно! Ось схема бізнес-п�
 
 На наступному кроці переходьте до уроку 2.1 ✅`;
 
+function buildMermaidLiveUrl(mermaidCode) {
+    if (!mermaidCode || typeof mermaidCode !== 'string') return null;
+    const encoded = Buffer.from(mermaidCode, 'utf8').toString('base64');
+    return `https://mermaid.live/edit#base64:${encoded}`;
+}
+
 function extractTag(text, tag) {
     const strict = text.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i'));
     if (strict) {
@@ -179,6 +185,8 @@ class Bot12Handler {
             logger.error('Mermaid generation failed', { error: err.message });
         }
 
+        const mermaidLiveUrl = buildMermaidLiveUrl(mermaidCode);
+
         // Build markdown artifact
         const businessType = processModel.business_type || 'Бізнес';
         const lanes = processModel.lanes || [];
@@ -222,6 +230,9 @@ class Bot12Handler {
             if (pngBuffer) {
                 try {
                     await sendPhoto(chatId, pngBuffer, COMPLETION_MESSAGE);
+                    if (mermaidLiveUrl) {
+                        await sendMessage(chatId, `📊 Переглянь схему онлайн: ${mermaidLiveUrl}`);
+                    }
                     return;
                 } catch (err) {
                     logger.warn('Failed to send mermaid PNG', { error: err.message });
@@ -231,6 +242,9 @@ class Bot12Handler {
 
         // Fallback: send text only
         await sendMessage(chatId, COMPLETION_MESSAGE);
+        if (mermaidLiveUrl) {
+            await sendMessage(chatId, `📊 Переглянь схему онлайн: ${mermaidLiveUrl}`);
+        }
         if (mermaidCode) {
             await sendMessage(chatId, `📊 Mermaid-схема збережена у файлі бізнес-процесу.`);
         }

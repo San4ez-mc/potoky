@@ -14,40 +14,6 @@ function hasUsableAnthropicKey() {
     return Boolean(key) && key !== 'placeholder_update_me' && key !== 'ВАШИЙ_КЛЮЧ';
 }
 
-function parseChannels(rawValue) {
-    if (!rawValue) return [];
-    try {
-        const parsed = JSON.parse(rawValue);
-        if (Array.isArray(parsed)) return parsed.filter(Boolean);
-    } catch {
-        // fall back to CSV
-    }
-    return String(rawValue)
-        .split(',')
-        .map((v) => v.trim())
-        .filter(Boolean);
-}
-
-async function getMissingFunnelKeys(botId) {
-    const keys = await db.funnelKey.findMany({ where: { botId } });
-    const keyMap = keys.reduce((acc, item) => {
-        acc[item.key] = item.value;
-        return acc;
-    }, {});
-
-    const channels = parseChannels(keyMap.FUNNEL_CHANNELS);
-    const required = [];
-
-    if (channels.includes('telegram')) {
-        required.push('TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_USERNAME');
-    }
-    if (channels.includes('instagram')) {
-        required.push('INSTAGRAM_ACCESS_TOKEN', 'INSTAGRAM_APP_SECRET', 'INSTAGRAM_VERIFY_TOKEN', 'INSTAGRAM_BUSINESS_ID', 'INSTAGRAM_USERNAME');
-    }
-
-    return required.filter((key) => !keyMap[key]);
-}
-
 async function getSystemClaudeKey() {
     const connector = await db.savedConnector.findFirst({
         where: { type: 'system_claude_api', isActive: true },
@@ -112,11 +78,6 @@ async function runBotRegression(botId) {
     const bot = await db.bot.findUnique({ where: { id: botId }, include: { project: true } });
     if (!bot) {
         throw new Error('Bot not found');
-    }
-
-    const missingKeys = await getMissingFunnelKeys(bot.id);
-    if (missingKeys.length > 0) {
-        throw new Error(`Бракує ключів воронки для тесту: ${missingKeys.join(', ')}`);
     }
 
     const systemClaudeKey = await getSystemClaudeKey();

@@ -63,7 +63,11 @@ function asObject(value) {
 
 function getByPath(source, path) {
     if (!path || typeof path !== 'string') return undefined;
-    return path.split('.').reduce((acc, key) => (acc == null ? undefined : acc[key]), source);
+    const parts = path.split('.').flatMap((k) => {
+        const m = k.match(/^([^\[]+)\[(\d+)\]$/);
+        return m ? [m[1], parseInt(m[2], 10)] : [k];
+    });
+    return parts.reduce((acc, key) => (acc == null ? undefined : acc[key]), source);
 }
 
 function setByPath(source, path, value) {
@@ -969,7 +973,7 @@ ${sourceContent || '(немає даних)'}
                     try {
                         const parsed = JSON.parse(responseText);
                         const value = data.responseField ? getByPath(parsed, data.responseField) : parsed;
-                        setByPath(ctx, outputVar, value !== undefined ? value : parsed);
+                        if (value !== undefined) setByPath(ctx, outputVar, value);
                     } catch {
                         setByPath(ctx, outputVar, responseText);
                     }

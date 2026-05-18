@@ -453,12 +453,16 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null }) {
                     ? runtime.dialogHistory[node.id]
                     : [];
 
+                // In finalization stage lastUserMessage is already cleared — provide explicit instruction
+                const userContent = runtime.lastUserMessage
+                    || (inFinalizationStage ? 'Підтверджено. Згенеруй фінальний документ.' : '');
+
                 if (historyForNode.length > 0) {
-                    messages = [...historyForNode, { role: 'user', content: runtime.lastUserMessage || '' }];
+                    messages = [...historyForNode, { role: 'user', content: userContent }];
                 } else if (data.messagesTemplate) {
-                    messages = parseClaudeMessages(data.messagesTemplate, scope, runtime.lastUserMessage || '');
+                    messages = parseClaudeMessages(data.messagesTemplate, scope, userContent);
                 } else {
-                    messages = [{ role: 'user', content: runtime.lastUserMessage || '' }];
+                    messages = [{ role: 'user', content: userContent }];
                 }
             } else {
                 messages = parseClaudeMessages(data.messagesTemplate, scope, runtime.lastUserMessage || '');

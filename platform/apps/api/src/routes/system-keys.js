@@ -24,20 +24,6 @@ const SYSTEM_KEYS = {
         configField: 'value',
         isSecret: false,
     },
-    COURSE_PRICE: {
-        label: 'Course Price',
-        description: 'Текстова ціна курсу для повідомлень (наприклад: 2990 грн).',
-        connectorType: 'system_course_price',
-        configField: 'value',
-        isSecret: false,
-    },
-    COURSE_PRICE_INT: {
-        label: 'Course Price Int',
-        description: 'Числова ціна курсу (наприклад: 2990).',
-        connectorType: 'system_course_price_int',
-        configField: 'value',
-        isSecret: false,
-    },
 };
 
 function mask(value, isSecret = true) {

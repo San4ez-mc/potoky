@@ -387,6 +387,12 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null }) {
 
     const nodesById = new Map(flow.nodes.map((node) => [node.id, node]));
     const { ctx, runtime } = getFlowRuntime(session.context);
+
+    const funnelKeyRows = await db.funnelKey.findMany({
+        where: { botId: session.botId },
+        select: { key: true, value: true },
+    });
+    const funnelEnv = Object.fromEntries(funnelKeyRows.map((k) => [k.key, k.value]));
     if (!runtime.currentNodeId) {
         runtime.currentNodeId = findStartNode(flow.nodes)?.id || null;
     }
@@ -411,6 +417,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null }) {
             user: sanitizeBigInt(session.user),
             session: { id: session.id, state: session.state },
             input: runtime.lastUserMessage || '',
+            env: funnelEnv,
         };
 
         if (node.type === 'start') {
@@ -1052,16 +1059,13 @@ ${sourceContent || '(немає даних)'}
 
         if (node.type === 'notifyAdmin') {
             try {
-                const [adminTelegramIdValue, coursePriceValue] = await Promise.all([
-                    getSystemKeyValue('ADMIN_TELEGRAM_ID'),
-                    getSystemKeyValue('COURSE_PRICE'),
-                ]);
+                const adminTelegramIdValue = await getSystemKeyValue('ADMIN_TELEGRAM_ID');
 
                 const enrichedScope = {
                     ...scope,
                     env: {
-                        ADMIN_TELEGRAM_ID: adminTelegramIdValue || process.env.ADMIN_TELEGRAM_ID || '',
-                        COURSE_PRICE: coursePriceValue || process.env.COURSE_PRICE || '',
+                        ...scope.env,
+                        ADMIN_TELEGRAM_ID: adminTelegramIdValue || scope.env.ADMIN_TELEGRAM_ID || process.env.ADMIN_TELEGRAM_ID || '',
                     },
                     timestamp: new Date().toISOString(),
                 };

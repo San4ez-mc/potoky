@@ -929,29 +929,41 @@ ${sourceContent || '(немає даних)'}
                     }
                 }
 
-                const parsedUrl = new URL(url);
-                const isHttps = parsedUrl.protocol === 'https:';
-                const requestModule = isHttps ? https : require('http');
-                const options = {
-                    hostname: parsedUrl.hostname,
-                    port: parsedUrl.port || (isHttps ? 443 : 80),
-                    path: parsedUrl.pathname + parsedUrl.search,
-                    method,
-                    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-                };
-                if (bodyPayload) options.headers['Content-Length'] = Buffer.byteLength(bodyPayload);
-
-                const responseText = await new Promise((resolve, reject) => {
-                    const req = requestModule.request(options, (res) => {
-                        const chunks = [];
-                        res.on('data', (chunk) => chunks.push(chunk));
-                        res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-                        res.on('error', reject);
+                const doRequest = (reqUrl, reqMethod, payload, redirectsLeft = 5) => new Promise((resolve, reject) => {
+                    const pu = new URL(reqUrl);
+                    const isHttps = pu.protocol === 'https:';
+                    const mod = isHttps ? https : require('http');
+                    const opts = {
+                        hostname: pu.hostname,
+                        port: pu.port || (isHttps ? 443 : 80),
+                        path: pu.pathname + pu.search,
+                        method: reqMethod,
+                        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                    };
+                    if (payload) opts.headers['Content-Length'] = Buffer.byteLength(payload);
+                    const req = mod.request(opts, (res) => {
+                        if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location && redirectsLeft > 0) {
+                            res.resume();
+                            // 303 and most 302s switch to GET; 307/308 keep original method
+                            const nextMethod = (res.statusCode === 307 || res.statusCode === 308) ? reqMethod : 'GET';
+                            const nextPayload = nextMethod === 'GET' ? null : payload;
+                            const location = res.headers.location.startsWith('http')
+                                ? res.headers.location
+                                : new URL(res.headers.location, reqUrl).toString();
+                            resolve(doRequest(location, nextMethod, nextPayload, redirectsLeft - 1));
+                        } else {
+                            const chunks = [];
+                            res.on('data', (chunk) => chunks.push(chunk));
+                            res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+                            res.on('error', reject);
+                        }
                     });
                     req.on('error', reject);
-                    if (bodyPayload) req.write(bodyPayload);
+                    if (payload) req.write(payload);
                     req.end();
                 });
+
+                const responseText = await doRequest(url, method, bodyPayload);
 
                 if (outputVar) {
                     try {

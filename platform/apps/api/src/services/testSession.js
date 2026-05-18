@@ -6,6 +6,7 @@ const { BOT_REQUIREMENTS } = require('../../../../projects/finance-course/config
 const { enableTestChat, disableTestChat, consumeTestMessages, sendMessage } = require('@platform/telegram');
 const crypto = require('crypto');
 const https = require('https');
+const vm = require('vm');
 
 const { handleTelegramUpdate } = require('../../../../projects/finance-course/src/telegramHandler');
 
@@ -897,7 +898,7 @@ ${sourceContent || '(немає даних)'}
         }
 
         if (node.type === 'httpRequest') {
-            const url = renderTemplate(data.url || '', ctx);
+            const url = renderTemplate(data.url || '', scope);
             const method = (data.method || 'GET').toUpperCase();
             const outputVar = data.outputVar ? String(data.outputVar).replace(/^context\./, '') : '';
 
@@ -907,24 +908,77 @@ ${sourceContent || '(немає даних)'}
             }
 
             try {
-                const response = await new Promise((resolve, reject) => {
-                    https.get(url, (res) => {
-                        let data = Buffer.alloc(0);
-                        res.on('data', (chunk) => {
-                            data = Buffer.concat([data, chunk]);
-                        });
-                        res.on('end', () => resolve(data));
+                let bodyPayload = null;
+                if (method === 'POST' || method === 'PUT' || method === 'PATCH') {
+                    if (data.bodyFields && typeof data.bodyFields === 'object') {
+                        const rendered = {};
+                        for (const [k, v] of Object.entries(data.bodyFields)) {
+                            if (typeof v !== 'string') { rendered[k] = v; continue; }
+                            // Pure {{path}} reference → resolve directly (preserves objects/arrays)
+                            const singleRef = v.trim().match(/^\{\{\s*([^}]+)\s*\}\}$/);
+                            if (singleRef) {
+                                const resolved = getByPath(scope, String(singleRef[1]).trim());
+                                rendered[k] = resolved !== undefined ? resolved : '';
+                            } else {
+                                rendered[k] = renderTemplate(v, scope);
+                            }
+                        }
+                        bodyPayload = JSON.stringify(rendered);
+                    } else if (data.body) {
+                        bodyPayload = typeof data.body === 'string' ? renderTemplate(data.body, scope) : JSON.stringify(data.body);
+                    }
+                }
+
+                const parsedUrl = new URL(url);
+                const isHttps = parsedUrl.protocol === 'https:';
+                const requestModule = isHttps ? https : require('http');
+                const options = {
+                    hostname: parsedUrl.hostname,
+                    port: parsedUrl.port || (isHttps ? 443 : 80),
+                    path: parsedUrl.pathname + parsedUrl.search,
+                    method,
+                    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                };
+                if (bodyPayload) options.headers['Content-Length'] = Buffer.byteLength(bodyPayload);
+
+                const responseText = await new Promise((resolve, reject) => {
+                    const req = requestModule.request(options, (res) => {
+                        const chunks = [];
+                        res.on('data', (chunk) => chunks.push(chunk));
+                        res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
                         res.on('error', reject);
-                    }).on('error', reject);
+                    });
+                    req.on('error', reject);
+                    if (bodyPayload) req.write(bodyPayload);
+                    req.end();
                 });
 
                 if (outputVar) {
-                    setByPath(ctx, outputVar, response.toString('base64'));
+                    try {
+                        const parsed = JSON.parse(responseText);
+                        const value = data.responseField ? getByPath(parsed, data.responseField) : parsed;
+                        setByPath(ctx, outputVar, value !== undefined ? value : parsed);
+                    } catch {
+                        setByPath(ctx, outputVar, responseText);
+                    }
                 }
             } catch (_error) {
                 // Silently skip HTTP request on error
             }
 
+            runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
+            continue;
+        }
+
+        if (node.type === 'js') {
+            const code = data.code || '';
+            if (code) {
+                try {
+                    vm.runInNewContext(code, { context: ctx }, { timeout: 2000 });
+                } catch (_err) {
+                    // Silently skip JS execution errors
+                }
+            }
             runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
             continue;
         }

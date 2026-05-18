@@ -250,10 +250,26 @@ function isUserConfirmation(text) {
 
     if (!normalized) return false;
 
-    const hasPositive = /\b(так|ок|окей|okay|гаразд|вірно|правильно|yes|yep|sure|done|підтверджую|підтверджено|погоджуюсь|згоден)\b/u.test(normalized);
-    const hasNegative = /\b(ні|no|not now|ще ні|не зараз|не вірно|неправильно|скасувати|cancel|stop)\b/u.test(normalized);
+    // Split into tokens — \b doesn't work with Cyrillic in JS (Cyrillic is non-\w),
+    // so token-based matching is required for Ukrainian words.
+    const tokens = normalized.split(/\s+/).filter(Boolean);
 
-    return hasPositive && !hasNegative;
+    const POSITIVE = new Set([
+        'так', 'ок', 'окей', 'okay', 'гаразд', 'вірно', 'правильно',
+        'yes', 'yep', 'sure', 'done',
+        'підтверджую', 'підтверджено', 'підтверджую', 'погоджуюсь', 'згоден',
+        'готово', 'зберегти', 'зберігаємо', 'зберігати', 'приймаю', 'приймаємо',
+        'далі', 'продовжуємо', 'продовжити', 'все', 'всі',
+    ]);
+    const NEGATIVE = new Set([
+        'ні', 'no', 'cancel', 'stop', 'скасувати', 'скасую',
+    ]);
+
+    const hasPositive = tokens.some((t) => POSITIVE.has(t));
+    const hasNegative = tokens.some((t) => NEGATIVE.has(t));
+    const hasNegativePhrase = /(not now|ще ні|не зараз|не вірно|неправильно)/.test(normalized);
+
+    return hasPositive && !hasNegative && !hasNegativePhrase;
 }
 
 function shouldExitDialog({ exitCondition, responseText, inputText }) {

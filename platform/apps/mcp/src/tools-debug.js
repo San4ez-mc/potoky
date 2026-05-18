@@ -196,6 +196,7 @@ async function getSessionContext({ sessionId }) {
         balance_table_url: 'balanceUrl',
         payment_calendar_url: 'calendarUrl',
         team_instructions: 'teamInstructions',
+        user_onboarding_data: 'onboarding_result',
     };
 
     const context = {};

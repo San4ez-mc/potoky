@@ -4,7 +4,15 @@ const { PrismaClient } = require('@prisma/client');
 
 const prisma = new PrismaClient();
 
-const TARGET_BOT_SLUGS = [
+const TARGET_BOT_SLUGS_V15 = [
+    'bot-2-2-cashflow-table',
+    'bot-2-3-payment-calendar',
+    'bot-3-2-pl-table',
+    'bot-4-4-combined-table',
+    'bot-5-2-balance-table',
+];
+
+const TARGET_BOT_SLUGS_ALL = [
     'bot-2-1-articles',
     'bot-2-2-cashflow-table',
     'bot-2-3-payment-calendar',
@@ -26,8 +34,13 @@ function getCliUrlArg() {
     return arg.slice('--url='.length).trim() || null;
 }
 
+function getTargetSlugs() {
+    return process.argv.includes('--all') ? TARGET_BOT_SLUGS_ALL : TARGET_BOT_SLUGS_V15;
+}
+
 async function main() {
     const appsScriptUrl = getCliUrlArg() || process.env.APPS_SCRIPT_URL || 'REPLACE_AFTER_DEPLOY';
+    const targetSlugs = getTargetSlugs();
 
     const project = await prisma.project.findUnique({
         where: { slug: 'finance-course' },
@@ -41,7 +54,7 @@ async function main() {
     const bots = await prisma.bot.findMany({
         where: {
             projectId: project.id,
-            slug: { in: TARGET_BOT_SLUGS },
+            slug: { in: targetSlugs },
         },
         select: { id: true, slug: true, name: true },
         orderBy: { slug: 'asc' },
@@ -73,13 +86,15 @@ async function main() {
         console.log(`OK: ${bot.slug} -> APPS_SCRIPT_URL`);
     }
 
-    const missingSlugs = TARGET_BOT_SLUGS.filter((slug) => !bots.some((b) => b.slug === slug));
+    const missingSlugs = targetSlugs.filter((slug) => !bots.some((b) => b.slug === slug));
 
     console.log(JSON.stringify({
         ok: true,
         project: project.slug,
+        mode: process.argv.includes('--all') ? 'all' : 'v15-default',
         appsScriptUrlSetTo: appsScriptUrl,
         botsUpdated: updated,
+        targetSlugs,
         missingSlugs,
     }, null, 2));
 }

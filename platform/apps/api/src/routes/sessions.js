@@ -277,6 +277,7 @@ router.get('/:sessionId/context',
             balance_table_url: 'balanceUrl',
             payment_calendar_url: 'calendarUrl',
             team_instructions: 'teamInstructions',
+            user_onboarding_data: 'onboarding_result',
         };
 
         // For each file type, use the most recent file

@@ -1,47 +1,57 @@
+'use strict';
+
 const { PrismaClient } = require('@prisma/client');
 
 const prisma = new PrismaClient();
 
-const FILE_TYPE_TO_CONTEXT_VAR = {
-    cashflow_articles: 'cashflowArticles',
-    pl_articles: 'plArticles',
-    business_process: 'businessProcess',
-    business_process_v2: 'businessProcessV2',
-    cashflow_table_url: 'sheetsUrl',
-    combined_table_url: 'combinedUrl',
-    financial_mechanics: 'financialMechanics',
-    salary_processes: 'salaryProcesses',
-    payment_processes: 'paymentProcesses',
-    balance_articles: 'balanceArticles',
-    balance_table_url: 'balanceUrl',
-    payment_calendar_url: 'calendarUrl',
-    team_instructions: 'teamInstructions',
-    user_onboarding_data: 'onboardingResult',
-};
-
-const BOT_LOADFILE_CONFIG = [
-    { idPrefix: 'ef42640d', slug: 'bot-2-2-cashflow-table', fileTypes: ['cashflow_articles', 'user_onboarding_data'] },
-    { idPrefix: 'c1b1103d', slug: 'bot-2-3-payment-calendar', fileTypes: ['cashflow_articles'] },
-    { idPrefix: '6adc79da', slug: 'bot-3-2-pl-table', fileTypes: ['pl_articles', 'cashflow_table_url'] },
-    { idPrefix: 'bd796da5', slug: 'bot-3-3-diagnostics', fileTypes: ['cashflow_articles', 'pl_articles', 'business_process'] },
-    { idPrefix: '0062e7e3', slug: 'bot-4-1-process-update', fileTypes: ['business_process', 'cashflow_articles', 'pl_articles'] },
-    { idPrefix: '15b79289', slug: 'bot-4-2-salaries', fileTypes: ['financial_mechanics', 'business_process'] },
-    { idPrefix: '26c78700', slug: 'bot-4-3-payments', fileTypes: ['cashflow_articles'] },
-    { idPrefix: 'a99faa7c', slug: 'bot-4-4-combined-table', fileTypes: ['salary_processes', 'payment_processes', 'cashflow_table_url'] },
-    { idPrefix: '907b31e9', slug: 'bot-4-5-team-instructions', fileTypes: ['business_process_v2', 'cashflow_articles', 'pl_articles', 'salary_processes', 'payment_processes'] },
-    { idPrefix: '69da1d5f', slug: 'bot-5-1-balance-articles', fileTypes: ['cashflow_articles', 'pl_articles', 'business_process'] },
-    { idPrefix: '8bb47937', slug: 'bot-5-2-balance-table', fileTypes: ['balance_articles', 'combined_table_url'] },
-    { idPrefix: 'e50af81c', slug: 'bot-5-3-balance-process', fileTypes: ['balance_articles', 'business_process_v2'] },
+const ONBOARDING_LOADFILE_CONFIG = [
+    { idPrefix: '6adc79da', slug: 'bot-3-2-pl-table', afterNodeId: 'loadfile_pl_articles' },
+    { idPrefix: 'bd796da5', slug: 'bot-3-3-diagnostics', afterNodeId: 'loadfile_pl_articles' },
+    { idPrefix: '0062e7e3', slug: 'bot-4-1-process-update', afterNodeId: 'loadfile_pl_articles' },
+    { idPrefix: '15b79289', slug: 'bot-4-2-salaries', afterNodeId: 'loadfile_business_process' },
+    { idPrefix: '26c78700', slug: 'bot-4-3-payments', afterNodeId: 'loadfile_cashflow_articles' },
+    { idPrefix: 'a99faa7c', slug: 'bot-4-4-combined-table', afterNodeId: 'loadfile_cashflow_table_url' },
+    { idPrefix: '907b31e9', slug: 'bot-4-5-team-instructions', afterNodeId: 'loadfile_pl_articles' },
+    { idPrefix: '69da1d5f', slug: 'bot-5-1-balance-articles', afterNodeId: 'loadfile_business_process' },
+    { idPrefix: '8bb47937', slug: 'bot-5-2-balance-table', afterNodeId: 'loadfile_combined_table_url' },
+    { idPrefix: 'e50af81c', slug: 'bot-5-3-balance-process', afterNodeId: 'loadfile_business_process_v2' },
 ];
 
+const GENERATED_DOC_CONFIG = [
+    { idPrefix: 'bd796da5', slug: 'bot-3-3-diagnostics', template: 'financial_diagnostics', sourceVar: 'context.mechanics_md' },
+    { idPrefix: '0062e7e3', slug: 'bot-4-1-process-update', template: 'business_process_v2', sourceVar: 'context.process_v2_md' },
+    { idPrefix: '15b79289', slug: 'bot-4-2-salaries', template: 'salary_processes', sourceVar: 'context.salary_md' },
+    { idPrefix: '26c78700', slug: 'bot-4-3-payments', template: 'payment_processes', sourceVar: 'context.payments_md' },
+    { idPrefix: '907b31e9', slug: 'bot-4-5-team-instructions', template: 'team_instructions', sourceVar: 'context.instructions_md' },
+    { idPrefix: '69da1d5f', slug: 'bot-5-1-balance-articles', template: 'balance_articles', sourceVar: 'context.balance_articles_md' },
+    { idPrefix: 'e50af81c', slug: 'bot-5-3-balance-process', template: 'balance_process_guide', sourceVar: 'context.balance_process_md' },
+];
+
+const BOT_43 = { idPrefix: '26c78700', slug: 'bot-4-3-payments' };
+const BOT_44 = { idPrefix: 'a99faa7c', slug: 'bot-4-4-combined-table' };
+const BOT_52 = { idPrefix: '8bb47937', slug: 'bot-5-2-balance-table' };
+
 function edgeExists(edges, source, target) {
-    return edges.some((e) => e.source === source && e.target === target);
+    return edges.some((edge) => edge.source === source && edge.target === target);
 }
 
 function ensureEdge(edges, source, target, idPrefix) {
+    if (!source || !target) return;
     if (!edgeExists(edges, source, target)) {
         edges.push({ id: `${idPrefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, source, target });
     }
+}
+
+function removeEdge(edges, source, target) {
+    return edges.filter((edge) => !(edge.source === source && edge.target === target));
+}
+
+function findNodeById(nodes, nodeId) {
+    return nodes.find((node) => node.id === nodeId) || null;
+}
+
+function findIntroNode(nodes) {
+    return nodes.find((node) => node.id === 'msg_intro' || (typeof node.id === 'string' && node.id.includes('msg_intro'))) || null;
 }
 
 async function findBot(config) {
@@ -62,162 +72,322 @@ async function findBot(config) {
     });
 }
 
-function findStartNode(nodes) {
-    return nodes.find((n) => n.id === 'start_1') || nodes.find((n) => n.type === 'start');
-}
-
-function findIntroNode(nodes, edges, startId) {
-    const explicit = nodes.find((n) => n.id === 'msg_intro' || (typeof n.id === 'string' && n.id.includes('msg_intro')));
-    if (explicit) return explicit;
-
-    const out = edges.find((e) => e.source === startId);
-    if (!out) return null;
-    return nodes.find((n) => n.id === out.target) || null;
-}
-
-function ensureLoadFileNode(nodes, fileType, startNode, index) {
-    const existing = nodes.find((n) => n.type === 'loadFile' && n?.data?.fileType === fileType);
-    if (existing) {
-        return existing.id;
-    }
-
-    const outputVar = `context.${FILE_TYPE_TO_CONTEXT_VAR[fileType]}`;
-    const nodeId = `loadfile_${fileType}`;
-
-    nodes.push({
-        id: nodeId,
-        type: 'loadFile',
-        position: {
-            x: (startNode.position?.x || 0) + 260 + index * 260,
-            y: startNode.position?.y || 0,
-        },
-        data: {
-            label: `Load ${fileType}`,
-            fileType,
-            outputVar,
-            onMissing: 'skip',
-        },
-    });
-
-    return nodeId;
-}
-
-async function applyLoadFileForBot(config) {
+async function loadFlowByBotConfig(config) {
     const bot = await findBot(config);
     if (!bot) {
         console.log(`SKIP: bot not found for prefix ${config.idPrefix} (${config.slug})`);
-        return;
+        return null;
     }
 
     const flow = await prisma.flowDefinition.findUnique({ where: { botId: bot.id } });
     if (!flow) {
         console.log(`SKIP: flow not found for ${bot.slug} (${bot.id})`);
+        return null;
+    }
+
+    return {
+        bot,
+        flow,
+        nodes: Array.isArray(flow.nodes) ? [...flow.nodes] : [],
+        edges: Array.isArray(flow.edges) ? [...flow.edges] : [],
+    };
+}
+
+function ensureOnboardingLoadFileNode(nodes, anchorNode) {
+    const existing = nodes.find((node) => node.id === 'loadfile_user_onboarding_data')
+        || nodes.find((node) => node.type === 'loadFile' && node?.data?.fileType === 'user_onboarding_data');
+
+    const node = {
+        id: existing?.id || 'loadfile_user_onboarding_data',
+        type: 'loadFile',
+        position: {
+            x: (anchorNode?.position?.x || 0) + 260,
+            y: anchorNode?.position?.y || 0,
+        },
+        data: {
+            ...(existing?.data || {}),
+            label: 'loadFile — онбординг',
+            fileType: 'user_onboarding_data',
+            outputVar: 'context.onboarding_result',
+            onMissing: 'skip',
+        },
+    };
+
+    if (!existing) {
+        nodes.push(node);
+        return node.id;
+    }
+
+    const idx = nodes.findIndex((item) => item.id === existing.id);
+    nodes[idx] = { ...nodes[idx], ...node, data: node.data };
+    return existing.id;
+}
+
+async function applyOnboardingLoadFile(config) {
+    const loaded = await loadFlowByBotConfig(config);
+    if (!loaded) return;
+
+    const { bot, nodes } = loaded;
+    let { edges } = loaded;
+
+    const fromNode = findNodeById(nodes, config.afterNodeId);
+    const introNode = findIntroNode(nodes);
+
+    if (!fromNode || !introNode) {
+        console.log(`SKIP: required nodes not found for ${bot.slug} (${bot.id})`);
         return;
     }
 
-    const nodes = Array.isArray(flow.nodes) ? [...flow.nodes] : [];
-    const edges = Array.isArray(flow.edges) ? [...flow.edges] : [];
+    const onboardingNodeId = ensureOnboardingLoadFileNode(nodes, fromNode);
 
-    const startNode = findStartNode(nodes);
-    if (!startNode) {
-        console.log(`SKIP: start node not found for ${bot.slug} (${bot.id})`);
-        return;
-    }
+    edges = removeEdge(edges, fromNode.id, introNode.id);
+    ensureEdge(edges, fromNode.id, onboardingNodeId, 'edge_onboarding_from');
+    ensureEdge(edges, onboardingNodeId, introNode.id, 'edge_onboarding_to_intro');
 
-    const introNode = findIntroNode(nodes, edges, startNode.id);
-    if (!introNode) {
-        console.log(`SKIP: intro node not found for ${bot.slug} (${bot.id})`);
-        return;
-    }
-
-    const chainNodeIds = config.fileTypes.map((ft, idx) => ensureLoadFileNode(nodes, ft, startNode, idx));
-
-    const filteredEdges = edges.filter((e) => {
-        if (e.source === startNode.id && (e.target === introNode.id || chainNodeIds.includes(e.target))) return false;
-        if (chainNodeIds.includes(e.source) && (e.target === introNode.id || chainNodeIds.includes(e.target))) return false;
-        return true;
+    await prisma.flowDefinition.update({
+        where: { botId: bot.id },
+        data: { nodes, edges },
     });
 
-    const updatedEdges = [...filteredEdges];
-    if (chainNodeIds.length > 0) {
-        ensureEdge(updatedEdges, startNode.id, chainNodeIds[0], 'edge_start_load');
-        for (let i = 0; i < chainNodeIds.length - 1; i += 1) {
-            ensureEdge(updatedEdges, chainNodeIds[i], chainNodeIds[i + 1], 'edge_load_load');
-        }
-        ensureEdge(updatedEdges, chainNodeIds[chainNodeIds.length - 1], introNode.id, 'edge_load_intro');
+    console.log(`OK: ${bot.slug} (${bot.id}) -> onboarding loadFile inserted`);
+}
+
+function ensureGenerateDocumentNode(nodes, saveResultNode, config) {
+    const existing = nodes.find((node) => node.id === 'generate_document')
+        || nodes.find((node) => node.type === 'generateDocument');
+
+    const node = {
+        id: existing?.id || 'generate_document',
+        type: 'generateDocument',
+        position: {
+            x: (saveResultNode?.position?.x || 0) + 260,
+            y: saveResultNode?.position?.y || 0,
+        },
+        data: {
+            ...(existing?.data || {}),
+            label: 'Generate DOCX',
+            template: config.template,
+            sourceVar: config.sourceVar,
+            filename: '{{user.firstName}}_{{bot.slug}}.docx',
+            sendToUser: true,
+        },
+    };
+
+    if (!existing) {
+        nodes.push(node);
+        return node.id;
+    }
+
+    const idx = nodes.findIndex((item) => item.id === existing.id);
+    nodes[idx] = { ...nodes[idx], ...node, data: node.data };
+    return existing.id;
+}
+
+async function applyGenerateDocument(config) {
+    const loaded = await loadFlowByBotConfig(config);
+    if (!loaded) return;
+
+    const { bot, nodes } = loaded;
+    let { edges } = loaded;
+
+    const saveResultNode = findNodeById(nodes, 'save_result');
+    const doneNode = findNodeById(nodes, 'msg_done');
+
+    if (!saveResultNode || !doneNode) {
+        console.log(`SKIP: save_result/msg_done not found for ${bot.slug} (${bot.id})`);
+        return;
+    }
+
+    const generateNodeId = ensureGenerateDocumentNode(nodes, saveResultNode, config);
+
+    edges = removeEdge(edges, saveResultNode.id, doneNode.id);
+    ensureEdge(edges, saveResultNode.id, generateNodeId, 'edge_save_generate');
+    ensureEdge(edges, generateNodeId, doneNode.id, 'edge_generate_done');
+
+    await prisma.flowDefinition.update({
+        where: { botId: bot.id },
+        data: { nodes, edges },
+    });
+
+    console.log(`OK: ${bot.slug} (${bot.id}) -> generateDocument inserted`);
+}
+
+function ensureBusinessProcessLoadNode(nodes, anchorNode) {
+    const existing = nodes.find((node) => node.id === 'loadfile_business_process')
+        || nodes.find((node) => node.type === 'loadFile' && node?.data?.fileType === 'business_process');
+
+    const node = {
+        id: existing?.id || 'loadfile_business_process',
+        type: 'loadFile',
+        position: {
+            x: (anchorNode?.position?.x || 0) + 180,
+            y: (anchorNode?.position?.y || 0) + 120,
+        },
+        data: {
+            ...(existing?.data || {}),
+            label: 'loadFile — business_process',
+            fileType: 'business_process',
+            outputVar: 'context.businessProcess',
+            onMissing: 'skip',
+        },
+    };
+
+    if (!existing) {
+        nodes.push(node);
+        return node.id;
+    }
+
+    const idx = nodes.findIndex((item) => item.id === existing.id);
+    nodes[idx] = { ...nodes[idx], ...node, data: node.data };
+    return existing.id;
+}
+
+async function applyBot43BusinessProcessLoad() {
+    const loaded = await loadFlowByBotConfig(BOT_43);
+    if (!loaded) return;
+
+    const { bot, nodes } = loaded;
+    let { edges } = loaded;
+
+    const cashflowNode = findNodeById(nodes, 'loadfile_cashflow_articles');
+    const onboardingNode = nodes.find((node) => node.id === 'loadfile_user_onboarding_data')
+        || nodes.find((node) => node.type === 'loadFile' && node?.data?.fileType === 'user_onboarding_data');
+
+    if (!cashflowNode || !onboardingNode) {
+        console.log(`SKIP: bot 4.3 chain nodes not found (${bot.id})`);
+        return;
+    }
+
+    const businessNodeId = ensureBusinessProcessLoadNode(nodes, cashflowNode);
+
+    edges = removeEdge(edges, cashflowNode.id, onboardingNode.id);
+    ensureEdge(edges, cashflowNode.id, businessNodeId, 'edge_cashflow_business');
+    ensureEdge(edges, businessNodeId, onboardingNode.id, 'edge_business_onboarding');
+
+    await prisma.flowDefinition.update({
+        where: { botId: bot.id },
+        data: { nodes, edges },
+    });
+
+    console.log(`OK: ${bot.slug} (${bot.id}) -> business_process loadFile inserted`);
+}
+
+function ensureSheetsIdParserNode(nodes, anchorNode) {
+    const existing = nodes.find((node) => node.id === 'js_extract_combined_sheets_id');
+
+    const code = [
+        "const url = context.sheetsUrl || context.combinedUrl;",
+        'if (url) {',
+        "    const match = url.match(/spreadsheets\\/d\\/([a-zA-Z0-9-_]+)/);",
+        "    context.combinedSheetsId = match ? match[1] : null;",
+        "    context.sheetsId = context.combinedSheetsId;",
+        '}',
+        'return { context };',
+    ].join('\n');
+
+    const node = {
+        id: existing?.id || 'js_extract_combined_sheets_id',
+        type: 'js',
+        position: {
+            x: (anchorNode?.position?.x || 0) + 240,
+            y: anchorNode?.position?.y || 0,
+        },
+        data: {
+            ...(existing?.data || {}),
+            label: 'Parse combinedSheetsId',
+            code,
+        },
+    };
+
+    if (!existing) {
+        nodes.push(node);
+        return node.id;
+    }
+
+    const idx = nodes.findIndex((item) => item.id === existing.id);
+    nodes[idx] = { ...nodes[idx], ...node, data: node.data };
+    return existing.id;
+}
+
+async function applyBot52CombinedSheetsIdFix() {
+    const loaded = await loadFlowByBotConfig(BOT_52);
+    if (!loaded) return;
+
+    const { bot, nodes } = loaded;
+    let { edges } = loaded;
+
+    const combinedLoadNode = findNodeById(nodes, 'loadfile_combined_table_url');
+    const introNode = findIntroNode(nodes);
+
+    if (!combinedLoadNode || !introNode) {
+        console.log(`SKIP: bot 5.2 required nodes not found (${bot.id})`);
+        return;
+    }
+
+    const parserNodeId = ensureSheetsIdParserNode(nodes, combinedLoadNode);
+
+    edges = removeEdge(edges, combinedLoadNode.id, introNode.id);
+    ensureEdge(edges, combinedLoadNode.id, parserNodeId, 'edge_combined_parser');
+    ensureEdge(edges, parserNodeId, introNode.id, 'edge_parser_intro');
+
+    await prisma.flowDefinition.update({
+        where: { botId: bot.id },
+        data: { nodes, edges },
+    });
+
+    console.log(`OK: ${bot.slug} (${bot.id}) -> combinedSheetsId parser inserted`);
+}
+
+async function applyBot44FileTypeUnification() {
+    const loaded = await loadFlowByBotConfig(BOT_44);
+    if (!loaded) return;
+
+    const { bot, nodes, edges } = loaded;
+
+    let changed = false;
+    const updatedNodes = nodes.map((node) => {
+        if (node.type !== 'saveFile') return node;
+        if (node?.data?.fileType !== 'combined_table_url') return node;
+        changed = true;
+        return {
+            ...node,
+            data: {
+                ...(node.data || {}),
+                fileType: 'cashflow_table_url',
+            },
+        };
+    });
+
+    if (!changed) {
+        console.log(`SKIP: bot 4.4 saveFile with combined_table_url not found (${bot.id})`);
+        return;
     }
 
     await prisma.flowDefinition.update({
         where: { botId: bot.id },
-        data: { nodes, edges: updatedEdges },
+        data: { nodes: updatedNodes, edges },
     });
 
-    console.log(`OK: ${bot.slug} (${bot.id}) -> inserted ${config.fileTypes.length} loadFile nodes`);
-}
-
-async function fixBot21EdgeRouting() {
-    const botId = 'f4bd6571-e386-4a36-a086-ff631c3d77e4';
-    const flow = await prisma.flowDefinition.findUnique({ where: { botId } });
-
-    if (!flow) {
-        console.log(`SKIP: flow not found for botId ${botId}`);
-        return;
-    }
-
-    const nodes = Array.isArray(flow.nodes) ? [...flow.nodes] : [];
-    const edges = Array.isArray(flow.edges) ? [...flow.edges] : [];
-
-    const saveResultIndex = nodes.findIndex((n) => n.id === 'save_result');
-    const plSaveIndex = nodes.findIndex((n) => n.id === 'node_1778531261129');
-
-    if (saveResultIndex < 0 || plSaveIndex < 0) {
-        console.log(`SKIP: required saveFile nodes not found for botId ${botId}`);
-        return;
-    }
-
-    nodes[saveResultIndex] = {
-        ...nodes[saveResultIndex],
-        data: {
-            ...(nodes[saveResultIndex].data || {}),
-            fileType: 'cashflow_articles',
-        },
-    };
-
-    nodes[plSaveIndex] = {
-        ...nodes[plSaveIndex],
-        data: {
-            ...(nodes[plSaveIndex].data || {}),
-            fileType: 'pl_articles',
-        },
-    };
-
-    const filtered = edges.filter((e) => {
-        if (e.source === 'claude_main' && e.target === 'msg_done') return false;
-        if (e.source === 'save_result' && e.target === 'msg_done') return false;
-        return true;
-    });
-
-    ensureEdge(filtered, 'claude_main', 'save_result', 'edge_claude_save');
-    ensureEdge(filtered, 'save_result', 'node_1778531261129', 'edge_save_pl');
-    ensureEdge(filtered, 'node_1778531261129', 'msg_done', 'edge_pl_done');
-
-    await prisma.flowDefinition.update({
-        where: { botId },
-        data: { nodes, edges: filtered },
-    });
-
-    console.log(`OK: fixed routing for botId ${botId}`);
+    console.log(`OK: ${bot.slug} (${bot.id}) -> saveFile fileType unified to cashflow_table_url`);
 }
 
 async function main() {
-    console.log('Applying flow updates...');
+    console.log('Applying flow updates v15...');
 
-    for (const config of BOT_LOADFILE_CONFIG) {
+    for (const config of ONBOARDING_LOADFILE_CONFIG) {
         // eslint-disable-next-line no-await-in-loop
-        await applyLoadFileForBot(config);
+        await applyOnboardingLoadFile(config);
     }
 
-    await fixBot21EdgeRouting();
+    await applyBot43BusinessProcessLoad();
+
+    for (const config of GENERATED_DOC_CONFIG) {
+        // eslint-disable-next-line no-await-in-loop
+        await applyGenerateDocument(config);
+    }
+
+    await applyBot52CombinedSheetsIdFix();
+    await applyBot44FileTypeUnification();
 
     console.log('Done.');
 }

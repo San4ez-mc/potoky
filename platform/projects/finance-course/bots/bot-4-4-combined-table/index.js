@@ -89,7 +89,7 @@ class Bot44Handler {
             const botRecord = bot || await db.bot.findFirst({ where: { slug: BOT_CONFIG.slug } });
             await FileStorage.save({
                 userId: user.id, botId: botRecord?.id, sessionId: session.id,
-                fileType: 'combined_table_url', content: combinedUrl, projectSlug: 'finance-course',
+                fileType: 'cashflow_table_url', content: combinedUrl, projectSlug: 'finance-course',
             });
 
             await SessionService.complete(session.id);

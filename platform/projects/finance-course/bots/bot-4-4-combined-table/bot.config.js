@@ -6,5 +6,5 @@ module.exports = {
     lessonNumber: '4.4',
     blockNumber: 4,
     prerequisites: ['cashflow_articles', 'pl_articles'],
-    artifactTypes: ['combined_table_url'],
+    artifactTypes: ['cashflow_table_url'],
 };

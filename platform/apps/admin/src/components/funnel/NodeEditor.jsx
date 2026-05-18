@@ -639,6 +639,7 @@ function LoadFileNodeEditor({ data, update }) {
                     <option value="balance_table_url">balance_table_url → context.balanceUrl</option>
                     <option value="payment_calendar_url">payment_calendar_url → context.calendarUrl</option>
                     <option value="team_instructions">team_instructions → context.teamInstructions</option>
+                    <option value="user_onboarding_data">user_onboarding_data → context.onboarding_result</option>
                 </select>
             </Field>
             <Field label="Що робити якщо файлу немає?">

@@ -12,6 +12,28 @@ const { handleTelegramUpdate } = require('../../../../projects/finance-course/sr
 
 const MAX_SAFE_TELEGRAM_ID = 9007199254740991;
 
+const FILE_SEED_DEFAULTS = {
+    articles: JSON.stringify({
+        cashflow: { inflows: ['Основний дохід', 'Додатковий дохід'], outflows: ['Зарплата', 'Оренда', 'Реклама'] },
+        pl: { inflows: ['Дохід від продажів', 'Дохід від послуг'], outflows: ['Собівартість', 'Операційні витрати'] },
+    }),
+    user_onboarding_data: JSON.stringify({
+        name: 'Тест Юзер',
+        company_description: 'Тестова компанія',
+        main_problem: 'Немає прозорості у фінансах',
+    }),
+    business_process: '# Бізнес-процес\n\nОпис тестового бізнес-процесу для регресійного тесту.',
+    cashflow_table_url: 'https://docs.google.com/spreadsheets/d/test_seed_table_id/edit',
+    pl_table_url: 'https://docs.google.com/spreadsheets/d/test_seed_table_id/edit',
+    balance_articles: JSON.stringify({
+        inflows: ['Грошові кошти', 'Дебіторська заборгованість'],
+        outflows: ['Кредиторська заборгованість', 'Власний капітал'],
+    }),
+    payment_processes: '# Платіжні процеси\n\nОпис платіжних процесів.',
+    salary_processes: '# Зарплатні процеси\n\nОпис зарплатних процесів.',
+    business_process_v2: '# Оновлений бізнес-процес\n\nОпис оновленого бізнес-процесу.',
+};
+
 function toSafeNumberTelegramId(value) {
     const num = Number(value);
     if (!Number.isFinite(num) || !Number.isSafeInteger(num)) {
@@ -637,6 +659,35 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null }) {
                     version: 1,
                 },
             });
+
+            runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
+            continue;
+        }
+
+        if (node.type === 'loadFile') {
+            const fileType = data.fileType ? String(data.fileType).trim() : '';
+            const outputVar = data.outputVar ? String(data.outputVar).replace(/^context\./, '') : '';
+            const onMissing = data.onMissing || 'skip';
+
+            if (fileType && outputVar) {
+                const file = await db.file.findFirst({
+                    where: { userId: session.userId, fileType },
+                    orderBy: { createdAt: 'desc' },
+                    select: { content: true },
+                });
+
+                if (file) {
+                    let value = file.content;
+                    try { value = JSON.parse(file.content); } catch { /* keep as string */ }
+                    setByPath(ctx, outputVar, value);
+                } else if (onMissing !== 'skip') {
+                    const msg = '⚠️ Необхідний файл не знайдений. Пройди попередній урок спочатку.';
+                    await persistAssistantMessage(session.id, msg, { nodeId: node.id, nodeType: node.type });
+                    await sendMessage(chatId, msg);
+                    runtime.currentNodeId = null;
+                    break;
+                }
+            }
 
             runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
             continue;
@@ -1375,17 +1426,28 @@ async function findLatestSession(userId, botId) {
 
 async function ensurePrerequisiteFiles(userId, bot) {
     const requirements = BOT_REQUIREMENTS[bot.slug] || { files: [] };
+    const allFileTypes = new Set(requirements.files || []);
 
-    for (const fileType of requirements.files || []) {
+    // Also seed fileTypes needed by loadFile nodes in the flow definition
+    try {
+        const flowDef = await db.flowDefinition.findUnique({ where: { botId: bot.id }, select: { nodes: true } });
+        if (flowDef?.nodes) {
+            const nodes = Array.isArray(flowDef.nodes) ? flowDef.nodes : [];
+            for (const node of nodes) {
+                if (node.type === 'loadFile' && node.data?.fileType) allFileTypes.add(node.data.fileType);
+            }
+        }
+    } catch { /* flow parsing errors are non-fatal */ }
+
+    for (const fileType of allFileTypes) {
         const latest = await db.file.findFirst({
             where: { userId, fileType },
             orderBy: { version: 'desc' },
         });
 
-        if (latest) {
-            continue;
-        }
+        if (latest) continue;
 
+        const content = FILE_SEED_DEFAULTS[fileType] || `Seed file for automated regression: ${fileType}`;
         await db.file.create({
             data: {
                 userId,
@@ -1393,7 +1455,7 @@ async function ensurePrerequisiteFiles(userId, bot) {
                 fileType,
                 fileName: `${fileType}_seed_v1.md`,
                 filePath: `/tmp/test-seed/${userId}/${fileType}_v1.md`,
-                content: `Seed file for automated regression: ${fileType}`,
+                content,
                 version: 1,
             },
         });

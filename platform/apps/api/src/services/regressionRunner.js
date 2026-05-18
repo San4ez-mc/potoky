@@ -81,11 +81,7 @@ async function runBotRegression(botId) {
     }
 
     const systemClaudeKey = await getSystemClaudeKey();
-    if (!systemClaudeKey && !hasUsableAnthropicKey()) {
-        throw new Error('Бракує системного ключа CLAUDE_API_KEY. Додайте його в Налаштування -> Ключі.');
-    }
-
-    const effectiveClaudeKey = systemClaudeKey || process.env.ANTHROPIC_API_KEY;
+    const effectiveClaudeKey = systemClaudeKey || (hasUsableAnthropicKey() ? process.env.ANTHROPIC_API_KEY : '');
 
     const legend = await buildScenarioLegend(bot, effectiveClaudeKey);
 

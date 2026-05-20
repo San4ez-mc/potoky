@@ -18,7 +18,7 @@ export function Users() {
 
     return (
         <div className="p-6">
-            <h1 className="text-xl font-semibold text-white mb-4">Юзери</h1>
+            <h1 className="text-xl font-semibold text-white mb-4">Користувачі</h1>
 
             {loading ? (
                 <div className="text-gray-400">Завантаження...</div>
@@ -63,7 +63,7 @@ export function Users() {
                             ))}
                             {users.length === 0 && (
                                 <tr>
-                                    <td colSpan={7} className="px-4 py-12 text-center text-gray-500">Немає юзерів</td>
+                                    <td colSpan={7} className="px-4 py-12 text-center text-gray-500">Немає користувачів</td>
                                 </tr>
                             )}
                         </tbody>

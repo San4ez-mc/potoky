@@ -123,13 +123,23 @@ router.post('/:id/bots',
 router.get('/:id/stats',
     validateParams({ params: z.object({ id: z.string().uuid() }) }),
     asyncHandler(async (req, res) => {
-        const [totalUsers, activeUsers, errors] = await Promise.all([
-            db.user.count({ where: { projectId: req.params.id } }),
-            db.session.count({
+        const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+        const [uniqueUserRows, activeUserRows, errors] = await Promise.all([
+            // Unique users who have any session with this project's bots
+            db.session.findMany({
+                where: { bot: { projectId: req.params.id } },
+                distinct: ['userId'],
+                select: { userId: true },
+            }),
+            // Unique users active in last 7 days
+            db.session.findMany({
                 where: {
                     bot: { projectId: req.params.id },
-                    lastActive: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
+                    lastActive: { gte: sevenDaysAgo },
                 },
+                distinct: ['userId'],
+                select: { userId: true },
             }),
             db.appError.count({
                 where: {
@@ -140,9 +150,41 @@ router.get('/:id/stats',
             }),
         ]);
 
-        res.json({ ok: true, data: { totalUsers, activeUsers, errorsLast24h: errors } });
+        res.json({ ok: true, data: {
+            totalUsers: uniqueUserRows.length,
+            activeUsers: activeUserRows.length,
+            errorsLast24h: errors,
+        } });
     })
 );
+
+// DELETE /api/projects/:id/bots/:botId — remove (soft-delete) a funnel from project
+router.delete('/:id/bots/:botId',
+    validateParams({ params: z.object({ id: z.string().uuid(), botId: z.string().uuid() }) }),
+    asyncHandler(async (req, res) => {
+        const bot = await db.bot.findFirst({
+            where: { id: req.params.botId, projectId: req.params.id },
+        });
+        if (!bot) throw new NotFoundError('Bot', req.params.botId);
+
+        await db.bot.update({
+            where: { id: req.params.botId },
+            data: { isActive: false },
+        });
+
+        res.json({ ok: true });
+    })
+);
+
+// GET /api/projects/bots/all — get all active bots (for moving between projects)
+router.get('/bots/all', asyncHandler(async (_req, res) => {
+    const bots = await db.bot.findMany({
+        where: { isActive: true },
+        orderBy: [{ projectId: 'asc' }, { name: 'asc' }],
+        select: { id: true, name: true, slug: true, projectId: true },
+    });
+    res.json({ ok: true, data: bots });
+}));
 
 // ── Global Keys ──────────────────────────────────────────────
 

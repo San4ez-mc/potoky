@@ -41,7 +41,7 @@ export function Dashboard() {
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <StatCard label="Всього сесій" value={analytics?.totalSessions} icon="💬" />
                 <StatCard label="Активних сесій" value={analytics?.activeSessions} icon="🟢" />
-                <StatCard label="Юзерів" value={analytics?.totalUsers} icon="👥" />
+                <StatCard label="Користувачів" value={analytics?.totalUsers} icon="👥" />
                 <StatCard label="API викликів сьогодні" value={analytics?.apiCallsToday} icon="📡" />
             </div>
 

@@ -223,7 +223,7 @@ export function Bots() {
                         <tr className="border-b border-gray-800 bg-gray-950/70">
                             <th className="text-left px-4 py-3 text-xs text-gray-400 font-medium">Воронка</th>
                             <th className="text-left px-4 py-3 text-xs text-gray-400 font-medium">Проєкт</th>
-                            <th className="text-left px-4 py-3 text-xs text-gray-400 font-medium">Юзери</th>
+                            <th className="text-left px-4 py-3 text-xs text-gray-400 font-medium">Користувачі</th>
                             <th className="text-left px-4 py-3 text-xs text-gray-400 font-medium">Сесії</th>
                             <th className="text-left px-4 py-3 text-xs text-gray-400 font-medium">Активні</th>
                             <th className="text-left px-4 py-3 text-xs text-gray-400 font-medium">Помилки</th>

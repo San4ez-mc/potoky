@@ -114,6 +114,14 @@ async function callClaude({ sessionId, systemPrompt, messages, options = {} }) {
             .map(block => block.text)
             .join('');
 
+        // Track token usage from API response
+        options._usage = {
+            inputTokens: response.usage?.input_tokens || 0,
+            outputTokens: response.usage?.output_tokens || 0,
+            cacheReadTokens: response.usage?.cache_read_input_tokens || 0,
+            cacheWriteTokens: response.usage?.cache_creation_input_tokens || 0,
+        };
+
     } catch (error) {
         statusCode = error.status || 500;
         errorMessage = error.message;
@@ -145,11 +153,19 @@ async function callClaude({ sessionId, systemPrompt, messages, options = {} }) {
         inputTokens: responseText.length,
     });
 
+    const usage = options._usage || {};
+
     await _logApiCall({
         sessionId,
         method: 'messages.create',
         requestData: _sanitizeRequest(requestBody),
-        responseData: { text: responseText.substring(0, 5000) },
+        responseData: {
+            text: responseText.substring(0, 5000),
+            inputTokens: usage.inputTokens || 0,
+            outputTokens: usage.outputTokens || 0,
+            cacheReadTokens: usage.cacheReadTokens || 0,
+            cacheWriteTokens: usage.cacheWriteTokens || 0,
+        },
         statusCode,
         durationMs,
         error: null,

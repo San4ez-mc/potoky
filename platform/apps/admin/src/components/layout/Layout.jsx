@@ -13,8 +13,8 @@ function routeMeta(pathname, search) {
     if (pathname.startsWith('/bots/') && pathname.endsWith('/sessions')) return { title: 'Сесії бота', backTo: '/funnels' };
     if (pathname.startsWith('/sessions/')) return { title: 'Деталі сесії', backTo: safeBack || '/sessions' };
     if (pathname.startsWith('/sessions')) return { title: 'Сесії' };
-    if (pathname.startsWith('/users/')) return { title: 'Деталі юзера', backTo: '/users' };
-    if (pathname.startsWith('/users')) return { title: 'Юзери' };
+    if (pathname.startsWith('/users/')) return { title: 'Деталі користувача', backTo: '/users' };
+    if (pathname.startsWith('/users')) return { title: 'Користувачі' };
     if (pathname.startsWith('/api-logs')) return { title: 'API логи' };
     if (pathname.startsWith('/errors')) return { title: 'Помилки' };
     if (pathname.startsWith('/connectors')) return { title: 'Конектори' };
@@ -54,7 +54,7 @@ export function Layout() {
                         <Link to="/funnels" className="text-xs px-2 py-1 rounded text-gray-400 hover:text-white hover:bg-gray-800">Воронки</Link>
                         <Link to="/projects" className="text-xs px-2 py-1 rounded text-gray-400 hover:text-white hover:bg-gray-800">Проєкти</Link>
                         <Link to="/sessions" className="text-xs px-2 py-1 rounded text-gray-400 hover:text-white hover:bg-gray-800">Сесії</Link>
-                        <Link to="/users" className="text-xs px-2 py-1 rounded text-gray-400 hover:text-white hover:bg-gray-800">Юзери</Link>
+                        <Link to="/users" className="text-xs px-2 py-1 rounded text-gray-400 hover:text-white hover:bg-gray-800">Користувачі</Link>
                         <Link to="/dashboard" className="text-xs px-2 py-1 rounded text-gray-400 hover:text-white hover:bg-gray-800">Дашборд</Link>
                     </div>
                 </div>

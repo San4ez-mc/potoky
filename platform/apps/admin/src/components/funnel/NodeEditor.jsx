@@ -78,42 +78,86 @@ function CodeBlock({ value, onChange, language = 'javascript' }) {
 }
 
 function MessageNodeEditor({ data, update }) {
-    const addButton = () => update({ keyboard: [...(data.keyboard || []), { text: 'Кнопка', callback: 'action' }] });
-    const removeButton = (i) => update({ keyboard: data.keyboard.filter((_, idx) => idx !== i) });
-    const updateButton = (i, field, val) => update({
-        keyboard: data.keyboard.map((b, idx) => idx === i ? { ...b, [field]: val } : b),
-    });
+    // Canonical format: buttons = [[{text, url}], ...] (each inner array = one row)
+    // Migrate from legacy `keyboard` format on first open
+    const getButtons = () => {
+        if (data.buttons) return data.buttons;
+        if (data.keyboard) {
+            // Convert legacy [{text, callback}] → [[{text, url:''}]]
+            return data.keyboard.map(b => [{ text: b.text, url: b.url || b.callback || '' }]);
+        }
+        return [];
+    };
+    const buttons = getButtons();
+
+    const addRow = () => update({ buttons: [...buttons, [{ text: 'Кнопка', url: '' }]] });
+    const addBtnToRow = (rowIdx) => {
+        const next = buttons.map((row, i) => i === rowIdx ? [...row, { text: 'Кнопка', url: '' }] : row);
+        update({ buttons: next });
+    };
+    const removeRow = (rowIdx) => update({ buttons: buttons.filter((_, i) => i !== rowIdx) });
+    const removeBtn = (rowIdx, btnIdx) => {
+        const next = buttons.map((row, i) => i === rowIdx ? row.filter((_, j) => j !== btnIdx) : row)
+            .filter(row => row.length > 0);
+        update({ buttons: next });
+    };
+    const updateBtn = (rowIdx, btnIdx, field, val) => {
+        const next = buttons.map((row, i) => i === rowIdx
+            ? row.map((b, j) => j === btnIdx ? { ...b, [field]: val } : b)
+            : row);
+        update({ buttons: next });
+    };
+
+    const inputCls = "bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-brand";
 
     return (
         <div className="space-y-3">
             <Field label="Текст повідомлення">
                 <CodeBlock value={data.text} onChange={v => update({ text: v })} language="markdown" />
             </Field>
-            <Field label="Кнопки клавіатури">
+            <Field label="Кнопки (inline keyboard)">
                 <div className="space-y-2">
-                    {(data.keyboard || []).map((btn, i) => (
-                        <div key={i} className="flex gap-2">
-                            <input
-                                value={btn.text}
-                                onChange={e => updateButton(i, 'text', e.target.value)}
-                                placeholder="Текст"
-                                className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-brand"
-                            />
-                            <input
-                                value={btn.callback}
-                                onChange={e => updateButton(i, 'callback', e.target.value)}
-                                placeholder="callback_data"
-                                className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-white font-mono focus:outline-none focus:border-brand"
-                            />
-                            <button onClick={() => removeButton(i)} className="text-red-400 hover:text-red-300 px-2">✕</button>
+                    {buttons.map((row, rowIdx) => (
+                        <div key={rowIdx} className="border border-gray-700 rounded-lg p-2 space-y-1 bg-gray-850">
+                            <div className="flex items-center justify-between mb-1">
+                                <span className="text-[10px] text-gray-500">Рядок {rowIdx + 1}</span>
+                                <div className="flex gap-1">
+                                    <button
+                                        onClick={() => addBtnToRow(rowIdx)}
+                                        className="text-[10px] text-blue-400 hover:text-blue-300 px-1"
+                                        title="Додати кнопку в рядок"
+                                    >+ кнопка</button>
+                                    <button onClick={() => removeRow(rowIdx)} className="text-red-400 hover:text-red-300 text-[10px] px-1">✕ рядок</button>
+                                </div>
+                            </div>
+                            {row.map((btn, btnIdx) => (
+                                <div key={btnIdx} className="flex gap-1 items-center">
+                                    <input
+                                        value={btn.text || ''}
+                                        onChange={e => updateBtn(rowIdx, btnIdx, 'text', e.target.value)}
+                                        placeholder="Текст кнопки"
+                                        className={inputCls + ' flex-1'}
+                                    />
+                                    <input
+                                        value={btn.url || ''}
+                                        onChange={e => updateBtn(rowIdx, btnIdx, 'url', e.target.value)}
+                                        placeholder="URL або {{context.var}}"
+                                        className={inputCls + ' flex-[2] font-mono text-xs'}
+                                    />
+                                    {row.length > 1 && (
+                                        <button onClick={() => removeBtn(rowIdx, btnIdx)} className="text-red-400 hover:text-red-300 text-xs px-1">✕</button>
+                                    )}
+                                </div>
+                            ))}
                         </div>
                     ))}
                     <button
-                        onClick={addButton}
+                        onClick={addRow}
                         className="w-full py-1.5 border border-dashed border-gray-600 rounded-lg text-gray-400 hover:text-white hover:border-gray-400 text-sm transition-colors"
                     >
-                        + Додати кнопку
+                        + Додати рядок кнопок
                     </button>
+                    <div className="text-[10px] text-gray-600">Кожен рядок — окремий рядок кнопок. В одному рядку може бути кілька кнопок.</div>
                 </div>
             </Field>
         </div>
@@ -121,6 +165,13 @@ function MessageNodeEditor({ data, update }) {
 }
 
 function ClaudeNodeEditor({ data, update }) {
+    const [savedConnectors, setSavedConnectors] = useState([]);
+    useEffect(() => {
+        api.getSavedConnectors()
+            .then(res => setSavedConnectors((res?.data || []).filter(s => s.type?.startsWith('claude'))))
+            .catch(() => setSavedConnectors([]));
+    }, []);
+
     const mode = data.mode || 'single';
     const exitCondition = data.exitCondition || 'json_output';
     const isKeywordExit = exitCondition.startsWith('keyword:');
@@ -128,45 +179,45 @@ function ClaudeNodeEditor({ data, update }) {
     const exitConditionType = isKeywordExit ? 'keyword' : exitCondition;
 
     const handleModeChange = (value) => {
-        if (value === 'dialog') {
-            update({ mode: value, exitCondition: data.exitCondition || 'json_output' });
-            return;
-        }
-        update({ mode: value });
+        update({ mode: value, ...(value === 'dialog' ? { exitCondition: data.exitCondition || 'json_output' } : {}) });
     };
-
     const handleExitConditionChange = (value) => {
-        if (value === 'keyword') {
-            const nextKeyword = keywordValue || 'DONE';
-            update({ exitCondition: `keyword:${nextKeyword}` });
-            return;
-        }
-        update({ exitCondition: value });
+        update({ exitCondition: value === 'keyword' ? `keyword:${keywordValue || 'DONE'}` : value });
     };
 
-    const handleKeywordChange = (value) => {
-        update({ exitCondition: `keyword:${value}` });
-    };
+    const selectCls = "w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand";
 
     return (
         <div className="space-y-3">
+            <Field label="Конектор (Claude instance)">
+                <select
+                    value={data.connectorId || ''}
+                    onChange={e => update({ connectorId: e.target.value })}
+                    className={selectCls}
+                >
+                    <option value="">{'— Env змінна ({{env.CLAUDE_CONNECTOR_ID}}) —'}</option>
+                    {savedConnectors.map(sc => (
+                        <option key={sc.id} value={sc.id}>{sc.name}</option>
+                    ))}
+                </select>
+                {!data.connectorId && (
+                    <div className="mt-1 text-[11px] text-gray-500">Якщо не обрано — буде використано <code className="text-gray-400">{'{{env.CLAUDE_CONNECTOR_ID}}'}</code></div>
+                )}
+            </Field>
             <Field label="Модель">
                 <select
                     value={data.model || 'claude-haiku-4-5'}
                     onChange={e => update({ model: e.target.value })}
-                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+                    className={selectCls}
                 >
-                    <option value="claude-haiku-4-5">claude-haiku-4-5</option>
+                    <option value="claude-haiku-4-5">claude-haiku-4-5 (швидка)</option>
+                    <option value="claude-sonnet-4-20250514">claude-sonnet-4-20250514 (основна)</option>
                     <option value="claude-sonnet-4-5">claude-sonnet-4-5</option>
-                    <option value="claude-opus-4-5">claude-opus-4-5</option>
+                    <option value="claude-opus-4-5">claude-opus-4-5 (потужна)</option>
                 </select>
             </Field>
             <Field label="Тип запиту до ШІ">
-                <select
-                    value={mode}
-                    onChange={e => handleModeChange(e.target.value)}
-                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
-                >
+                <select value={mode} onChange={e => handleModeChange(e.target.value)} className={selectCls}>
                     <option value="single">Одиночний запит</option>
                     <option value="dialog">Діалог</option>
                 </select>
@@ -177,17 +228,15 @@ function ClaudeNodeEditor({ data, update }) {
             <Field label="System Prompt">
                 <CodeBlock value={data.systemPrompt} onChange={v => update({ systemPrompt: v })} language="markdown" />
             </Field>
-            <Field label="Messages Template (JSON)">
-                <CodeBlock value={data.messagesTemplate} onChange={v => update({ messagesTemplate: v })} language="json" />
+            <Field label="Messages Template">
+                <TextInput value={data.messagesTemplate} onChange={v => update({ messagesTemplate: v })} placeholder="{{conversationHistory}}" />
+                <div className="mt-1 text-[11px] text-gray-500">Зазвичай: <code className="text-gray-400">{'{{conversationHistory}}'}</code></div>
             </Field>
             {mode === 'dialog' && (
                 <Field label="Умова завершення діалогу">
-                    <select
-                        value={exitConditionType}
-                        onChange={e => handleExitConditionChange(e.target.value)}
-                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
-                    >
+                    <select value={exitConditionType} onChange={e => handleExitConditionChange(e.target.value)} className={selectCls}>
                         <option value="json_output">JSON у відповіді</option>
+                        <option value="first_response">Перша відповідь (single)</option>
                         <option value="markdown_output">Markdown у відповіді</option>
                         <option value="user_confirms">Підтвердження користувача</option>
                         <option value="keyword">Ключове слово</option>
@@ -197,11 +246,7 @@ function ClaudeNodeEditor({ data, update }) {
                     </div>
                     {exitConditionType === 'keyword' && (
                         <div className="mt-2">
-                            <TextInput
-                                value={keywordValue}
-                                onChange={handleKeywordChange}
-                                placeholder="Наприклад: DONE"
-                            />
+                            <TextInput value={keywordValue} onChange={v => update({ exitCondition: `keyword:${v}` })} placeholder="DONE" />
                         </div>
                     )}
                 </Field>
@@ -228,24 +273,95 @@ function JsNodeEditor({ data, update }) {
 }
 
 function ConditionNodeEditor({ data, update }) {
+    // Support new multi-condition format and legacy single-condition
+    const isMulti = Array.isArray(data.conditions) && data.conditions.length > 0;
+    const conditions = isMulti ? data.conditions : [];
+
+    const addCondition = () => update({
+        conditions: [...conditions, { id: `cond_${Date.now()}`, label: 'Умова', expression: '' }],
+    });
+    const removeCondition = (i) => update({ conditions: conditions.filter((_, idx) => idx !== i) });
+    const updateCondition = (i, field, val) => update({
+        conditions: conditions.map((c, idx) => idx === i ? { ...c, [field]: val } : c),
+    });
+
+    const inputCls = "w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-brand font-mono";
+
     return (
         <div className="space-y-3">
-            <Field label="Умова (JavaScript)">
-                <CodeBlock value={data.condition} onChange={v => update({ condition: v })} />
-            </Field>
+            {!isMulti && (
+                <div className="bg-orange-950/30 border border-orange-800 rounded-lg px-3 py-2 text-xs text-orange-300">
+                    Цей вузол використовує legacy формат. Натисни «Перейти на умови» щоб конвертувати.
+                </div>
+            )}
+            {!isMulti && (
+                <>
+                    <Field label="Умова (JavaScript, legacy)">
+                        <CodeBlock value={data.condition} onChange={v => update({ condition: v })} />
+                    </Field>
+                    <button
+                        onClick={() => update({ conditions: [{ id: 'cond_true', label: 'TRUE', expression: data.condition || '' }, { id: 'cond_false', label: 'FALSE', expression: '' }], condition: undefined })}
+                        className="w-full py-1.5 border border-dashed border-orange-700 rounded-lg text-orange-400 hover:text-orange-200 text-sm transition-colors"
+                    >
+                        🔀 Перейти на multi-condition формат
+                    </button>
+                </>
+            )}
+            {isMulti && (
+                <>
+                    <div className="text-[11px] text-gray-500 bg-gray-800 rounded px-3 py-2 border border-gray-700">
+                        Умови перевіряються <strong className="text-gray-300">по порядку</strong>. Перша що спрацювала — обирає гілку. Ребра від ноди призначаються в тому самому порядку.
+                    </div>
+                    <div className="space-y-3">
+                        {conditions.map((cond, i) => (
+                            <div key={i} className="border border-gray-700 rounded-lg p-3 space-y-2 bg-gray-850">
+                                <div className="flex items-center justify-between">
+                                    <span className="text-xs font-bold text-gray-300">#{i + 1}</span>
+                                    <button onClick={() => removeCondition(i)} className="text-red-400 hover:text-red-300 text-xs">✕ видалити</button>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                        <label className="text-[10px] text-gray-400 block mb-1">ID (slug)</label>
+                                        <input value={cond.id} onChange={e => updateCondition(i, 'id', e.target.value)} className={inputCls} placeholder="cond_ready" />
+                                    </div>
+                                    <div>
+                                        <label className="text-[10px] text-gray-400 block mb-1">Назва</label>
+                                        <input value={cond.label} onChange={e => updateCondition(i, 'label', e.target.value)} className={inputCls} placeholder="Готовий" />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="text-[10px] text-gray-400 block mb-1">JavaScript вираз</label>
+                                    <input value={cond.expression} onChange={e => updateCondition(i, 'expression', e.target.value)} className={inputCls} placeholder="context.result.ready_to_buy === true" />
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                    <button
+                        onClick={addCondition}
+                        className="w-full py-1.5 border border-dashed border-gray-600 rounded-lg text-gray-400 hover:text-white hover:border-gray-400 text-sm transition-colors"
+                    >
+                        + Додати умову
+                    </button>
+                </>
+            )}
         </div>
     );
 }
 
 function NotifyAdminNodeEditor({ data, update }) {
+    // Support both `targetKey` (new, env-var key name) and legacy `telegramId`
+    const targetValue = data.targetKey || data.telegramId || 'ADMIN_TELEGRAM_ID';
     return (
         <div className="space-y-3">
-            <Field label="Telegram ID адміна">
+            <Field label="Ключ Telegram ID адміна (env var name)">
                 <TextInput
-                    value={data.telegramId}
-                    onChange={v => update({ telegramId: v })}
-                    placeholder="{{env.ADMIN_TELEGRAM_ID}}"
+                    value={targetValue}
+                    onChange={v => update({ targetKey: v, telegramId: undefined })}
+                    placeholder="ADMIN_TELEGRAM_ID"
                 />
+                <div className="mt-1 text-[11px] text-gray-500">
+                    Ім'я env-змінної (без <code>{'{{env.}}'}</code>), яка містить Telegram ID адміна.
+                </div>
             </Field>
             <Field label="Повідомлення адміну">
                 <CodeBlock
@@ -254,26 +370,6 @@ function NotifyAdminNodeEditor({ data, update }) {
                     language="markdown"
                 />
             </Field>
-            <Field label="Додатково надіслати повідомлення студенту">
-                <label className="flex items-center gap-2">
-                    <input
-                        type="checkbox"
-                        checked={data.notifyUser === true}
-                        onChange={e => update({ notifyUser: e.target.checked })}
-                        className="accent-brand"
-                    />
-                    <span className="text-sm text-gray-300">Надсилати підтвердження оплати студенту</span>
-                </label>
-            </Field>
-            {data.notifyUser && (
-                <Field label="Текст для студента">
-                    <CodeBlock
-                        value={data.userMessage || ''}
-                        onChange={v => update({ userMessage: v })}
-                        language="markdown"
-                    />
-                </Field>
-            )}
         </div>
     );
 }
@@ -405,28 +501,47 @@ function ConnectorNodeEditor({ data, update, connectors }) {
                             <option value="create_invoice">create_invoice — Створити інвойс</option>
                         </select>
                     </Field>
-                    <Field label="Сума (amount)" hint="Число або змінна: {{context.price}}">
+                    <Field label="Сума (amount)">
                         <input
                             value={data.amount || ''}
                             onChange={e => update({ amount: e.target.value })}
-                            placeholder="{{context.course_price}}"
-                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+                            placeholder="{{env.COURSE_PRICE_INT}}"
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-brand"
                         />
                     </Field>
-                    <Field label="Назва продукту" hint="Відображається покупцю">
+                    <Field label="Валюта (currency)">
+                        <select
+                            value={data.currency || 'UAH'}
+                            onChange={e => update({ currency: e.target.value })}
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+                        >
+                            <option value="UAH">UAH — Гривня</option>
+                            <option value="USD">USD — Долар</option>
+                            <option value="EUR">EUR — Євро</option>
+                        </select>
+                    </Field>
+                    <Field label="Опис продукту (description)">
                         <input
-                            value={data.productName || ''}
-                            onChange={e => update({ productName: e.target.value })}
-                            placeholder="Курс «Гроші в бізнесі»"
+                            value={data.description || ''}
+                            onChange={e => update({ description: e.target.value })}
+                            placeholder="Курс «Фінансова система бізнесу»"
                             className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
                         />
                     </Field>
-                    <Field label="Output var" hint="Куди зберегти URL оплати">
+                    <Field label="Order Reference (унікальний ID замовлення)">
+                        <input
+                            value={data.orderReference || ''}
+                            onChange={e => update({ orderReference: e.target.value })}
+                            placeholder="course_{{context.spin_result.name}}_{{timestamp}}"
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-brand"
+                        />
+                    </Field>
+                    <Field label="Output var (куди зберегти URL оплати)">
                         <input
                             value={data.outputVar || ''}
                             onChange={e => update({ outputVar: e.target.value })}
-                            placeholder="context.invoice_url"
-                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+                            placeholder="context.payment_url"
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-brand"
                         />
                     </Field>
                 </>
@@ -584,16 +699,16 @@ function SendDocumentNodeEditor({ data, update }) {
             <Field label="Назва ноди">
                 <TextInput value={data.label} onChange={v => update({ label: v })} placeholder="Відправити документ" />
             </Field>
-            <Field label="Тип файлу (опційно)">
-                <TextInput value={data.fileType} onChange={v => update({ fileType: v })} placeholder="presentation_pdf" />
+            <Field label="fileKey — ключ env-змінної з URL файлу">
+                <TextInput value={data.fileKey} onChange={v => update({ fileKey: v })} placeholder="PRESENTATION_PDF_URL" />
+                <div className="mt-1 text-[11px] text-gray-500">
+                    Ім'я env-змінної (без <code>{'{{env.}}'}</code>), яка містить URL або file_id файлу. Використовується якщо URL захардкоджено в env.
+                </div>
             </Field>
-            <Field label="Змінна з документом/URL (опційно)">
+            <Field label="fileVar — контекстна змінна з URL/file_id (динамічно)">
                 <TextInput value={data.fileVar} onChange={v => update({ fileVar: v })} placeholder="context.presentation_url" />
             </Field>
-            <Field label="Ім'я файлу (опційно)">
-                <TextInput value={data.fileName} onChange={v => update({ fileName: v })} placeholder="presentation.pdf" />
-            </Field>
-            <Field label="Підпис">
+            <Field label="Підпис (caption)">
                 <TextInput value={data.caption} onChange={v => update({ caption: v })} placeholder="Ось презентація курсу" multiline />
             </Field>
         </div>

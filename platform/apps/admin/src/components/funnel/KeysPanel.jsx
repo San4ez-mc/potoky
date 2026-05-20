@@ -4,6 +4,69 @@ import { api } from '../../api/client.js';
 
 const CHANNELS_KEY = 'FUNNEL_CHANNELS';
 
+const KEY_HINTS = {
+    'TELEGRAM_BOT_TOKEN': {
+        hint: 'Отримати у @BotFather → /newbot або /token',
+        url: 'https://t.me/BotFather',
+    },
+    'TELEGRAM_BOT_USERNAME': {
+        hint: 'Username бота без @, там само у @BotFather',
+        url: 'https://t.me/BotFather',
+    },
+    'CLAUDE_API_KEY': {
+        hint: 'Anthropic Console → API Keys',
+        url: 'https://console.anthropic.com/account/keys',
+    },
+    'ANTHROPIC_API_KEY': {
+        hint: 'Anthropic Console → API Keys',
+        url: 'https://console.anthropic.com/account/keys',
+    },
+    'CLAUDE_CONNECTOR_ID': {
+        hint: 'ID збереженого Claude-конектора зі вкладки Конектори',
+        url: null,
+    },
+    'INSTAGRAM_ACCESS_TOKEN': {
+        hint: 'Meta for Developers → Graph API Explorer',
+        url: 'https://developers.facebook.com/tools/explorer/',
+    },
+    'INSTAGRAM_APP_SECRET': {
+        hint: 'Meta for Developers → App Dashboard → Basic Settings',
+        url: 'https://developers.facebook.com/',
+    },
+    'INSTAGRAM_VERIFY_TOKEN': {
+        hint: 'Довільний рядок, який ви самі вигадаєте для верифікації вебхука',
+        url: null,
+    },
+    'INSTAGRAM_BUSINESS_ID': {
+        hint: 'Meta Business Suite → Налаштування → ID бізнес-акаунту',
+        url: 'https://business.facebook.com/settings/',
+    },
+    'INSTAGRAM_USERNAME': {
+        hint: 'Username Instagram-акаунту без @',
+        url: null,
+    },
+    'ADMIN_TELEGRAM_ID': {
+        hint: 'Ваш Telegram ID — дізнатись через @userinfobot',
+        url: 'https://t.me/userinfobot',
+    },
+    'WAYFORPAY_MERCHANT_ACCOUNT': {
+        hint: 'WayForPay особистий кабінет → Мій рахунок',
+        url: 'https://admin.wayforpay.com/',
+    },
+    'WAYFORPAY_MERCHANT_SECRET': {
+        hint: 'WayForPay особистий кабінет → Мій рахунок → Секретний ключ',
+        url: 'https://admin.wayforpay.com/',
+    },
+    'OPENAI_API_KEY': {
+        hint: 'OpenAI Platform → API Keys',
+        url: 'https://platform.openai.com/api-keys',
+    },
+    'FOLLOW_UP_MESSAGE': {
+        hint: 'Текст повідомлення-нагадування, якщо користувач не відповів протягом кількох годин',
+        url: null,
+    },
+};
+
 const CHANNEL_PRESETS = [
     {
         id: 'telegram',
@@ -135,6 +198,22 @@ function KeyRow({ k, onEdit, onDelete, onReveal, isRequired = false }) {
                         {isMissing && <span className="text-[10px] bg-red-900/40 text-red-400 border border-red-800 rounded px-1.5 py-0.5">⚠ БРАКУЄ</span>}
                     </div>
                     {k.label && <div className="text-xs text-gray-400 mt-0.5">{k.label}</div>}
+                    {KEY_HINTS[k.key] && (
+                        <div className="text-[11px] text-gray-500 mt-0.5 flex items-center gap-1">
+                            <span>💡 {KEY_HINTS[k.key].hint}</span>
+                            {KEY_HINTS[k.key].url && (
+                                <a
+                                    href={KEY_HINTS[k.key].url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-brand-light hover:text-brand underline"
+                                    onClick={e => e.stopPropagation()}
+                                >
+                                    →
+                                </a>
+                            )}
+                        </div>
+                    )}
                     <div className={`text-sm mt-1 font-mono break-all ${isMissing ? 'text-red-300' : 'text-gray-300'}`}>
                         {revealed ? revealedValue : (k.isSecret ? '••••••••' : k.value)}
                     </div>
@@ -385,17 +464,27 @@ export function KeysPanel({ embedded = false }) {
                         <div className="text-xs text-red-300 mb-2">Бракує обов'язкових ключів для каналів:</div>
                         <div className="space-y-2">
                             {missingRequiredKeys.map((key) => (
-                                <div key={key} className="flex items-center justify-between gap-2">
-                                    <code className="text-xs text-red-200 font-mono">{key}</code>
-                                    <button
-                                        onClick={() => {
-                                            setEditing({ key, value: '', label: key, isSecret: key.includes('TOKEN') || key.includes('SECRET') });
-                                            setIsNew(true);
-                                        }}
-                                        className="text-xs px-2 py-1 rounded bg-red-900/30 hover:bg-red-900/50 text-red-200 border border-red-800"
-                                    >
-                                        Додати
-                                    </button>
+                                <div key={key} className="space-y-0.5">
+                                    <div className="flex items-center justify-between gap-2">
+                                        <code className="text-xs text-red-200 font-mono">{key}</code>
+                                        <button
+                                            onClick={() => {
+                                                setEditing({ key, value: '', label: key, isSecret: key.includes('TOKEN') || key.includes('SECRET') });
+                                                setIsNew(true);
+                                            }}
+                                            className="text-xs px-2 py-1 rounded bg-red-900/30 hover:bg-red-900/50 text-red-200 border border-red-800"
+                                        >
+                                            Додати
+                                        </button>
+                                    </div>
+                                    {KEY_HINTS[key] && (
+                                        <div className="text-[11px] text-gray-500 flex items-center gap-1">
+                                            <span>💡 {KEY_HINTS[key].hint}</span>
+                                            {KEY_HINTS[key].url && (
+                                                <a href={KEY_HINTS[key].url} target="_blank" rel="noopener noreferrer" className="text-brand-light hover:text-brand underline">→</a>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
                             ))}
                         </div>

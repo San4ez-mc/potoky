@@ -834,6 +834,36 @@ ${sourceContent || '(немає даних)'}
         }
 
         if (node.type === 'condition') {
+            // ── Multi-condition format: data.conditions = [{id, label, expression}] ──
+            // Edges are matched by creation-order index (same order as conditions array).
+            if (Array.isArray(data.conditions) && data.conditions.length > 0) {
+                const outgoing = getOutgoingEdges(flow.edges, node.id);
+                let matchedIndex = -1;
+                for (let i = 0; i < data.conditions.length; i++) {
+                    try {
+                        const expr = String(data.conditions[i].expression || 'false');
+                        const result = Boolean(
+                            Function('context', 'user', 'session', 'input', `return (${expr});`)(
+                                ctx, session.user, session, runtime.lastUserMessage || ''
+                            )
+                        );
+                        if (result) {
+                            matchedIndex = i;
+                            break;
+                        }
+                    } catch (_error) {
+                        // expression failed — skip this branch
+                    }
+                }
+                // Pick edge by index; fall back to first edge if nothing matched
+                const target = matchedIndex >= 0
+                    ? outgoing[matchedIndex]?.target
+                    : outgoing[0]?.target;
+                runtime.currentNodeId = target || null;
+                continue;
+            }
+
+            // ── Legacy single-condition format: data.condition = "js expression" ──
             let result = false;
             try {
                 const expr = data.condition || 'false';
@@ -1019,18 +1049,20 @@ ${sourceContent || '(немає даних)'}
                 });
 
                 const responseText = await doRequest(url, method, bodyPayload);
+                console.log(`[httpRequest] url=${url.slice(0, 80)} status=ok responseLen=${responseText.length} preview=${responseText.slice(0, 300)}`);
 
                 if (outputVar) {
                     try {
                         const parsed = JSON.parse(responseText);
                         const value = data.responseField ? getByPath(parsed, data.responseField) : parsed;
+                        console.log(`[httpRequest] responseField=${data.responseField} value=${JSON.stringify(value)}`);
                         if (value !== undefined) setByPath(ctx, outputVar, value);
                     } catch {
                         setByPath(ctx, outputVar, responseText);
                     }
                 }
             } catch (_error) {
-                // Silently skip HTTP request on error
+                console.error(`[httpRequest] error: ${_error.message}`);
             }
 
             runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
@@ -1211,7 +1243,22 @@ ${sourceContent || '(немає даних)'}
                     timestamp: new Date().toISOString(),
                 };
 
-                const adminTelegramId = renderTemplate(data.telegramId || '{{env.ADMIN_TELEGRAM_ID}}', enrichedScope);
+                // Support both legacy `telegramId` and new `targetKey` field
+                let adminTelegramId;
+                if (data.targetKey) {
+                    // targetKey is an env var name (no {{env.}} prefix)
+                    adminTelegramId = enrichedScope.env[data.targetKey] || '';
+                    if (!adminTelegramId) {
+                        // Try as a bot key
+                        const keyRow = await db.funnelKey.findUnique({
+                            where: { botId_key: { botId: session.botId, key: data.targetKey } },
+                            select: { value: true },
+                        }).catch(() => null);
+                        adminTelegramId = keyRow?.value || adminTelegramIdValue || '';
+                    }
+                } else {
+                    adminTelegramId = renderTemplate(data.telegramId || '{{env.ADMIN_TELEGRAM_ID}}', enrichedScope);
+                }
                 const adminMessage = renderTemplate(data.message || 'Нова подія в системі.', enrichedScope);
 
                 if (adminTelegramId && adminMessage) {
@@ -1331,6 +1378,25 @@ ${sourceContent || '(немає даних)'}
                     ctx.wfp_order_reference = orderReference;
 
                     console.log(`[connector:wayforpay] Invoice created: ${invoiceUrl || 'no url'}, reason: ${wfpResponse.reason}`);
+
+                    // ── Auto-notify admin when payment link is generated ──
+                    try {
+                        const adminId = await getSystemKeyValue('ADMIN_TELEGRAM_ID');
+                        if (adminId && invoiceUrl) {
+                            const sr = ctx.spin_result || {};
+                            const clientName = sr.name || sr.company || 'Клієнт';
+                            const clientCompany = sr.company || sr.business || '';
+                            const clientPain = sr.main_pain || '';
+                            const botLabel = flow.bot?.name || 'бот';
+                            let notifyText = `🔔 *Новий потенційний клієнт* — ${botLabel}\n\n`;
+                            notifyText += `👤 ${clientName}`;
+                            if (clientCompany && clientCompany !== clientName) notifyText += ` (${clientCompany})`;
+                            notifyText += '\n';
+                            if (clientPain) notifyText += `📌 Біль: ${clientPain}\n`;
+                            notifyText += `\n💳 Посилання на оплату відправлено\n${invoiceUrl}`;
+                            await sendMessage(String(adminId), notifyText, { parse_mode: 'Markdown' }, session.id).catch(() => {});
+                        }
+                    } catch (_notifyErr) { /* silent fail */ }
                 }
             } catch (connectorError) {
                 console.error(`[connector:${connectorType}] Error:`, connectorError.message);

@@ -56,6 +56,7 @@ export const api = {
     updateBot: (id, name, description) => req('PATCH', `/bots/${id}`, { name, description }),
     getBotSessions: (id, page = 0) => req('GET', `/bots/${id}/sessions?page=${page}`),
     createFunnel: (projectId, data) => req('POST', `/projects/${projectId}/bots`, data),
+    deleteFunnel: (projectId, botId) => req('DELETE', `/projects/${projectId}/bots/${botId}`),
 
     // Funnels
     getFunnel: (botId) => req('GET', `/funnels/${botId}`),
@@ -69,6 +70,7 @@ export const api = {
         req('PUT', `/funnels/${botId}/keys`, { key, value, label, isSecret }),
     deleteFunnelKey: (botId, key) => req('DELETE', `/funnels/${botId}/keys/${key}`),
     revealFunnelKey: (botId, key) => req('GET', `/funnels/${botId}/keys/${key}/reveal`),
+    getNodeStats: (botId, nodeId, period = '30d') => req('GET', `/funnels/${botId}/nodes/${nodeId}/stats?period=${period}`),
 
     // Connectors (type definitions)
     getConnectors: () => req('GET', '/connectors'),

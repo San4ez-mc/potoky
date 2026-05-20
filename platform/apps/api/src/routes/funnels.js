@@ -314,6 +314,30 @@ router.get('/:botId/nodes/:nodeId/stats',
 
         const errorCount = errorsAtNode?.[0]?.count || 0;
 
+        // Token usage for Claude nodes — aggregate from api_calls responseData
+        const claudeApiCalls = await db.apiCall.findMany({
+            where: {
+                session: { botId },
+                service: 'claude',
+                method: 'messages.create',
+                createdAt: { gte: timeFrom },
+            },
+            select: { responseData: true },
+        });
+
+        let totalInputTokens = 0;
+        let totalOutputTokens = 0;
+        let claudeCallCount = 0;
+
+        for (const call of claudeApiCalls) {
+            const rd = (call.responseData && typeof call.responseData === 'object') ? call.responseData : {};
+            if (typeof rd.inputTokens === 'number') {
+                totalInputTokens += rd.inputTokens;
+                totalOutputTokens += rd.outputTokens || 0;
+                claudeCallCount++;
+            }
+        }
+
         res.json({
             ok: true,
             data: {
@@ -323,6 +347,12 @@ router.get('/:botId/nodes/:nodeId/stats',
                 errors: Number(errorCount),
                 errorRate: sessionsPassedThrough > 0 ? (Number(errorCount) / sessionsPassedThrough * 100).toFixed(2) + '%' : '0%',
                 indicator: Number(errorCount) > 0 ? 'error' : sessionsPassedThrough > 100 ? 'warning' : 'ok',
+                tokens: {
+                    input: totalInputTokens,
+                    output: totalOutputTokens,
+                    total: totalInputTokens + totalOutputTokens,
+                    calls: claudeCallCount,
+                },
             },
         });
     })

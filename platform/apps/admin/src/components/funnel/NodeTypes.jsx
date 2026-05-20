@@ -1,14 +1,60 @@
-import React, { memo } from 'react';
+import React, { memo, useEffect, useState } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import clsx from 'clsx';
+import { useFunnelStore } from '../../stores/funnelStore.js';
+import { api } from '../../api/client.js';
+
+// ─── Node stats cache (in-memory, 5 min TTL) ─────────────────────────────────
+const _statsCache = {};
+const STATS_TTL_MS = 5 * 60 * 1000;
+
+function getCachedStats(botId, nodeId) {
+    const key = `${botId}__${nodeId}`;
+    const entry = _statsCache[key];
+    if (!entry) return null;
+    if (Date.now() - entry.ts > STATS_TTL_MS) { delete _statsCache[key]; return null; }
+    return entry.data;
+}
+function setCachedStats(botId, nodeId, data) {
+    _statsCache[`${botId}__${nodeId}`] = { data, ts: Date.now() };
+}
+
+function formatTokens(n) {
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+    return String(n);
+}
+
+function useNodeStats(nodeId) {
+    const bot = useFunnelStore(s => s.bot);
+    const botId = bot?.id;
+    const [tokens, setTokens] = useState(() => botId ? getCachedStats(botId, nodeId)?.tokens : null);
+
+    useEffect(() => {
+        if (!botId || !nodeId) return;
+        const cached = getCachedStats(botId, nodeId);
+        if (cached) { setTokens(cached.tokens); return; }
+
+        api.getNodeStats(botId, nodeId, '30d')
+            .then(data => {
+                if (data?.tokens) {
+                    setCachedStats(botId, nodeId, data);
+                    setTokens(data.tokens);
+                }
+            })
+            .catch(() => {});
+    }, [botId, nodeId]);
+
+    return tokens;
+}
 
 // ─── Base node wrapper ─────────────────────────────────────────────────────────
 function BaseNode({ id, selected, color, icon, label, children, hasInput = true, hasOutput = true }) {
     return (
         <div
             className={clsx(
-                'min-w-[200px] rounded-xl border-2 bg-gray-900 shadow-xl transition-all',
-                selected ? 'border-brand shadow-brand/20' : 'border-gray-700 hover:border-gray-500'
+                'min-w-[220px] max-w-[320px] rounded-xl border-2 bg-gray-900 shadow-xl transition-all cursor-pointer',
+                selected ? 'border-brand shadow-brand/20' : 'border-gray-700 hover:border-gray-500 hover:shadow-gray-600/20'
             )}
         >
             {/* Header */}
@@ -47,19 +93,25 @@ export const StartNode = memo(({ id, selected, data }) => (
 ));
 
 // ─── Message Node ──────────────────────────────────────────────────────────────
-export const MessageNode = memo(({ id, selected, data }) => (
-    <BaseNode id={id} selected={selected} color="bg-blue-700" icon="💬" label={data.label || 'Повідомлення'}>
-        {data.text && (
-            <p className="line-clamp-2 text-gray-300">{data.text}</p>
-        )}
-        {data.keyboard?.length > 0 && (
-            <div className="mt-1 text-blue-400">⌨️ {data.keyboard.length} кнопок</div>
-        )}
-    </BaseNode>
-));
+export const MessageNode = memo(({ id, selected, data }) => {
+    // Support both `buttons` (URL inline KB, [[{text,url}]]) and legacy `keyboard` ([{text,callback}])
+    const btnCount = data.buttons?.flat().length || data.keyboard?.length || 0;
+    return (
+        <BaseNode id={id} selected={selected} color="bg-blue-700" icon="💬" label={data.label || 'Повідомлення'}>
+            {data.text && (
+                <p className="line-clamp-3 text-gray-300 whitespace-pre-wrap break-words">{data.text}</p>
+            )}
+            {btnCount > 0 && (
+                <div className="mt-1 text-blue-400">⌨️ {btnCount} {btnCount === 1 ? 'кнопка' : 'кнопки'}</div>
+            )}
+        </BaseNode>
+    );
+});
 
 // ─── Claude Node ───────────────────────────────────────────────────────────────
 export const ClaudeNode = memo(({ id, selected, data }) => {
+    const tokens = useNodeStats(id);
+
     const exitConditionLabel = () => {
         if (!data.exitCondition) return '';
         if (data.exitCondition === 'json_output') return '📋 JSON';
@@ -88,6 +140,12 @@ export const ClaudeNode = memo(({ id, selected, data }) => {
                 <p className="line-clamp-2 text-gray-300">{data.systemPrompt}</p>
             )}
             {data.model && <div className="mt-1 text-violet-400 text-[11px]">{data.model}</div>}
+            {tokens && tokens.total > 0 && (
+                <div className="mt-1.5 flex items-center gap-1 text-[10px] text-violet-300 bg-violet-900/30 rounded px-1.5 py-0.5 w-fit" title={`Вхідні: ${tokens.input.toLocaleString()}, Вихідні: ${tokens.output.toLocaleString()}, Виклики: ${tokens.calls}`}>
+                    <span>🪙</span>
+                    <span>{formatTokens(tokens.total)} токенів (30д)</span>
+                </div>
+            )}
         </BaseNode>
     );
 });
@@ -102,41 +160,78 @@ export const JsNode = memo(({ id, selected, data }) => (
 ));
 
 // ─── Condition Node ────────────────────────────────────────────────────────────
-export const ConditionNode = memo(({ id, selected, data }) => (
-    <div
-        className={clsx(
-            'min-w-[180px] rounded-xl border-2 bg-gray-900 shadow-xl transition-all',
-            selected ? 'border-brand shadow-brand/20' : 'border-gray-700 hover:border-gray-500'
-        )}
-    >
-        <div className="flex items-center gap-2 px-3 py-2 rounded-t-lg bg-orange-700">
-            <span>🔀</span>
-            <span className="text-sm font-semibold text-white">{data.label || 'Умова'}</span>
+const COND_COLORS = ['bg-emerald-500', 'bg-red-500', 'bg-yellow-500', 'bg-blue-500', 'bg-purple-500'];
+const COND_BORDER = ['border-emerald-300', 'border-red-300', 'border-yellow-300', 'border-blue-300', 'border-purple-300'];
+const COND_TEXT = ['text-emerald-400', 'text-red-400', 'text-yellow-400', 'text-blue-400', 'text-purple-400'];
+
+export const ConditionNode = memo(({ id, selected, data }) => {
+    // Support new multi-condition format: data.conditions = [{id, label, expression}]
+    // and legacy single: data.condition = "js expression"
+    const conditions = data.conditions?.length
+        ? data.conditions
+        : data.condition
+            ? [{ id: 'true', label: 'TRUE', expression: data.condition }, { id: 'false', label: 'FALSE', expression: '' }]
+            : [{ id: 'true', label: 'TRUE' }, { id: 'false', label: 'FALSE' }];
+
+    const count = conditions.length;
+    // Evenly spread handles
+    const handlePositions = conditions.map((_, i) => `${Math.round(((i + 1) / (count + 1)) * 100)}%`);
+
+    return (
+        <div
+            className={clsx(
+                'min-w-[220px] max-w-[320px] rounded-xl border-2 bg-gray-900 shadow-xl transition-all cursor-pointer',
+                selected ? 'border-brand shadow-brand/20' : 'border-gray-700 hover:border-gray-500 hover:shadow-gray-600/20'
+            )}
+        >
+            <div className="flex items-center gap-2 px-3 py-2 rounded-t-lg bg-orange-700">
+                <span>🔀</span>
+                <span className="text-sm font-semibold text-white truncate">{data.label || 'Умова'}</span>
+            </div>
+            {/* Show each condition label + expression */}
+            <div className="px-3 py-2 space-y-1">
+                {conditions.map((cond, i) => (
+                    <div key={cond.id || i} className="flex items-start gap-1">
+                        <span className={clsx('text-[9px] font-bold mt-0.5 shrink-0', COND_TEXT[i % COND_TEXT.length])}>
+                            {i + 1}.
+                        </span>
+                        <div className="min-w-0">
+                            <div className={clsx('text-[10px] font-semibold truncate', COND_TEXT[i % COND_TEXT.length])}>
+                                {cond.label || cond.id}
+                            </div>
+                            {cond.expression && (
+                                <div className="text-[9px] text-gray-500 font-mono line-clamp-1 break-all">{cond.expression}</div>
+                            )}
+                        </div>
+                    </div>
+                ))}
+            </div>
+            <Handle type="target" position={Position.Top} className="!w-3 !h-3 !bg-gray-600 !border-2 !border-gray-400" />
+            {conditions.map((cond, i) => (
+                <Handle
+                    key={cond.id || i}
+                    type="source"
+                    id={cond.id || String(i)}
+                    position={Position.Bottom}
+                    style={{ left: handlePositions[i] }}
+                    className={clsx('!w-3 !h-3 !border-2', COND_COLORS[i % COND_COLORS.length], COND_BORDER[i % COND_BORDER.length])}
+                />
+            ))}
+            {/* Labels below handles */}
+            <div className="relative h-5 pb-1.5">
+                {conditions.map((cond, i) => (
+                    <span
+                        key={cond.id || i}
+                        className={clsx('absolute text-[9px] font-bold -translate-x-1/2', COND_TEXT[i % COND_TEXT.length])}
+                        style={{ left: handlePositions[i] }}
+                    >
+                        {(cond.label || cond.id || String(i + 1)).substring(0, 8)}
+                    </span>
+                ))}
+            </div>
         </div>
-        {data.condition && (
-            <div className="px-3 py-2 text-xs text-orange-300 font-mono line-clamp-2">{data.condition}</div>
-        )}
-        <Handle type="target" position={Position.Top} className="!w-3 !h-3 !bg-gray-600 !border-2 !border-gray-400" />
-        <Handle
-            type="source"
-            id="true"
-            position={Position.Bottom}
-            style={{ left: '30%' }}
-            className="!w-3 !h-3 !bg-emerald-500 !border-2 !border-emerald-300"
-        />
-        <Handle
-            type="source"
-            id="false"
-            position={Position.Bottom}
-            style={{ left: '70%' }}
-            className="!w-3 !h-3 !bg-red-500 !border-2 !border-red-300"
-        />
-        <div className="flex justify-between px-2 pb-1.5 text-[10px]">
-            <span className="text-emerald-400">TRUE</span>
-            <span className="text-red-400">FALSE</span>
-        </div>
-    </div>
-));
+    );
+});
 
 // ─── Connector Node ────────────────────────────────────────────────────────────
 export const ConnectorNode = memo(({ id, selected, data }) => (

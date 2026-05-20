@@ -62,7 +62,7 @@ export function UserDetail() {
     }, [id]);
 
     if (loading) return <div className="flex items-center justify-center h-full text-gray-400">Завантаження...</div>;
-    if (!user) return <div className="p-6 text-red-400">Юзера не знайдено</div>;
+    if (!user) return <div className="p-6 text-red-400">Користувача не знайдено</div>;
 
     const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ') || '—';
 
@@ -76,7 +76,7 @@ export function UserDetail() {
     return (
         <div className="p-6 max-w-4xl mx-auto">
             {/* Back */}
-            <Link to="/users" className="text-xs text-gray-500 hover:text-gray-300 mb-4 inline-block">← Всі юзери</Link>
+            <Link to="/users" className="text-xs text-gray-500 hover:text-gray-300 mb-4 inline-block">← Всі користувачі</Link>
 
             {/* Header */}
             <div className="flex items-center gap-4 mb-6">

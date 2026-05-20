@@ -31,6 +31,12 @@ const mcpDebugRouter = require('./routes/mcp-debug');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// ── Static file serving ──────────────────────────────────────
+const BOT_FILES_DIR = process.env.BOT_FILES_DIR
+    || require('path').join(__dirname, '..', '..', 'uploads', 'bot-files');
+require('fs').mkdirSync(BOT_FILES_DIR, { recursive: true });
+app.use('/bot-files', express.static(BOT_FILES_DIR, { maxAge: '7d' }));
 const MCP_PATH_PREFIXES = ['/api/mcp', '/api/mcp-edit', '/api/mcp-debug', '/mcp'];
 
 function isMcpRequestPath(pathname) {

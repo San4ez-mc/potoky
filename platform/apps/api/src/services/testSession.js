@@ -1185,6 +1185,26 @@ ${sourceContent || '(немає даних)'}
             continue;
         }
 
+        // sendFile — static pre-uploaded file (PDF etc.) stored on the server
+        if (node.type === 'sendFile') {
+            const fileUrl = renderTemplate(data.fileUrl || '', scope);
+            const fileName = renderTemplate(data.fileName || 'file', scope);
+            const caption = renderTemplate(data.caption || '', scope);
+
+            if (fileUrl) {
+                const messageText = caption || `📎 ${fileName}`;
+                await persistAssistantMessage(session.id, messageText, {
+                    nodeId: node.id,
+                    nodeType: node.type,
+                    attachment: { type: 'document', url: fileUrl, fileName, caption },
+                });
+                lastAssistant = messageText;
+            }
+
+            runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
+            continue;
+        }
+
         if (node.type === 'fetchTelegramProfile') {
             // Fetch Telegram bio and profile photo for the current user (silent node)
             try {
@@ -1450,10 +1470,7 @@ async function resolveBot({ botId, botSlug }) {
         throw new Error('Bot not found');
     }
 
-    if (bot.project?.slug !== 'finance-course') {
-        throw new Error('Test session currently supports finance-course bots only');
-    }
-
+    // Support any bot that has a flow definition (not limited to finance-course)
     return bot;
 }
 

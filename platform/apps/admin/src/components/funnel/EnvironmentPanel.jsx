@@ -1,14 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useFunnelStore } from '../../stores/funnelStore.js';
+import { api } from '../../api/client.js';
 
 const CHANNELS_KEY = 'FUNNEL_CHANNELS';
+const TG_CONNECTOR_KEY = 'TELEGRAM_CONNECTOR_ID';
 
 const CHANNEL_PRESETS = [
     {
         id: 'telegram',
         label: 'Telegram бот',
         keys: [
-            { key: 'TELEGRAM_BOT_TOKEN', label: 'Telegram Bot Token', isSecret: true },
             { key: 'TELEGRAM_BOT_USERNAME', label: 'Telegram Bot Username', isSecret: false },
         ],
     },
@@ -22,6 +23,11 @@ const CHANNEL_PRESETS = [
             { key: 'INSTAGRAM_BUSINESS_ID', label: 'Instagram Business ID', isSecret: false },
             { key: 'INSTAGRAM_USERNAME', label: 'Instagram Username (without @)', isSecret: false },
         ],
+    },
+    {
+        id: 'webhook',
+        label: 'Webhook / API (запит ззовні)',
+        keys: [],
     },
 ];
 
@@ -49,6 +55,17 @@ function parseSelectedChannels(rawValue) {
         .split(',')
         .map(v => v.trim())
         .filter(Boolean);
+}
+
+function buildWebhookInfo(bot) {
+    const base = window.location.origin.replace(':5173', '').replace(':5174', '');
+    const webhookBase = base.includes('localhost') ? 'https://flows.fineko.space' : base;
+    return {
+        startUrl: `${webhookBase}/webhook/telegram/${bot.id}`,
+        httpMethod: 'POST',
+        bodyExample: JSON.stringify({ text: 'Привіт', from: { id: 123456789, first_name: 'Юзер' } }, null, 2),
+        note: 'Або запуск через POST-запит на цей URL з тілом у форматі Telegram update.',
+    };
 }
 
 function buildChannelLinks({ channels, keyMap, bot, counts }) {
@@ -97,15 +114,28 @@ export function EnvironmentPanel({ embedded = false }) {
     const [selectedChannels, setSelectedChannels] = useState([]);
     const [isApplyingChannels, setIsApplyingChannels] = useState(false);
     const [linkCounts, setLinkCounts] = useState({ telegram: 1, instagram: 1 });
+    const [tgConnectors, setTgConnectors] = useState([]);
+    const [copiedWebhook, setCopiedWebhook] = useState(false);
 
     const channelsKey = useMemo(
         () => keys.find(k => k.key === CHANNELS_KEY),
+        [keys]
+    );
+    const selectedConnectorId = useMemo(
+        () => keys.find(k => k.key === TG_CONNECTOR_KEY)?.value || '',
         [keys]
     );
 
     useEffect(() => {
         setSelectedChannels(parseSelectedChannels(channelsKey?.value));
     }, [channelsKey?.value]);
+
+    // Load Telegram bot connectors
+    useEffect(() => {
+        api.getSavedConnectors()
+            .then(all => setTgConnectors((all || []).filter(c => c.type === 'telegram_bot')))
+            .catch(() => {});
+    }, []);
 
     const keyMap = useMemo(() => toKeyMap(keys), [keys]);
     const generatedLinks = useMemo(
@@ -143,13 +173,31 @@ export function EnvironmentPanel({ embedded = false }) {
         setLinkCounts(prev => ({ ...prev, [channelId]: (prev[channelId] || 1) + 1 }));
     };
 
-    const copyToClipboard = async (text) => {
+    const copyToClipboard = async (text, onDone) => {
         try {
             await navigator.clipboard.writeText(text);
+            if (onDone) onDone();
         } catch {
             // no-op
         }
     };
+
+    const handleSelectTgConnector = async (connectorId) => {
+        await upsertKey(TG_CONNECTOR_KEY, connectorId, 'Telegram Bot Connector', false);
+        // If connector has a username in its config, auto-fill TELEGRAM_BOT_USERNAME
+        const connector = tgConnectors.find(c => c.id === connectorId);
+        if (connector?.config?.username) {
+            const existing = keys.find(k => k.key === 'TELEGRAM_BOT_USERNAME');
+            if (!existing?.value) {
+                await upsertKey('TELEGRAM_BOT_USERNAME', connector.config.username, 'Telegram Bot Username', false);
+            }
+        }
+    };
+
+    const webhookInfo = useMemo(
+        () => (bot && selectedChannels.includes('webhook') ? buildWebhookInfo(bot) : null),
+        [bot, selectedChannels]
+    );
 
     return (
         <div className={embedded
@@ -167,16 +215,37 @@ export function EnvironmentPanel({ embedded = false }) {
 
                     <div className="space-y-1.5 pt-1">
                         {CHANNEL_PRESETS.map(channel => (
-                            <label key={channel.id} className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
-                                <input
-                                    type="checkbox"
-                                    checked={selectedChannels.includes(channel.id)}
-                                    onChange={() => handleToggleChannel(channel.id)}
-                                    disabled={isApplyingChannels}
-                                    className="accent-brand"
-                                />
-                                <span>{channel.label}</span>
-                            </label>
+                            <div key={channel.id}>
+                                <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={selectedChannels.includes(channel.id)}
+                                        onChange={() => handleToggleChannel(channel.id)}
+                                        disabled={isApplyingChannels}
+                                        className="accent-brand"
+                                    />
+                                    <span>{channel.label}</span>
+                                </label>
+                                {/* Telegram connector picker */}
+                                {channel.id === 'telegram' && selectedChannels.includes('telegram') && tgConnectors.length > 0 && (
+                                    <div className="ml-5 mt-1.5">
+                                        <div className="text-[11px] text-gray-400 mb-1">Telegram Bot конектор:</div>
+                                        <select
+                                            value={selectedConnectorId}
+                                            onChange={e => handleSelectTgConnector(e.target.value)}
+                                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-brand"
+                                        >
+                                            <option value="">— вибрати конектор —</option>
+                                            {tgConnectors.map(c => (
+                                                <option key={c.id} value={c.id}>{c.name}</option>
+                                            ))}
+                                        </select>
+                                        {selectedConnectorId && (
+                                            <div className="text-[10px] text-emerald-400 mt-1">✓ Токен береться з конектора</div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
                         ))}
                     </div>
 

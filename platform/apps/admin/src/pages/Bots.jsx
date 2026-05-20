@@ -31,18 +31,36 @@ function slugify(value) {
         .slice(0, 100);
 }
 
+const FILTER_STORAGE_KEY = 'botsListFilters';
+
+function loadSavedFilters() {
+    try {
+        const raw = sessionStorage.getItem(FILTER_STORAGE_KEY);
+        if (raw) return JSON.parse(raw);
+    } catch { /* ignore */ }
+    return null;
+}
+
 export function Bots() {
+    const savedFilters = loadSavedFilters();
     const [projects, setProjects] = useState([]);
     const [rows, setRows] = useState([]);
-    const [projectFilter, setProjectFilter] = useState('all');
-    const [searchQuery, setSearchQuery] = useState('');
-    const [nameSort, setNameSort] = useState('asc');
+    const [projectFilter, setProjectFilter] = useState(savedFilters?.projectFilter ?? 'all');
+    const [searchQuery, setSearchQuery] = useState(savedFilters?.searchQuery ?? '');
+    const [nameSort, setNameSort] = useState(savedFilters?.nameSort ?? 'asc');
     const [loading, setLoading] = useState(true);
     const [createModalOpen, setCreateModalOpen] = useState(false);
     const [creating, setCreating] = useState(false);
     const [createError, setCreateError] = useState('');
     const [createForm, setCreateForm] = useState({ projectId: '', name: '', slug: '', description: '' });
     const navigate = useNavigate();
+
+    // Persist filters to sessionStorage whenever they change
+    useEffect(() => {
+        try {
+            sessionStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify({ projectFilter, searchQuery, nameSort }));
+        } catch { /* ignore */ }
+    }, [projectFilter, searchQuery, nameSort]);
 
     useEffect(() => {
         api.getProjects()

@@ -30,10 +30,33 @@ function getBaseUrl() {
     return (process.env.PUBLIC_BASE_URL || process.env.APP_BASE_URL || 'https://flows.fineko.space').replace(/\/$/, '');
 }
 
+function isValidTelegramToken(val) {
+    return typeof val === 'string' && /^\d+:[A-Za-z0-9_-]{20,}$/.test(val.trim());
+}
+
+async function resolveTelegramToken(keyMap) {
+    // 1. Try connector reference
+    const connectorId = keyMap.TELEGRAM_CONNECTOR_ID;
+    if (connectorId) {
+        try {
+            const connector = await db.savedConnector.findUnique({ where: { id: connectorId }, select: { config: true } });
+            const t = connector?.config?.token;
+            if (isValidTelegramToken(t)) return t.trim();
+        } catch { /* ignore */ }
+    }
+    // 2. Direct key
+    const direct = keyMap.TELEGRAM_BOT_TOKEN;
+    if (isValidTelegramToken(direct)) return direct.trim();
+    // 3. Global env
+    const envVal = process.env.TELEGRAM_BOT_TOKEN;
+    if (isValidTelegramToken(envVal)) return envVal.trim();
+    return null;
+}
+
 async function syncTelegram(botId, keyMap) {
-    const token = keyMap.TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
+    const token = await resolveTelegramToken(keyMap);
     if (!token) {
-        return { ok: false, skipped: true, reason: 'TELEGRAM_BOT_TOKEN missing' };
+        return { ok: false, skipped: true, reason: 'TELEGRAM_BOT_TOKEN missing or invalid' };
     }
 
     const secret = keyMap.TELEGRAM_WEBHOOK_SECRET || process.env.TELEGRAM_WEBHOOK_SECRET || null;

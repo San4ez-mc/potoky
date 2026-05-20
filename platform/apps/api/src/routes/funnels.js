@@ -2,12 +2,17 @@
 
 const { Router } = require('express');
 const { z } = require('zod');
+const path = require('path');
+const fs = require('fs');
 const { db } = require('@platform/db');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const { authMiddleware } = require('../middleware/auth');
 const { validateParams } = require('../middleware/validateParams');
 const { NotFoundError } = require('@platform/errors');
 const { syncChannelsForBot } = require('../services/channelSync');
+
+const UPLOADS_DIR = process.env.BOT_FILES_DIR
+    || path.join(__dirname, '..', '..', '..', '..', 'uploads', 'bot-files');
 
 const router = Router();
 router.use(authMiddleware);
@@ -400,6 +405,36 @@ router.post('/:botId/check-prerequisites',
                 suggestedBot: prerequisites.onFail?.suggest_bot || null,
             },
         });
+    })
+);
+
+// POST /api/funnels/:botId/upload-file — upload a static file for a sendFile node
+// Body: { filename: 'name.pdf', data: '<base64>' }
+router.post('/:botId/upload-file',
+    validateParams({ params: z.object({ botId: z.string().uuid() }) }),
+    asyncHandler(async (req, res) => {
+        const { botId } = req.params;
+        const { filename, data } = req.body;
+
+        if (!filename || !data) {
+            return res.status(400).json({ ok: false, error: { message: 'filename and data are required' } });
+        }
+
+        const safeName = path.basename(filename).replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 200);
+        const ts = Date.now();
+        const storedName = `${ts}-${safeName}`;
+
+        const botDir = path.join(UPLOADS_DIR, botId);
+        fs.mkdirSync(botDir, { recursive: true });
+
+        const filePath = path.join(botDir, storedName);
+        const buffer = Buffer.from(data.replace(/^data:[^;]+;base64,/, ''), 'base64');
+        fs.writeFileSync(filePath, buffer);
+
+        const baseUrl = process.env.PUBLIC_BASE_URL || process.env.APP_BASE_URL || 'https://flows.fineko.space';
+        const fileUrl = `${baseUrl}/bot-files/${botId}/${storedName}`;
+
+        res.json({ ok: true, data: { fileUrl, fileName: safeName, storedName } });
     })
 );
 

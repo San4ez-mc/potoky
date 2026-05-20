@@ -69,20 +69,30 @@ function isValidTelegramToken(val) {
 }
 
 async function getBotToken(botId) {
-    const row = await db.funnelKey.findUnique({
-        where: { botId_key: { botId, key: 'TELEGRAM_BOT_TOKEN' } },
-        select: { value: true },
+    const keys = await db.funnelKey.findMany({
+        where: { botId, key: { in: ['TELEGRAM_CONNECTOR_ID', 'TELEGRAM_BOT_TOKEN'] } },
+        select: { key: true, value: true },
     });
-    const dbValue = row?.value?.trim() || null;
-    if (isValidTelegramToken(dbValue)) return dbValue;
+    const keyMap = Object.fromEntries(keys.map(k => [k.key, k.value]));
 
-    // Fallback to global env token (e.g. when bot reuses the main bot token)
-    const envValue = process.env.TELEGRAM_BOT_TOKEN?.trim() || null;
-    if (isValidTelegramToken(envValue)) {
-        logger.debug('[platformBotHandler] Using global TELEGRAM_BOT_TOKEN for bot', { botId });
-        return envValue;
+    // 1. Connector reference
+    const connectorId = keyMap.TELEGRAM_CONNECTOR_ID;
+    if (connectorId) {
+        try {
+            const connector = await db.savedConnector.findUnique({ where: { id: connectorId }, select: { config: true } });
+            const t = connector?.config?.token;
+            if (isValidTelegramToken(t)) return t.trim();
+        } catch { /* ignore */ }
     }
-
+    // 2. Direct key in funnelKey
+    const directVal = keyMap.TELEGRAM_BOT_TOKEN?.trim();
+    if (isValidTelegramToken(directVal)) return directVal;
+    // 3. Global env
+    const envVal = process.env.TELEGRAM_BOT_TOKEN?.trim();
+    if (isValidTelegramToken(envVal)) {
+        logger.debug('[platformBotHandler] Using global TELEGRAM_BOT_TOKEN for bot', { botId });
+        return envVal;
+    }
     return null;
 }
 
@@ -294,7 +304,31 @@ async function handlePlatformBotUpdate(botId, update) {
 
     for (const msg of newMessages) {
         try {
-            await sendTelegramMessage(token, chatId, msg.content);
+            const meta = msg.metadata || {};
+            const attachment = meta.attachment;
+
+            if (attachment?.type === 'document' && attachment.url) {
+                await tgRequest(token, 'sendDocument', {
+                    chat_id: chatId,
+                    document: attachment.url,
+                    caption: attachment.caption || msg.content || undefined,
+                    parse_mode: 'HTML',
+                });
+            } else if (attachment?.type === 'photo' && attachment.url) {
+                if (attachment.url.startsWith('http')) {
+                    await tgRequest(token, 'sendPhoto', {
+                        chat_id: chatId,
+                        photo: attachment.url,
+                        caption: attachment.caption || undefined,
+                        parse_mode: 'HTML',
+                    });
+                } else {
+                    // base64 or data URL — fallback to text
+                    await sendTelegramMessage(token, chatId, attachment.caption || msg.content || '📸');
+                }
+            } else {
+                await sendTelegramMessage(token, chatId, msg.content);
+            }
         } catch (err) {
             logger.error('[platformBotHandler] Failed to send message', {
                 sessionId: session.id, msgId: msg.id, error: err.message,

@@ -61,20 +61,21 @@ router.post('/telegram',
     })
 );
 
-// POST /webhook/telegram/:botId — bot-scoped webhook endpoint
+// POST /webhook/telegram/:botId — bot-scoped webhook endpoint (platform flow bots)
 router.post('/telegram/:botId',
     verifyTelegramSecretForBot,
     asyncHandler(async (req, res) => {
         const update = req.body;
+        const botId = req.params.botId;
         res.json({ ok: true });
 
         setImmediate(async () => {
             try {
-                const { handleTelegramUpdate } = require('../../../../projects/finance-course/src/telegramHandler');
-                await handleTelegramUpdate(update);
+                const { handlePlatformBotUpdate } = require('../services/platformBotHandler');
+                await handlePlatformBotUpdate(botId, update);
             } catch (error) {
                 logger.error('Telegram webhook handler failed (bot-scoped)', {
-                    botId: req.params.botId,
+                    botId,
                     error: error.message,
                     stack: error.stack,
                 });

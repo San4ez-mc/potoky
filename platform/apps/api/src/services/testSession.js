@@ -1775,4 +1775,5 @@ module.exports = {
     sendTestMessage,
     getTestSessionState,
     endTestSession,
+    executeFlowStep,
 };

@@ -63,12 +63,27 @@ async function sendTelegramMessage(token, chatId, text, extra = {}) {
 // DB helpers
 // ---------------------------------------------------------------------------
 
+// Telegram token format: digits:alphanumeric (e.g. 123456789:AABBcc...)
+function isValidTelegramToken(val) {
+    return typeof val === 'string' && /^\d+:[A-Za-z0-9_-]{20,}$/.test(val.trim());
+}
+
 async function getBotToken(botId) {
     const row = await db.funnelKey.findUnique({
         where: { botId_key: { botId, key: 'TELEGRAM_BOT_TOKEN' } },
         select: { value: true },
     });
-    return row?.value || null;
+    const dbValue = row?.value?.trim() || null;
+    if (isValidTelegramToken(dbValue)) return dbValue;
+
+    // Fallback to global env token (e.g. when bot reuses the main bot token)
+    const envValue = process.env.TELEGRAM_BOT_TOKEN?.trim() || null;
+    if (isValidTelegramToken(envValue)) {
+        logger.debug('[platformBotHandler] Using global TELEGRAM_BOT_TOKEN for bot', { botId });
+        return envValue;
+    }
+
+    return null;
 }
 
 async function findOrCreateUser(from, botId) {

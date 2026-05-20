@@ -25,6 +25,32 @@ router.get('/:id',
     })
 );
 
+// PATCH /api/bots/:id — update bot name / description / goal
+router.patch('/:id',
+    validateParams({
+        params: z.object({ id: z.string().uuid() }),
+        body: z.object({
+            name: z.string().min(1).max(255).optional(),
+            description: z.string().optional(),
+            goal: z.string().optional(),
+        }),
+    }),
+    asyncHandler(async (req, res) => {
+        const bot = await db.bot.findUnique({ where: { id: req.params.id } });
+        if (!bot) throw new NotFoundError('Bot', req.params.id);
+
+        const updated = await db.bot.update({
+            where: { id: req.params.id },
+            data: {
+                ...(req.body.name !== undefined && { name: req.body.name }),
+                ...(req.body.description !== undefined && { description: req.body.description }),
+                ...(req.body.goal !== undefined && { goal: req.body.goal }),
+            },
+        });
+        res.json({ ok: true, data: updated });
+    })
+);
+
 // GET /api/bots/:id/sessions
 router.get('/:id/sessions',
     validateParams({

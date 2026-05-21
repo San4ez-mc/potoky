@@ -385,13 +385,28 @@ export function FunnelEditor() {
                     {isRightPanelOpen && (
                         <div className="absolute inset-y-0 right-0 z-20 w-[320px] max-w-[92vw] bg-gray-950 border-l border-gray-800 flex flex-col overflow-hidden shadow-2xl shadow-black/40 xl:static xl:z-auto xl:w-80 xl:max-w-none xl:shadow-none">
                             <div className="px-4 py-3 border-b border-gray-800 flex items-start justify-between gap-3">
-                                <div>
-                                    <div className="text-sm font-semibold text-white">{selectedNode ? 'Налаштування ноди' : 'Панель ноди'}</div>
-                                    <div className="text-xs text-gray-500 font-mono">{selectedNode?.id || 'Виберіть ноду на полотні'}</div>
+                                <div className="min-w-0">
+                                    {selectedNode ? (
+                                        <>
+                                            <div className="text-sm font-semibold text-white truncate">
+                                                {selectedNode.data?.label || selectedNode.type}
+                                            </div>
+                                            <div className="text-xs text-gray-500 font-mono flex items-center gap-1.5">
+                                                <span className="text-gray-600">{selectedNode.type}</span>
+                                                <span className="text-gray-700">·</span>
+                                                <span className="truncate">{selectedNode.id}</span>
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <div className="text-sm font-semibold text-white">Панель ноди</div>
+                                            <div className="text-xs text-gray-500">Виберіть ноду на полотні</div>
+                                        </>
+                                    )}
                                 </div>
                                 <button
                                     onClick={() => setRightPanelOpen(false)}
-                                    className="h-8 w-8 rounded-lg border border-gray-800 bg-gray-900 text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+                                    className="h-8 w-8 shrink-0 rounded-lg border border-gray-800 bg-gray-900 text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
                                     title="Закрити праву панель"
                                 >
                                     ✕
@@ -405,7 +420,7 @@ export function FunnelEditor() {
                                     <div className="h-full flex items-center justify-center px-6 text-center">
                                         <div>
                                             <div className="text-sm text-gray-300">Клікни на ноду, щоб відкрити її налаштування</div>
-                                            <div className="text-xs text-gray-500 mt-2">Панель лишається закритою, доки не вибереш ноду або не відкриєш її вручну.</div>
+                                            <div className="text-xs text-gray-500 mt-2">З'єднуй ноди — тягни від нижнього handle до верхнього іншої ноди.</div>
                                         </div>
                                     </div>
                                 )}

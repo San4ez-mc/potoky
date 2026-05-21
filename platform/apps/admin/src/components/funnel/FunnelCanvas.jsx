@@ -72,13 +72,23 @@ export function FunnelCanvas({ onNodeClick }) {
                 fitView
                 fitViewOptions={{ padding: 0.2 }}
                 deleteKeyCode="Delete"
+                connectionRadius={40}
+                snapToGrid
+                snapGrid={[15, 15]}
+                defaultEdgeOptions={{ animated: true, style: { stroke: '#6366f1', strokeWidth: 2 } }}
                 className="bg-gray-950"
+                style={{ cursor: 'default' }}
             >
                 <Background color="#1f2937" gap={20} size={1} />
                 <Controls />
                 <MiniMap
                     nodeColor={(n) => {
-                        const colors = { start: '#059669', message: '#1d4ed8', claude: '#7c3aed', js: '#b45309', condition: '#c2410c', connector: '#0e7490' };
+                        const colors = {
+                            start: '#059669', message: '#1d4ed8', claude: '#7c3aed',
+                            js: '#b45309', condition: '#c2410c', connector: '#0e7490',
+                            saveFile: '#be185d', loadFile: '#4338ca', wait: '#4b5563',
+                            wait_payment: '#65a30d', httpRequest: '#0f766e', tag: '#b91c1c',
+                        };
                         return colors[n.type] || '#374151';
                     }}
                     maskColor="#03070D88"

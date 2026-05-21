@@ -49,11 +49,12 @@ function useNodeStats(nodeId) {
 }
 
 // ─── Base node wrapper ─────────────────────────────────────────────────────────
-function BaseNode({ id, selected, color, icon, label, children, hasInput = true, hasOutput = true }) {
+function BaseNode({ id, selected, color, icon, label, description, children, hasInput = true, hasOutput = true }) {
     return (
         <div
+            title={description || undefined}
             className={clsx(
-                'min-w-[220px] max-w-[320px] rounded-xl border-2 bg-gray-900 shadow-xl transition-all cursor-pointer',
+                'min-w-[220px] max-w-[320px] rounded-xl border-2 bg-gray-900 shadow-xl transition-all cursor-pointer select-none group',
                 selected ? 'border-brand shadow-brand/20' : 'border-gray-700 hover:border-gray-500 hover:shadow-gray-600/20'
             )}
         >
@@ -71,14 +72,14 @@ function BaseNode({ id, selected, color, icon, label, children, hasInput = true,
                 <Handle
                     type="target"
                     position={Position.Top}
-                    className="!w-3 !h-3 !bg-gray-600 !border-2 !border-gray-400"
+                    className="!w-3.5 !h-3.5 !bg-gray-600 !border-2 !border-gray-400 hover:!bg-gray-300 hover:!scale-125 transition-transform"
                 />
             )}
             {hasOutput && (
                 <Handle
                     type="source"
                     position={Position.Bottom}
-                    className="!w-3 !h-3 !bg-brand !border-2 !border-brand-light"
+                    className="!w-3.5 !h-3.5 !bg-brand !border-2 !border-brand-light hover:!bg-white hover:!scale-125 transition-transform"
                 />
             )}
         </div>
@@ -87,17 +88,19 @@ function BaseNode({ id, selected, color, icon, label, children, hasInput = true,
 
 // ─── Start Node ────────────────────────────────────────────────────────────────
 export const StartNode = memo(({ id, selected, data }) => (
-    <BaseNode id={id} selected={selected} color="bg-emerald-700" icon="🚀" label="Start" hasInput={false}>
+    <BaseNode id={id} selected={selected} color="bg-emerald-700" icon="🚀" label={data.label || 'Start'} description={data.description} hasInput={false}>
         {data.trigger && <span className="text-emerald-400">{data.trigger}</span>}
+        {data.trigger === 'webhook' && data.bodySchema && (
+            <div className="text-emerald-300 text-[10px] mt-0.5">📬 POST webhook</div>
+        )}
     </BaseNode>
 ));
 
 // ─── Message Node ──────────────────────────────────────────────────────────────
 export const MessageNode = memo(({ id, selected, data }) => {
-    // Support both `buttons` (URL inline KB, [[{text,url}]]) and legacy `keyboard` ([{text,callback}])
     const btnCount = data.buttons?.flat().length || data.keyboard?.length || 0;
     return (
-        <BaseNode id={id} selected={selected} color="bg-blue-700" icon="💬" label={data.label || 'Повідомлення'}>
+        <BaseNode id={id} selected={selected} color="bg-blue-700" icon="💬" label={data.label || 'Повідомлення'} description={data.description}>
             {data.text && (
                 <p className="line-clamp-3 text-gray-300 whitespace-pre-wrap break-words">{data.text}</p>
             )}
@@ -125,7 +128,7 @@ export const ClaudeNode = memo(({ id, selected, data }) => {
     };
 
     return (
-        <BaseNode id={id} selected={selected} color="bg-violet-700" icon="🧠" label={data.label || 'Claude AI'}>
+        <BaseNode id={id} selected={selected} color="bg-violet-700" icon="🧠" label={data.label || 'Claude AI'} description={data.description}>
             <div className="mb-1 flex gap-1 flex-wrap">
                 {data.mode === 'dialog' ? (
                     <span className="inline-flex items-center rounded bg-violet-900/70 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-200">💬 діалог</span>
@@ -152,7 +155,7 @@ export const ClaudeNode = memo(({ id, selected, data }) => {
 
 // ─── JS Node ───────────────────────────────────────────────────────────────────
 export const JsNode = memo(({ id, selected, data }) => (
-    <BaseNode id={id} selected={selected} color="bg-yellow-700" icon="⚡" label={data.label || 'JavaScript'}>
+    <BaseNode id={id} selected={selected} color="bg-yellow-700" icon="⚡" label={data.label || 'JavaScript'} description={data.description}>
         {data.code && (
             <code className="line-clamp-2 font-mono text-yellow-300 text-[11px]">{data.code}</code>
         )}
@@ -241,8 +244,13 @@ export const ConnectorNode = memo(({ id, selected, data }) => (
         color="bg-cyan-700"
         icon={data.connectorType === 'wayforpay' ? '💳' : (data.connectorIcon || '🔌')}
         label={data.label || data.connectorType || 'Конектор'}
+        description={data.description}
     >
-        {data.connectorType && <div className="text-cyan-400 text-[11px]">{data.connectorType}</div>}
+        {/* Show connector name if available, otherwise type */}
+        {data.savedConnectorName
+            ? <div className="text-cyan-300 text-[11px] font-medium">📁 {data.savedConnectorName}</div>
+            : data.connectorType && <div className="text-cyan-400 text-[11px]">{data.connectorType}</div>
+        }
         {data.action && <div className="text-cyan-300 text-[11px]">{data.action}</div>}
         {data.outputVar && <div className="text-cyan-200 text-[11px]">→ {data.outputVar}</div>}
     </BaseNode>
@@ -250,15 +258,15 @@ export const ConnectorNode = memo(({ id, selected, data }) => (
 
 // ─── Save File Node ────────────────────────────────────────────────────────────
 export const SaveFileNode = memo(({ id, selected, data }) => (
-    <BaseNode id={id} selected={selected} color="bg-pink-700" icon="💾" label={data.label || 'Зберегти файл'}>
+    <BaseNode id={id} selected={selected} color="bg-pink-700" icon="💾" label={data.label || 'Зберегти файл'} description={data.description}>
         {data.fileType && <div className="text-pink-400">{data.fileType}</div>}
     </BaseNode>
 ));
 
 // ─── Wait Node ─────────────────────────────────────────────────────────────────
 export const WaitNode = memo(({ id, selected, data }) => (
-    <BaseNode id={id} selected={selected} color="bg-gray-600" icon="⏳" label={data.label || 'Очікування'}>
-        {data.duration && <div className="text-gray-300">{data.duration}</div>}
+    <BaseNode id={id} selected={selected} color="bg-gray-600" icon="⏳" label={data.label || 'Очікування'} description={data.description}>
+        {(data.duration || data.unit) && <div className="text-gray-300">{data.duration} {data.unit || ''}</div>}
         {data.hint && <p className="text-gray-400 text-[11px]">{data.hint}</p>}
     </BaseNode>
 ));
@@ -299,7 +307,7 @@ export const WaitPaymentNode = memo(({ id, selected, data }) => (
 
 // ─── Load File Node (Gap #1) ────────────────────────────────────────────────────
 export const LoadFileNode = memo(({ id, selected, data }) => (
-    <BaseNode id={id} selected={selected} color="bg-indigo-700" icon="📂" label={data.label || 'Завантажити файл'}>
+    <BaseNode id={id} selected={selected} color="bg-indigo-700" icon="📂" label={data.label || 'Завантажити файл'} description={data.description}>
         {data.fileType && <div className="text-indigo-400">{data.fileType}</div>}
         {data.onMissing && <div className="text-indigo-300 text-[11px]">→ {data.onMissing}</div>}
     </BaseNode>
@@ -307,7 +315,7 @@ export const LoadFileNode = memo(({ id, selected, data }) => (
 
 // ─── Tag Node (new) ─────────────────────────────────────────────────────────────
 export const TagNode = memo(({ id, selected, data }) => (
-    <BaseNode id={id} selected={selected} color="bg-red-700" icon="🏷️" label={data.label || 'Тег'}>
+    <BaseNode id={id} selected={selected} color="bg-red-700" icon="🏷️" label={data.label || 'Тег'} description={data.description}>
         {data.tag && <div className="text-red-400">{data.tag}</div>}
         {data.action && <div className="text-red-300 text-[11px]">{data.action}</div>}
     </BaseNode>
@@ -355,7 +363,7 @@ export const ABTestNode = memo(({ id, selected, data }) => (
 
 // ─── Generate Document Node ────────────────────────────────────────────────────
 export const GenerateDocumentNode = memo(({ id, selected, data }) => (
-    <BaseNode id={id} selected={selected} color="bg-emerald-700" icon="📄" label={data.label || 'Генерувати документ'}>
+    <BaseNode id={id} selected={selected} color="bg-emerald-700" icon="📄" label={data.label || 'Генерувати документ'} description={data.description}>
         {data.template && <div className="text-emerald-400 text-[11px]">Шаблон: {data.template}</div>}
         {data.sourceVar && <div className="text-emerald-300 text-[11px]">Дані: {data.sourceVar}</div>}
         {data.sendToUser && <div className="text-emerald-300 text-[11px]">✉️ Відправити користувачу</div>}
@@ -364,7 +372,7 @@ export const GenerateDocumentNode = memo(({ id, selected, data }) => (
 
 // ─── HTTP Encode Node ──────────────────────────────────────────────────────────
 export const HttpEncodeNode = memo(({ id, selected, data }) => (
-    <BaseNode id={id} selected={selected} color="bg-cyan-700" icon="🔒" label={data.label || 'Кодування Base64'}>
+    <BaseNode id={id} selected={selected} color="bg-cyan-700" icon="🔒" label={data.label || 'Кодування Base64'} description={data.description}>
         {data.sourceVar && <div className="text-cyan-400 text-[11px]">Джерело: {data.sourceVar}</div>}
         {data.outputVar && <div className="text-cyan-300 text-[11px]">→ {data.outputVar}</div>}
     </BaseNode>
@@ -372,29 +380,30 @@ export const HttpEncodeNode = memo(({ id, selected, data }) => (
 
 // ─── Fetch Telegram Profile Node ──────────────────────────────────────────────
 export const FetchTelegramProfileNode = memo(({ id, selected, data }) => (
-    <BaseNode id={id} selected={selected} color="bg-sky-700" icon="👤" label={data.label || 'TG профіль'}>
+    <BaseNode id={id} selected={selected} color="bg-sky-700" icon="👤" label={data.label || 'TG профіль'} description={data.description}>
         <div className="text-sky-300 text-[11px]">→ tg_bio, tg_photo_url</div>
     </BaseNode>
 ));
 
 // ─── HTTP Request Node ─────────────────────────────────────────────────────────
 export const HttpRequestNode = memo(({ id, selected, data }) => (
-    <BaseNode id={id} selected={selected} color="bg-teal-700" icon="🌐" label={data.label || 'HTTP запит'}>
-        {data.url && <div className="text-teal-400 text-[11px] truncate">{data.url}</div>}
-        {data.method && <div className="text-teal-300 text-[11px]">{data.method}</div>}
+    <BaseNode id={id} selected={selected} color="bg-teal-700" icon="🌐" label={data.label || 'HTTP запит'} description={data.description}>
+        {data.method && <span className="text-[10px] font-bold text-teal-300 bg-teal-900/50 rounded px-1">{data.method}</span>}
+        {data.url && <div className="text-teal-400 text-[11px] truncate mt-0.5">{data.url}</div>}
+        {data.outputVar && <div className="text-teal-200 text-[11px]">→ {data.outputVar}</div>}
     </BaseNode>
 ));
 
 // ─── Send Photo Node ────────────────────────────────────────────────────────────
 export const SendPhotoNode = memo(({ id, selected, data }) => (
-    <BaseNode id={id} selected={selected} color="bg-pink-700" icon="📸" label={data.label || 'Відправити фото'}>
+    <BaseNode id={id} selected={selected} color="bg-pink-700" icon="📸" label={data.label || 'Відправити фото'} description={data.description}>
         {data.photoVar && <div className="text-pink-400 text-[11px]">Фото: {data.photoVar}</div>}
         {data.caption && <div className="text-pink-300 text-[11px] line-clamp-1">{data.caption}</div>}
     </BaseNode>
 ));
 
 export const SendDocumentNode = memo(({ id, selected, data }) => (
-    <BaseNode id={id} selected={selected} color="bg-fuchsia-700" icon="📎" label={data.label || 'Відправити документ'}>
+    <BaseNode id={id} selected={selected} color="bg-fuchsia-700" icon="📎" label={data.label || 'Відправити документ'} description={data.description}>
         {data.fileType && <div className="text-fuchsia-300 text-[11px]">Тип: {data.fileType}</div>}
         {data.fileVar && <div className="text-fuchsia-200 text-[11px]">Змінна: {data.fileVar}</div>}
     </BaseNode>
@@ -402,8 +411,8 @@ export const SendDocumentNode = memo(({ id, selected, data }) => (
 
 // ─── Notify Admin Node ─────────────────────────────────────────────────────────
 export const NotifyAdminNode = memo(({ id, selected, data }) => (
-    <BaseNode id={id} selected={selected} color="bg-amber-700" icon="📣" label={data.label || 'Сповістити адміна'}>
-        {data.telegramId && <div className="text-amber-300 text-[11px]">ID: {data.telegramId}</div>}
+    <BaseNode id={id} selected={selected} color="bg-amber-700" icon="📣" label={data.label || 'Сповістити адміна'} description={data.description}>
+        {data.targetKey && <div className="text-amber-300 text-[11px]">→ {data.targetKey}</div>}
         {data.notifyUser && <div className="text-amber-200 text-[11px]">+ Повідомити студента</div>}
     </BaseNode>
 ));
@@ -433,23 +442,68 @@ export const NODE_TYPES = {
 
 // ─── Node palette items (for drag sidebar) ────────────────────────────────────
 export const NODE_PALETTE = [
-    { type: 'start', icon: '🚀', label: 'Start', color: 'border-emerald-700', defaultData: { trigger: '/start' } },
-    { type: 'message', icon: '💬', label: 'Повідомлення', color: 'border-blue-700', defaultData: { text: 'Привіт!', keyboard: [] } },
-    { type: 'claude', icon: '🧠', label: 'Claude AI', color: 'border-violet-700', defaultData: { systemPrompt: '', model: 'claude-haiku-4-5', temperature: 0.7, maxTokens: 1000, mode: 'single', exitCondition: 'json_output' } },
-    { type: 'js', icon: '⚡', label: 'JavaScript', color: 'border-yellow-700', defaultData: { code: '// your code\nreturn context;' } },
-    { type: 'condition', icon: '🔀', label: 'Умова', color: 'border-orange-700', defaultData: { condition: 'context.score > 50' } },
-    { type: 'connector', icon: '🔌', label: 'Конектор', color: 'border-cyan-700', defaultData: {} },
-    { type: 'saveFile', icon: '💾', label: 'Зберегти файл', color: 'border-pink-700', defaultData: { fileType: 'report' } },
-    { type: 'loadFile', icon: '📂', label: 'Завантажити файл', color: 'border-indigo-700', defaultData: { fileType: '', onMissing: 'ask', outputVar: 'context.file' } },
-    { type: 'wait', icon: '⏳', label: 'Очікування', color: 'border-gray-600', defaultData: { duration: '5m', hint: '' } },
-    { type: 'wait_payment', icon: '💳', label: 'Очікування оплати', color: 'border-lime-700', defaultData: { timeoutHours: 24 } },
-    { type: 'httpEncode', icon: '🔒', label: 'Кодування Base64', color: 'border-cyan-700', defaultData: { sourceVar: 'context.data', outputVar: 'context.encoded' } },
-    { type: 'httpRequest', icon: '🌐', label: 'HTTP запит', color: 'border-teal-700', defaultData: { url: '', method: 'GET', outputVar: 'context.response' } },
-    { type: 'sendPhoto', icon: '📸', label: 'Відправити фото', color: 'border-pink-700', defaultData: { photoVar: 'context.photo', caption: '' } },
-    { type: 'sendDocument', icon: '📎', label: 'Відправити документ', color: 'border-fuchsia-700', defaultData: { fileType: '', fileVar: '', caption: '' } },
-    { type: 'tag', icon: '🏷️', label: 'Тег', color: 'border-red-700', defaultData: { tag: '', action: 'add' } },
-    { type: 'abtest', icon: '🧪', label: 'A/B тест', color: 'border-purple-700', defaultData: { variantA: '', variantB: '', percentA: 50, percentB: 50 } },
-    { type: 'generateDocument', icon: '📄', label: 'Генерувати документ', color: 'border-emerald-700', defaultData: { template: 'student_profile', sourceVar: 'context.onboarding_result', filename: 'document.docx', sendToUser: true } },
-    { type: 'fetchTelegramProfile', icon: '👤', label: 'TG профіль', color: 'border-sky-700', defaultData: {} },
-    { type: 'notifyAdmin', icon: '📣', label: 'Сповістити адміна', color: 'border-amber-700', defaultData: { telegramId: '{{env.ADMIN_TELEGRAM_ID}}', message: '💰 Нова оплата!', notifyUser: true, userMessage: '✅ Оплату отримано! Дякую, що обрав курс.' } },
+    // ── Тригери ──
+    { type: 'start', icon: '🚀', label: 'Start', color: 'border-emerald-700', group: 'Тригери',
+        description: 'Стартова нода — починає виконання воронки за тригером (/start, webhook, etc.)',
+        defaultData: { label: 'Start', trigger: '/start' } },
+    // ── Повідомлення ──
+    { type: 'message', icon: '💬', label: 'Повідомлення', color: 'border-blue-700', group: 'Повідомлення',
+        description: 'Відправляє текстове повідомлення з опційними кнопками',
+        defaultData: { label: 'Повідомлення', text: 'Привіт!', keyboard: [] } },
+    { type: 'sendPhoto', icon: '📸', label: 'Відправити фото', color: 'border-pink-700', group: 'Повідомлення',
+        description: 'Відправляє зображення з опційним підписом',
+        defaultData: { label: 'Відправити фото', photoVar: 'context.photo', caption: '' } },
+    { type: 'sendDocument', icon: '📎', label: 'Відправити документ', color: 'border-fuchsia-700', group: 'Повідомлення',
+        description: 'Відправляє файл (PDF, Excel, zip тощо)',
+        defaultData: { label: 'Відправити документ', fileType: '', fileVar: '', caption: '' } },
+    { type: 'notifyAdmin', icon: '📣', label: 'Сповістити адміна', color: 'border-amber-700', group: 'Повідомлення',
+        description: 'Відправляє повідомлення адміну в Telegram',
+        defaultData: { label: 'Сповістити адміна', targetKey: 'ADMIN_TELEGRAM_ID', message: '💰 Нова оплата!', notifyUser: true, userMessage: '✅ Оплату отримано! Дякую, що обрав курс.' } },
+    // ── ШІ ──
+    { type: 'claude', icon: '🧠', label: 'Claude AI', color: 'border-violet-700', group: 'ШІ',
+        description: 'Виклик Claude AI — одиночний запит або діалог з умовою виходу',
+        defaultData: { label: 'Claude AI', systemPrompt: '', model: 'claude-haiku-4-5', temperature: 0.7, maxTokens: 1000, mode: 'single', exitCondition: 'json_output' } },
+    { type: 'generateDocument', icon: '📄', label: 'Генерувати документ', color: 'border-emerald-700', group: 'ШІ',
+        description: 'Генерує DOCX-документ за шаблоном з даними сесії',
+        defaultData: { label: 'Генерувати документ', template: 'student_profile', sourceVar: 'context.onboarding_result', filename: 'document.docx', sendToUser: true } },
+    // ── Логіка ──
+    { type: 'condition', icon: '🔀', label: 'Умова', color: 'border-orange-700', group: 'Логіка',
+        description: 'Розгалуження потоку за JS-виразом або кількома умовами',
+        defaultData: { label: 'Умова', condition: 'context.score > 50' } },
+    { type: 'abtest', icon: '🧪', label: 'A/B тест', color: 'border-purple-700', group: 'Логіка',
+        description: 'Розподіляє користувачів між двома варіантами у заданому відсотку',
+        defaultData: { label: 'A/B тест', variantA: 'Варіант А', variantB: 'Варіант Б', percentA: 50, percentB: 50 } },
+    { type: 'js', icon: '⚡', label: 'JavaScript', color: 'border-yellow-700', group: 'Логіка',
+        description: 'Виконує довільний JavaScript код у контексті сесії',
+        defaultData: { label: 'JavaScript', code: '// your code\nreturn context;' } },
+    // ── Дані та файли ──
+    { type: 'saveFile', icon: '💾', label: 'Зберегти файл', color: 'border-pink-700', group: 'Дані',
+        description: 'Зберігає дані сесії як файл (прив\'язаний до користувача)',
+        defaultData: { label: 'Зберегти файл', fileType: 'report' } },
+    { type: 'loadFile', icon: '📂', label: 'Завантажити файл', color: 'border-indigo-700', group: 'Дані',
+        description: 'Завантажує раніше збережений файл у контекст сесії',
+        defaultData: { label: 'Завантажити файл', fileType: '', onMissing: 'ask', outputVar: 'context.file' } },
+    { type: 'tag', icon: '🏷️', label: 'Тег', color: 'border-red-700', group: 'Дані',
+        description: 'Додає або видаляє тег на профілі користувача',
+        defaultData: { label: 'Тег', tag: '', action: 'add' } },
+    { type: 'fetchTelegramProfile', icon: '👤', label: 'TG профіль', color: 'border-sky-700', group: 'Дані',
+        description: 'Отримує bio та фото профілю Telegram — зберігає в context.tg_bio / context.tg_photo_url',
+        defaultData: { label: 'TG профіль' } },
+    // ── Інтеграції ──
+    { type: 'connector', icon: '🔌', label: 'Конектор', color: 'border-cyan-700', group: 'Інтеграції',
+        description: 'Виклик зовнішнього сервісу через збережений конектор (WayForPay, HeyGen, Replicate тощо)',
+        defaultData: { label: 'Конектор' } },
+    { type: 'httpRequest', icon: '🌐', label: 'HTTP запит', color: 'border-teal-700', group: 'Інтеграції',
+        description: 'Відправляє HTTP запит до будь-якого API (GET/POST/PUT/DELETE)',
+        defaultData: { label: 'HTTP запит', url: '', method: 'POST', outputVar: 'context.response' } },
+    { type: 'httpEncode', icon: '🔒', label: 'Кодування Base64', color: 'border-cyan-700', group: 'Інтеграції',
+        description: 'Кодує змінну контексту в Base64 (для передачі бінарних даних в API)',
+        defaultData: { label: 'Кодування Base64', sourceVar: 'context.data', outputVar: 'context.encoded' } },
+    // ── Очікування ──
+    { type: 'wait', icon: '⏳', label: 'Очікування', color: 'border-gray-600', group: 'Очікування',
+        description: 'Затримка виконання: через N хвилин/годин або до конкретного часу',
+        defaultData: { label: 'Очікування', duration: 5, unit: 'minutes', waitType: 'duration' } },
+    { type: 'wait_payment', icon: '💳', label: 'Очікування оплати', color: 'border-lime-700', group: 'Очікування',
+        description: 'Чекає підтвердження оплати WayForPay — просувається коли wfp_payment_status = approved',
+        defaultData: { label: 'Очікування оплати', timeoutHours: 24 } },
 ];

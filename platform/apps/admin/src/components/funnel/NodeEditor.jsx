@@ -567,6 +567,11 @@ function FetchTelegramProfileNodeEditor() {
 }
 
 function StartNodeEditor({ data, update }) {
+    const bot = useFunnelStore(s => s.bot);
+    const webhookUrl = bot?.slug
+        ? `https://flows.fineko.space/webhook/bot/${bot.slug}`
+        : 'https://flows.fineko.space/webhook/bot/{slug}';
+
     return (
         <div className="space-y-3">
             <Field label="Тригер">
@@ -579,12 +584,44 @@ function StartNodeEditor({ data, update }) {
                     <option value="deeplink">/start з deep link</option>
                     <option value="message">Будь-яке повідомлення</option>
                     <option value="callback">Callback кнопка</option>
+                    <option value="webhook">Webhook (POST запит)</option>
                 </select>
             </Field>
             {data.trigger === 'deeplink' && (
                 <Field label="Deep link параметр">
                     <TextInput value={data.deeplinkParam} onChange={v => update({ deeplinkParam: v })} placeholder="bot21" />
                 </Field>
+            )}
+            {data.trigger === 'webhook' && (
+                <>
+                    <div className="rounded-lg border border-emerald-900 bg-emerald-950/30 px-3 py-2 space-y-1.5">
+                        <div className="text-[10px] text-emerald-400 font-semibold uppercase tracking-wide">Endpoint для запуску воронки</div>
+                        <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-bold text-emerald-300 bg-emerald-900/50 rounded px-1.5 py-0.5">POST</span>
+                            <code className="text-[11px] text-emerald-200 font-mono break-all">{webhookUrl}</code>
+                            <button
+                                onClick={() => navigator.clipboard?.writeText(webhookUrl)}
+                                className="text-gray-400 hover:text-white text-xs shrink-0"
+                                title="Скопіювати URL"
+                            >📋</button>
+                        </div>
+                    </div>
+                    <Field label="Схема тіла запиту (Body Schema)">
+                        <CodeBlock
+                            value={data.bodySchema || '{\n  "param1": "string",\n  "callbackUrl": "string"\n}'}
+                            onChange={v => update({ bodySchema: v })}
+                            language="json"
+                        />
+                        <div className="mt-1 text-[10px] text-gray-500">Опис параметрів POST-запиту (для документації). callbackUrl — URL куди відправити результат.</div>
+                    </Field>
+                    <Field label="Webhook Note (інструкція)">
+                        <TextInput
+                            value={data.webhookNote || ''}
+                            onChange={v => update({ webhookNote: v })}
+                            placeholder="Коментар про те як запустити цю воронку..."
+                        />
+                    </Field>
+                </>
             )}
         </div>
     );
@@ -944,31 +981,45 @@ export function NodeEditor({ embedded = false, onClose }) {
         <div className={embedded
             ? 'h-full flex flex-col overflow-hidden'
             : 'w-80 shrink-0 bg-gray-950 border-l border-gray-800 flex flex-col overflow-hidden'}>
-            {/* Header */}
-            <div className="px-4 py-3 border-b border-gray-800 flex items-start justify-between gap-3">
-                <div>
-                    <div className="text-sm font-semibold text-white capitalize">{type} node</div>
-                    <div className="text-xs text-gray-500 font-mono">{selectedNode.id}</div>
+            {/* Header — only shown when not embedded (embedded panels have their own header in FunnelEditor) */}
+            {!embedded && (
+                <div className="px-4 py-3 border-b border-gray-800 flex items-start justify-between gap-3">
+                    <div>
+                        <div className="text-sm font-semibold text-white capitalize">{type} node</div>
+                        <div className="text-xs text-gray-500 font-mono">{selectedNode.id}</div>
+                    </div>
+                    {onClose && (
+                        <button
+                            onClick={onClose}
+                            className="h-8 w-8 rounded-lg border border-gray-800 bg-gray-900 text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+                            title="Закрити панель"
+                        >
+                            ✕
+                        </button>
+                    )}
                 </div>
-                {onClose && (
-                    <button
-                        onClick={onClose}
-                        className="h-8 w-8 rounded-lg border border-gray-800 bg-gray-900 text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
-                        title="Закрити панель"
-                    >
-                        ✕
-                    </button>
-                )}
-            </div>
+            )}
 
-            {/* Label */}
-            <div className="px-4 py-3 border-b border-gray-800">
-                <label className="text-xs text-gray-400 block mb-1">Назва вузла</label>
-                <input
-                    value={data.label || ''}
-                    onChange={e => update({ label: e.target.value })}
-                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
-                />
+            {/* Label + Description */}
+            <div className="px-4 py-3 border-b border-gray-800 space-y-3">
+                <div>
+                    <label className="text-xs text-gray-400 block mb-1">Назва вузла</label>
+                    <input
+                        value={data.label || ''}
+                        onChange={e => update({ label: e.target.value })}
+                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+                    />
+                </div>
+                <div>
+                    <label className="text-xs text-gray-400 block mb-1">Опис ноди <span className="text-gray-600">(підказка при наведенні)</span></label>
+                    <textarea
+                        value={data.description || ''}
+                        onChange={e => update({ description: e.target.value })}
+                        placeholder="Що робить ця нода в даній воронці..."
+                        rows={2}
+                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-brand resize-none"
+                    />
+                </div>
             </div>
 
             {/* Type-specific editor */}

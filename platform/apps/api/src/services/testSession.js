@@ -470,7 +470,22 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null }) {
 
         if (node.type === 'message') {
             const text = renderTemplate(data.text || data.label || '', scope) || '...';
-            await persistAssistantMessage(session.id, text, { nodeId: node.id, nodeType: node.type });
+            // Render inline keyboard buttons (if any)
+            const rawButtons = Array.isArray(data.buttons) ? data.buttons : [];
+            const renderedButtons = rawButtons
+                .map(row => (Array.isArray(row) ? row : [row])
+                    .map(btn => ({
+                        text: renderTemplate(String(btn.text || btn.label || ''), scope),
+                        ...(btn.url ? { url: renderTemplate(String(btn.url), scope) } : {}),
+                        ...(btn.callback_data ? { callback_data: renderTemplate(String(btn.callback_data), scope) } : {}),
+                    }))
+                    .filter(btn => btn.text))
+                .filter(row => row.length > 0);
+            await persistAssistantMessage(session.id, text, {
+                nodeId: node.id,
+                nodeType: node.type,
+                ...(renderedButtons.length > 0 ? { keyboard: renderedButtons } : {}),
+            });
             lastAssistant = text;
             runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
             continue;
@@ -877,6 +892,23 @@ ${sourceContent || '(немає даних)'}
         }
 
         if (node.type === 'wait') {
+            // Event-driven wait: pauses until a named context key is set to true.
+            // Used for homework-completion gates between lessons.
+            if (data.mode === 'event' && data.eventKey) {
+                const eventKey = String(data.eventKey);
+                if (ctx[eventKey]) {
+                    // Event fired — clear the flag and proceed
+                    delete ctx[eventKey];
+                    runtime.waitEventNodeId = null;
+                    runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
+                    continue;
+                }
+                // Still waiting for event
+                runtime.waitEventNodeId = node.id;
+                runtime.waitingForUser = false;
+                break;
+            }
+
             const toWaitMs = () => {
                 const unitRaw = String(data.unit || 'minutes').toLowerCase();
                 const unit = unitRaw.endsWith('s') ? unitRaw : `${unitRaw}s`;

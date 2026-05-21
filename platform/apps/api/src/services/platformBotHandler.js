@@ -49,12 +49,14 @@ async function sendTelegramMessage(token, chatId, text, extra = {}) {
     }
     if (remaining.length > 0) parts.push(remaining);
 
-    for (const part of parts) {
+    for (let i = 0; i < parts.length; i++) {
+        const isLast = i === parts.length - 1;
         await tgRequest(token, 'sendMessage', {
             chat_id: chatId,
-            text: part,
+            text: parts[i],
             parse_mode: 'HTML',
-            ...extra,
+            // Only attach extra (e.g. reply_markup) to the last part so buttons appear once
+            ...(isLast ? extra : {}),
         });
     }
 }
@@ -244,6 +246,8 @@ async function handlePlatformBotUpdate(botId, update) {
     }
 
     const isStart = text.startsWith('/start');
+    // Extract /start payload (e.g. "/start lesson_1_1" or "/start bot-slug__l2")
+    const startPayload = isStart ? text.slice('/start'.length).trim() : '';
 
     let session;
     let lastMsgId;
@@ -257,6 +261,16 @@ async function handlePlatformBotUpdate(botId, update) {
 
         // Create fresh session
         session = await createNewSession(user.id, botId);
+
+        // If the start payload looks like a lesson slug (e.g. "lesson_1_1"), store it in session context
+        if (startPayload && /^lesson_\d+_\d+$/.test(startPayload)) {
+            const updatedCtx = { ...(session.context || {}), lessonSlug: startPayload };
+            session = await db.session.update({
+                where: { id: session.id },
+                data: { context: updatedCtx },
+            });
+        }
+
         lastMsgId = null; // we want ALL messages created after session creation
 
         logger.info('[platformBotHandler] New session created on /start', {
@@ -306,6 +320,9 @@ async function handlePlatformBotUpdate(botId, update) {
         try {
             const meta = msg.metadata || {};
             const attachment = meta.attachment;
+            const keyboard = Array.isArray(meta.keyboard) && meta.keyboard.length > 0
+                ? { inline_keyboard: meta.keyboard }
+                : null;
 
             if (attachment?.type === 'document' && attachment.url) {
                 await tgRequest(token, 'sendDocument', {
@@ -313,6 +330,7 @@ async function handlePlatformBotUpdate(botId, update) {
                     document: attachment.url,
                     caption: attachment.caption || msg.content || undefined,
                     parse_mode: 'HTML',
+                    ...(keyboard ? { reply_markup: keyboard } : {}),
                 });
             } else if (attachment?.type === 'photo' && attachment.url) {
                 if (attachment.url.startsWith('http')) {
@@ -321,13 +339,16 @@ async function handlePlatformBotUpdate(botId, update) {
                         photo: attachment.url,
                         caption: attachment.caption || undefined,
                         parse_mode: 'HTML',
+                        ...(keyboard ? { reply_markup: keyboard } : {}),
                     });
                 } else {
                     // base64 or data URL — fallback to text
-                    await sendTelegramMessage(token, chatId, attachment.caption || msg.content || '📸');
+                    await sendTelegramMessage(token, chatId, attachment.caption || msg.content || '📸',
+                        keyboard ? { reply_markup: keyboard } : {});
                 }
             } else {
-                await sendTelegramMessage(token, chatId, msg.content);
+                await sendTelegramMessage(token, chatId, msg.content,
+                    keyboard ? { reply_markup: keyboard } : {});
             }
         } catch (err) {
             logger.error('[platformBotHandler] Failed to send message', {
@@ -335,6 +356,139 @@ async function handlePlatformBotUpdate(botId, update) {
             });
         }
     }
+
+    // After sending messages, check if this session just completed and it's a Michael-style
+    // homework bot. If so, signal the user's course bot session to advance.
+    await tryTriggerHomeworkDone(botId, user.id, isStart ? null : text, session.id);
 }
 
-module.exports = { handlePlatformBotUpdate };
+// ---------------------------------------------------------------------------
+// Homework-done cross-bot trigger
+// ---------------------------------------------------------------------------
+
+/**
+ * When a session on a "practice" bot completes (reaches a node marked as homework_done),
+ * find the user's active session on the linked course bot and fire the homework event.
+ *
+ * Triggered after every flow step on non-start messages.
+ * The course bot must be linked via the COURSE_BOT_ID funnelKey on the practice bot.
+ */
+async function tryTriggerHomeworkDone(practiceBotId, userId, userText, sessionId) {
+    try {
+        // Check if this bot has a COURSE_BOT_ID key (meaning it's a practice/homework bot)
+        const courseBotKey = await db.funnelKey.findUnique({
+            where: { botId_key: { botId: practiceBotId, key: 'COURSE_BOT_ID' } },
+            select: { value: true },
+        });
+        if (!courseBotKey?.value) return;
+        const courseBotId = courseBotKey.value;
+
+        // Check if current session just completed
+        const currentSession = await db.session.findUnique({
+            where: { id: sessionId },
+            select: { state: true, context: true },
+        });
+        if (!currentSession || currentSession.state !== 'completed') return;
+
+        // Find the lesson slug from session context (set when /start=lesson_X_Y)
+        // Stored at session.context.lessonSlug (root level)
+        const pracCtx = currentSession.context || {};
+        const lessonSlug = pracCtx.lessonSlug;
+        if (!lessonSlug) return;
+
+        // Find the user's active course bot session
+        const courseSession = await db.session.findFirst({
+            where: { userId, botId: courseBotId, state: { not: 'completed' } },
+            orderBy: { startedAt: 'desc' },
+        });
+        if (!courseSession) return;
+
+        const eventKey = `homework_done_${lessonSlug}`;
+        logger.info('[platformBotHandler] Homework done — triggering course session', {
+            practiceBotId, courseBotId, lessonSlug, courseSessionId: courseSession.id,
+        });
+
+        // Set the event key at the root of session.context so executeFlowStep's `ctx[eventKey]` picks it up
+        const courseCtx = { ...(courseSession.context || {}), [eventKey]: true };
+        await db.session.update({
+            where: { id: courseSession.id },
+            data: { context: courseCtx },
+        });
+
+        // Execute the next step in the course session
+        await executeFlowStep({ sessionId: courseSession.id, incomingUserMessage: null });
+
+        // Send any new course bot messages to the user
+        const courseBotToken = await getBotToken(courseBotId);
+        if (!courseBotToken) return;
+
+        const courseUser = await db.user.findUnique({ where: { id: userId }, select: { telegramId: true } });
+        if (!courseUser?.telegramId) return;
+        const courseChatId = Number(courseUser.telegramId);
+
+        const courseMessages = await db.message.findMany({
+            where: { sessionId: courseSession.id, role: 'assistant' },
+            orderBy: { createdAt: 'desc' },
+            take: 10,
+        });
+
+        // Only send messages created very recently (last 10 seconds)
+        const cutoff = Date.now() - 10_000;
+        const freshMessages = courseMessages
+            .filter(m => new Date(m.createdAt).getTime() > cutoff)
+            .reverse();
+
+        for (const msg of freshMessages) {
+            const meta = msg.metadata || {};
+            const keyboard = Array.isArray(meta.keyboard) && meta.keyboard.length > 0
+                ? { inline_keyboard: meta.keyboard }
+                : null;
+            await sendTelegramMessage(courseBotToken, courseChatId, msg.content,
+                keyboard ? { reply_markup: keyboard } : {});
+        }
+    } catch (err) {
+        logger.warn('[platformBotHandler] tryTriggerHomeworkDone failed', { error: err.message });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Exported delivery helper (for use by API routes after advancing a session)
+// ---------------------------------------------------------------------------
+
+/**
+ * Deliver any assistant messages created after `sinceMessageId` to the given
+ * Telegram chat. Used by the homework-done endpoint to push course messages.
+ */
+async function deliverSessionMessages(botId, sessionId, telegramChatId, sinceMessageId) {
+    const token = await getBotToken(botId);
+    if (!token) {
+        logger.warn('[platformBotHandler] deliverSessionMessages: no token for bot', { botId });
+        return;
+    }
+    const msgs = await getNewAssistantMessages(sessionId, sinceMessageId);
+    for (const msg of msgs) {
+        try {
+            const meta = msg.metadata || {};
+            const keyboard = Array.isArray(meta.keyboard) && meta.keyboard.length > 0
+                ? { inline_keyboard: meta.keyboard }
+                : null;
+            const attachment = meta.attachment;
+            if (attachment?.type === 'document' && attachment.url) {
+                await tgRequest(token, 'sendDocument', {
+                    chat_id: telegramChatId,
+                    document: attachment.url,
+                    caption: attachment.caption || msg.content || undefined,
+                    parse_mode: 'HTML',
+                    ...(keyboard ? { reply_markup: keyboard } : {}),
+                });
+            } else {
+                await sendTelegramMessage(token, telegramChatId, msg.content,
+                    keyboard ? { reply_markup: keyboard } : {});
+            }
+        } catch (err) {
+            logger.warn('[platformBotHandler] deliverSessionMessages: send failed', { msgId: msg.id, error: err.message });
+        }
+    }
+}
+
+module.exports = { handlePlatformBotUpdate, deliverSessionMessages, getBotToken };

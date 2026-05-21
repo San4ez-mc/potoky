@@ -190,6 +190,71 @@ router.delete('/:botId/keys/:key',
     })
 );
 
+// POST /api/funnels/:botId/homework-done — signal that a user completed homework for a lesson
+// Called by practice (Michael) bots to advance the user's session in the course bot.
+// Body: { telegramId: string|number, lessonSlug: string }
+router.post('/:botId/homework-done',
+    validateParams({
+        params: z.object({ botId: z.string().uuid() }),
+        body: z.object({
+            telegramId: z.union([z.string(), z.number()]),
+            lessonSlug: z.string().min(1),
+        }),
+    }),
+    asyncHandler(async (req, res) => {
+        const { botId } = req.params;
+        const { telegramId, lessonSlug } = req.body;
+
+        const telegramIdBig = BigInt(telegramId);
+        const user = await db.user.findUnique({ where: { telegramId: telegramIdBig }, select: { id: true } });
+        if (!user) {
+            return res.status(404).json({ ok: false, error: { message: 'User not found' } });
+        }
+
+        // Find the user's active session on this (course) bot
+        const session = await db.session.findFirst({
+            where: { userId: user.id, botId, state: { not: 'completed' } },
+            orderBy: { startedAt: 'desc' },
+        });
+        if (!session) {
+            return res.status(404).json({ ok: false, error: { message: 'No active session for this user' } });
+        }
+
+        // Set the homework event key at root session.context level
+        // (executeFlowStep reads ctx = session.context, so ctx[eventKey] works directly)
+        const eventKey = `homework_done_${lessonSlug}`;
+        const updatedCtx = { ...(session.context || {}), [eventKey]: true };
+
+        await db.session.update({
+            where: { id: session.id },
+            data: { context: updatedCtx },
+        });
+
+        // Import here to avoid circular dep at module load
+        const { executeFlowStep } = require('../services/testSession');
+        const { deliverSessionMessages, getBotToken } = require('../services/platformBotHandler');
+
+        // Record last message id so we only deliver messages created by this step
+        const lastMsg = await db.message.findFirst({
+            where: { sessionId: session.id },
+            orderBy: { createdAt: 'desc' },
+            select: { id: true },
+        });
+        const sinceId = lastMsg?.id || null;
+
+        await executeFlowStep({ sessionId: session.id, incomingUserMessage: null });
+
+        // Deliver new messages via Telegram if user has a telegramId
+        const userWithTg = await db.user.findUnique({ where: { id: user.id }, select: { telegramId: true } });
+        if (userWithTg?.telegramId) {
+            const chatId = Number(userWithTg.telegramId);
+            await deliverSessionMessages(botId, session.id, chatId, sinceId);
+        }
+
+        res.json({ ok: true, data: { sessionId: session.id, eventKey, triggered: true } });
+    })
+);
+
 // POST /api/funnels/:botId/sync-channels — manual re-sync for delivery channels
 router.post('/:botId/sync-channels',
     validateParams({ params: z.object({ botId: z.string().uuid() }) }),

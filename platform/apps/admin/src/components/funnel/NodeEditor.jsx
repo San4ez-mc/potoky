@@ -349,7 +349,6 @@ function ConditionNodeEditor({ data, update }) {
 }
 
 function NotifyAdminNodeEditor({ data, update }) {
-    // Support both `targetKey` (new, env-var key name) and legacy `telegramId`
     const targetValue = data.targetKey || data.telegramId || 'ADMIN_TELEGRAM_ID';
     return (
         <div className="space-y-3">
@@ -370,6 +369,27 @@ function NotifyAdminNodeEditor({ data, update }) {
                     language="markdown"
                 />
             </Field>
+            <Field label="Також повідомити студента?">
+                <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                        type="checkbox"
+                        checked={!!data.notifyUser}
+                        onChange={e => update({ notifyUser: e.target.checked })}
+                        className="accent-brand"
+                    />
+                    <span className="text-sm text-gray-300">Відправити студенту повідомлення</span>
+                </label>
+            </Field>
+            {data.notifyUser && (
+                <Field label="Повідомлення студенту">
+                    <TextInput
+                        value={data.userMessage || ''}
+                        onChange={v => update({ userMessage: v })}
+                        placeholder="✅ Оплату отримано! Дякую, що обрав курс."
+                        multiline
+                    />
+                </Field>
+            )}
         </div>
     );
 }

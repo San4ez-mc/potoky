@@ -410,20 +410,32 @@ export function KeysPanel({ embedded = false }) {
         <div className={embedded
             ? 'h-full flex flex-col overflow-hidden'
             : 'w-72 shrink-0 bg-gray-950 border-l border-gray-800 flex flex-col overflow-hidden'}>
-            <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
-                <div>
-                    <div className="text-sm font-semibold text-white">Ключі воронки</div>
-                    <div className="text-xs text-gray-500">Env змінні для цього бота</div>
+            {!embedded && (
+                <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
+                    <div>
+                        <div className="text-sm font-semibold text-white">Ключі воронки</div>
+                        <div className="text-xs text-gray-500">Env змінні для цього бота</div>
+                    </div>
+                    <button
+                        onClick={handleNew}
+                        className="text-sm bg-brand/20 hover:bg-brand/30 text-brand-light rounded-lg px-2.5 py-1.5 transition-colors"
+                    >
+                        + Новий
+                    </button>
                 </div>
-                <button
-                    onClick={handleNew}
-                    className="text-sm bg-brand/20 hover:bg-brand/30 text-brand-light rounded-lg px-2.5 py-1.5 transition-colors"
-                >
-                    + Новий
-                </button>
-            </div>
+            )}
 
             <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
+                {embedded && (
+                    <div className="flex justify-end">
+                        <button
+                            onClick={handleNew}
+                            className="text-xs bg-brand/20 hover:bg-brand/30 text-brand-light rounded-lg px-2.5 py-1.5 transition-colors"
+                        >
+                            + Новий ключ
+                        </button>
+                    </div>
+                )}
                 <div className="rounded-lg p-3 border bg-blue-900/10 border-blue-900/40 space-y-2">
                     <div className="text-xs text-blue-300 font-medium">Claude для цієї воронки</div>
                     <div className="text-xs text-gray-400">

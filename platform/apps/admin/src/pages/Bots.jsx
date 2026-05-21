@@ -1,7 +1,92 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { format } from 'date-fns';
+
+function EditInfoModal({ isOpen, bot, onClose, onSaved }) {
+    const [form, setForm] = useState({ name: '', description: '' });
+    const [saving, setSaving] = useState(false);
+    const [error, setError] = useState('');
+    const textareaRef = useRef(null);
+
+    useEffect(() => {
+        if (isOpen && bot) {
+            setForm({ name: bot.name || '', description: bot.description || '' });
+            setError('');
+        }
+    }, [isOpen, bot]);
+
+    if (!isOpen || !bot) return null;
+
+    const handleSave = async () => {
+        if (!form.name.trim()) { setError('Назва обов\'язкова'); return; }
+        setSaving(true);
+        setError('');
+        try {
+            await api.updateBot(bot.id, form.name.trim(), form.description.trim());
+            onSaved({ ...bot, name: form.name.trim(), description: form.description.trim() });
+            onClose();
+        } catch (e) {
+            setError(e.message || 'Помилка збереження');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+            <div className="w-full max-w-md rounded-2xl border border-gray-800 bg-gray-950 shadow-2xl shadow-black/40">
+                <div className="flex items-center justify-between border-b border-gray-800 px-5 py-4">
+                    <div>
+                        <h2 className="text-base font-semibold text-white">Інформація про воронку</h2>
+                        <div className="text-xs text-gray-500 font-mono mt-0.5">/{bot.slug}</div>
+                    </div>
+                    <button onClick={onClose} className="text-gray-400 hover:text-white text-xl leading-none">✕</button>
+                </div>
+                <div className="p-5 space-y-3">
+                    {error && (
+                        <div className="rounded-lg bg-red-900/20 border border-red-900/40 px-3 py-2 text-sm text-red-300">{error}</div>
+                    )}
+                    <div>
+                        <label className="mb-1 block text-sm text-gray-300">Назва</label>
+                        <input
+                            type="text"
+                            value={form.name}
+                            onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                            className="w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-white focus:border-brand focus:outline-none"
+                        />
+                    </div>
+                    <div>
+                        <label className="mb-1 block text-sm text-gray-300">Опис воронки</label>
+                        <textarea
+                            ref={textareaRef}
+                            value={form.description}
+                            onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+                            rows={4}
+                            placeholder="Для кого ця воронка, що вона робить, коли запускається..."
+                            className="w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-brand focus:outline-none resize-none"
+                        />
+                    </div>
+                    <div className="flex gap-2 pt-1">
+                        <button
+                            onClick={handleSave}
+                            disabled={saving}
+                            className="flex-1 rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand/90 disabled:opacity-50"
+                        >
+                            {saving ? 'Збереження...' : 'Зберегти'}
+                        </button>
+                        <button
+                            onClick={onClose}
+                            className="flex-1 rounded-lg border border-gray-700 bg-gray-900 px-4 py-2 text-sm text-gray-300 transition-colors hover:bg-gray-800"
+                        >
+                            Скасувати
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
 
 function Modal({ isOpen, title, children, onClose }) {
     if (!isOpen) return null;
@@ -53,6 +138,7 @@ export function Bots() {
     const [creating, setCreating] = useState(false);
     const [createError, setCreateError] = useState('');
     const [createForm, setCreateForm] = useState({ projectId: '', name: '', slug: '', description: '' });
+    const [editInfoBot, setEditInfoBot] = useState(null);
     const navigate = useNavigate();
 
     // Persist filters to sessionStorage whenever they change
@@ -179,6 +265,10 @@ export function Bots() {
         }
     };
 
+    const handleEditInfoSaved = (updated) => {
+        setRows(prev => prev.map(r => r.id === updated.id ? { ...r, name: updated.name, description: updated.description } : r));
+    };
+
     if (loading) return (
         <div className="flex items-center justify-center h-full">
             <div className="text-gray-400">Завантаження...</div>
@@ -252,9 +342,12 @@ export function Bots() {
                     <tbody>
                         {filteredRows.map((bot) => (
                             <tr key={bot.id} className="border-b border-gray-800/60 hover:bg-gray-800/35 transition-colors align-top">
-                                <td className="px-4 py-3">
+                                <td className="px-4 py-3 max-w-xs">
                                     <div className="font-medium text-white">{bot.name}</div>
                                     <div className="text-xs text-gray-500 font-mono">/{bot.slug}</div>
+                                    {bot.description && (
+                                        <div className="text-xs text-gray-400 mt-1 line-clamp-2 leading-relaxed">{bot.description}</div>
+                                    )}
                                 </td>
                                 <td className="px-4 py-3 text-sm text-gray-300">{bot.projectName}</td>
                                 <td className="px-4 py-3 text-sm text-gray-300">{bot.metrics?.usersCount ?? 0}</td>
@@ -269,7 +362,14 @@ export function Bots() {
                                     {bot.metrics?.flowUpdatedAt ? format(new Date(bot.metrics.flowUpdatedAt), 'dd.MM.yyyy HH:mm') : '—'}
                                 </td>
                                 <td className="px-4 py-3">
-                                    <div className="flex justify-end gap-2">
+                                    <div className="flex justify-end gap-2 flex-wrap">
+                                        <button
+                                            onClick={() => setEditInfoBot(bot)}
+                                            title={bot.description ? bot.description : 'Переглянути / редагувати опис'}
+                                            className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs rounded-lg transition-colors"
+                                        >
+                                            ℹ Інфо
+                                        </button>
                                         <button
                                             onClick={() => navigate(`/funnel/${bot.id}`)}
                                             className="px-3 py-1.5 bg-brand/20 hover:bg-brand/30 text-brand-light text-xs rounded-lg transition-colors"
@@ -297,6 +397,13 @@ export function Bots() {
                     Всього воронок: {filteredRows.length}
                 </div>
             </div>
+
+            <EditInfoModal
+                isOpen={!!editInfoBot}
+                bot={editInfoBot}
+                onClose={() => setEditInfoBot(null)}
+                onSaved={handleEditInfoSaved}
+            />
 
             <Modal
                 isOpen={createModalOpen}

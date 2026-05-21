@@ -698,7 +698,9 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null }) {
                 } else if (onMissing !== 'skip') {
                     const msg = '⚠️ Необхідний файл не знайдений. Пройди попередній урок спочатку.';
                     await persistAssistantMessage(session.id, msg, { nodeId: node.id, nodeType: node.type });
-                    await sendMessage(chatId, msg);
+                    if (session.user?.telegramId) {
+                        await sendMessage(String(session.user.telegramId), msg, {}, session.id).catch(() => {});
+                    }
                     runtime.currentNodeId = null;
                     break;
                 }

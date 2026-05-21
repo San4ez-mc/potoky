@@ -5,6 +5,8 @@ const crypto = require('crypto');
 const logger = require('@platform/logger');
 const { db } = require('@platform/db');
 const { asyncHandler } = require('../middleware/asyncHandler');
+const { executeFlowStep } = require('../services/testSession');
+const { deliverSessionMessages } = require('../services/platformBotHandler');
 
 const router = Router();
 
@@ -178,20 +180,39 @@ router.post('/wayforpay',
 
         logger.info('[wayforpay webhook] Payment received', { orderReference, transactionStatus, amount, currency });
 
-        // Find the session by orderReference stored in context.wfp_order_reference
+        // Respond to WayForPay immediately — flow advancement happens in the background
+        const responseSignature = crypto
+            .createHmac('md5', merchantSecret)
+            .update([orderReference, 'accept'].join(';'))
+            .digest('hex');
+
+        res.status(200).json({
+            orderReference,
+            status: 'accept',
+            time: Math.floor(Date.now() / 1000),
+            signature: responseSignature,
+        });
+
+        // Advance the flow session in the background so wait_payment node can proceed
         if (transactionStatus === 'Approved') {
-            try {
-                const sessions = await db.session.findMany({
-                    where: { state: { not: 'completed' } },
-                    select: { id: true, context: true, botId: true },
-                });
+            setImmediate(async () => {
+                try {
+                    const sessions = await db.session.findMany({
+                        where: { state: { not: 'completed' } },
+                        select: { id: true, context: true, botId: true, userId: true },
+                    });
 
-                const matchedSession = sessions.find((s) => {
-                    const ctx = s.context || {};
-                    return ctx.wfp_order_reference === orderReference;
-                });
+                    const matchedSession = sessions.find((s) => {
+                        const ctx = s.context || {};
+                        return ctx.wfp_order_reference === orderReference;
+                    });
 
-                if (matchedSession) {
+                    if (!matchedSession) {
+                        logger.warn('[wayforpay webhook] No active session found for orderReference', { orderReference });
+                        return;
+                    }
+
+                    // Mark payment as approved in session context
                     await db.session.update({
                         where: { id: matchedSession.id },
                         data: {
@@ -203,24 +224,37 @@ router.post('/wayforpay',
                         },
                     });
                     logger.info('[wayforpay webhook] Session updated with payment status', { sessionId: matchedSession.id });
+
+                    // Advance the flow (wait_payment node checks wfp_payment_status === 'approved')
+                    const sinceTime = new Date();
+                    await executeFlowStep({ sessionId: matchedSession.id, incomingUserMessage: null });
+
+                    // Deliver new messages to the user via Telegram
+                    if (matchedSession.userId) {
+                        const user = await db.user.findUnique({
+                            where: { id: matchedSession.userId },
+                            select: { telegramId: true },
+                        });
+                        if (user?.telegramId) {
+                            await deliverSessionMessages(
+                                matchedSession.botId,
+                                matchedSession.id,
+                                Number(user.telegramId),
+                                sinceTime,
+                            );
+                        }
+                    }
+
+                    logger.info('[wayforpay webhook] Flow advanced after payment', { sessionId: matchedSession.id });
+                } catch (err) {
+                    logger.error('[wayforpay webhook] Failed to advance flow after payment', {
+                        orderReference,
+                        error: err.message,
+                        stack: err.stack,
+                    });
                 }
-            } catch (dbError) {
-                logger.error('[wayforpay webhook] DB error', { error: dbError.message });
-            }
+            });
         }
-
-        // Respond to WayForPay with accept confirmation
-        const responseSignature = crypto
-            .createHmac('md5', merchantSecret)
-            .update([orderReference, 'accept'].join(';'))
-            .digest('hex');
-
-        return res.status(200).json({
-            orderReference,
-            status: 'accept',
-            time: Math.floor(Date.now() / 1000),
-            signature: responseSignature,
-        });
     })
 );
 

@@ -46,8 +46,43 @@ function removeEdge(edges, source, target) {
     return edges.filter((edge) => !(edge.source === source && edge.target === target));
 }
 
+function removeEdgesForNode(edges, nodeId) {
+    return edges.filter((edge) => edge.source !== nodeId && edge.target !== nodeId);
+}
+
 function findNodeById(nodes, nodeId) {
     return nodes.find((node) => node.id === nodeId) || null;
+}
+
+function findNodeByFileType(nodes, fileType) {
+    return nodes.find((node) => node.type === 'loadFile' && node?.data?.fileType === fileType) || null;
+}
+
+function getIncomingEdges(edges, target) {
+    return edges.filter((edge) => edge.target === target);
+}
+
+function findFirstLoadFileBeforeIntro(nodes, edges, introNodeId) {
+    const incomingToIntro = getIncomingEdges(edges, introNodeId);
+    if (!incomingToIntro.length) return null;
+
+    let currentNode = findNodeById(nodes, incomingToIntro[0].source);
+    if (!currentNode || currentNode.type !== 'loadFile') return null;
+
+    while (currentNode) {
+        const incomingToCurrent = getIncomingEdges(edges, currentNode.id);
+        const previousLoad = incomingToCurrent
+            .map((edge) => findNodeById(nodes, edge.source))
+            .find((node) => node && node.type === 'loadFile');
+
+        if (!previousLoad) {
+            return currentNode;
+        }
+
+        currentNode = previousLoad;
+    }
+
+    return null;
 }
 
 function findIntroNode(nodes) {
@@ -133,16 +168,37 @@ async function applyOnboardingLoadFile(config) {
     const fromNode = findNodeById(nodes, config.afterNodeId);
     const introNode = findIntroNode(nodes);
 
-    if (!fromNode || !introNode) {
-        console.log(`SKIP: required nodes not found for ${bot.slug} (${bot.id})`);
+    if (!introNode) {
+        console.log(`SKIP: msg_intro not found for ${bot.slug} (${bot.id})`);
         return;
     }
 
     const onboardingNodeId = ensureOnboardingLoadFileNode(nodes, fromNode);
+    edges = removeEdgesForNode(edges, onboardingNodeId);
 
-    edges = removeEdge(edges, fromNode.id, introNode.id);
-    ensureEdge(edges, fromNode.id, onboardingNodeId, 'edge_onboarding_from');
-    ensureEdge(edges, onboardingNodeId, introNode.id, 'edge_onboarding_to_intro');
+    const firstLoadNode = findFirstLoadFileBeforeIntro(nodes, edges, introNode.id);
+
+    if (firstLoadNode && firstLoadNode.id !== onboardingNodeId) {
+        const incomingToFirst = getIncomingEdges(edges, firstLoadNode.id).filter((edge) => edge.source !== onboardingNodeId);
+
+        for (const edge of incomingToFirst) {
+            edges = removeEdge(edges, edge.source, firstLoadNode.id);
+            ensureEdge(edges, edge.source, onboardingNodeId, 'edge_onboarding_from');
+        }
+
+        ensureEdge(edges, onboardingNodeId, firstLoadNode.id, 'edge_onboarding_to_first_load');
+    } else if (fromNode) {
+        edges = removeEdge(edges, fromNode.id, introNode.id);
+        ensureEdge(edges, fromNode.id, onboardingNodeId, 'edge_onboarding_from');
+        ensureEdge(edges, onboardingNodeId, introNode.id, 'edge_onboarding_to_intro');
+    } else {
+        const incomingToIntro = getIncomingEdges(edges, introNode.id);
+        for (const edge of incomingToIntro) {
+            edges = removeEdge(edges, edge.source, introNode.id);
+            ensureEdge(edges, edge.source, onboardingNodeId, 'edge_onboarding_from_intro_in');
+        }
+        ensureEdge(edges, onboardingNodeId, introNode.id, 'edge_onboarding_to_intro_fallback');
+    }
 
     await prisma.flowDefinition.update({
         where: { botId: bot.id },
@@ -279,8 +335,8 @@ function ensureSheetsIdParserNode(nodes, anchorNode) {
         "const url = context.sheetsUrl || context.combinedUrl;",
         'if (url) {',
         "    const match = url.match(/spreadsheets\\/d\\/([a-zA-Z0-9-_]+)/);",
-        "    context.combinedSheetsId = match ? match[1] : null;",
-        "    context.sheetsId = context.combinedSheetsId;",
+        "    context.sheetsId = match ? match[1] : null;",
+        "    context.combinedSheetsId = context.sheetsId;",
         '}',
         'return { context };',
     ].join('\n');
@@ -316,7 +372,10 @@ async function applyBot52CombinedSheetsIdFix() {
     const { bot, nodes } = loaded;
     let { edges } = loaded;
 
-    const combinedLoadNode = findNodeById(nodes, 'loadfile_combined_table_url');
+    const combinedLoadNode = findNodeById(nodes, 'loadfile_combined_table_url')
+        || findNodeById(nodes, 'loadfile_cashflow_table_url')
+        || findNodeByFileType(nodes, 'cashflow_table_url')
+        || findNodeByFileType(nodes, 'combined_table_url');
     const introNode = findIntroNode(nodes);
 
     if (!combinedLoadNode || !introNode) {

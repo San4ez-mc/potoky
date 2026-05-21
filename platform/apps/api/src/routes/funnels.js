@@ -234,13 +234,8 @@ router.post('/:botId/homework-done',
         const { executeFlowStep } = require('../services/testSession');
         const { deliverSessionMessages, getBotToken } = require('../services/platformBotHandler');
 
-        // Record last message id so we only deliver messages created by this step
-        const lastMsg = await db.message.findFirst({
-            where: { sessionId: session.id },
-            orderBy: { createdAt: 'desc' },
-            select: { id: true },
-        });
-        const sinceId = lastMsg?.id || null;
+        // Capture timestamp before execution — only deliver messages created after this point
+        const sinceTime = new Date();
 
         await executeFlowStep({ sessionId: session.id, incomingUserMessage: null });
 
@@ -248,7 +243,7 @@ router.post('/:botId/homework-done',
         const userWithTg = await db.user.findUnique({ where: { id: user.id }, select: { telegramId: true } });
         if (userWithTg?.telegramId) {
             const chatId = Number(userWithTg.telegramId);
-            await deliverSessionMessages(botId, session.id, chatId, sinceId);
+            await deliverSessionMessages(botId, session.id, chatId, sinceTime);
         }
 
         res.json({ ok: true, data: { sessionId: session.id, eventKey, triggered: true } });

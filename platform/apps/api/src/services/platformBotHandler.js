@@ -170,24 +170,17 @@ async function createNewSession(userId, botId) {
     });
 }
 
-async function getNewAssistantMessages(sessionId, sinceMessageId) {
+// Use createdAt timestamp instead of id comparison — UUID ids are non-sequential
+// and alphabetical gt comparison causes old messages to be re-delivered.
+async function getNewAssistantMessages(sessionId, since) {
     const where = { sessionId, role: 'assistant' };
-    if (sinceMessageId) {
-        where.id = { gt: sinceMessageId };
+    if (since) {
+        where.createdAt = { gt: since };
     }
     return db.message.findMany({
         where,
         orderBy: { createdAt: 'asc' },
     });
-}
-
-async function getLastMessageId(sessionId) {
-    const msg = await db.message.findFirst({
-        where: { sessionId },
-        orderBy: { createdAt: 'desc' },
-        select: { id: true },
-    });
-    return msg?.id || null;
 }
 
 async function persistUserMessage(sessionId, content) {
@@ -250,7 +243,9 @@ async function handlePlatformBotUpdate(botId, update) {
     const startPayload = isStart ? text.slice('/start'.length).trim() : '';
 
     let session;
-    let lastMsgId;
+    // Timestamp just before execution — used to fetch only newly created assistant messages.
+    // UUID-based id comparison is unreliable (non-sequential), so we use createdAt instead.
+    let sinceTime;
 
     if (isStart) {
         // Deactivate all previous active sessions
@@ -271,8 +266,6 @@ async function handlePlatformBotUpdate(botId, update) {
             });
         }
 
-        lastMsgId = null; // we want ALL messages created after session creation
-
         logger.info('[platformBotHandler] New session created on /start', {
             botId, userId: user.id, sessionId: session.id,
         });
@@ -287,7 +280,6 @@ async function handlePlatformBotUpdate(botId, update) {
         }
 
         // Persist user message before executing step
-        lastMsgId = await getLastMessageId(session.id);
         await persistUserMessage(session.id, text);
 
         logger.info('[platformBotHandler] Continuing session', {
@@ -295,22 +287,31 @@ async function handlePlatformBotUpdate(botId, update) {
         });
     }
 
-    // 4. Execute flow step
+    // 4. Show typing indicator while processing (refresh every 4s for long Claude calls)
+    sinceTime = new Date();
+    await tgRequest(token, 'sendChatAction', { chat_id: chatId, action: 'typing' }).catch(() => {});
+    const typingTimer = setInterval(() => {
+        tgRequest(token, 'sendChatAction', { chat_id: chatId, action: 'typing' }).catch(() => {});
+    }, 4000);
+
+    // 5. Execute flow step
     try {
         await executeFlowStep({
             sessionId: session.id,
             incomingUserMessage: isStart ? null : text,
         });
     } catch (err) {
+        clearInterval(typingTimer);
         logger.error('[platformBotHandler] executeFlowStep failed', {
             botId, sessionId: session.id, error: err.message, stack: err.stack,
         });
         await sendTelegramMessage(token, chatId, 'Вибачте, сталася помилка. Спробуйте ще раз або /start.');
         return;
     }
+    clearInterval(typingTimer);
 
-    // 5. Fetch new assistant messages and send them
-    const newMessages = await getNewAssistantMessages(session.id, lastMsgId);
+    // 6. Fetch new assistant messages and send them
+    const newMessages = await getNewAssistantMessages(session.id, sinceTime);
 
     if (newMessages.length === 0) {
         logger.debug('[platformBotHandler] No new assistant messages after step', { sessionId: session.id });
@@ -415,37 +416,18 @@ async function tryTriggerHomeworkDone(practiceBotId, userId, userText, sessionId
             data: { context: courseCtx },
         });
 
+        // Capture timestamp before execution so we only deliver newly created messages
+        const sinceTime = new Date();
+
         // Execute the next step in the course session
         await executeFlowStep({ sessionId: courseSession.id, incomingUserMessage: null });
 
-        // Send any new course bot messages to the user
-        const courseBotToken = await getBotToken(courseBotId);
-        if (!courseBotToken) return;
-
+        // Deliver new course bot messages to the user via the course bot's token
         const courseUser = await db.user.findUnique({ where: { id: userId }, select: { telegramId: true } });
         if (!courseUser?.telegramId) return;
         const courseChatId = Number(courseUser.telegramId);
 
-        const courseMessages = await db.message.findMany({
-            where: { sessionId: courseSession.id, role: 'assistant' },
-            orderBy: { createdAt: 'desc' },
-            take: 10,
-        });
-
-        // Only send messages created very recently (last 10 seconds)
-        const cutoff = Date.now() - 10_000;
-        const freshMessages = courseMessages
-            .filter(m => new Date(m.createdAt).getTime() > cutoff)
-            .reverse();
-
-        for (const msg of freshMessages) {
-            const meta = msg.metadata || {};
-            const keyboard = Array.isArray(meta.keyboard) && meta.keyboard.length > 0
-                ? { inline_keyboard: meta.keyboard }
-                : null;
-            await sendTelegramMessage(courseBotToken, courseChatId, msg.content,
-                keyboard ? { reply_markup: keyboard } : {});
-        }
+        await deliverSessionMessages(courseBotId, courseSession.id, courseChatId, sinceTime);
     } catch (err) {
         logger.warn('[platformBotHandler] tryTriggerHomeworkDone failed', { error: err.message });
     }
@@ -456,16 +438,16 @@ async function tryTriggerHomeworkDone(practiceBotId, userId, userText, sessionId
 // ---------------------------------------------------------------------------
 
 /**
- * Deliver any assistant messages created after `sinceMessageId` to the given
+ * Deliver any assistant messages created after `sinceTime` (Date) to the given
  * Telegram chat. Used by the homework-done endpoint to push course messages.
  */
-async function deliverSessionMessages(botId, sessionId, telegramChatId, sinceMessageId) {
+async function deliverSessionMessages(botId, sessionId, telegramChatId, sinceTime) {
     const token = await getBotToken(botId);
     if (!token) {
         logger.warn('[platformBotHandler] deliverSessionMessages: no token for bot', { botId });
         return;
     }
-    const msgs = await getNewAssistantMessages(sessionId, sinceMessageId);
+    const msgs = await getNewAssistantMessages(sessionId, sinceTime);
     for (const msg of msgs) {
         try {
             const meta = msg.metadata || {};

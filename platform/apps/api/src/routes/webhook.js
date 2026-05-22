@@ -209,6 +209,18 @@ router.post('/wayforpay',
         logger.info('[wayforpay webhook] DEBUG callback', { body: JSON.stringify(body), expectedSignature, merchantSignature });
         if (merchantSignature !== expectedSignature) {
             logger.warn('[wayforpay webhook] Signature mismatch', { orderReference });
+            // Log signature mismatch (no sessionId — can't match without valid order)
+            db.apiCall.create({
+                data: {
+                    service: 'wayforpay',
+                    method: 'callback',
+                    requestData: { orderReference, transactionStatus, amount, currency, merchantAccount },
+                    responseData: { signatureValid: false, action: 'decline' },
+                    statusCode: 403,
+                    durationMs: 0,
+                    error: 'Signature mismatch',
+                },
+            }).catch(() => {});
             return res.status(200).json({ orderReference, status: 'decline', time: Math.floor(Date.now() / 1000), signature: '' });
         }
 
@@ -258,6 +270,28 @@ router.post('/wayforpay',
                         },
                     });
                     logger.info('[wayforpay webhook] Session updated with payment status', { sessionId: matchedSession.id });
+
+                    // Log callback to api_calls for visibility in session API tab
+                    await db.apiCall.create({
+                        data: {
+                            sessionId: matchedSession.id,
+                            service: 'wayforpay',
+                            method: 'callback',
+                            requestData: {
+                                orderReference,
+                                transactionStatus,
+                                amount,
+                                currency,
+                                merchantAccount,
+                            },
+                            responseData: {
+                                signatureValid: true,
+                                action: 'accept',
+                            },
+                            statusCode: 200,
+                            durationMs: 0,
+                        },
+                    }).catch(e => logger.error('[wayforpay webhook] Failed to log callback:', { error: e.message }));
 
                     // Advance the flow (wait_payment node checks wfp_payment_status === 'approved')
                     const sinceTime = new Date();

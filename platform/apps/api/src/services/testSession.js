@@ -1441,6 +1441,7 @@ ${sourceContent || '(немає даних)'}
                     });
 
                     // POST to WayForPay API
+                    const wfpCallStart = Date.now();
                     const wfpResponse = await new Promise((resolve, reject) => {
                         const options = {
                             hostname: 'api.wayforpay.com',
@@ -1480,6 +1481,29 @@ ${_baseUrl}/legal/refund — Повернення коштів
 ${_baseUrl}/legal/terms — Правила використання`;
 
                     console.log(`[connector:wayforpay] Invoice created: ${invoiceUrl || 'no url'}, reason: ${wfpResponse.reason}`);
+
+                    // Log to api_calls for visibility in session API tab
+                    db.apiCall.create({
+                        data: {
+                            sessionId: session.id,
+                            service: 'wayforpay',
+                            method: 'create_invoice',
+                            requestData: {
+                                orderReference,
+                                amount,
+                                currency,
+                                productName,
+                                merchantAccount,
+                            },
+                            responseData: {
+                                invoiceUrl: invoiceUrl || null,
+                                reasonCode: wfpResponse.reasonCode || null,
+                                reason: wfpResponse.reason || null,
+                            },
+                            statusCode: invoiceUrl ? 200 : 422,
+                            durationMs: Date.now() - wfpCallStart,
+                        },
+                    }).catch(e => console.error('[wfp:log] Failed to log create_invoice:', e.message));
 
                     // ── Auto-notify admin when payment link is generated ──
                     try {

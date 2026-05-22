@@ -481,10 +481,25 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null }) {
                     }))
                     .filter(btn => btn.text))
                 .filter(row => row.length > 0);
+            // Optional document attachment (data.attachmentUrl supports templates)
+            let msgAttachment = null;
+            if (data.attachmentUrl) {
+                const resolvedUrl = renderTemplate(String(data.attachmentUrl), scope);
+                if (resolvedUrl && resolvedUrl.startsWith('http')) {
+                    msgAttachment = {
+                        type: 'document',
+                        url: resolvedUrl,
+                        fileName: data.attachmentFileName
+                            ? renderTemplate(String(data.attachmentFileName), scope)
+                            : 'document.pdf',
+                    };
+                }
+            }
             await persistAssistantMessage(session.id, text, {
                 nodeId: node.id,
                 nodeType: node.type,
                 ...(renderedButtons.length > 0 ? { keyboard: renderedButtons } : {}),
+                ...(msgAttachment ? { attachment: msgAttachment } : {}),
             });
             lastAssistant = text;
             runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
@@ -1178,6 +1193,14 @@ ${sourceContent || '(немає даних)'}
                             fileName: fileName || 'document.txt',
                             content: typeof source === 'string' ? source : safeJsonStringify(source, 2),
                         };
+                    }
+                }
+
+                // Direct URL with template support (e.g. {{env.PRESENTATION_PDF_URL}})
+                if (!attachment && data.url) {
+                    const resolvedUrl = renderTemplate(String(data.url), scope);
+                    if (resolvedUrl && resolvedUrl.startsWith('http')) {
+                        attachment = { type: 'document', url: resolvedUrl, fileName: fileName || 'document.pdf' };
                     }
                 }
 

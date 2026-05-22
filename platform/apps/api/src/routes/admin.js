@@ -7,6 +7,7 @@ const { asyncHandler } = require('../middleware/asyncHandler');
 const { validateParams } = require('../middleware/validateParams');
 const { authMiddleware, loginHandler, logoutHandler } = require('../middleware/auth');
 const { runBotRegression, runProjectRegressions } = require('../services/regressionRunner');
+const { startTestSession } = require('../services/testSession');
 
 const router = Router();
 
@@ -176,6 +177,28 @@ router.post('/bots/:id/run-regression',
     asyncHandler(async (req, res) => {
         const data = await runBotRegression(req.params.id);
         res.json({ ok: true, data });
+    })
+);
+
+// POST /api/admin/bots/:id/webhook-test — trigger a webhook-start bot with a custom JSON body
+router.post('/bots/:id/webhook-test',
+    validateParams({
+        params: z.object({ id: z.string().uuid() }),
+        body: z.record(z.string(), z.any()).optional().default({}),
+    }),
+    asyncHandler(async (req, res) => {
+        const bot = await db.bot.findUnique({ where: { id: req.params.id } });
+        if (!bot) return res.status(404).json({ ok: false, error: { message: 'Bot not found' } });
+
+        const result = await startTestSession({ botId: bot.id, contextOverride: req.body || {} });
+        res.json({
+            ok: true,
+            data: {
+                sessionId: result.sessionId,
+                firstMessage: result.firstMessage,
+                currentState: result.currentState,
+            },
+        });
     })
 );
 

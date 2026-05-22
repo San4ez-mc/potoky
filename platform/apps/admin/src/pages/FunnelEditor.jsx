@@ -148,7 +148,11 @@ function TopBar({
 export function FunnelEditor() {
     const { botId } = useParams();
     const navigate = useNavigate();
-    const { bot, connectors, isDirty, isSaving, isLoading, error, selectedNode, keys, loadFunnel, saveFunnel, exportFunnel, importFunnel } = useFunnelStore();
+    const { bot, connectors, nodes, isDirty, isSaving, isLoading, error, selectedNode, keys, loadFunnel, saveFunnel, exportFunnel, importFunnel } = useFunnelStore();
+
+    const startNode = nodes.find(n => n.id === 'start');
+    const isWebhookBot = startNode?.data?.trigger === 'webhook';
+    const webhookBodySchema = startNode?.data?.bodySchema || '';
 
     const [isLeftPanelOpen, setLeftPanelOpen] = useState(true);
     const [isRightPanelOpen, setRightPanelOpen] = useState(true);
@@ -233,6 +237,13 @@ export function FunnelEditor() {
     const missingKeys = getRequiredKeys();
 
     const handleRunTest = async () => {
+        // Webhook bots: open modal in JSON-editor mode without auto-starting
+        if (isWebhookBot) {
+            setTestModalOpen(true);
+            setTestResult(null);
+            return;
+        }
+
         const localMissing = getRequiredKeys();
         const allMissing = [...localMissing];
         if (missingSystemKeys.length > 0) {
@@ -277,6 +288,19 @@ export function FunnelEditor() {
                 missingKeys: missingKeys,
                 errors: [{ step: 'Тест', message: err.message }],
             });
+        } finally {
+            setIsTesting(false);
+        }
+    };
+
+    const handleRunWebhookTest = async (body) => {
+        setIsTesting(true);
+        setTestResult(null);
+        try {
+            const result = await api.runWebhookTest(botId, body);
+            setTestResult({ ok: true, sessionId: result.sessionId, currentState: result.currentState });
+        } catch (err) {
+            setTestResult({ ok: false, errors: [{ step: 'Webhook POST', message: err.message }] });
         } finally {
             setIsTesting(false);
         }
@@ -439,10 +463,13 @@ export function FunnelEditor() {
 
                 <FunnelTestModal
                     isOpen={testModalOpen}
-                    onClose={() => setTestModalOpen(false)}
+                    onClose={() => { setTestModalOpen(false); setTestResult(null); }}
                     isLoading={isTesting}
                     result={testResult}
                     onOpenSession={handleOpenTestSession}
+                    isWebhookMode={isWebhookBot}
+                    bodySchema={webhookBodySchema}
+                    onRunWebhookTest={handleRunWebhookTest}
                 />
             </div>
         </ReactFlowProvider>

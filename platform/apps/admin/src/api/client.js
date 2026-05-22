@@ -127,6 +127,7 @@ export const api = {
     getLogs: (tab = 'all') => req('GET', `/admin/logs?tab=${tab}`),
     getMcpConfig: () => req('GET', '/admin/mcp-config'),
     runBotRegression: (botId) => req('POST', `/admin/bots/${botId}/run-regression`),
+    runWebhookTest: (botId, body) => req('POST', `/admin/bots/${botId}/webhook-test`, body),
     runProjectRegressions: (projectSlug) => req('POST', `/admin/projects/${projectSlug}/run-regressions`),
 
     // System Keys (settings-level, not funnel-level)

@@ -160,6 +160,35 @@ function MessageNodeEditor({ data, update }) {
                     <div className="text-[10px] text-gray-600">Кожен рядок — окремий рядок кнопок. В одному рядку може бути кілька кнопок.</div>
                 </div>
             </Field>
+            <Field label="Вкладення (PDF / файл)">
+                <div className="space-y-2">
+                    {data.attachmentUrl ? (
+                        <div className="flex items-center gap-1 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-green-400">
+                            <span className="truncate flex-1" title={data.attachmentUrl}>📎 {data.attachmentUrl}</span>
+                            <button
+                                onClick={() => update({ attachmentUrl: '', attachmentFileName: '' })}
+                                className="text-red-400 hover:text-red-300 ml-1 shrink-0"
+                                title="Видалити вкладення"
+                            >✕</button>
+                        </div>
+                    ) : (
+                        <div className="text-[11px] text-gray-500 italic">Вкладення не встановлено</div>
+                    )}
+                    <input
+                        value={data.attachmentUrl || ''}
+                        onChange={e => update({ attachmentUrl: e.target.value })}
+                        placeholder="URL файлу або {{env.PDF_URL}}"
+                        className={inputCls + ' w-full font-mono text-xs'}
+                    />
+                    <input
+                        value={data.attachmentFileName || ''}
+                        onChange={e => update({ attachmentFileName: e.target.value })}
+                        placeholder="Назва файлу (напр. presentation.pdf)"
+                        className={inputCls + ' w-full'}
+                    />
+                    <div className="text-[10px] text-gray-600">URL підтримує змінні: <code className="text-gray-400">{'{{env.VAR}}'}</code> або <code className="text-gray-400">{'{{context.var}}'}</code>. Назва файлу — як він відображатиметься у Telegram.</div>
+                </div>
+            </Field>
         </div>
     );
 }

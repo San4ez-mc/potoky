@@ -96,7 +96,11 @@ export const api = {
     },
 
     // Users
-    getUsers: (page = 0) => req('GET', `/users?page=${page}`),
+    getUsers: (page = 0, search = '') => {
+        const params = new URLSearchParams({ page });
+        if (search) params.set('search', search);
+        return req('GET', `/users?${params}`);
+    },
     getUser: (id) => req('GET', `/users/${id}`),
     getUserProgress: (id) => req('GET', `/users/${id}/progress`),
     getUserFiles: (id) => req('GET', `/users/${id}/files`),

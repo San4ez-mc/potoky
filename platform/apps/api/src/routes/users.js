@@ -13,6 +13,7 @@ const router = Router();
 const paginationSchema = z.object({
     page: z.coerce.number().int().min(0).default(0),
     limit: z.coerce.number().int().min(1).max(100).default(50),
+    search: z.string().optional(),
 });
 
 function normalizeUser(user) {
@@ -26,14 +27,30 @@ function normalizeUser(user) {
 router.get('/',
     validateParams({ query: paginationSchema }),
     asyncHandler(async (req, res) => {
-        const { page, limit } = req.query;
+        const { page, limit, search } = req.query;
+
+        const where = search
+            ? {
+                OR: [
+                    { firstName: { contains: search, mode: 'insensitive' } },
+                    { lastName: { contains: search, mode: 'insensitive' } },
+                    { username: { contains: search, mode: 'insensitive' } },
+                ],
+            }
+            : undefined;
+
         const [users, total] = await Promise.all([
             db.user.findMany({
+                where,
                 orderBy: { createdAt: 'desc' },
                 take: limit,
                 skip: page * limit,
+                include: {
+                    project: { select: { id: true, name: true } },
+                    _count: { select: { sessions: true } },
+                },
             }),
-            db.user.count(),
+            db.user.count({ where }),
         ]);
         res.json({ ok: true, data: users.map(normalizeUser), meta: { total, page, limit } });
     })

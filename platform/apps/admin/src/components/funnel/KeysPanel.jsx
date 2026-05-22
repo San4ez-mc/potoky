@@ -247,10 +247,21 @@ function KeyRow({ k, onEdit, onDelete, onReveal, isRequired = false }) {
     );
 }
 
-function KeyForm({ initial, onSave, onCancel }) {
+function KeyForm({ initial, onSave, onCancel, savedConnectors = [] }) {
     const [form, setForm] = useState(initial || { key: '', value: '', label: '', isSecret: false });
     const [showValue, setShowValue] = useState(false);
+    const [pickerConnectorId, setPickerConnectorId] = useState('');
     const set = (field, val) => setForm(f => ({ ...f, [field]: val }));
+
+    const pickedConnector = savedConnectors.find(c => c.id === pickerConnectorId);
+    const connectorFields = pickedConnector
+        ? [
+            { key: '__id', label: '🔑 ID конектора', value: pickedConnector.id },
+            ...Object.entries(pickedConnector.config || {})
+                .filter(([, v]) => v !== null && v !== undefined && v !== '')
+                .map(([k, v]) => ({ key: k, label: k, value: String(v) })),
+          ]
+        : [];
 
     return (
         <div className="bg-gray-800 rounded-lg p-3 border border-gray-700 space-y-2">
@@ -283,6 +294,36 @@ function KeyForm({ initial, onSave, onCancel }) {
                     </button>
                 </div>
             </div>
+            {savedConnectors.length > 0 && (
+                <div className="rounded-lg border border-gray-700 p-2 bg-gray-900/50 space-y-1.5">
+                    <label className="text-xs text-gray-500 block">Заповнити з конектора</label>
+                    <select
+                        value={pickerConnectorId}
+                        onChange={e => setPickerConnectorId(e.target.value)}
+                        className="w-full bg-gray-700 border border-gray-600 rounded px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-brand"
+                    >
+                        <option value="">— оберіть конектор —</option>
+                        {savedConnectors.map(c => (
+                            <option key={c.id} value={c.id}>{c.name} ({c.type})</option>
+                        ))}
+                    </select>
+                    {connectorFields.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 pt-0.5">
+                            {connectorFields.map(f => (
+                                <button
+                                    key={f.key}
+                                    type="button"
+                                    onClick={() => set('value', f.value)}
+                                    title={f.key === '__id' ? f.value : 'Натисни, щоб вставити значення поля'}
+                                    className="text-xs px-2 py-1 rounded bg-gray-700 hover:bg-brand/30 border border-gray-600 hover:border-brand/60 text-gray-300 hover:text-white transition-colors"
+                                >
+                                    {f.label}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
             <div>
                 <label className="text-xs text-gray-400 block mb-1">Мітка (опційно)</label>
                 <input
@@ -323,20 +364,23 @@ export function KeysPanel({ embedded = false }) {
     const { bot, keys, upsertKey, deleteKey, revealKey } = useFunnelStore();
     const [editing, setEditing] = useState(null); // null | {} (new) | existing key
     const [isNew, setIsNew] = useState(false);
-    const [savedClaudeConnectors, setSavedClaudeConnectors] = useState([]);
+    const [allSavedConnectors, setAllSavedConnectors] = useState([]);
     const [selectedConnectorId, setSelectedConnectorId] = useState('');
     const [loadingConnectors, setLoadingConnectors] = useState(false);
     const visibleKeys = useMemo(() => keys, [keys]);
+    const savedClaudeConnectors = useMemo(
+        () => allSavedConnectors.filter((item) => String(item.type || '').startsWith('claude_')),
+        [allSavedConnectors]
+    );
 
     useEffect(() => {
         setLoadingConnectors(true);
         api.getSavedConnectors()
             .then((list) => {
                 const normalized = Array.isArray(list) ? list : (list?.data || []);
-                const claudeItems = normalized.filter((item) => String(item.type || '').startsWith('claude_'));
-                setSavedClaudeConnectors(claudeItems);
+                setAllSavedConnectors(normalized);
             })
-            .catch(() => setSavedClaudeConnectors([]))
+            .catch(() => setAllSavedConnectors([]))
             .finally(() => setLoadingConnectors(false));
     }, []);
 
@@ -504,12 +548,12 @@ export function KeysPanel({ embedded = false }) {
                 )}
 
                 {isNew && editing && (
-                    <KeyForm initial={editing} onSave={handleSave} onCancel={() => { setEditing(null); setIsNew(false); }} />
+                    <KeyForm initial={editing} onSave={handleSave} onCancel={() => { setEditing(null); setIsNew(false); }} savedConnectors={allSavedConnectors} />
                 )}
 
                 {visibleKeys.map(k => (
                     editing?.key === k.key && !isNew ? (
-                        <KeyForm key={k.key} initial={editing} onSave={handleSave} onCancel={() => setEditing(null)} />
+                        <KeyForm key={k.key} initial={editing} onSave={handleSave} onCancel={() => setEditing(null)} savedConnectors={allSavedConnectors} />
                     ) : (
                         <KeyRow
                             key={k.key}

@@ -7,3 +7,4 @@ public/admin/
 *.log
 .DS_Store
 prisma/migrations/
+!public/admin/legal/

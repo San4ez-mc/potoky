@@ -1357,12 +1357,17 @@ ${sourceContent || '(немає даних)'}
                 if (connectorType === 'wayforpay' && action === 'create_invoice') {
                     const merchantAccount = config.merchant_account || '';
                     const merchantSecret = config.merchant_secret || '';
-                    const merchantDomainName = config.merchant_domain || '';
+                    const merchantDomainRaw = config.merchant_domain || '';
+                    const merchantDomainName = merchantDomainRaw.split('://').pop().replace(/[/]+$/, '');
                     const merchantName = config.merchant_name || merchantDomainName;
 
                     // Resolve dynamic params from context / data fields
                     const amount = String(renderTemplate(data.amount || '0', scope));
                     const productName = renderTemplate(data.productName || 'Course', scope);
+                    const productImageUrl = renderTemplate(data.productImageUrl || '', scope);
+                    const clientFirstName = (ctx.tg_first_name || '').trim();
+                    const clientLastName = (ctx.tg_last_name || '').trim();
+                    const clientEmail = ctx.email || '';
                     const orderReference = `order_${session.id}_${Date.now()}`;
                     const orderDate = Math.floor(Date.now() / 1000);
                     const currency = 'UAH';
@@ -1386,19 +1391,30 @@ ${sourceContent || '(немає даних)'}
                         .update(signatureString)
                         .digest('hex');
 
+                    const amountNum = parseFloat(amount) || 0;
+                    const serviceUrl = (process.env.PUBLIC_BASE_URL || "https://flows.fineko.space").replace(/\/$/, "") + "/webhook/wayforpay";
+                    const returnUrl = "https://t.me/michael_fineko_bot";
+
                     const payload = safeJsonStringify({
-                        transactionType: 'CREATE_INVOICE',
+                        transactionType: "CREATE_INVOICE",
                         merchantAccount,
                         merchantDomainName,
                         merchantName,
                         orderReference,
                         orderDate,
-                        amount,
+                        amount: amountNum,
                         currency,
                         productName: [productName],
-                        productPrice: [amount],
+                        productPrice: [amountNum],
                         productCount: [productCount],
                         merchantSignature,
+                        serviceUrl,
+                        returnUrl,
+                        apiVersion: 1,
+                        language: 'UA',
+                        ...(productImageUrl ? { productImageUrl: [productImageUrl] } : {}),
+                        ...(clientFirstName ? { clientFirstName, clientLastName } : {}),
+                        ...(clientEmail ? { clientEmail } : {}),
                     });
 
                     // POST to WayForPay API
@@ -1431,6 +1447,14 @@ ${sourceContent || '(немає даних)'}
 
                     // Store orderReference for webhook matching
                     ctx.wfp_order_reference = orderReference;
+
+                    // Auto-set legal footer — added to context for every WayForPay invoice
+                    // Rule: always include {{context.wfp_legal_footer}} in the message node after WayForPay connector
+                    const _baseUrl = (process.env.PUBLIC_BASE_URL || 'https://flows.fineko.space').replace(//$/,'');
+                    ctx.wfp_legal_footer = `📄 Оплачуючи, ти погоджуєшся з умовами:
+${_baseUrl}/legal/offer — Публічна оферта
+${_baseUrl}/legal/refund — Повернення коштів
+${_baseUrl}/legal/terms — Правила використання`;
 
                     console.log(`[connector:wayforpay] Invoice created: ${invoiceUrl || 'no url'}, reason: ${wfpResponse.reason}`);
 

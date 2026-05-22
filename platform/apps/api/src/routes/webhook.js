@@ -10,6 +10,39 @@ const { deliverSessionMessages } = require('../services/platformBotHandler');
 
 const router = Router();
 
+// WayForPay sends JSON as raw body. Express urlencoded (qs) parses it strangely:
+// Case 1: entire JSON as one key with empty value  -> { '{...}': '' }
+// Case 2: qs splits on '[' (array notation) -> { '{...,"products":': { '{...}': '' } }
+// This function reconstructs the original JSON object from either case.
+function parseWfpBody(body) {
+    if (!body || typeof body !== 'object') return body;
+    const keys = Object.keys(body);
+    if (keys.length !== 1 || !keys[0].startsWith('{')) return body;
+
+    const outerKey = keys[0];
+    const outerValue = body[outerKey];
+
+    // Case 1: entire JSON as single key with empty value
+    if (outerValue === '' || outerValue === undefined || outerValue === null) {
+        try { return JSON.parse(outerKey); } catch {}
+    }
+
+    // Case 2: JSON split at products array — qs parsed '[{...}]' as nested object
+    // Reconstruct: outerKey + '[' + innerKey + ']}'
+    if (outerValue !== null && typeof outerValue === 'object') {
+        const innerKeys = Object.keys(outerValue);
+        if (innerKeys.length === 1 && innerKeys[0].startsWith('{')) {
+            try {
+                const reconstructed = outerKey + '[' + innerKeys[0] + ']}';
+                const parsed = JSON.parse(reconstructed);
+                if (parsed.merchantAccount) return parsed;
+            } catch {}
+        }
+    }
+
+    return body;
+}
+
 /**
  * Verify Telegram webhook secret token.
  */
@@ -133,7 +166,7 @@ router.post('/instagram/:botId',
 // POST /webhook/wayforpay — WayForPay payment notification
 router.post('/wayforpay',
     asyncHandler(async (req, res) => {
-        const body = req.body || {};
+        const body = parseWfpBody(req.body || {});
         const {
             merchantAccount,
             orderReference,
@@ -173,6 +206,7 @@ router.post('/wayforpay',
             .update(signatureFields)
             .digest('hex');
 
+        logger.info('[wayforpay webhook] DEBUG callback', { body: JSON.stringify(body), expectedSignature, merchantSignature });
         if (merchantSignature !== expectedSignature) {
             logger.warn('[wayforpay webhook] Signature mismatch', { orderReference });
             return res.status(200).json({ orderReference, status: 'decline', time: Math.floor(Date.now() / 1000), signature: '' });

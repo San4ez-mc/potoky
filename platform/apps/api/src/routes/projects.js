@@ -96,8 +96,8 @@ router.post('/:id/bots',
         const project = await db.project.findUnique({ where: { id: projectId } });
         if (!project) throw new NotFoundError('Project', projectId);
 
-        const existingBot = await db.bot.findUnique({
-            where: { projectId_slug: { projectId, slug } },
+        const existingBot = await db.bot.findFirst({
+            where: { projectId, slug },
         });
         if (existingBot) {
             return res.status(409).json({ ok: false, error: { message: 'Воронка з таким slug вже існує в проєкті' } });
@@ -158,7 +158,7 @@ router.get('/:id/stats',
     })
 );
 
-// DELETE /api/projects/:id/bots/:botId — remove (soft-delete) a funnel from project
+// DELETE /api/projects/:id/bots/:botId — remove a funnel from project (unassign, keep bot intact)
 router.delete('/:id/bots/:botId',
     validateParams({ params: z.object({ id: z.string().uuid(), botId: z.string().uuid() }) }),
     asyncHandler(async (req, res) => {
@@ -169,7 +169,7 @@ router.delete('/:id/bots/:botId',
 
         await db.bot.update({
             where: { id: req.params.botId },
-            data: { isActive: false },
+            data: { projectId: null },
         });
 
         res.json({ ok: true });

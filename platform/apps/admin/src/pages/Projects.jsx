@@ -30,7 +30,7 @@ function FunnelRow({ bot, projectId, onDelete, onNavigate }) {
     const [deleting, setDeleting] = useState(false);
 
     const handleDelete = async () => {
-        if (!confirm(`Видалити воронку «${bot.name}»? Це деактивує її.`)) return;
+        if (!confirm(`Видалити воронку «${bot.name}» з проекту?\n\nВоронка залишиться в системі, але більше не буде прив'язана до цього проекту.`)) return;
         setDeleting(true);
         try {
             await api.deleteFunnel(projectId, bot.id);

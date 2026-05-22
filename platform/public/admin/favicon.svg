@@ -1,0 +1,17 @@
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Funnel platform icon">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0B1220"/>
+      <stop offset="100%" stop-color="#0E1A33"/>
+    </linearGradient>
+    <linearGradient id="funnel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#22D3EE"/>
+      <stop offset="100%" stop-color="#2563EB"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="6" y="6" width="116" height="116" rx="24" fill="url(#bg)"/>
+  <path d="M26 32H102L77 64V88L51 102V64L26 32Z" fill="url(#funnel)"/>
+  <circle cx="64" cy="98" r="7" fill="#F8FAFC"/>
+  <circle cx="64" cy="98" r="3" fill="#0F172A"/>
+</svg>

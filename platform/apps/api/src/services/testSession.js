@@ -1667,6 +1667,7 @@ async function startTestSession({ botId, botSlug, userId, contextOverride }) {
                 userId: user.id,
                 botId: bot.id,
                 state: startNode?.id || 'start',
+                isTest: true,
                 context: {
                     ...overrideContext,
                     currentNode: startNode?.id || null,

@@ -212,6 +212,24 @@ router.post('/:id/send',
     })
 );
 
+// PATCH /api/sessions/:id/mark-test — toggle isTest flag
+router.patch('/:id/mark-test',
+    validateParams({
+        params: z.object({ id: z.string().uuid() }),
+        body: z.object({ isTest: z.boolean() }),
+    }),
+    asyncHandler(async (req, res) => {
+        const session = await db.session.findUnique({ where: { id: req.params.id } });
+        if (!session) throw new NotFoundError('Session', req.params.id);
+
+        const updated = await db.session.update({
+            where: { id: req.params.id },
+            data: { isTest: req.body.isTest },
+        });
+        res.json({ ok: true, data: { id: updated.id, isTest: updated.isTest } });
+    })
+);
+
 // DELETE /api/sessions/:id
 router.delete('/:id',
     validateParams({ params: z.object({ id: z.string().uuid() }) }),

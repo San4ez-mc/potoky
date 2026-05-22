@@ -13,22 +13,32 @@ export function Sessions() {
     const [deleting, setDeleting] = useState(false);
     const [errorsModal, setErrorsModal] = useState(null);
     const [errorsOnly, setErrorsOnly] = useState(false);
+    const [testOnly, setTestOnly] = useState(false);
 
     const backTo = useMemo(() => {
         const params = new URLSearchParams();
         params.set('page', String(page));
         if (errorsOnly) params.set('hasErrors', 'true');
+        if (testOnly) params.set('isTest', 'true');
         return botId
             ? `/bots/${botId}/sessions?${params.toString()}`
             : `/sessions?${params.toString()}`;
-    }, [botId, page, errorsOnly]);
+    }, [botId, page, errorsOnly, testOnly]);
+
+    const buildFilters = () => {
+        const filters = {};
+        if (errorsOnly) filters.hasErrors = 'true';
+        if (testOnly) filters.isTest = 'true';
+        return filters;
+    };
 
     const loadSessions = () => {
         setLoading(true);
+        const filters = buildFilters();
 
         const promise = botId
-            ? api.getBotSessions(botId, page, errorsOnly ? { hasErrors: 'true' } : {})
-            : api.getAllSessions({ page, ...(errorsOnly ? { hasErrors: 'true' } : {}) });
+            ? api.getBotSessions(botId, page, filters)
+            : api.getAllSessions({ page, ...filters });
 
         return promise
             .then(res => {
@@ -45,7 +55,7 @@ export function Sessions() {
 
     useEffect(() => {
         loadSessions();
-    }, [botId, page, errorsOnly]);
+    }, [botId, page, errorsOnly, testOnly]);
 
     const visibleIds = sessions.map(s => s.id);
     const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.includes(id));
@@ -95,6 +105,16 @@ export function Sessions() {
         }
     };
 
+    const handleToggleTest = async (session) => {
+        try {
+            await api.markSessionTest(session.id, !session.isTest);
+            setSessions(prev => prev.map(s => s.id === session.id ? { ...s, isTest: !session.isTest } : s));
+        } catch (err) {
+            console.error('Mark test failed:', err);
+            alert(err.message || 'Не вдалося змінити мітку тесту');
+        }
+    };
+
     const handleOpenErrors = async (session) => {
         const fullName = [session.user?.firstName || '', session.user?.lastName || '']
             .filter(Boolean)
@@ -141,6 +161,12 @@ export function Sessions() {
                 </div>
                 <div className="flex items-center gap-3">
                     <button
+                        onClick={() => { setPage(0); setTestOnly(v => !v); }}
+                        className={`px-3 py-2 text-xs rounded-lg border transition-colors ${testOnly ? 'border-violet-700 text-violet-300 bg-violet-900/20' : 'border-gray-700 text-gray-300 hover:bg-gray-800'}`}
+                    >
+                        {testOnly ? 'Лише тестові: ON' : 'Лише тестові'}
+                    </button>
+                    <button
                         onClick={() => { setPage(0); setErrorsOnly(v => !v); }}
                         className={`px-3 py-2 text-xs rounded-lg border transition-colors ${errorsOnly ? 'border-amber-700 text-amber-300 bg-amber-900/20' : 'border-gray-700 text-gray-300 hover:bg-gray-800'}`}
                     >
@@ -174,7 +200,7 @@ export function Sessions() {
                             <thead className="bg-gray-950 border-b border-gray-800 text-xs uppercase tracking-wider text-gray-400">
                                 <tr>
                                     <th className="px-2 py-2 text-left w-8">✓</th>
-                                    <th className="px-2 py-2 text-left w-24">Статус</th>
+                                    <th className="px-2 py-2 text-left w-32">Статус</th>
                                     <th className="px-2 py-2 text-left">Користувач</th>
                                     <th className="px-2 py-2 text-left w-16">Бот</th>
                                     <th className="px-2 py-2 text-left w-20">Стан</th>
@@ -210,9 +236,16 @@ export function Sessions() {
                                                 />
                                             </td>
                                             <td className="px-2 py-2 align-top">
-                                                <span className={`inline-flex text-xs px-2 py-0.5 rounded-full border ${s.isActive ? 'text-emerald-400 bg-emerald-900/30 border-emerald-800' : 'text-gray-400 bg-gray-900 border-gray-700'}`}>
-                                                    {s.isActive ? 'активна' : 'завершена'}
-                                                </span>
+                                                <div className="flex flex-col gap-1">
+                                                    <span className={`inline-flex text-xs px-2 py-0.5 rounded-full border ${s.isActive ? 'text-emerald-400 bg-emerald-900/30 border-emerald-800' : 'text-gray-400 bg-gray-900 border-gray-700'}`}>
+                                                        {s.isActive ? 'активна' : 'завершена'}
+                                                    </span>
+                                                    {s.isTest && (
+                                                        <span className="inline-flex text-xs px-2 py-0.5 rounded-full border text-violet-400 bg-violet-900/30 border-violet-800">
+                                                            тест
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </td>
                                             <td className="px-2 py-2 align-top">
                                                 <div className="text-sm text-white font-medium truncate" title={fullName}>{fullName}</div>
@@ -236,6 +269,13 @@ export function Sessions() {
                                             <td className="px-2 py-2 align-top text-xs text-gray-600 font-mono whitespace-nowrap">{s.id.slice(0, 6)}…</td>
                                             <td className="px-2 py-2 align-top">
                                                 <div className="flex items-center justify-end gap-1">
+                                                    <button
+                                                        onClick={() => handleToggleTest(s)}
+                                                        className={`px-1.5 py-1 text-[11px] rounded border transition-colors ${s.isTest ? 'border-violet-700 text-violet-400 bg-violet-900/20 hover:bg-violet-900/40' : 'border-gray-700 text-gray-400 hover:bg-gray-800'}`}
+                                                        title={s.isTest ? 'Зняти мітку тесту' : 'Позначити як тест'}
+                                                    >
+                                                        {s.isTest ? '🔬 Тест' : 'Тест'}
+                                                    </button>
                                                     <button
                                                         onClick={() => handleOpenErrors(s)}
                                                         className="px-1.5 py-1 text-[11px] rounded border border-amber-800 text-amber-400 hover:bg-amber-900/30"

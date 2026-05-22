@@ -13,6 +13,7 @@ const paginationSchema = z.object({
     page: z.coerce.number().int().min(0).default(0),
     limit: z.coerce.number().int().min(1).max(100).default(50),
     hasErrors: z.enum(['true', 'false']).optional(),
+    isTest: z.enum(['true', 'false']).optional(),
 });
 
 // GET /api/bots/:id
@@ -58,11 +59,12 @@ router.get('/:id/sessions',
         query: paginationSchema,
     }),
     asyncHandler(async (req, res) => {
-        const { page, limit, hasErrors } = req.query;
+        const { page, limit, hasErrors, isTest } = req.query;
         const where = { botId: req.params.id };
         if (hasErrors !== undefined) {
             where.errors = hasErrors === 'true' ? { some: {} } : { none: {} };
         }
+        if (isTest !== undefined) where.isTest = isTest === 'true';
 
         const [sessions, total] = await Promise.all([
             db.session.findMany({

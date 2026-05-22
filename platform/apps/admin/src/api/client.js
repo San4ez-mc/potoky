@@ -90,6 +90,7 @@ export const api = {
     sendSessionMessage: (id, payload) => req('POST', `/sessions/${id}/send`, payload),
     deleteSession: (id) => req('DELETE', `/sessions/${id}`),
     deleteSessionsBulk: (ids) => req('POST', '/sessions/bulk-delete', { ids }),
+    markSessionTest: (id, isTest) => req('PATCH', `/sessions/${id}/mark-test`, { isTest }),
     getBotSessions: (botId, page = 0, params = {}) => {
         const q = new URLSearchParams({ page, limit: 50, ...params }).toString();
         return reqWithMeta('GET', `/bots/${botId}/sessions${q ? '?' + q : ''}`);

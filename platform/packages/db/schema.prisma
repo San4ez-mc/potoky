@@ -101,6 +101,7 @@ model Session {
   lastActive  DateTime  @default(now())
   completedAt DateTime?
   isActive    Boolean   @default(true)
+  isTest      Boolean   @default(false)
 
   user     User      @relation(fields: [userId], references: [id])
   bot      Bot       @relation(fields: [botId], references: [id])
@@ -112,6 +113,7 @@ model Session {
   @@index([userId])
   @@index([botId])
   @@index([isActive])
+  @@index([isTest])
   @@map("sessions")
 }
 

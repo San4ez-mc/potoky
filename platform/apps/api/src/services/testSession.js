@@ -963,7 +963,8 @@ ${sourceContent || '(немає даних)'}
 
         if (node.type === 'wait_payment') {
             const paid = String(ctx.wfp_payment_status || '').toLowerCase() === 'approved'
-                || String(ctx.wfp_transaction_status || '').toLowerCase() === 'approved';
+                || String(ctx.wfp_transaction_status || '').toLowerCase() === 'approved'
+                || ctx.testMode === 'flow'; // auto-approve in test mode
 
             if (paid) {
                 runtime.waitPaymentUntil = null;

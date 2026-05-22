@@ -6,6 +6,8 @@ import {
     MiniMap,
     addEdge,
     useReactFlow,
+    applyNodeChanges,
+    applyEdgeChanges,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useFunnelStore } from '../../stores/funnelStore.js';
@@ -55,14 +57,8 @@ export function FunnelCanvas({ onNodeClick }) {
             <ReactFlow
                 nodes={nodes}
                 edges={edges}
-                onNodesChange={(changes) => {
-                    const { applyNodeChanges } = require('@xyflow/react');
-                    setNodes((nds) => applyNodeChanges(changes, nds));
-                }}
-                onEdgesChange={(changes) => {
-                    const { applyEdgeChanges } = require('@xyflow/react');
-                    setEdges((eds) => applyEdgeChanges(changes, eds));
-                }}
+                onNodesChange={(changes) => setNodes((nds) => applyNodeChanges(changes, nds))}
+                onEdgesChange={(changes) => setEdges((eds) => applyEdgeChanges(changes, eds))}
                 onConnect={onConnect}
                 onNodeClick={onNodeClickCb}
                 onPaneClick={onPaneClick}
@@ -77,7 +73,6 @@ export function FunnelCanvas({ onNodeClick }) {
                 snapGrid={[15, 15]}
                 defaultEdgeOptions={{ animated: true, style: { stroke: '#6366f1', strokeWidth: 2 } }}
                 className="bg-gray-950"
-                style={{ cursor: 'default' }}
             >
                 <Background color="#1f2937" gap={20} size={1} />
                 <Controls />

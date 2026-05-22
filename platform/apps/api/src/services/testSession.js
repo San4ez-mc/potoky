@@ -1473,7 +1473,7 @@ ${sourceContent || '(немає даних)'}
 
                     // Auto-set legal footer — added to context for every WayForPay invoice
                     // Rule: always include {{context.wfp_legal_footer}} in the message node after WayForPay connector
-                    const _baseUrl = (process.env.PUBLIC_BASE_URL || 'https://flows.fineko.space').replace(//$/,'');
+                    const _baseUrl = (process.env.PUBLIC_BASE_URL || 'https://flows.fineko.space').replace(/\/$/, '');
                     ctx.wfp_legal_footer = `📄 Оплачуючи, ти погоджуєшся з умовами:
 ${_baseUrl}/legal/offer — Публічна оферта
 ${_baseUrl}/legal/refund — Повернення коштів

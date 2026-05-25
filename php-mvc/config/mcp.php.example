@@ -1,0 +1,36 @@
+<?php
+return [
+    // MCP endpoint token (for Claude connector) — generate a strong random string
+    'token' => 'change-me-to-strong-random-token',
+
+    // Token for POST /api/generation/webhook validation — must match callbackUrl token
+    'generation_webhook_token' => 'change-me-webhook-token',
+
+    // Public base URL of THIS app (used to build callback URLs sent to flows)
+    'public_base_url' => 'https://content.fineko.space',
+
+    // Optional Bearer API key for flows.fineko.space POST requests
+    'flows_api_key' => '',
+
+    // Optional voice ID forwarded to avatar flow payload
+    'flow_voice_id' => '',
+
+    // Flow webhook endpoints on flows.fineko.space
+    'flows_endpoints' => [
+        'content-stories-generator' => 'https://flows.fineko.space/webhook/bot/content-stories-generator',
+        'content-carousel'          => 'https://flows.fineko.space/webhook/bot/content-carousel',
+        'content-video-basic-subs'  => 'https://flows.fineko.space/webhook/bot/content-video-basic-subs',
+        'content-video-remotion'    => 'https://flows.fineko.space/webhook/bot/content-video-remotion',
+        'content-resizer'           => 'https://flows.fineko.space/webhook/bot/content-resizer',
+        'content-avatar-heygen'     => 'https://flows.fineko.space/webhook/bot/content-avatar-heygen',
+        'content-avatar-budget'     => 'https://flows.fineko.space/webhook/bot/content-avatar-budget',
+    ],
+
+    // CORS allow-list for MCP browser connector
+    'allowed_origins' => [
+        'https://claude.ai',
+    ],
+
+    // Default row limit for MCP list tools
+    'default_limit' => 200,
+];

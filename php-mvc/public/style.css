@@ -1,0 +1,531 @@
+/* app/views/style.css - Спільні стили для всього проекту */
+
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&family=Inter:wght@300;400;500;600&display=swap');
+
+:root {
+    --primary: #5a6c7d;
+    --primary-light: #e8ecf1;
+    --primary-dark: #455562;
+    --bg-light: #f5f5f7;
+    --text-dark: #2c3e50;
+    --text-gray: #7f8c8d;
+    --border-color: #e0e0e0;
+    --success: #52c77a;
+    --danger: #e8675f;
+    --warn: #f5a623;
+    --shadow: 0 1px 8px rgba(0, 0, 0, 0.06);
+    --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.08);
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Inter', sans-serif;
+    background: var(--bg-light);
+    color: var(--text-dark);
+    line-height: 1.6;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+    font-family: 'Poppins', sans-serif;
+    font-weight: 600;
+    color: var(--text-dark);
+}
+
+h1 {
+    font-size: 28px;
+}
+
+h2 {
+    font-size: 24px;
+    margin-bottom: 12px;
+}
+
+h3 {
+    font-size: 18px;
+}
+
+.topbar {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+    color: white;
+    padding: 16px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    box-shadow: var(--shadow);
+}
+
+.topbar .logo {
+    font-size: 20px;
+    font-weight: 700;
+    font-family: 'Poppins', sans-serif;
+    letter-spacing: -0.5px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-size: 18px;
+}
+
+.topbar .menu {
+    display: flex;
+    gap: 28px;
+    margin: 0 auto;
+}
+
+.topbar a {
+    color: white;
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 500;
+    transition: opacity 0.3s;
+    padding: 4px 0;
+}
+
+.topbar a:hover {
+    opacity: 0.9;
+}
+
+.logout-link {
+    color: white;
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 500;
+    transition: opacity 0.3s;
+}
+
+.logout-link:hover {
+    opacity: 0.9;
+}
+
+.project-switch {
+    background: rgba(255, 255, 255, 0.2);
+    color: white;
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s;
+    font-size: 13px;
+}
+
+.project-switch:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+.container {
+    width: 100%;
+    padding: 24px;
+    margin: 0;
+    background: var(--bg-light);
+    min-height: calc(100vh - 70px);
+}
+
+.container>* {
+    max-width: 1600px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.form-box {
+    max-width: 420px;
+    margin: 60px auto;
+    background: white;
+    border-radius: 10px;
+    box-shadow: var(--shadow-lg);
+    padding: 40px;
+}
+
+input[type="text"],
+input[type="password"],
+input[type="email"],
+input[type="time"],
+input[type="date"],
+select,
+textarea {
+    width: 100%;
+    padding: 10px 12px;
+    margin-bottom: 16px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    transition: all 0.3s;
+    background: white;
+}
+
+input[type="text"]:focus,
+input[type="password"]:focus,
+input[type="email"]:focus,
+input[type="time"]:focus,
+input[type="date"]:focus,
+select:focus,
+textarea:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(90, 108, 125, 0.08);
+}
+
+button {
+    background: var(--primary);
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    font-family: 'Inter', sans-serif;
+    transition: all 0.3s;
+}
+
+button:hover {
+    background: var(--primary-dark);
+    box-shadow: var(--shadow);
+    transform: translateY(-1px);
+}
+
+button.submit-btn {
+    background: var(--primary);
+    padding: 10px 20px;
+}
+
+button.submit-btn:hover {
+    background: var(--primary-dark);
+}
+
+button.secondary {
+    background: #f0f0f5;
+    color: var(--text-dark);
+    border: 1px solid var(--border-color);
+}
+
+button.secondary:hover {
+    background: #e8e8f0;
+}
+
+button.danger {
+    background: var(--danger);
+}
+
+button.danger:hover {
+    background: #d35548;
+}
+
+.btn-group {
+    display: flex;
+    gap: 12px;
+    margin-top: 24px;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 24px;
+    background: white;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+th {
+    background: var(--primary-light);
+    color: var(--primary);
+    padding: 12px 14px;
+    text-align: left;
+    font-weight: 600;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+td {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 14px;
+}
+
+tr:hover {
+    background: #fafbfc;
+}
+
+.actions {
+    display: flex;
+    gap: 8px;
+}
+
+.actions button {
+    padding: 6px 10px;
+    font-size: 12px;
+}
+
+.add-btn {
+    background: var(--primary);
+    color: white;
+    padding: 10px 18px;
+    border-radius: 6px;
+    margin-bottom: 20px;
+    font-weight: 600;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.3s;
+}
+
+.add-btn:hover {
+    background: var(--primary-dark);
+}
+
+label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 500;
+    color: var(--text-dark);
+    font-size: 14px;
+}
+
+label.checkbox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-weight: 400;
+}
+
+input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    accent-color: var(--primary);
+}
+
+.error {
+    background: #fef2f2;
+    color: #991b1b;
+    padding: 12px 14px;
+    border-radius: 6px;
+    margin-bottom: 16px;
+    font-size: 14px;
+    border-left: 4px solid var(--danger);
+}
+
+.success {
+    background: #f1fdf4;
+    color: #166534;
+    padding: 12px 14px;
+    border-radius: 6px;
+    margin-bottom: 16px;
+    font-size: 14px;
+    border-left: 4px solid var(--success);
+}
+
+.warning {
+    background: #fffbeb;
+    color: #92400e;
+    padding: 12px 14px;
+    border-radius: 6px;
+    margin-bottom: 16px;
+    font-size: 14px;
+    border-left: 4px solid var(--warn);
+}
+
+.status-active {
+    color: var(--success);
+    font-weight: 600;
+}
+
+.status-inactive {
+    color: var(--text-gray);
+    font-weight: 600;
+}
+
+@media (max-width: 768px) {
+    .topbar {
+        flex-direction: column;
+        gap: 12px;
+        padding: 12px 16px;
+    }
+
+    .topbar .menu {
+        width: 100%;
+        justify-content: space-around;
+        gap: 12px;
+        font-size: 12px;
+    }
+
+    .container {
+        padding: 16px;
+        min-height: auto;
+    }
+
+    .form-box {
+        margin: 40px 16px;
+        padding: 24px;
+    }
+
+    input[type="text"],
+    input[type="password"],
+    input[type="email"],
+    input[type="time"],
+    input[type="date"],
+    select,
+    textarea {
+        padding: 10px;
+        font-size: 14px;
+    }
+
+    button {
+        padding: 10px 16px;
+        font-size: 13px;
+    }
+
+    table {
+        font-size: 12px;
+    }
+
+    th,
+    td {
+        padding: 10px;
+    }
+
+    .actions {
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .actions button {
+        padding: 6px 8px;
+        font-size: 11px;
+        width: 100%;
+    }
+
+    h2 {
+        font-size: 20px;
+    }
+}
+
+/* Спеціальні компоненти для контент плану */
+.content-planner-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.date-input {
+    padding: 8px 12px;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    font-size: 14px;
+}
+
+.controls {
+    display: flex;
+    gap: 8px;
+}
+
+.table-wrapper {
+    overflow-x: auto;
+}
+
+.content-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: white;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.content-table th {
+    background: #e8ecf1;
+    color: #5a6c7d;
+    padding: 12px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 13px;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.content-table td {
+    padding: 12px;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.content-table tr:hover {
+    background: #fafbfc;
+}
+
+.date-cell {
+    font-weight: 600;
+}
+
+.empty-content {
+    text-align: center;
+    padding: 20px;
+    color: #7f8c8d;
+}
+
+.add-post-btn {
+    padding: 6px 10px;
+    font-size: 12px;
+    background: #52c77a;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.add-post-btn:hover {
+    background: #40a861;
+}
+
+.delete-btn {
+    padding: 4px 8px;
+    font-size: 11px;
+    background: #e8675f;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.delete-btn:hover {
+    background: #d35548;
+}
+
+.category-card {
+    background: white;
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 12px;
+    border-left: 4px solid #5a6c7d;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: var(--shadow);
+}
+
+.category-color {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+}
+
+.category-info {
+    flex: 1;
+    margin: 0 16px;
+}
+
+.category-actions {
+    display: flex;
+    gap: 8px;
+}

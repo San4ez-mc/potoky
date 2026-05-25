@@ -1,0 +1,8 @@
+<?php
+// config/telegram.php.example
+// Скопіюйте цей файл як telegram.php та заповніть реальними даними
+
+return [
+    'bot_token' => 'YOUR_BOT_TOKEN_HERE', // Отримайте у @BotFather
+    'chat_id' => 'YOUR_CHAT_ID_HERE' // Отримайте у @userinfobot або через getUpdates
+];

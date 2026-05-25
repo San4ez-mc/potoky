@@ -1,9 +1,36 @@
-доступи.md
-*.md
-*.docx
-apps-script/
-боти/
-боти/Google Sheets AI agent/ultra-surfer-492920-a5-cd1642cd832a.json
-боти/Google Sheets AI agent/node_modules/
-боти/бізнес процес агента/node_modules/
-michael-bot/
+# ⚙️ .gitignore для проекту Content Planner Bot
+
+# Конфігураційні файли з чутливими даними
+php-mvc/config/telegram.php
+php-mvc/config/database.php
+php-mvc/config/mcp.php
+
+# Логи
+*.log
+logs/
+
+# Системні файли
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Dependency directories
+vendor/
+node_modules/
+
+# Тимчасові файли
+*.tmp
+*.temp
+*.cache
+
+# User-uploaded / generated media (not part of the codebase)
+php-mvc/public/uploads/generated_images/*
+php-mvc/public/uploads/images/*
+php-mvc/public/uploads/generated/*
+php-mvc/public/uploads/source_images/*
+!php-mvc/public/uploads/source_images/README.md

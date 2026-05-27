@@ -4,15 +4,13 @@
  * platformBotHandler.js
  *
  * Production Telegram webhook handler for platform flow bots.
- * Replaces the finance-course handler for bot-scoped webhook endpoints.
  *
- * Responsibilities:
- *  1. Find the bot by UUID (from webhook URL)
- *  2. Load the bot's TELEGRAM_BOT_TOKEN from funnelKey
- *  3. Find or create a User from the Telegram update
- *  4. On /start  → deactivate old sessions, create new session, executeFlowStep
- *  5. On message → find active session, executeFlowStep with user text
- *  6. Send all new assistant messages using the bot's own token
+ * Routing logic:
+ *   /start <slug>  → find bot by slug in the same project, route there
+ *   /start         → returning user  → restart their last non-system bot
+ *                    new user        → route to system bot (settings.isSystem=true), if any
+ *   /start lesson_X_Y → store lessonSlug, keep current bot
+ *   <message>      → continue active session on whatever bot it belongs to
  */
 
 const { db } = require('@platform/db');
@@ -39,7 +37,6 @@ async function tgRequest(token, method, payload) {
 }
 
 async function sendTelegramMessage(token, chatId, text, extra = {}) {
-    // Telegram max message length is 4096 chars; split if needed
     const MAX_LEN = 4000;
     const parts = [];
     let remaining = String(text || '');
@@ -55,7 +52,6 @@ async function sendTelegramMessage(token, chatId, text, extra = {}) {
             chat_id: chatId,
             text: parts[i],
             parse_mode: 'HTML',
-            // Only attach extra (e.g. reply_markup) to the last part so buttons appear once
             ...(isLast ? extra : {}),
         });
     }
@@ -65,7 +61,6 @@ async function sendTelegramMessage(token, chatId, text, extra = {}) {
 // DB helpers
 // ---------------------------------------------------------------------------
 
-// Telegram token format: digits:alphanumeric (e.g. 123456789:AABBcc...)
 function isValidTelegramToken(val) {
     return typeof val === 'string' && /^\d+:[A-Za-z0-9_-]{20,}$/.test(val.trim());
 }
@@ -77,7 +72,6 @@ async function getBotToken(botId) {
     });
     const keyMap = Object.fromEntries(keys.map(k => [k.key, k.value]));
 
-    // 1. Connector reference
     const connectorId = keyMap.TELEGRAM_CONNECTOR_ID;
     if (connectorId) {
         try {
@@ -86,15 +80,10 @@ async function getBotToken(botId) {
             if (isValidTelegramToken(t)) return t.trim();
         } catch { /* ignore */ }
     }
-    // 2. Direct key in funnelKey
     const directVal = keyMap.TELEGRAM_BOT_TOKEN?.trim();
     if (isValidTelegramToken(directVal)) return directVal;
-    // 3. Global env
     const envVal = process.env.TELEGRAM_BOT_TOKEN?.trim();
-    if (isValidTelegramToken(envVal)) {
-        logger.debug('[platformBotHandler] Using global TELEGRAM_BOT_TOKEN for bot', { botId });
-        return envVal;
-    }
+    if (isValidTelegramToken(envVal)) return envVal;
     return null;
 }
 
@@ -103,7 +92,6 @@ async function findOrCreateUser(from, botId) {
 
     const existing = await db.user.findUnique({ where: { telegramId } });
     if (existing) {
-        // Update name if changed
         const needsUpdate = (
             (from.first_name && existing.firstName !== from.first_name) ||
             (from.last_name !== undefined && existing.lastName !== (from.last_name || null)) ||
@@ -122,7 +110,6 @@ async function findOrCreateUser(from, botId) {
         return existing;
     }
 
-    // Resolve projectId via bot
     const bot = await db.bot.findUnique({ where: { id: botId }, select: { projectId: true } });
 
     return db.user.create({
@@ -146,7 +133,6 @@ async function findActiveSession(userId, botId) {
 }
 
 async function createNewSession(userId, botId) {
-    // Get flow definition to find start node
     const flowDef = await db.flowDefinition.findUnique({ where: { botId } });
     const nodes = Array.isArray(flowDef?.nodes) ? flowDef.nodes : [];
     const startNode = nodes.find((n) => n.type === 'start') || nodes[0] || null;
@@ -170,8 +156,6 @@ async function createNewSession(userId, botId) {
     });
 }
 
-// Use createdAt timestamp instead of id comparison — UUID ids are non-sequential
-// and alphabetical gt comparison causes old messages to be re-delivered.
 async function getNewAssistantMessages(sessionId, since) {
     const where = { sessionId, role: 'assistant' };
     if (since) {
@@ -195,6 +179,89 @@ async function persistUserMessage(sessionId, content) {
 }
 
 // ---------------------------------------------------------------------------
+// Routing helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Given the webhook bot ID and a startPayload, resolve which bot should
+ * actually handle this session.
+ *
+ * Rules (in priority order):
+ *   1. Payload matches a bot slug in the same project → route there
+ *   2. Payload matches lesson_X_Y format → keep current bot, store lessonSlug
+ *   3. No payload + returning user → restart their last non-system bot
+ *   4. No payload + new user → system bot in project (settings.isSystem = true)
+ *   5. Fallback: use the webhook bot (botId)
+ *
+ * Returns { targetBotId, lessonSlug | null }
+ */
+async function resolveTargetBot(botId, startPayload, userId) {
+    // Load origin bot's project once
+    const originBot = await db.bot.findUnique({
+        where: { id: botId },
+        select: { projectId: true },
+    });
+    const projectId = originBot?.projectId;
+
+    // ── Rule 1: slug routing ───────────────────────────────────────────────
+    if (startPayload && !/^lesson_\d+_\d+$/.test(startPayload)) {
+        if (projectId) {
+            const slugBot = await db.bot.findFirst({
+                where: { slug: startPayload, projectId, isActive: true },
+                select: { id: true },
+            });
+            if (slugBot) {
+                logger.info('[platformBotHandler] Routed by slug', { slug: startPayload, targetBotId: slugBot.id });
+                return { targetBotId: slugBot.id, lessonSlug: null };
+            }
+            logger.warn('[platformBotHandler] Slug not found in project, using webhook bot', { slug: startPayload, botId });
+        }
+        return { targetBotId: botId, lessonSlug: null };
+    }
+
+    // ── Rule 2: lesson slug (keep current bot) ─────────────────────────────
+    if (startPayload && /^lesson_\d+_\d+$/.test(startPayload)) {
+        return { targetBotId: botId, lessonSlug: startPayload };
+    }
+
+    // ── Rules 3 & 4: plain /start (no payload) ────────────────────────────
+    if (!startPayload && userId && projectId) {
+        // Returning user: find last non-test, non-system session in same project
+        const lastSession = await db.session.findFirst({
+            where: {
+                userId,
+                isTest: false,
+                bot: { projectId },
+            },
+            orderBy: { startedAt: 'desc' },
+            select: { botId: true, bot: { select: { settings: true } } },
+        });
+
+        const isLastSystem = lastSession?.bot?.settings?.isSystem === true;
+
+        if (lastSession && !isLastSystem) {
+            logger.info('[platformBotHandler] Returning user — restarting last bot', {
+                targetBotId: lastSession.botId, userId,
+            });
+            return { targetBotId: lastSession.botId, lessonSlug: null };
+        }
+
+        // New user (or last was system bot) — find system bot
+        const projectBots = await db.bot.findMany({
+            where: { projectId, isActive: true },
+            select: { id: true, settings: true },
+        });
+        const sysBot = projectBots.find(b => b.settings?.isSystem === true);
+        if (sysBot) {
+            logger.info('[platformBotHandler] New user — routing to system bot', { targetBotId: sysBot.id });
+            return { targetBotId: sysBot.id, lessonSlug: null };
+        }
+    }
+
+    return { targetBotId: botId, lessonSlug: null };
+}
+
+// ---------------------------------------------------------------------------
 // Main handler
 // ---------------------------------------------------------------------------
 
@@ -214,14 +281,17 @@ async function handlePlatformBotUpdate(botId, update) {
         return;
     }
 
-    // 1. Load bot's Telegram token
+    const isStart = text.startsWith('/start');
+    const startPayload = isStart ? text.slice('/start'.length).trim() : '';
+
+    // ── Phase 1: token (use webhook bot — same connector for all bots in project) ──
     const token = await getBotToken(botId);
     if (!token) {
         logger.error('[platformBotHandler] No TELEGRAM_BOT_TOKEN for bot', { botId });
         return;
     }
 
-    // 2. Find or create user
+    // ── Phase 2: find or create user (use webhook bot for projectId on new users) ──
     let user;
     try {
         user = await findOrCreateUser(from, botId);
@@ -230,36 +300,39 @@ async function handlePlatformBotUpdate(botId, update) {
         return;
     }
 
-    // 3. Determine flow definition exists
-    const flowDef = await db.flowDefinition.findUnique({ where: { botId }, select: { id: true } });
+    // ── Phase 3: resolve target bot ────────────────────────────────────────────
+    let targetBotId = botId;
+    let lessonSlug = null;
+
+    if (isStart) {
+        const resolved = await resolveTargetBot(botId, startPayload, user.id);
+        targetBotId = resolved.targetBotId;
+        lessonSlug = resolved.lessonSlug;
+    }
+
+    // ── Phase 4: verify flow definition exists ─────────────────────────────────
+    const flowDef = await db.flowDefinition.findUnique({ where: { botId: targetBotId }, select: { id: true } });
     if (!flowDef) {
-        logger.warn('[platformBotHandler] No flow definition for bot', { botId });
+        logger.warn('[platformBotHandler] No flow definition for bot', { targetBotId });
         await sendTelegramMessage(token, chatId, 'Вибачте, бот ще не налаштований.');
         return;
     }
 
-    const isStart = text.startsWith('/start');
-    // Extract /start payload (e.g. "/start lesson_1_1" or "/start bot-slug__l2")
-    const startPayload = isStart ? text.slice('/start'.length).trim() : '';
-
     let session;
-    // Timestamp just before execution — used to fetch only newly created assistant messages.
-    // UUID-based id comparison is unreliable (non-sequential), so we use createdAt instead.
     let sinceTime;
 
     if (isStart) {
-        // Deactivate all previous active sessions
+        // Deactivate all previous active sessions for this specific bot
         await db.session.updateMany({
-            where: { userId: user.id, botId, state: { not: 'completed' } },
+            where: { userId: user.id, botId: targetBotId, state: { not: 'completed' } },
             data: { state: 'completed' },
         });
 
-        // Create fresh session
-        session = await createNewSession(user.id, botId);
+        session = await createNewSession(user.id, targetBotId);
 
-        // If the start payload looks like a lesson slug (e.g. "lesson_1_1"), store it in session context
-        if (startPayload && /^lesson_\d+_\d+$/.test(startPayload)) {
-            const updatedCtx = { ...(session.context || {}), lessonSlug: startPayload };
+        // Store lesson slug in context if present
+        if (lessonSlug) {
+            const updatedCtx = { ...(session.context || {}), lessonSlug };
             session = await db.session.update({
                 where: { id: session.id },
                 data: { context: updatedCtx },
@@ -267,34 +340,52 @@ async function handlePlatformBotUpdate(botId, update) {
         }
 
         logger.info('[platformBotHandler] New session created on /start', {
-            botId, userId: user.id, sessionId: session.id,
+            webhookBotId: botId,
+            targetBotId,
+            userId: user.id,
+            sessionId: session.id,
         });
     } else {
-        // Find active session
-        session = await findActiveSession(user.id, botId);
+        // Non-start message: find active session on the BOT it was last running on.
+        // We search across all bots in the project (user might be in the middle of SPIN
+        // while the webhook belongs to Automation, or vice versa).
+        session = await findActiveSession(user.id, targetBotId);
 
         if (!session) {
-            // No active session — prompt user to start
+            // Also try across all bots in the same project (handles cross-bot continuation)
+            const originBot = await db.bot.findUnique({ where: { id: botId }, select: { projectId: true } });
+            if (originBot?.projectId) {
+                session = await db.session.findFirst({
+                    where: {
+                        userId: user.id,
+                        state: { not: 'completed' },
+                        bot: { projectId: originBot.projectId },
+                    },
+                    orderBy: { lastActive: 'desc' },
+                });
+                if (session) targetBotId = session.botId;
+            }
+        }
+
+        if (!session) {
             await sendTelegramMessage(token, chatId, 'Натисніть /start щоб розпочати.');
             return;
         }
 
-        // Persist user message before executing step
         await persistUserMessage(session.id, text);
 
         logger.info('[platformBotHandler] Continuing session', {
-            botId, userId: user.id, sessionId: session.id, text: text.slice(0, 80),
+            targetBotId, userId: user.id, sessionId: session.id, text: text.slice(0, 80),
         });
     }
 
-    // 4. Show typing indicator while processing (refresh every 4s for long Claude calls)
+    // ── Phase 5: execute flow step ────────────────────────────────────────────
     sinceTime = new Date();
     await tgRequest(token, 'sendChatAction', { chat_id: chatId, action: 'typing' }).catch(() => {});
     const typingTimer = setInterval(() => {
         tgRequest(token, 'sendChatAction', { chat_id: chatId, action: 'typing' }).catch(() => {});
     }, 4000);
 
-    // 5. Execute flow step
     try {
         await executeFlowStep({
             sessionId: session.id,
@@ -303,14 +394,14 @@ async function handlePlatformBotUpdate(botId, update) {
     } catch (err) {
         clearInterval(typingTimer);
         logger.error('[platformBotHandler] executeFlowStep failed', {
-            botId, sessionId: session.id, error: err.message, stack: err.stack,
+            targetBotId, sessionId: session.id, error: err.message, stack: err.stack,
         });
         await sendTelegramMessage(token, chatId, 'Вибачте, сталася помилка. Спробуйте ще раз або /start.');
         return;
     }
     clearInterval(typingTimer);
 
-    // 6. Fetch new assistant messages and send them
+    // ── Phase 6: deliver new messages ─────────────────────────────────────────
     const newMessages = await getNewAssistantMessages(session.id, sinceTime);
 
     if (newMessages.length === 0) {
@@ -343,7 +434,6 @@ async function handlePlatformBotUpdate(botId, update) {
                         ...(keyboard ? { reply_markup: keyboard } : {}),
                     });
                 } else {
-                    // base64 or data URL — fallback to text
                     await sendTelegramMessage(token, chatId, attachment.caption || msg.content || '📸',
                         keyboard ? { reply_markup: keyboard } : {});
                 }
@@ -358,25 +448,15 @@ async function handlePlatformBotUpdate(botId, update) {
         }
     }
 
-    // After sending messages, check if this session just completed and it's a Michael-style
-    // homework bot. If so, signal the user's course bot session to advance.
-    await tryTriggerHomeworkDone(botId, user.id, isStart ? null : text, session.id);
+    await tryTriggerHomeworkDone(targetBotId, user.id, isStart ? null : text, session.id);
 }
 
 // ---------------------------------------------------------------------------
 // Homework-done cross-bot trigger
 // ---------------------------------------------------------------------------
 
-/**
- * When a session on a "practice" bot completes (reaches a node marked as homework_done),
- * find the user's active session on the linked course bot and fire the homework event.
- *
- * Triggered after every flow step on non-start messages.
- * The course bot must be linked via the COURSE_BOT_ID funnelKey on the practice bot.
- */
 async function tryTriggerHomeworkDone(practiceBotId, userId, userText, sessionId) {
     try {
-        // Check if this bot has a COURSE_BOT_ID key (meaning it's a practice/homework bot)
         const courseBotKey = await db.funnelKey.findUnique({
             where: { botId_key: { botId: practiceBotId, key: 'COURSE_BOT_ID' } },
             select: { value: true },
@@ -384,20 +464,16 @@ async function tryTriggerHomeworkDone(practiceBotId, userId, userText, sessionId
         if (!courseBotKey?.value) return;
         const courseBotId = courseBotKey.value;
 
-        // Check if current session just completed
         const currentSession = await db.session.findUnique({
             where: { id: sessionId },
             select: { state: true, context: true },
         });
         if (!currentSession || currentSession.state !== 'completed') return;
 
-        // Find the lesson slug from session context (set when /start=lesson_X_Y)
-        // Stored at session.context.lessonSlug (root level)
         const pracCtx = currentSession.context || {};
         const lessonSlug = pracCtx.lessonSlug;
         if (!lessonSlug) return;
 
-        // Find the user's active course bot session
         const courseSession = await db.session.findFirst({
             where: { userId, botId: courseBotId, state: { not: 'completed' } },
             orderBy: { startedAt: 'desc' },
@@ -409,20 +485,15 @@ async function tryTriggerHomeworkDone(practiceBotId, userId, userText, sessionId
             practiceBotId, courseBotId, lessonSlug, courseSessionId: courseSession.id,
         });
 
-        // Set the event key at the root of session.context so executeFlowStep's `ctx[eventKey]` picks it up
         const courseCtx = { ...(courseSession.context || {}), [eventKey]: true };
         await db.session.update({
             where: { id: courseSession.id },
             data: { context: courseCtx },
         });
 
-        // Capture timestamp before execution so we only deliver newly created messages
         const sinceTime = new Date();
-
-        // Execute the next step in the course session
         await executeFlowStep({ sessionId: courseSession.id, incomingUserMessage: null });
 
-        // Deliver new course bot messages to the user via the course bot's token
         const courseUser = await db.user.findUnique({ where: { id: userId }, select: { telegramId: true } });
         if (!courseUser?.telegramId) return;
         const courseChatId = Number(courseUser.telegramId);
@@ -434,13 +505,9 @@ async function tryTriggerHomeworkDone(practiceBotId, userId, userText, sessionId
 }
 
 // ---------------------------------------------------------------------------
-// Exported delivery helper (for use by API routes after advancing a session)
+// Exported delivery helper
 // ---------------------------------------------------------------------------
 
-/**
- * Deliver any assistant messages created after `sinceTime` (Date) to the given
- * Telegram chat. Used by the homework-done endpoint to push course messages.
- */
 async function deliverSessionMessages(botId, sessionId, telegramChatId, sinceTime) {
     const token = await getBotToken(botId);
     if (!token) {

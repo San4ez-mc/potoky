@@ -87,11 +87,12 @@ router.post('/:id/bots',
             slug: z.string().min(1).max(100),
             description: z.string().max(1000).optional(),
             trigger: z.string().max(255).optional(),
+            isSystem: z.boolean().optional(), // marks a system/default bot (hidden in UI, non-deletable)
         }),
     }),
     asyncHandler(async (req, res) => {
         const { id: projectId } = req.params;
-        const { name, slug, description, trigger } = req.body;
+        const { name, slug, description, trigger, isSystem } = req.body;
 
         const project = await db.project.findUnique({ where: { id: projectId } });
         if (!project) throw new NotFoundError('Project', projectId);
@@ -103,6 +104,9 @@ router.post('/:id/bots',
             return res.status(409).json({ ok: false, error: { message: 'Воронка з таким slug вже існує в проєкті' } });
         }
 
+        const settings = {};
+        if (isSystem) settings.isSystem = true;
+
         const bot = await db.bot.create({
             data: {
                 projectId,
@@ -111,7 +115,7 @@ router.post('/:id/bots',
                 description: description || null,
                 trigger: trigger || null,
                 isActive: true,
-                settings: {},
+                settings,
             },
         });
 
@@ -166,6 +170,14 @@ router.delete('/:id/bots/:botId',
             where: { id: req.params.botId, projectId: req.params.id },
         });
         if (!bot) throw new NotFoundError('Bot', req.params.botId);
+
+        // System bots are protected — they handle default /start routing and cannot be removed
+        if (bot.settings?.isSystem === true) {
+            return res.status(403).json({
+                ok: false,
+                error: { message: 'Системну воронку не можна видалити. Це захищений компонент бота.' },
+            });
+        }
 
         await db.bot.update({
             where: { id: req.params.botId },

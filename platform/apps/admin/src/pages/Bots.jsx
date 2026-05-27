@@ -133,6 +133,7 @@ export function Bots() {
     const [projectFilter, setProjectFilter] = useState(savedFilters?.projectFilter ?? 'all');
     const [searchQuery, setSearchQuery] = useState(savedFilters?.searchQuery ?? '');
     const [nameSort, setNameSort] = useState(savedFilters?.nameSort ?? 'asc');
+    const [showSystemBots, setShowSystemBots] = useState(savedFilters?.showSystemBots ?? false);
     const [loading, setLoading] = useState(true);
     const [createModalOpen, setCreateModalOpen] = useState(false);
     const [creating, setCreating] = useState(false);
@@ -144,9 +145,9 @@ export function Bots() {
     // Persist filters to sessionStorage whenever they change
     useEffect(() => {
         try {
-            sessionStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify({ projectFilter, searchQuery, nameSort }));
+            sessionStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify({ projectFilter, searchQuery, nameSort, showSystemBots }));
         } catch { /* ignore */ }
-    }, [projectFilter, searchQuery, nameSort]);
+    }, [projectFilter, searchQuery, nameSort, showSystemBots]);
 
     useEffect(() => {
         api.getProjects()
@@ -180,20 +181,30 @@ export function Bots() {
             ? rows
             : rows.filter((row) => row.projectId === projectFilter);
 
+        // Hide system bots by default unless toggle is on
+        const visibleRows = showSystemBots
+            ? baseRows
+            : baseRows.filter((row) => row.settings?.isSystem !== true);
+
         const searchedRows = query
-            ? baseRows.filter((row) =>
+            ? visibleRows.filter((row) =>
                 String(row.name || '').toLowerCase().includes(query) ||
                 String(row.slug || '').toLowerCase().includes(query)
             )
-            : baseRows;
+            : visibleRows;
 
         return [...searchedRows].sort((a, b) => {
+            // System bots always sort last
+            const aSystem = a.settings?.isSystem === true;
+            const bSystem = b.settings?.isSystem === true;
+            if (aSystem !== bSystem) return aSystem ? 1 : -1;
+
             const left = String(a.name || '').toLowerCase();
             const right = String(b.name || '').toLowerCase();
             const comparison = left.localeCompare(right, 'uk');
             return nameSort === 'desc' ? -comparison : comparison;
         });
-    }, [rows, projectFilter, searchQuery, nameSort]);
+    }, [rows, projectFilter, searchQuery, nameSort, showSystemBots]);
 
     const openCreateModal = () => {
         const initialProjectId = projectFilter !== 'all' ? projectFilter : (projects[0]?.id || '');
@@ -317,6 +328,17 @@ export function Bots() {
                         </select>
                     </div>
                     <button
+                        onClick={() => setShowSystemBots(v => !v)}
+                        title="Системні воронки обробляють /start без параметра і не відображаються в основному списку"
+                        className={`px-3 py-2 rounded-lg text-xs font-medium transition-colors border ${
+                            showSystemBots
+                                ? 'bg-gray-700 border-gray-500 text-gray-200'
+                                : 'bg-gray-900 border-gray-700 text-gray-400 hover:text-gray-200'
+                        }`}
+                    >
+                        ⚙ Системні
+                    </button>
+                    <button
                         onClick={openCreateModal}
                         className="px-4 py-2 rounded-lg bg-brand hover:bg-brand/90 text-white text-sm font-medium transition-colors"
                     >
@@ -341,9 +363,16 @@ export function Bots() {
                     </thead>
                     <tbody>
                         {filteredRows.map((bot) => (
-                            <tr key={bot.id} className="border-b border-gray-800/60 hover:bg-gray-800/35 transition-colors align-top">
+                            <tr key={bot.id} className={`border-b border-gray-800/60 hover:bg-gray-800/35 transition-colors align-top ${bot.settings?.isSystem ? 'opacity-70' : ''}`}>
                                 <td className="px-4 py-3 max-w-xs">
-                                    <div className="font-medium text-white">{bot.name}</div>
+                                    <div className="flex items-center gap-2">
+                                        <span className="font-medium text-white">{bot.name}</span>
+                                        {bot.settings?.isSystem && (
+                                            <span title="Системна воронка — обробляє /start без параметра для нових користувачів. Не видаляється." className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-700 text-gray-400 border border-gray-600">
+                                                ⚙ sys
+                                            </span>
+                                        )}
+                                    </div>
                                     <div className="text-xs text-gray-500 font-mono">/{bot.slug}</div>
                                     {bot.description && (
                                         <div className="text-xs text-gray-400 mt-1 line-clamp-2 leading-relaxed">{bot.description}</div>
@@ -393,8 +422,13 @@ export function Bots() {
                         )}
                     </tbody>
                 </table>
-                <div className="px-4 py-2 text-xs text-gray-500 border-t border-gray-800">
-                    Всього воронок: {filteredRows.length}
+                <div className="px-4 py-2 text-xs text-gray-500 border-t border-gray-800 flex items-center justify-between">
+                    <span>Всього воронок: {filteredRows.length}</span>
+                    {!showSystemBots && rows.some(r => r.settings?.isSystem) && (
+                        <span className="text-gray-600">
+                            + {rows.filter(r => r.settings?.isSystem).length} системних (приховано)
+                        </span>
+                    )}
                 </div>
             </div>
 

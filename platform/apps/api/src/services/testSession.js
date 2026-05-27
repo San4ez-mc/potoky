@@ -1175,6 +1175,7 @@ ${sourceContent || '(немає даних)'}
         }
 
         if (node.type === 'sendDocument') {
+            const fileKey = data.fileKey ? String(data.fileKey).trim() : '';
             const fileType = data.fileType ? String(data.fileType).trim() : '';
             const fileVar = data.fileVar ? String(data.fileVar).replace(/^context\./, '') : '';
             const caption = renderTemplate(data.caption || '', scope);
@@ -1183,15 +1184,33 @@ ${sourceContent || '(немає даних)'}
                 let fileName = data.fileName ? renderTemplate(data.fileName, scope) : '';
                 let attachment = null;
 
-                if (fileVar) {
+                // fileKey — env var name, e.g. PRESENTATION_PDF_URL (supports both http URLs and Telegram file_ids)
+                if (!attachment && fileKey) {
+                    const resolvedValue = funnelEnv[fileKey] || '';
+                    if (resolvedValue) {
+                        attachment = { type: 'document', url: resolvedValue, fileName: fileName || 'document.pdf' };
+                    }
+                }
+
+                // fileVar — context variable (supports http URLs and Telegram file_ids)
+                if (!attachment && fileVar) {
                     const source = getByPath(ctx, fileVar);
-                    if (typeof source === 'string' && source.startsWith('http')) {
-                        attachment = { type: 'document', url: source, fileName: fileName || 'document.pdf' };
-                    } else if (source) {
+                    if (typeof source === 'string' && source) {
+                        if (source.startsWith('http')) {
+                            attachment = { type: 'document', url: source, fileName: fileName || 'document.pdf' };
+                        } else {
+                            // Could be a Telegram file_id or text content
+                            attachment = {
+                                type: 'document',
+                                url: source,
+                                fileName: fileName || 'document.pdf',
+                            };
+                        }
+                    } else if (source && typeof source !== 'string') {
                         attachment = {
                             type: 'document',
                             fileName: fileName || 'document.txt',
-                            content: typeof source === 'string' ? source : safeJsonStringify(source, 2),
+                            content: safeJsonStringify(source, 2),
                         };
                     }
                 }
@@ -1199,7 +1218,7 @@ ${sourceContent || '(немає даних)'}
                 // Direct URL with template support (e.g. {{env.PRESENTATION_PDF_URL}})
                 if (!attachment && data.url) {
                     const resolvedUrl = renderTemplate(String(data.url), scope);
-                    if (resolvedUrl && resolvedUrl.startsWith('http')) {
+                    if (resolvedUrl) {
                         attachment = { type: 'document', url: resolvedUrl, fileName: fileName || 'document.pdf' };
                     }
                 }

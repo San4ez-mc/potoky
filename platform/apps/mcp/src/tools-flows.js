@@ -98,16 +98,24 @@ const TOOLS = [
     {
         name: 'add_node',
         description: 'Add a new node to the funnel canvas. Key types and their required data fields:\n' +
-            '• message — { text, label } — optional: attachmentUrl, attachmentFileName, notifyAdmin(bool)\n' +
-            '• notifyAdmin — { message, targetKey } — targetKey is a funnel-key name (e.g. "ADMIN_TELEGRAM_ID") whose value is the admin Telegram chat id\n' +
-            '• wait_payment — { timeoutHours } — pauses flow until WayForPay webhook fires\n' +
-            '• sendDocument — { fileKey, caption } — fileKey is an env key pointing to a PDF URL\n' +
-            '• claude — { systemPrompt, model, outputVar, connectorId, exitCondition }\n' +
-            '• connector — { connectorType, action, amount, currency, outputVar, connectorId, ... }\n' +
-            '• condition — { conditions: [{ id, label, expression }] }\n' +
-            '• wait — { duration, unit } — unit: "seconds"|"minutes"|"hours"|"days"\n' +
-            '• saveFile — { fileType, contentVar, fileNameTemplate }\n' +
-            '• loadFile — { fileType, outputVar }',
+            '• message — { text, label } — optional: attachmentUrl, attachmentFileName, buttons: [[{text,url}]]\n' +
+            '• claude — { systemPrompt, model, mode, outputVar, connectorId, exitCondition } — mode: "single"|"dialog"; exitCondition: "json_output"|"first_response"|"user_confirms"|"keyword:WORD"\n' +
+            '• condition — { conditions: [{ id, label, expression }] } — expression is a JS boolean expression on context\n' +
+            '• js — { code } — JS code with access to context/user/session; must return context object\n' +
+            '• connector — { connectorType, action, amount, currency, orderReference, description, outputVar } — for WayForPay: action="create_invoice"\n' +
+            '• saveFile — { fileType, contentVar } — saves context var as user file; fileType: "cashflow_articles"|"business_process"|etc.\n' +
+            '• loadFile — { fileType, outputVar, onMissing } — onMissing: "ask"|"skip"|"block"\n' +
+            '• httpRequest — { url, method, bodyTemplate, outputVar, responsePath } — method: "GET"|"POST"|"PUT"|"DELETE"\n' +
+            '• wait — { duration, unit } — unit: "minutes"|"hours"|"days"|"weeks"\n' +
+            '• tag — { tag, action } — action: "add"|"remove"\n' +
+            '• abtest — { percentA, variantA, percentB, variantB } — splits users A/B by percentage\n' +
+            '• notifyAdmin — { message, targetKey } — targetKey is funnel-key name (e.g. "ADMIN_TELEGRAM_ID"); supports {{user.firstName}}, {{user.telegramId}}, {{session.id}}\n' +
+            '• sendDocument — { fileKey, fileVar, caption } — fileKey: env key name (e.g. "PRESENTATION_PDF_URL"); fileVar: context path; supports Telegram file_ids\n' +
+            '• sendPhoto — { photoVar, caption } — photoVar: context path to image URL or base64\n' +
+            '• wait_payment — { timeoutHours } — pauses until WayForPay webhook; exits via "paid" handle\n' +
+            '• generateDocument — { template, sourceVar, filename, sendToUser } — template: "student_profile"|"business_process"|"cashflow_table"|"pl_table"|"balance_table"\n' +
+            '• httpEncode — { sourceVar, outputVar } — Base64-encodes a context variable\n' +
+            '• fetchTelegramProfile — {} — silently loads tg_bio and tg_photo_url into context',
         inputSchema: {
             type: 'object',
             properties: {

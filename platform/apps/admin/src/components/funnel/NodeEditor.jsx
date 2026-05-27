@@ -4,23 +4,6 @@ import { api } from '../../api/client.js';
 
 const MonacoEditor = lazy(() => import('@monaco-editor/react'));
 
-const EDITORS = {
-    claude: ['systemPrompt', 'messagesTemplate'],
-    js: ['code'],
-    message: [],
-    condition: ['condition'],
-    connector: [],
-    saveFile: [],
-    wait: [],
-    wait_payment: [],
-    start: [],
-    generateDocument: [],
-    httpEncode: [],
-    httpRequest: [],
-    sendPhoto: [],
-    sendDocument: [],
-    notifyAdmin: [],
-};
 
 function Field({ label, children }) {
     return (

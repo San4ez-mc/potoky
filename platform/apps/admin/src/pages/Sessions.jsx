@@ -14,6 +14,7 @@ export function Sessions() {
     const [errorsModal, setErrorsModal] = useState(null);
     const [errorsOnly, setErrorsOnly] = useState(false);
     const [testOnly, setTestOnly] = useState(false);
+    const [realOnly, setRealOnly] = useState(false);
 
     const backTo = useMemo(() => {
         const params = new URLSearchParams();
@@ -29,6 +30,7 @@ export function Sessions() {
         const filters = {};
         if (errorsOnly) filters.hasErrors = 'true';
         if (testOnly) filters.isTest = 'true';
+        else if (realOnly) filters.isTest = 'false';  // mutually exclusive with testOnly
         return filters;
     };
 
@@ -55,7 +57,7 @@ export function Sessions() {
 
     useEffect(() => {
         loadSessions();
-    }, [botId, page, errorsOnly, testOnly]);
+    }, [botId, page, errorsOnly, testOnly, realOnly]);
 
     const visibleIds = sessions.map(s => s.id);
     const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.includes(id));
@@ -161,10 +163,16 @@ export function Sessions() {
                 </div>
                 <div className="flex items-center gap-3">
                     <button
-                        onClick={() => { setPage(0); setTestOnly(v => !v); }}
+                        onClick={() => { setPage(0); setTestOnly(v => { if (!v) setRealOnly(false); return !v; }); }}
                         className={`px-3 py-2 text-xs rounded-lg border transition-colors ${testOnly ? 'border-violet-700 text-violet-300 bg-violet-900/20' : 'border-gray-700 text-gray-300 hover:bg-gray-800'}`}
                     >
-                        {testOnly ? 'Лише тестові: ON' : 'Лише тестові'}
+                        {testOnly ? 'Лише тестові ✓' : 'Лише тестові'}
+                    </button>
+                    <button
+                        onClick={() => { setPage(0); setRealOnly(v => { if (!v) setTestOnly(false); return !v; }); }}
+                        className={`px-3 py-2 text-xs rounded-lg border transition-colors ${realOnly ? 'border-emerald-700 text-emerald-300 bg-emerald-900/20' : 'border-gray-700 text-gray-300 hover:bg-gray-800'}`}
+                    >
+                        {realOnly ? 'Справжні ✓' : 'Справжні'}
                     </button>
                     <button
                         onClick={() => { setPage(0); setErrorsOnly(v => !v); }}

@@ -315,6 +315,7 @@ export function SessionDetail() {
     const [photoFile, setPhotoFile] = useState(null);
     const [sending, setSending] = useState(false);
     const [sendError, setSendError] = useState('');
+    const [restarting, setRestarting] = useState(false);
     const [highlightedMsgId, setHighlightedMsgId] = useState(null);
 
     // Refs for scrolling to highlighted message
@@ -364,6 +365,27 @@ export function SessionDetail() {
         reader.readAsDataURL(file);
     });
 
+    const restartChat = async () => {
+        if (!window.confirm('Перезапустити чат? Вся історія буде очищена і бот запуститься з початку.')) return;
+        setRestarting(true);
+        setSendError('');
+        try {
+            await api.restartSession(id);
+            const [s, m, a] = await Promise.all([
+                api.getSession(id),
+                api.getSessionMessages(id),
+                api.getSessionApiCalls(id),
+            ]);
+            setSession(s.data || s);
+            setMessages(m.data || m);
+            setApiCalls(a.data || a);
+        } catch (err) {
+            setSendError(err.message || 'Не вдалося перезапустити чат');
+        } finally {
+            setRestarting(false);
+        }
+    };
+
     const sendManualMessage = async () => {
         if (!draft.trim() && !photoFile) { setSendError('Введіть повідомлення або додайте фото'); return; }
         setSending(true);
@@ -408,7 +430,15 @@ export function SessionDetail() {
                             {id.slice(0, 8)}… · стан: <span className="font-mono">{session.state}</span> · {messages.length} повідомлень
                         </div>
                     </div>
-                    <div className="flex gap-2 ml-auto">
+                    <div className="flex gap-2 ml-auto items-center">
+                        <button
+                            onClick={restartChat}
+                            disabled={restarting}
+                            title="Очистити чат і запустити воронку з початку (як новий /start)"
+                            className="text-xs px-3 py-1.5 rounded-lg border border-amber-800 text-amber-400 hover:bg-amber-900/20 disabled:opacity-50 transition-colors"
+                        >
+                            {restarting ? '⏳ Перезапуск...' : '🔄 Перезапустити чат'}
+                        </button>
                         {['chat', 'api', 'context'].map(t => (
                             <button key={t} onClick={() => setTab(t)}
                                 className={`text-sm px-3 py-1.5 rounded-lg transition-colors ${tab === t ? 'bg-brand/20 text-brand-light' : 'text-gray-400 hover:text-white'}`}>

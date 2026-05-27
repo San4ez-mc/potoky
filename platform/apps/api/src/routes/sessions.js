@@ -152,7 +152,69 @@ router.get('/:id/api-calls',
     })
 );
 
-// POST /api/sessions/:id/send — manual message from admin
+// ─── Helper: resolve bot token for a session ─────────────────────────────────
+// Tries per-bot funnelKey first, falls back to global singleton.
+async function resolveBotToken(botId) {
+    if (!botId) return null;
+    try {
+        const keys = await db.funnelKey.findMany({
+            where: { botId, key: { in: ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CONNECTOR_ID'] } },
+            select: { key: true, value: true },
+        });
+        const keyMap = Object.fromEntries(keys.map(k => [k.key, k.value]));
+
+        const connectorId = keyMap.TELEGRAM_CONNECTOR_ID;
+        if (connectorId) {
+            const conn = await db.savedConnector.findUnique({ where: { id: connectorId }, select: { config: true } });
+            const t = conn?.config?.token;
+            if (t && /^\d+:[A-Za-z0-9_-]{20,}$/.test(t.trim())) return t.trim();
+        }
+        const direct = keyMap.TELEGRAM_BOT_TOKEN;
+        if (direct && /^\d+:[A-Za-z0-9_-]{20,}$/.test(direct.trim())) return direct.trim();
+    } catch { /* fall through */ }
+    return null;
+}
+
+// ─── Helper: send via per-bot token (or fallback to global) ──────────────────
+async function sendViaBot(botId, chatId, text, photoBuffer) {
+    const token = await resolveBotToken(botId);
+
+    if (token) {
+        // Direct Telegram API — uses the session's own bot token
+        const apiBase = `https://api.telegram.org/bot${token}`;
+        if (photoBuffer) {
+            const FormData = require('form-data');
+            const form = new FormData();
+            form.append('chat_id', String(chatId));
+            form.append('photo', photoBuffer, { filename: 'photo.jpg', contentType: 'image/jpeg' });
+            const res = await fetch(`${apiBase}/sendPhoto`, { method: 'POST', body: form, headers: form.getHeaders() });
+            if (!res.ok) {
+                const txt = await res.text().catch(() => '');
+                throw new Error(`ETELEGRAM: ${res.status} ${txt}`);
+            }
+        } else {
+            const res = await fetch(`${apiBase}/sendMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: String(chatId), text, parse_mode: 'HTML' }),
+            });
+            if (!res.ok) {
+                const txt = await res.text().catch(() => '');
+                throw new Error(`ETELEGRAM: ${res.status} ${txt}`);
+            }
+        }
+        return;
+    }
+
+    // Fallback: global singleton
+    if (photoBuffer) {
+        await sendPhoto(Number(chatId), photoBuffer, text || '', {});
+    } else {
+        await sendMessage(Number(chatId), text, {});
+    }
+}
+
+// POST /api/sessions/:id/send — manual message from admin to user's Telegram
 router.post('/:id/send',
     validateParams({ params: z.object({ id: z.string().uuid() }) }),
     asyncHandler(async (req, res) => {
@@ -188,11 +250,7 @@ router.post('/:id/send',
             }
         }
 
-        if (photoBuffer) {
-            await sendPhoto(Number(session.user.telegramId), photoBuffer, text || '', {}, session.id);
-        } else {
-            await sendMessage(Number(session.user.telegramId), text, {}, session.id);
-        }
+        await sendViaBot(session.botId, session.user.telegramId, text, photoBuffer);
 
         await db.message.create({
             data: {
@@ -207,6 +265,41 @@ router.post('/:id/send',
                 },
             },
         });
+
+        res.json({ ok: true });
+    })
+);
+
+// POST /api/sessions/:id/restart — reset session to initial state and re-run flow
+router.post('/:id/restart',
+    validateParams({ params: z.object({ id: z.string().uuid() }) }),
+    asyncHandler(async (req, res) => {
+        const session = await db.session.findUnique({
+            where: { id: req.params.id },
+            include: { user: true },
+        });
+        if (!session) throw new NotFoundError('Session', req.params.id);
+
+        // Clear history
+        await db.$transaction([
+            db.message.deleteMany({ where: { sessionId: session.id } }),
+            db.apiCall.deleteMany({ where: { sessionId: session.id } }),
+            db.appError.deleteMany({ where: { sessionId: session.id } }),
+            db.session.update({
+                where: { id: session.id },
+                data: {
+                    state: null,
+                    context: {},
+                    isActive: true,
+                    completedAt: null,
+                    lastActive: new Date(),
+                },
+            }),
+        ]);
+
+        // Re-run flow from start (like /start was pressed again)
+        const { executeFlowStep } = require('../services/testSession');
+        await executeFlowStep({ sessionId: session.id, incomingUserMessage: null }).catch(() => {});
 
         res.json({ ok: true });
     })

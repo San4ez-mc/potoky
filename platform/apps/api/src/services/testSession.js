@@ -397,23 +397,23 @@ async function persistUserMessage(sessionId, content) {
 
 async function getSystemKeyValue(keyName) {
     const typeByKey = {
-        CLAUDE_API_KEY: 'system_claude_api',
-        ADMIN_TELEGRAM_ID: 'system_admin_telegram_id',
-        COURSE_PRICE: 'system_course_price',
-        COURSE_PRICE_INT: 'system_course_price_int',
+        CLAUDE_API_KEY:         { type: 'system_claude_api',           field: 'apiKey' },
+        ADMIN_TELEGRAM_ID:      { type: 'system_admin_telegram_id',    field: 'value'  },
+        TELEGRAM_BOT_TOKEN:     { type: 'system_telegram_bot_token',   field: 'token'  },
+        COURSE_PRICE:           { type: 'system_course_price',         field: 'value'  },
+        COURSE_PRICE_INT:       { type: 'system_course_price_int',     field: 'value'  },
     };
-    const connectorType = typeByKey[keyName];
-    if (!connectorType) return null;
+    const def = typeByKey[keyName];
+    if (!def) return null;
 
     const connector = await db.savedConnector.findFirst({
-        where: { type: connectorType, isActive: true },
+        where: { type: def.type, isActive: true },
         orderBy: { updatedAt: 'desc' },
         select: { config: true },
     });
 
     if (!connector?.config || typeof connector.config !== 'object') return null;
-    if (keyName === 'CLAUDE_API_KEY') return connector.config.apiKey || null;
-    return connector.config.value || null;
+    return connector.config[def.field] || null;
 }
 
 async function executeFlowStep({ sessionId, incomingUserMessage = null }) {
@@ -1340,7 +1340,41 @@ ${sourceContent || '(немає даних)'}
                 const adminMessage = renderTemplate(data.message || 'Нова подія в системі.', enrichedScope);
 
                 if (adminTelegramId && adminMessage) {
-                    await sendMessage(String(adminTelegramId), adminMessage, {}, session.id);
+                    // Resolve bot token: prefer bot's own funnel key → system key → env fallback
+                    const botTokenRow = await db.funnelKey.findFirst({
+                        where: { botId: session.botId, key: { in: ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CONNECTOR_ID'] } },
+                        select: { key: true, value: true },
+                    }).catch(() => null);
+
+                    let notifyToken = null;
+                    if (botTokenRow?.key === 'TELEGRAM_CONNECTOR_ID' && botTokenRow.value) {
+                        const conn = await db.savedConnector.findUnique({
+                            where: { id: botTokenRow.value },
+                            select: { config: true },
+                        }).catch(() => null);
+                        notifyToken = conn?.config?.token || null;
+                    } else if (botTokenRow?.key === 'TELEGRAM_BOT_TOKEN' && /^\d+:[A-Za-z0-9_-]{20,}$/.test(botTokenRow.value)) {
+                        notifyToken = botTokenRow.value;
+                    }
+
+                    if (!notifyToken) {
+                        notifyToken = await getSystemKeyValue('TELEGRAM_BOT_TOKEN');
+                    }
+                    if (!notifyToken) {
+                        notifyToken = process.env.TELEGRAM_BOT_TOKEN || null;
+                    }
+
+                    if (notifyToken) {
+                        // Direct Telegram API call — bypasses the global singleton bot instance
+                        await fetch(`https://api.telegram.org/bot${notifyToken}/sendMessage`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ chat_id: String(adminTelegramId), text: adminMessage }),
+                        }).catch((e) => console.error('[notifyAdmin] fetch error:', e.message));
+                    } else {
+                        // Legacy fallback
+                        await sendMessage(String(adminTelegramId), adminMessage, {}, session.id);
+                    }
                 }
 
                 // Optional student confirmation from the same node

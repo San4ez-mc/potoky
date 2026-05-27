@@ -260,15 +260,26 @@ async function resolveTargetBot(botId, startPayload, userId) {
             return { targetBotId: lastSession.botId, lessonSlug: null };
         }
 
-        // New user (or last was system bot) — find system bot
+        // New user (or last was system bot) — find system bot that is anchored to THIS webhook bot.
+        // anchorBotId in settings ties a system bot to a specific physical Telegram bot.
+        // Fall back to any isSystem bot in project only if no anchored one exists.
         const projectBots = await db.bot.findMany({
             where: { projectId, isActive: true },
             select: { id: true, settings: true },
         });
-        const sysBot = projectBots.find(b => b.settings?.isSystem === true);
-        if (sysBot) {
-            logger.info('[platformBotHandler] New user — routing to system bot', { targetBotId: sysBot.id });
+        const sysBotAnchored = projectBots.find(b => b.settings?.isSystem === true && b.settings?.anchorBotId === botId);
+        const sysBotAny      = projectBots.find(b => b.settings?.isSystem === true);
+        const sysBot         = sysBotAnchored || sysBotAny;
+        if (sysBotAnchored) {
+            logger.info('[platformBotHandler] New user — routing to anchored system bot', { targetBotId: sysBot.id, anchorBotId: botId });
             return { targetBotId: sysBot.id, lessonSlug: null };
+        }
+        if (sysBotAny && sysBotAny.settings?.anchorBotId && sysBotAny.settings.anchorBotId !== botId) {
+            // Only system bot belongs to a DIFFERENT physical bot — don't use it, fall through to webhook bot
+            logger.info('[platformBotHandler] New user — system bot anchored to different bot, using webhook bot', { webhookBotId: botId });
+        } else if (sysBotAny) {
+            logger.info('[platformBotHandler] New user — routing to system bot (no anchor)', { targetBotId: sysBotAny.id });
+            return { targetBotId: sysBotAny.id, lessonSlug: null };
         }
     }
 
@@ -431,13 +442,23 @@ async function handlePlatformBotUpdate(botId, update) {
                 : null;
 
             if (attachment?.type === 'document' && attachment.url) {
-                await tgRequest(token, 'sendDocument', {
+                const docRes = await tgRequest(token, 'sendDocument', {
                     chat_id: chatId,
                     document: attachment.url,
                     caption: attachment.caption || msg.content || undefined,
                     parse_mode: 'HTML',
                     ...(keyboard ? { reply_markup: keyboard } : {}),
                 });
+                // If Telegram can't fetch the document URL, fall back to text-only message
+                if (!docRes.ok) {
+                    logger.warn('[platformBotHandler] sendDocument failed, falling back to text', {
+                        sessionId: session.id, url: attachment.url,
+                    });
+                    if (msg.content) {
+                        await sendTelegramMessage(token, chatId, msg.content,
+                            keyboard ? { reply_markup: keyboard } : {});
+                    }
+                }
             } else if (attachment?.type === 'photo' && attachment.url) {
                 if (attachment.url.startsWith('http')) {
                     await tgRequest(token, 'sendPhoto', {

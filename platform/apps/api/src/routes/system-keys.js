@@ -24,6 +24,13 @@ const SYSTEM_KEYS = {
         configField: 'value',
         isSecret: false,
     },
+    TELEGRAM_BOT_TOKEN: {
+        label: 'Telegram Bot Token (den_fineko_bot)',
+        description: 'Токен бота Дена — використовується для notifyAdmin сповіщень.',
+        connectorType: 'system_telegram_bot_token',
+        configField: 'token',
+        isSecret: true,
+    },
 };
 
 function mask(value, isSecret = true) {

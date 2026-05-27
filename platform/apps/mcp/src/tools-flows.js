@@ -8,7 +8,26 @@ function safeJsonStringify(value) {
     return JSON.stringify(value, (_, current) => (typeof current === 'bigint' ? current.toString() : current), 2);
 }
 
-const NODE_TYPES = ['start', 'message', 'claude', 'js', 'condition', 'connector', 'saveFile', 'wait', 'loadFile', 'httpRequest', 'tag', 'abtest'];
+const NODE_TYPES = [
+    'start',
+    'message',
+    'claude',
+    'js',
+    'condition',
+    'connector',
+    'saveFile',
+    'wait',
+    'loadFile',
+    'httpRequest',
+    'tag',
+    'abtest',
+    // ── Admin / Telegram ──────────────────────────────────────────
+    'notifyAdmin',   // sends Telegram message to admin; data: { message, targetKey }
+    'sendDocument',  // sends file/PDF to user;  data: { fileKey } or { caption, fileKey }
+    'sendPhoto',     // sends image to user;      data: { photoUrl, caption }
+    // ── Payments ──────────────────────────────────────────────────
+    'wait_payment',  // blocks until WayForPay webhook fires; data: { timeoutHours }
+];
 
 const TOOLS = [
     {
@@ -73,7 +92,17 @@ const TOOLS = [
     },
     {
         name: 'add_node',
-        description: 'Add a new node to the funnel canvas',
+        description: 'Add a new node to the funnel canvas. Key types and their required data fields:\n' +
+            '• message — { text, label } — optional: attachmentUrl, attachmentFileName, notifyAdmin(bool)\n' +
+            '• notifyAdmin — { message, targetKey } — targetKey is a funnel-key name (e.g. "ADMIN_TELEGRAM_ID") whose value is the admin Telegram chat id\n' +
+            '• wait_payment — { timeoutHours } — pauses flow until WayForPay webhook fires\n' +
+            '• sendDocument — { fileKey, caption } — fileKey is an env key pointing to a PDF URL\n' +
+            '• claude — { systemPrompt, model, outputVar, connectorId, exitCondition }\n' +
+            '• connector — { connectorType, action, amount, currency, outputVar, connectorId, ... }\n' +
+            '• condition — { conditions: [{ id, label, expression }] }\n' +
+            '• wait — { duration, unit } — unit: "seconds"|"minutes"|"hours"|"days"\n' +
+            '• saveFile — { fileType, contentVar, fileNameTemplate }\n' +
+            '• loadFile — { fileType, outputVar }',
         inputSchema: {
             type: 'object',
             properties: {

@@ -219,8 +219,22 @@ async function resolveTargetBot(botId, startPayload, userId) {
         return { targetBotId: botId, lessonSlug: null };
     }
 
-    // ── Rule 2: lesson slug (keep current bot) ─────────────────────────────
+    // ── Rule 2: lesson slug → route to matching lesson bot ────────────────
+    // Deep link: /start lesson_1_2 → find bot whose slug starts with "bot-1-2-"
     if (startPayload && /^lesson_\d+_\d+$/.test(startPayload)) {
+        if (projectId) {
+            const match = startPayload.match(/^lesson_(\d+)_(\d+)$/);
+            const prefix = `bot-${match[1]}-${match[2]}-`;
+            const lessonBot = await db.bot.findFirst({
+                where: { projectId, isActive: true, slug: { startsWith: prefix } },
+                select: { id: true },
+            });
+            if (lessonBot) {
+                logger.info('[platformBotHandler] Routed lesson slug to bot', { lessonSlug: startPayload, prefix, targetBotId: lessonBot.id });
+                return { targetBotId: lessonBot.id, lessonSlug: startPayload };
+            }
+            logger.warn('[platformBotHandler] Lesson bot not found for slug, using webhook bot', { lessonSlug: startPayload, prefix });
+        }
         return { targetBotId: botId, lessonSlug: startPayload };
     }
 

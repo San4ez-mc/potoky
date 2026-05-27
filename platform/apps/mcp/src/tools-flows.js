@@ -32,6 +32,8 @@ const NODE_TYPES = [
     // ── Utility ───────────────────────────────────────────────────
     'httpEncode',           // Base64-encodes a context var;      data: { sourceVar, outputVar }
     'fetchTelegramProfile', // fetches TG bio + photo_url (silent); data: {}
+    // ── Knowledge ────────────────────────────────────────────────────────────
+    'knowledgeBase',        // smart keyword search over blocks;  data: { contextKey, blocks: [{id,title,content}] }
 ];
 
 const TOOLS = [
@@ -115,7 +117,8 @@ const TOOLS = [
             '• wait_payment — { timeoutHours } — pauses until WayForPay webhook; exits via "paid" handle\n' +
             '• generateDocument — { template, sourceVar, filename, sendToUser } — template: "student_profile"|"business_process"|"cashflow_table"|"pl_table"|"balance_table"\n' +
             '• httpEncode — { sourceVar, outputVar } — Base64-encodes a context variable\n' +
-            '• fetchTelegramProfile — {} — silently loads tg_bio and tg_photo_url into context',
+            '• fetchTelegramProfile — {} — silently loads tg_bio and tg_photo_url into context\n' +
+            '• knowledgeBase — { contextKey, blocks: [{id,title,content}] } — smart keyword search; contextKey defaults to "knowledge_base"; place before Claude node; Claude reads via {{context.knowledge_base}} in systemPrompt',
         inputSchema: {
             type: 'object',
             properties: {

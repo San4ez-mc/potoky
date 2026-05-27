@@ -372,6 +372,54 @@ function findStartNode(nodes) {
     return nodes.find((node) => node.type === 'start') || nodes[0] || null;
 }
 
+// ─── Knowledge Base smart search ──────────────────────────────────────────────
+// Keyword relevance scoring — no external deps, works fully offline.
+// Returns up to 3 most relevant blocks as formatted text, or all blocks if
+// no query / no matches. Scores title matches 3× higher than body matches.
+function searchKnowledgeBase(blocks, query) {
+    if (!blocks || blocks.length === 0) return '';
+
+    const allText = blocks.map(b => `[${b.title}]\n${b.content}`).join('\n\n');
+
+    if (!query || typeof query !== 'string') return allText;
+
+    // Tokenize: split on non-word chars, keep tokens ≥ 3 chars
+    const stopWords = new Set(['для', 'що', 'як', 'але', 'або', 'від', 'про', 'при', 'під', 'над', 'між', 'через', 'після', 'перед', 'якщо', 'коли', 'щоб', 'тобто', 'тому', 'дуже', 'the', 'and', 'for', 'that', 'with', 'this', 'from', 'have', 'are']);
+    const tokens = query.toLowerCase()
+        .split(/[\s,;.!?()[\]{}'"«»]+/)
+        .filter(t => t.length >= 3 && !stopWords.has(t));
+
+    if (tokens.length === 0) return allText;
+
+    // Score each block
+    const scored = blocks.map(block => {
+        const titleLow = (block.title || '').toLowerCase();
+        const contentLow = (block.content || '').toLowerCase();
+        let score = 0;
+
+        for (const token of tokens) {
+            // Exact word count in title (weight ×4)
+            let idx = titleLow.indexOf(token);
+            while (idx !== -1) { score += 4; idx = titleLow.indexOf(token, idx + 1); }
+
+            // Exact word count in content (weight ×1)
+            idx = contentLow.indexOf(token);
+            while (idx !== -1) { score += 1; idx = contentLow.indexOf(token, idx + 1); }
+        }
+
+        return { block, score };
+    });
+
+    // Sort by score descending
+    scored.sort((a, b) => b.score - a.score);
+
+    // Top-3 relevant blocks (score > 0); fallback to all blocks if nothing matched
+    const relevant = scored.filter(s => s.score > 0).slice(0, 3);
+    const chosen = relevant.length > 0 ? relevant.map(s => s.block) : blocks;
+
+    return chosen.map(b => `[${b.title}]\n${b.content}`).join('\n\n');
+}
+
 async function persistAssistantMessage(sessionId, content, metadata = {}) {
     if (!content) return;
     await db.message.create({
@@ -1579,6 +1627,20 @@ ${_baseUrl}/legal/terms — Правила використання`;
                 }
             } catch (connectorError) {
                 console.error(`[connector:${connectorType}] Error:`, connectorError.message);
+            }
+
+            runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
+            continue;
+        }
+
+        if (node.type === 'knowledgeBase') {
+            const blocks = Array.isArray(data.blocks) ? data.blocks : [];
+            const contextKey = data.contextKey ? String(data.contextKey).trim() : 'knowledge_base';
+
+            if (blocks.length > 0) {
+                const query = runtime.lastUserMessage || '';
+                const result = searchKnowledgeBase(blocks, query);
+                setByPath(ctx, contextKey, result);
             }
 
             runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);

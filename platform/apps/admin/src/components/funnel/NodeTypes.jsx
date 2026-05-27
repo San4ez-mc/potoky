@@ -409,6 +409,24 @@ export const SendDocumentNode = memo(({ id, selected, data }) => (
     </BaseNode>
 ));
 
+// ─── Knowledge Base Node ──────────────────────────────────────────────────────
+export const KnowledgeBaseNode = memo(({ id, selected, data }) => {
+    const blocks = Array.isArray(data.blocks) ? data.blocks : [];
+    const blockCount = blocks.length;
+    return (
+        <BaseNode id={id} selected={selected} color="bg-amber-800" icon="📚" label={data.label || 'База знань'} description={data.description}>
+            <div className="text-amber-300 text-[11px]">
+                {blockCount === 0 ? 'Блоки не додані' : `${blockCount} ${blockCount === 1 ? 'блок' : blockCount < 5 ? 'блоки' : 'блоків'}`}
+            </div>
+            {blocks.slice(0, 3).map((b, i) => (
+                <div key={b.id || i} className="text-amber-200 text-[10px] truncate">· {b.title || 'Без назви'}</div>
+            ))}
+            {blockCount > 3 && <div className="text-amber-400 text-[10px]">+{blockCount - 3} ще…</div>}
+            {data.contextKey && <div className="mt-1 text-amber-100 text-[10px] font-mono">→ context.{data.contextKey}</div>}
+        </BaseNode>
+    );
+});
+
 // ─── Notify Admin Node ─────────────────────────────────────────────────────────
 export const NotifyAdminNode = memo(({ id, selected, data }) => (
     <BaseNode id={id} selected={selected} color="bg-amber-700" icon="📣" label={data.label || 'Сповістити адміна'} description={data.description}>
@@ -438,6 +456,7 @@ export const NODE_TYPES = {
     generateDocument: GenerateDocumentNode,
     fetchTelegramProfile: FetchTelegramProfileNode,
     notifyAdmin: NotifyAdminNode,
+    knowledgeBase: KnowledgeBaseNode,
 };
 
 // ─── Node palette items (for drag sidebar) ────────────────────────────────────
@@ -500,6 +519,9 @@ export const NODE_PALETTE = [
         description: 'Кодує змінну контексту в Base64 (для передачі бінарних даних в API)',
         defaultData: { label: 'Кодування Base64', sourceVar: 'context.data', outputVar: 'context.encoded' } },
     // ── Очікування ──
+    { type: 'knowledgeBase', icon: '📚', label: 'База знань', color: 'border-amber-800', group: 'ШІ',
+        description: 'Зберігає блоки знань (FAQ, кейси, заперечення тощо). Виконує розумний пошук за запитом і вставляє результат у context для Claude.',
+        defaultData: { label: 'База знань', contextKey: 'knowledge_base', blocks: [] } },
     { type: 'wait', icon: '⏳', label: 'Очікування', color: 'border-gray-600', group: 'Очікування',
         description: 'Затримка виконання: через N хвилин/годин або до конкретного часу',
         defaultData: { label: 'Очікування', duration: 5, unit: 'minutes', waitType: 'duration' } },

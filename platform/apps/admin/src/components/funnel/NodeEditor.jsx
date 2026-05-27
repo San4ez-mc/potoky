@@ -971,6 +971,100 @@ function GenerateDocumentNodeEditor({ data, update }) {
     );
 }
 
+function KnowledgeBaseNodeEditor({ data, update }) {
+    const blocks = Array.isArray(data.blocks) ? data.blocks : [];
+
+    const addBlock = () => {
+        const id = `block_${Date.now()}`;
+        update({ blocks: [...blocks, { id, title: 'Новий блок', content: '' }] });
+    };
+
+    const updateBlock = (idx, field, val) => {
+        const next = blocks.map((b, i) => i === idx ? { ...b, [field]: val } : b);
+        update({ blocks: next });
+    };
+
+    const removeBlock = (idx) => {
+        update({ blocks: blocks.filter((_, i) => i !== idx) });
+    };
+
+    const inputCls = "w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-brand";
+
+    return (
+        <div className="space-y-4">
+            <Field label="Контекстна змінна (contextKey)">
+                <TextInput
+                    value={data.contextKey || 'knowledge_base'}
+                    onChange={v => update({ contextKey: v })}
+                    placeholder="knowledge_base"
+                />
+                <div className="mt-1 text-[10px] text-gray-500">
+                    Результат пошуку зберігається в <code className="text-gray-400">{'{{context.knowledge_base}}'}</code> — вставляй в systemPrompt Claude.
+                </div>
+            </Field>
+
+            <div>
+                <div className="flex items-center justify-between mb-2">
+                    <label className="text-xs text-gray-400">Блоки знань</label>
+                    <button
+                        onClick={addBlock}
+                        className="text-xs text-amber-400 hover:text-amber-300 border border-amber-800 hover:border-amber-600 rounded px-2 py-0.5 transition-colors"
+                    >
+                        + Додати блок
+                    </button>
+                </div>
+
+                {blocks.length === 0 && (
+                    <div className="text-center py-6 border border-dashed border-gray-700 rounded-lg text-gray-500 text-sm">
+                        Блоків ще немає.<br />
+                        <span className="text-xs">Натисни «+ Додати блок» щоб почати.</span>
+                    </div>
+                )}
+
+                <div className="space-y-3">
+                    {blocks.map((block, idx) => (
+                        <div key={block.id || idx} className="border border-gray-700 rounded-lg overflow-hidden bg-gray-850">
+                            {/* Block header */}
+                            <div className="flex items-center gap-2 px-2 py-1.5 bg-gray-800 border-b border-gray-700">
+                                <span className="text-amber-400 text-xs shrink-0">📁</span>
+                                <input
+                                    value={block.title || ''}
+                                    onChange={e => updateBlock(idx, 'title', e.target.value)}
+                                    placeholder="Назва блоку (напр. «Кейси клієнтів»)"
+                                    className="flex-1 bg-transparent border-0 text-sm font-medium text-white placeholder-gray-500 focus:outline-none"
+                                />
+                                <button
+                                    onClick={() => removeBlock(idx)}
+                                    className="text-red-500 hover:text-red-400 text-xs px-1 shrink-0"
+                                    title="Видалити блок"
+                                >
+                                    ✕
+                                </button>
+                            </div>
+                            {/* Block content */}
+                            <textarea
+                                value={block.content || ''}
+                                onChange={e => updateBlock(idx, 'content', e.target.value)}
+                                placeholder="Вміст блоку: FAQ, кейси, заперечення, умови тощо…"
+                                rows={5}
+                                className={inputCls + ' rounded-none border-0 resize-y text-xs font-mono'}
+                            />
+                        </div>
+                    ))}
+                </div>
+            </div>
+
+            <div className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-[11px] text-gray-400 space-y-1">
+                <div className="text-gray-300 font-medium mb-1">💡 Як це працює</div>
+                <div>• Нода виконується <strong>до</strong> Claude-ноди в тому ж потоці</div>
+                <div>• Пошук по останньому повідомленню клієнта — знаходить 1-3 найрелевантніших блоки</div>
+                <div>• Вставляй в systemPrompt Claude: <code className="text-amber-300">{'{{context.knowledge_base}}'}</code></div>
+                <div>• Приклад блоків: «Часті питання», «Кейси», «Заперечення», «Ціни», «Гарантії»</div>
+            </div>
+        </div>
+    );
+}
+
 export function NodeEditor({ embedded = false, onClose }) {
     const { selectedNode, updateNodeData, connectors, deleteNode } = useFunnelStore();
 
@@ -1005,6 +1099,7 @@ export function NodeEditor({ embedded = false, onClose }) {
             case 'abtest': return <ABTestNodeEditor data={data} update={update} />;
             case 'generateDocument': return <GenerateDocumentNodeEditor data={data} update={update} />;
             case 'fetchTelegramProfile': return <FetchTelegramProfileNodeEditor />;
+            case 'knowledgeBase': return <KnowledgeBaseNodeEditor data={data} update={update} />;
             default: return <div className="text-gray-500 text-sm">Немає налаштувань для цього вузла</div>;
         }
     };

@@ -22,11 +22,16 @@ const NODE_TYPES = [
     'tag',
     'abtest',
     // ── Admin / Telegram ──────────────────────────────────────────
-    'notifyAdmin',   // sends Telegram message to admin; data: { message, targetKey }
-    'sendDocument',  // sends file/PDF to user;  data: { fileKey } or { caption, fileKey }
-    'sendPhoto',     // sends image to user;      data: { photoUrl, caption }
+    'notifyAdmin',          // sends Telegram message to admin;   data: { message, targetKey }
+    'sendDocument',         // sends file/PDF to user;             data: { fileKey, fileVar, caption }
+    'sendPhoto',            // sends image to user;                data: { photoVar, caption }
     // ── Payments ──────────────────────────────────────────────────
-    'wait_payment',  // blocks until WayForPay webhook fires; data: { timeoutHours }
+    'wait_payment',         // blocks until WayForPay webhook fires; data: { timeoutHours }
+    // ── AI + Documents ────────────────────────────────────────────
+    'generateDocument',     // generates DOCX via template;       data: { template, sourceVar, filename, sendToUser }
+    // ── Utility ───────────────────────────────────────────────────
+    'httpEncode',           // Base64-encodes a context var;      data: { sourceVar, outputVar }
+    'fetchTelegramProfile', // fetches TG bio + photo_url (silent); data: {}
 ];
 
 const TOOLS = [
@@ -138,6 +143,18 @@ const TOOLS = [
                 target: { type: 'string' },
             },
             required: ['botId', 'source', 'target'],
+        },
+    },
+    {
+        name: 'delete_edge',
+        description: 'Delete a specific edge by its ID from the funnel',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                botId: { type: 'string' },
+                edgeId: { type: 'string', description: 'Edge ID to delete (e.g. edge_1234567890)' },
+            },
+            required: ['botId', 'edgeId'],
         },
     },
     {
@@ -535,6 +552,16 @@ async function createEdge({ botId, source, target }) {
     return { edge };
 }
 
+async function deleteEdge({ botId, edgeId }) {
+    const flow = await prisma.flowDefinition.findUnique({ where: { botId } });
+    if (!flow) throw new Error(`No flow found for botId: ${botId}`);
+    const before = (flow.edges || []).length;
+    const edges = (flow.edges || []).filter((e) => e.id !== edgeId);
+    if (edges.length === before) throw new Error(`Edge ${edgeId} not found in bot ${botId}`);
+    await prisma.flowDefinition.update({ where: { botId }, data: { edges } });
+    return { deleted: edgeId, remainingEdges: edges.length };
+}
+
 async function updateFunnelKey({ botId, key, value, label, isSecret }) {
     if (!/^[A-Z0-9_]+$/.test(key)) throw new Error('Key must match [A-Z0-9_]+');
 
@@ -693,6 +720,7 @@ async function callTool(name, args = {}) {
         case 'add_node': return addNode(args);
         case 'delete_node': return deleteNode(args);
         case 'create_edge': return createEdge(args);
+        case 'delete_edge': return deleteEdge(args);
         case 'update_funnel_key': return updateFunnelKey(args);
         case 'delete_funnel_key': return deleteFunnelKey(args);
         case 'list_connectors': return listConnectors();

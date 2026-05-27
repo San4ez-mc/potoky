@@ -481,14 +481,14 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null }) {
                     }))
                     .filter(btn => btn.text))
                 .filter(row => row.length > 0);
-            // Optional document attachment (data.attachmentUrl supports templates)
+            // Optional document attachment (data.attachmentUrl supports templates + Telegram file_id)
             let msgAttachment = null;
             if (data.attachmentUrl) {
                 const resolvedUrl = renderTemplate(String(data.attachmentUrl), scope);
-                if (resolvedUrl && resolvedUrl.startsWith('http')) {
+                if (resolvedUrl) {
                     msgAttachment = {
                         type: 'document',
-                        url: resolvedUrl,
+                        url: resolvedUrl,           // can be http URL or Telegram file_id
                         fileName: data.attachmentFileName
                             ? renderTemplate(String(data.attachmentFileName), scope)
                             : 'document.pdf',

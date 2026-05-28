@@ -305,6 +305,42 @@ async function handleCallbackQuery(botId, callbackQuery) {
         callback_query_id: callbackQuery.id,
     }).catch(() => {});
 
+    // ── Homework-done button ───────────────────────────────────────────────────
+    if (data.startsWith('hw_done:') && from?.id) {
+        const eventKey = data.slice('hw_done:'.length); // e.g. "homework_done_lesson_1_1"
+
+        const hwUser = await db.user.findUnique({ where: { telegramId: BigInt(from.id) } }).catch(() => null);
+        if (!hwUser) return;
+
+        const hwSession = await db.session.findFirst({
+            where: { userId: hwUser.id, botId, state: { not: 'completed' } },
+            orderBy: { startedAt: 'desc' },
+        }).catch(() => null);
+        if (!hwSession) return;
+
+        // Remove the button from the original message (clean up UI)
+        await tgRequest(token, 'editMessageReplyMarkup', {
+            chat_id: chatId, message_id: msgId, reply_markup: { inline_keyboard: [] },
+        }).catch(() => {});
+
+        await tgRequest(token, 'answerCallbackQuery', {
+            callback_query_id: callbackQuery.id,
+            text: '🎉 Відмінно! Продовжуємо...',
+            show_alert: false,
+        }).catch(() => {});
+
+        // Set the event key in session context
+        const updatedCtx = { ...(hwSession.context || {}), [eventKey]: true };
+        await db.session.update({ where: { id: hwSession.id }, data: { context: updatedCtx } });
+
+        const sinceTime = new Date();
+        await executeFlowStep({ sessionId: hwSession.id, incomingUserMessage: null }).catch(err => {
+            logger.error('[platformBotHandler] hw_done executeFlowStep failed', { error: err.message });
+        });
+        await deliverSessionMessages(botId, hwSession.id, Number(chatId), sinceTime);
+        return;
+    }
+
     if (!data.startsWith('cm_') || !from?.id) return;
 
     // Find the user

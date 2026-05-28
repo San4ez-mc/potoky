@@ -968,6 +968,16 @@ ${sourceContent || '(немає даних)'}
                     runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
                     continue;
                 }
+                // First encounter — send a callback button so user can confirm homework done
+                if (runtime.waitEventNodeId !== node.id) {
+                    const buttonLabel = renderTemplate(String(data.buttonText || '✅ Домашнє завдання виконано'), scope);
+                    const waitMsg = renderTemplate(String(data.waitMessage || 'Виконай домашнє завдання і натисни кнопку нижче, коли буде готово 👇'), scope);
+                    await persistAssistantMessage(session.id, waitMsg, {
+                        nodeId: node.id,
+                        nodeType: 'wait_event_prompt',
+                        keyboard: [[{ text: buttonLabel, callback_data: `hw_done:${eventKey}` }]],
+                    });
+                }
                 // Still waiting for event
                 runtime.waitEventNodeId = node.id;
                 runtime.waitingForUser = false;

@@ -285,6 +285,21 @@ model SavedConnector {
   @@map("saved_connectors")
 }
 
+model Broadcast {
+  id          String    @id @default(uuid())
+  name        String?   @db.VarChar(255)
+  status      String    @db.VarChar(20)   // draft|scheduled|sending|sent|failed|cancelled
+  scheduledAt DateTime?
+  sentAt      DateTime?
+  stats       Json      @default("{}")    // { total, sent, failed }
+  message     Json      @default("{}")    // { text, parseMode, photoUrl, documentUrl, documentName, caption }
+  recipients  Json      @default("[]")   // [{ telegramId, botId, firstName, username, sent, error }]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@map("broadcasts")
+}
+
 // ============================================================
 // GLOBAL KEYS (проектные ключи и токены)
 // ============================================================

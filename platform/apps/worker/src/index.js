@@ -255,11 +255,112 @@ setTimeout(() => {
     setInterval(sendHomeworkReminders, HOMEWORK_REMINDER_INTERVAL_MS);
 }, 3 * 60 * 1000);
 
+// ── Broadcast queue ──────────────────────────────────────────
+const broadcastQueue = new Bull('broadcasts', REDIS_URL);
+
+async function sendTelegramMessage(token, chatId, msg) {
+    const base = `https://api.telegram.org/bot${token}`;
+    let method, body;
+
+    if (msg.photoUrl) {
+        method = 'sendPhoto';
+        body = { chat_id: chatId, photo: msg.photoUrl, caption: msg.caption || msg.text || '', parse_mode: msg.parseMode || 'Markdown' };
+    } else if (msg.documentUrl) {
+        method = 'sendDocument';
+        body = { chat_id: chatId, document: msg.documentUrl, caption: msg.caption || msg.text || '', parse_mode: msg.parseMode || 'Markdown' };
+    } else {
+        method = 'sendMessage';
+        body = { chat_id: chatId, text: msg.text, parse_mode: msg.parseMode || 'Markdown', disable_web_page_preview: true };
+    }
+
+    const res = await fetch(`${base}/${method}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+        const err = await res.text();
+        throw new Error(`Telegram ${method} error: ${err}`);
+    }
+}
+
+async function getBotToken(botId) {
+    // Check TELEGRAM_CONNECTOR_ID -> savedConnector
+    const connectorKey = await db.funnelKey.findFirst({
+        where: { botId, key: 'TELEGRAM_CONNECTOR_ID' },
+    });
+    if (connectorKey?.value) {
+        const sc = await db.savedConnector.findUnique({ where: { id: connectorKey.value } });
+        if (sc?.config?.token) return sc.config.token;
+    }
+    // Check TELEGRAM_BOT_TOKEN directly
+    const tokenKey = await db.funnelKey.findFirst({
+        where: { botId, key: 'TELEGRAM_BOT_TOKEN' },
+    });
+    return tokenKey?.value || null;
+}
+
+broadcastQueue.process(async (job) => {
+    const { broadcastId } = job.data;
+    const broadcast = await db.broadcast.findUnique({ where: { id: broadcastId } });
+    if (!broadcast || broadcast.status === 'cancelled') return;
+
+    await db.broadcast.update({ where: { id: broadcastId }, data: { status: 'sending' } });
+
+    const recipients = Array.isArray(broadcast.recipients) ? broadcast.recipients : [];
+    const message = broadcast.message || {};
+
+    // Cache bot tokens
+    const tokenCache = {};
+    const getToken = async (botId) => {
+        if (!tokenCache[botId]) tokenCache[botId] = await getBotToken(botId);
+        return tokenCache[botId];
+    };
+
+    let sent = 0, failed = 0;
+    const updatedRecipients = [...recipients];
+
+    for (let i = 0; i < recipients.length; i++) {
+        const r = recipients[i];
+        try {
+            const token = await getToken(r.botId);
+            if (!token) throw new Error('No bot token');
+            await sendTelegramMessage(token, r.telegramId, message);
+            updatedRecipients[i] = { ...r, sent: true };
+            sent++;
+        } catch (err) {
+            updatedRecipients[i] = { ...r, sent: false, error: err.message };
+            failed++;
+            logger.error('Broadcast send error', { broadcastId, telegramId: r.telegramId, error: err.message });
+        }
+        // Rate limit: 30 msg/sec max, use 50ms delay
+        if (i < recipients.length - 1) await new Promise(resolve => setTimeout(resolve, 50));
+    }
+
+    await db.broadcast.update({
+        where: { id: broadcastId },
+        data: {
+            status: 'sent',
+            sentAt: new Date(),
+            stats: { total: recipients.length, sent, failed },
+            recipients: updatedRecipients,
+        },
+    });
+
+    logger.info('Broadcast completed', { broadcastId, sent, failed });
+});
+
+broadcastQueue.on('failed', (job, error) => {
+    logger.error('Broadcast queue job failed', { jobId: job.id, error: error.message });
+    db.broadcast.update({ where: { id: job.data.broadcastId }, data: { status: 'failed' } }).catch(() => {});
+});
+
 // ── Graceful shutdown ────────────────────────────────────────
 async function shutdown() {
     logger.info('Worker shutting down...');
     await telegramQueue.close();
     await notificationQueue.close();
+    await broadcastQueue.close();
     process.exit(0);
 }
 
@@ -268,4 +369,4 @@ process.on('SIGINT', shutdown);
 
 logger.info('Platform worker started', { redis: REDIS_URL });
 
-module.exports = { telegramQueue, notificationQueue };
+module.exports = { telegramQueue, notificationQueue, broadcastQueue };

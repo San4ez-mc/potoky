@@ -239,7 +239,19 @@
       "Bash(ssh -i ~/.ssh/id_ed25519 root@173.242.62.180 'grep -n \"id=\\\\\"ai-bg\\\\|id=\\\\\"multi-plate\\\\|id=\\\\\"social-proof\\\\|id=\\\\\"video-subs\\\\|id=\\\\\"video-karaoke\\\\|id=\\\\\"broll-kling\\\\|id=\\\\\"avatar-\" /var/www/content.fineko.space/php-mvc/app/views/content.php')",
       "Bash(scp -i ~/.ssh/id_ed25519 \"/mnt/d/програмування/система для воронок/patch_prefill.py\" root@173.242.62.180:/tmp/patch_prefill.py)",
       "Bash(scp \"D:\\\\програмування\\\\система для воронок\\\\platform\\\\apps\\\\api\\\\src\\\\routes\\\\webhook.js\" root@flows.fineko.space:/var/www/flows.fineko.space/platform/apps/api/src/routes/webhook.js)",
-      "Bash(scp \"D:\\\\програмування\\\\система для воронок\\\\platform\\\\apps\\\\api\\\\src\\\\services\\\\platformBotHandler.js\" root@flows.fineko.space:/var/www/flows.fineko.space/platform/apps/api/src/services/platformBotHandler.js)"
+      "Bash(scp \"D:\\\\програмування\\\\система для воронок\\\\platform\\\\apps\\\\api\\\\src\\\\services\\\\platformBotHandler.js\" root@flows.fineko.space:/var/www/flows.fineko.space/platform/apps/api/src/services/platformBotHandler.js)",
+      "Bash(ssh root@flows.fineko.space \"pm2 restart platform-api && sleep 2 && pm2 list | grep platform-api\")",
+      "Bash(scp \"D:\\\\програмування\\\\система для воронок\\\\build-new-funnels.js\" root@flows.fineko.space:/tmp/build-new-funnels.js)",
+      "Bash(ssh root@flows.fineko.space \"export DATABASE_URL=\\\\$\\(grep '^DATABASE_URL' /var/www/flows.fineko.space/platform/.env | cut -d= -f2-\\) && node /tmp/build-new-funnels.js\")",
+      "Bash(dir \"D:\\\\програмування\\\\система для воронок\\\\platform\\\\apps\\\\web\\\\src\" /b)",
+      "PowerShell(Get-ChildItem \"D:\\\\програмування\\\\система для воронок\\\\platform\\\\apps\\\\admin\\\\src\" -Recurse -Name | Where-Object { $_ -match \"key|connector|Key|Connector\" } | Select-Object -First 30)",
+      "PowerShell(Get-Command python -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-Command python3 -ErrorAction SilentlyContinue)",
+      "PowerShell(Set-Location \"C:\\\\temp\\\\nb-auth\"; $env:PLAYWRIGHT_DOWNLOAD_HOST=\"https://playwright.azureedge.net\"; npx playwright install chromium 2>&1 | Select-Object -Last 8)",
+      "PowerShell(Get-Item \"C:\\\\Program Files\\\\Google\\\\Chrome\\\\Application\\\\chrome.exe\" -ErrorAction SilentlyContinue | Select-Object FullName; Get-Item \"C:\\\\Program Files \\(x86\\)\\\\Google\\\\Chrome\\\\Application\\\\chrome.exe\" -ErrorAction SilentlyContinue | Select-Object FullName; Get-Item \"$env:LOCALAPPDATA\\\\Google\\\\Chrome\\\\Application\\\\chrome.exe\" -ErrorAction SilentlyContinue | Select-Object FullName)",
+      "Bash(scp \"D:/програмування/система для воронок/platform/apps/notebooklm-service/app.py\" root@flows.fineko.space:/var/www/notebooklm.flows.fineko.space/app.py)",
+      "Bash(ssh root@flows.fineko.space \"pm2 restart notebooklm-service && sleep 2 && curl -s https://notebooklm.flows.fineko.space/health && echo '' && curl -s https://notebooklm.flows.fineko.space/notebooks\")",
+      "WebSearch"
     ]
   }
 }

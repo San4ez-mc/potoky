@@ -17,6 +17,7 @@ import { Logs } from './pages/Logs.jsx';
 import { Settings } from './pages/Settings.jsx';
 import { Connectors } from './pages/Connectors.jsx';
 import { ContentStudio } from './pages/ContentStudio.jsx';
+import { Broadcasts } from './pages/Broadcasts.jsx';
 
 function ProtectedRoute({ children }) {
     const { isAuthenticated, isLoading } = useAuthStore();
@@ -61,6 +62,7 @@ export default function App() {
                     <Route path="projects" element={<Projects />} />
                     <Route path="dashboard" element={<Dashboard />} />
                     <Route path="content" element={<ContentStudio />} />
+                    <Route path="broadcasts" element={<Broadcasts />} />
                     <Route path="connectors" element={<Connectors />} />
                     <Route path="bots" element={<Navigate to="/funnels" replace />} />
                     <Route path="bots/:botId/sessions" element={<Sessions />} />

@@ -18,6 +18,7 @@ function routeMeta(pathname, search) {
     if (pathname.startsWith('/api-logs')) return { title: 'API логи' };
     if (pathname.startsWith('/errors')) return { title: 'Помилки' };
     if (pathname.startsWith('/content')) return { title: 'Content Studio' };
+    if (pathname.startsWith('/broadcasts')) return { title: 'Розсилки' };
     if (pathname.startsWith('/connectors')) return { title: 'Конектори' };
     if (pathname.startsWith('/settings')) return { title: 'Налаштування' };
     return { title: 'Платформа' };

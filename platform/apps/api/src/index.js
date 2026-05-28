@@ -28,6 +28,7 @@ const mcpRouter = require('./routes/mcp');
 const mcpFlowsRouter = require('./routes/mcp-flows');
 const mcpFlowsEditRouter = require('./routes/mcp-flows-edit');
 const mcpDebugRouter = require('./routes/mcp-debug');
+const broadcastsRouter = require('./routes/broadcasts');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -164,6 +165,7 @@ app.use('/api/connectors', authMiddleware, connectorsRouter);
 app.use('/api/saved-connectors', authMiddleware, savedConnectorsRouter);
 app.use('/api/system-keys', authMiddleware, systemKeysRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api/broadcasts', authMiddleware, broadcastsRouter);
 
 // MCP endpoints: split into flows read-only, flows-edit write, and debug
 app.use(mcpRequestLogger);

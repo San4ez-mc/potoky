@@ -135,6 +135,13 @@ export const api = {
     runWebhookTest: (botId, body) => req('POST', `/admin/bots/${botId}/webhook-test`, body),
     runProjectRegressions: (projectSlug) => req('POST', `/admin/projects/${projectSlug}/run-regressions`),
 
+    // Broadcasts
+    getBroadcastEligibleBots: () => req('GET', '/broadcasts/eligible-bots'),
+    getBroadcastSubscribers: (botIds) => req('GET', `/broadcasts/subscribers?botIds=${botIds.join(',')}`),
+    getBroadcasts: () => req('GET', '/broadcasts'),
+    createBroadcast: (data) => req('POST', '/broadcasts', data),
+    cancelBroadcast: (id) => req('DELETE', `/broadcasts/${id}`),
+
     // System Keys (settings-level, not funnel-level)
     getSystemKeys: () => req('GET', '/system-keys'),
     upsertSystemKey: (key, value, label, description, isSecret = true) =>

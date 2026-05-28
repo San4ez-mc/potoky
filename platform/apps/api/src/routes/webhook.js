@@ -163,6 +163,82 @@ router.post('/instagram/:botId',
     })
 );
 
+// POST /webhook/bot/:slug — direct webhook trigger for content funnels
+// Accepts any JSON body, injects it into session context, runs the flow asynchronously.
+router.post('/bot/:slug',
+    asyncHandler(async (req, res) => {
+        const { slug } = req.params;
+        res.json({ ok: true, slug });
+
+        setImmediate(async () => {
+            try {
+                const bot = await db.bot.findFirst({
+                    where: { slug },
+                    select: { id: true, slug: true, isActive: true },
+                });
+                if (!bot) {
+                    logger.warn('[webhookBot] Bot not found', { slug });
+                    return;
+                }
+                if (!bot.isActive) {
+                    logger.warn('[webhookBot] Bot inactive', { slug });
+                    return;
+                }
+
+                const flow = await db.flowDefinition.findUnique({ where: { botId: bot.id } });
+                if (!flow || !Array.isArray(flow.nodes) || flow.nodes.length === 0) {
+                    logger.warn('[webhookBot] No flow definition', { slug });
+                    return;
+                }
+
+                const startNode = flow.nodes.find((n) => n.type === 'start') || flow.nodes[0];
+
+                // Reuse or create a dedicated webhook system user
+                let user = await db.user.findFirst({ where: { telegramId: 'webhook_system' } });
+                if (!user) {
+                    user = await db.user.create({
+                        data: { telegramId: 'webhook_system', username: 'webhook', firstName: 'Webhook' },
+                    });
+                }
+
+                const contextFromBody = (req.body && typeof req.body === 'object') ? req.body : {};
+
+                const session = await db.session.create({
+                    data: {
+                        userId: user.id,
+                        botId: bot.id,
+                        state: startNode?.id || 'start',
+                        isActive: true,
+                        isTest: false,
+                        startedAt: new Date(),
+                        lastActive: new Date(),
+                        context: {
+                            ...contextFromBody,
+                            flowRuntime: {
+                                currentNodeId: startNode?.id || null,
+                                waitingForUser: false,
+                                nodesVisited: [],
+                                lastUserMessage: '',
+                            },
+                        },
+                    },
+                });
+
+                logger.info('[webhookBot] Session created, running flow', { slug, sessionId: session.id });
+                await executeFlowStep({ sessionId: session.id });
+                logger.info('[webhookBot] Flow step executed', { slug, sessionId: session.id });
+
+            } catch (error) {
+                logger.error('[webhookBot] Unhandled error', {
+                    slug,
+                    error: error.message,
+                    stack: error.stack,
+                });
+            }
+        });
+    })
+);
+
 // POST /webhook/wayforpay — WayForPay payment notification
 router.post('/wayforpay',
     asyncHandler(async (req, res) => {

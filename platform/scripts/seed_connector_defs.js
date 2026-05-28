@@ -130,6 +130,20 @@ const connectorDefs = [
         },
     },
     {
+        type: 'fal_ai',
+        name: 'Fal.ai',
+        description: 'Fal.ai API — генерація зображень і відео через FLUX, Kling, Ideogram, Recraft та інші моделі.',
+        icon: '🎨',
+        color: '#8B5CF6',
+        schema: {
+            api_url: 'https://fal.run',
+            docs_url: 'https://fal.ai/docs',
+            fields: [
+                { key: 'api_key', label: 'Fal.ai API Key', secret: true, placeholder: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' },
+            ],
+        },
+    },
+    {
         type: 'webhook_generic',
         name: 'Generic Webhook',
         description: 'HTTP запит на довільний URL — POST/GET з JSON body. Для інтеграцій з будь-якими API.',

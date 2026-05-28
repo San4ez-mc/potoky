@@ -25,6 +25,10 @@ const KEY_HINTS = {
         hint: 'ID збереженого Claude-конектора зі вкладки Конектори',
         url: null,
     },
+    'FAL_AI_KEY': {
+        hint: 'fal.ai Dashboard → API Keys',
+        url: 'https://fal.ai/dashboard/keys',
+    },
     'INSTAGRAM_ACCESS_TOKEN': {
         hint: 'Meta for Developers → Graph API Explorer',
         url: 'https://developers.facebook.com/tools/explorer/',
@@ -65,6 +69,15 @@ const KEY_HINTS = {
         hint: 'Текст повідомлення-нагадування, якщо користувач не відповів протягом кількох годин',
         url: null,
     },
+};
+
+// Smart mapping: key name → suggested connector type + target field
+const KEY_TO_CONNECTOR_HINT = {
+    'FAL_AI_KEY':          { type: 'fal_ai',       field: 'api_key' },
+    'CLAUDE_API_KEY':      { type: 'claude_sonnet', field: 'api_key' },
+    'ANTHROPIC_API_KEY':   { type: 'claude_sonnet', field: 'api_key' },
+    'OPENAI_API_KEY':      { type: 'openai_gpt4',   field: 'api_key' },
+    'TELEGRAM_BOT_TOKEN':  { type: 'telegram_bot',  field: 'token'   },
 };
 
 const CHANNEL_PRESETS = [
@@ -161,7 +174,138 @@ function parseSelectedChannels(rawValue) {
         .filter(Boolean);
 }
 
-function KeyRow({ k, onEdit, onDelete, onReveal, isRequired = false }) {
+// ─── Save as Connector Modal ──────────────────────────────────────────────────
+function SaveAsConnectorModal({ keyName, keyValue, connectorDefs, onSave, onClose }) {
+    const hint = KEY_TO_CONNECTOR_HINT[keyName];
+
+    const initialDef = hint
+        ? (connectorDefs.find(d => d.type === hint.type) || connectorDefs[0])
+        : connectorDefs[0];
+
+    const [name, setName] = useState(keyName.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, c => c.toUpperCase()));
+    const [type, setType] = useState(initialDef?.type || '');
+    const [fieldKey, setFieldKey] = useState('');
+    const [saving, setSaving] = useState(false);
+    const [error, setError] = useState('');
+
+    useEffect(() => {
+        if (!type) return;
+        const def = connectorDefs.find(d => d.type === type);
+        const fields = def?.schema?.fields || [];
+        const preferred = hint?.type === type ? fields.find(f => f.key === hint?.field) : null;
+        setFieldKey(preferred?.key || fields[0]?.key || '');
+    }, [type]);
+
+    const selectedDef = connectorDefs.find(d => d.type === type);
+    const fields = selectedDef?.schema?.fields || [];
+
+    const handleTypeChange = (newType) => setType(newType);
+
+    const handleSave = async () => {
+        if (!name.trim()) { setError('Введіть назву конектора'); return; }
+        if (!type) { setError('Оберіть тип конектора'); return; }
+        if (!fieldKey) { setError('Оберіть поле'); return; }
+        setSaving(true);
+        setError('');
+        try {
+            await onSave({ name: name.trim(), type, config: { [fieldKey]: keyValue } });
+        } catch (e) {
+            setError(e.message || 'Помилка збереження');
+            setSaving(false);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+            <div className="w-full max-w-md bg-gray-900 border border-gray-700 rounded-xl shadow-2xl flex flex-col">
+                <div className="px-5 py-4 border-b border-gray-800 flex items-center justify-between">
+                    <div>
+                        <h3 className="text-white font-semibold">Зберегти як конектор</h3>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                            Ключ <code className="text-brand-light">{keyName}</code> стане багаторазовим конектором
+                        </p>
+                    </div>
+                    <button onClick={onClose} className="text-gray-400 hover:text-white text-sm">✕</button>
+                </div>
+
+                <div className="p-5 space-y-4">
+                    <div>
+                        <label className="text-xs text-gray-400 block mb-1">Назва конектора</label>
+                        <input
+                            value={name}
+                            onChange={e => setName(e.target.value)}
+                            placeholder="Мій FAL.ai ключ"
+                            autoFocus
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+                        />
+                    </div>
+
+                    <div>
+                        <label className="text-xs text-gray-400 block mb-1">Тип конектора</label>
+                        <select
+                            value={type}
+                            onChange={e => handleTypeChange(e.target.value)}
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+                        >
+                            <option value="">— оберіть тип —</option>
+                            {connectorDefs.map(d => (
+                                <option key={d.type} value={d.type}>{d.icon} {d.name}</option>
+                            ))}
+                        </select>
+                        {selectedDef?.description && (
+                            <p className="text-xs text-gray-500 mt-1">{selectedDef.description}</p>
+                        )}
+                    </div>
+
+                    {fields.length > 1 && (
+                        <div>
+                            <label className="text-xs text-gray-400 block mb-1">Записати значення в поле</label>
+                            <select
+                                value={fieldKey}
+                                onChange={e => setFieldKey(e.target.value)}
+                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+                            >
+                                {fields.map(f => (
+                                    <option key={f.key} value={f.key}>{f.label}</option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
+
+                    {type && fieldKey && (
+                        <div className="rounded-lg bg-gray-800/60 border border-gray-700 px-3 py-2 text-xs text-gray-400 space-y-0.5">
+                            <div>📦 Тип: <span className="text-gray-300">{selectedDef?.icon} {selectedDef?.name}</span></div>
+                            <div>🔑 Поле: <code className="text-brand-light">{fieldKey}</code> ← значення <code className="text-brand-light">{keyName}</code></div>
+                        </div>
+                    )}
+
+                    {error && (
+                        <div className="text-sm text-red-400 bg-red-900/20 border border-red-900/40 rounded px-3 py-2">{error}</div>
+                    )}
+                </div>
+
+                <div className="px-5 py-4 border-t border-gray-800 flex justify-end gap-2">
+                    <button
+                        onClick={onClose}
+                        className="px-3 py-2 text-sm text-gray-300 hover:text-white transition-colors"
+                    >
+                        Скасувати
+                    </button>
+                    <button
+                        onClick={handleSave}
+                        disabled={saving || !name.trim() || !type || !fieldKey}
+                        className="px-4 py-2 text-sm rounded bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white transition-colors"
+                    >
+                        {saving ? 'Збереження…' : '💾 Зберегти конектор'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// ─── KeyRow ───────────────────────────────────────────────────────────────────
+function KeyRow({ k, onEdit, onDelete, onReveal, onSaveAsConnector, isRequired = false }) {
     const [revealed, setRevealed] = useState(false);
     const [revealedValue, setRevealedValue] = useState('');
     const [isRevealing, setIsRevealing] = useState(false);
@@ -184,6 +328,15 @@ function KeyRow({ k, onEdit, onDelete, onReveal, isRequired = false }) {
         } else {
             onEdit(k);
         }
+    };
+
+    const handleSaveAsConnector = async () => {
+        let value = k.value;
+        if (k.isSecret) {
+            value = revealedValue || await onReveal(k.key);
+            if (!revealedValue) setRevealedValue(value);
+        }
+        onSaveAsConnector({ ...k, value });
     };
 
     const isMissing = isRequired && !k.value;
@@ -230,6 +383,13 @@ function KeyRow({ k, onEdit, onDelete, onReveal, isRequired = false }) {
                         </button>
                     )}
                     <button
+                        onClick={handleSaveAsConnector}
+                        className="text-xs px-2 py-1 rounded bg-gray-800 hover:bg-blue-900/40 text-gray-400 hover:text-blue-300 transition-colors"
+                        title="Зберегти як конектор"
+                    >
+                        💾
+                    </button>
+                    <button
                         onClick={handleEdit}
                         className="text-xs px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white transition-colors"
                     >
@@ -247,6 +407,7 @@ function KeyRow({ k, onEdit, onDelete, onReveal, isRequired = false }) {
     );
 }
 
+// ─── KeyForm ──────────────────────────────────────────────────────────────────
 function KeyForm({ initial, onSave, onCancel, savedConnectors = [] }) {
     const [form, setForm] = useState(initial || { key: '', value: '', label: '', isSecret: false });
     const [showValue, setShowValue] = useState(false);
@@ -360,13 +521,17 @@ function KeyForm({ initial, onSave, onCancel, savedConnectors = [] }) {
     );
 }
 
+// ─── KeysPanel ────────────────────────────────────────────────────────────────
 export function KeysPanel({ embedded = false }) {
     const { bot, keys, upsertKey, deleteKey, revealKey } = useFunnelStore();
     const [editing, setEditing] = useState(null); // null | {} (new) | existing key
     const [isNew, setIsNew] = useState(false);
     const [allSavedConnectors, setAllSavedConnectors] = useState([]);
+    const [connectorDefs, setConnectorDefs] = useState([]);
     const [selectedConnectorId, setSelectedConnectorId] = useState('');
     const [loadingConnectors, setLoadingConnectors] = useState(false);
+    const [saveAsConnectorKey, setSaveAsConnectorKey] = useState(null); // { key, value, isSecret, label }
+    const [saveAsSuccess, setSaveAsSuccess] = useState('');
     const visibleKeys = useMemo(() => keys, [keys]);
     const savedClaudeConnectors = useMemo(
         () => allSavedConnectors.filter((item) => String(item.type || '').startsWith('claude_')),
@@ -375,13 +540,19 @@ export function KeysPanel({ embedded = false }) {
 
     useEffect(() => {
         setLoadingConnectors(true);
-        api.getSavedConnectors()
-            .then((list) => {
-                const normalized = Array.isArray(list) ? list : (list?.data || []);
-                setAllSavedConnectors(normalized);
-            })
-            .catch(() => setAllSavedConnectors([]))
-            .finally(() => setLoadingConnectors(false));
+        Promise.allSettled([
+            api.getSavedConnectors(),
+            api.getConnectors(),
+        ]).then(([savedRes, defsRes]) => {
+            if (savedRes.status === 'fulfilled') {
+                const list = savedRes.value;
+                setAllSavedConnectors(Array.isArray(list) ? list : (list?.data || []));
+            }
+            if (defsRes.status === 'fulfilled') {
+                const list = defsRes.value;
+                setConnectorDefs(Array.isArray(list) ? list : (list?.data || []));
+            }
+        }).finally(() => setLoadingConnectors(false));
     }, []);
 
     useEffect(() => {
@@ -391,9 +562,6 @@ export function KeysPanel({ embedded = false }) {
 
     // Get required keys based on enabled channels
     const getRequiredKeys = () => {
-        const keyMap = {};
-        keys.forEach(k => { keyMap[k.key] = k.value; });
-
         const channelsKey = keys.find(k => k.key === 'FUNNEL_CHANNELS');
         let channels = [];
         if (channelsKey?.value) {
@@ -442,12 +610,19 @@ export function KeysPanel({ embedded = false }) {
         setIsNew(true);
     };
 
-    const copyToClipboard = async (text) => {
-        try {
-            await navigator.clipboard.writeText(text);
-        } catch {
-            // no-op
-        }
+    // Save key as connector
+    const handleSaveAsConnector = (keyObj) => {
+        setSaveAsConnectorKey(keyObj);
+    };
+
+    const handleConfirmSaveAsConnector = async (connectorData) => {
+        await api.createSavedConnector(connectorData);
+        // Refresh saved connectors list
+        const updated = await api.getSavedConnectors();
+        setAllSavedConnectors(Array.isArray(updated) ? updated : (updated?.data || []));
+        setSaveAsConnectorKey(null);
+        setSaveAsSuccess(`✅ Конектор «${connectorData.name}» збережено!`);
+        setTimeout(() => setSaveAsSuccess(''), 3000);
     };
 
     return (
@@ -480,6 +655,13 @@ export function KeysPanel({ embedded = false }) {
                         </button>
                     </div>
                 )}
+
+                {saveAsSuccess && (
+                    <div className="rounded-lg px-3 py-2 bg-green-900/20 border border-green-800 text-xs text-green-300">
+                        {saveAsSuccess}
+                    </div>
+                )}
+
                 <div className="rounded-lg p-3 border bg-blue-900/10 border-blue-900/40 space-y-2">
                     <div className="text-xs text-blue-300 font-medium">Claude для цієї воронки</div>
                     <div className="text-xs text-gray-400">
@@ -561,6 +743,7 @@ export function KeysPanel({ embedded = false }) {
                             onEdit={handleEdit}
                             onDelete={handleDelete}
                             onReveal={revealKey}
+                            onSaveAsConnector={handleSaveAsConnector}
                             isRequired={requiredKeys.includes(k.key)}
                         />
                     )
@@ -573,6 +756,16 @@ export function KeysPanel({ embedded = false }) {
                     </div>
                 )}
             </div>
+
+            {saveAsConnectorKey && (
+                <SaveAsConnectorModal
+                    keyName={saveAsConnectorKey.key}
+                    keyValue={saveAsConnectorKey.value}
+                    connectorDefs={connectorDefs}
+                    onSave={handleConfirmSaveAsConnector}
+                    onClose={() => setSaveAsConnectorKey(null)}
+                />
+            )}
         </div>
     );
 }

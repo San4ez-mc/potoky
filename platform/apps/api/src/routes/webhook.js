@@ -194,10 +194,22 @@ router.post('/bot/:slug',
                 const startNode = flow.nodes.find((n) => n.type === 'start') || flow.nodes[0];
 
                 // Reuse or create a dedicated webhook system user
-                let user = await db.user.findFirst({ where: { telegramId: 'webhook_system' } });
+                // telegramId is BigInt — use a reserved numeric ID (1 = system)
+                const WEBHOOK_SYSTEM_TG_ID = BigInt(1);
+                let user = await db.user.findFirst({ where: { telegramId: WEBHOOK_SYSTEM_TG_ID } });
                 if (!user) {
+                    // Resolve projectId from the bot's project
+                    const botWithProject = await db.bot.findUnique({
+                        where: { id: bot.id },
+                        select: { project: { select: { id: true } } },
+                    });
                     user = await db.user.create({
-                        data: { telegramId: 'webhook_system', username: 'webhook', firstName: 'Webhook' },
+                        data: {
+                            telegramId: WEBHOOK_SYSTEM_TG_ID,
+                            username: 'webhook_system',
+                            firstName: 'Webhook',
+                            projectId: botWithProject?.project?.id || bot.id,
+                        },
                     });
                 }
 

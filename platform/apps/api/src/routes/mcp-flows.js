@@ -23,6 +23,7 @@ const READ_TOOL_NAMES = new Set([
     'get_api_logs',
     'list_connectors',
     'get_connector',
+    'list_projects',
 ]);
 
 const READ_TOOLS = TOOLS.filter((tool) => READ_TOOL_NAMES.has(tool.name));

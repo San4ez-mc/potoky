@@ -341,6 +341,41 @@ async function handleCallbackQuery(botId, callbackQuery) {
         return;
     }
 
+    // ── Generic choice button (cta:xxx) — treat as user message ──────────────
+    if (data.startsWith('cta:') && from?.id) {
+        const choiceMap = {
+            'cta:demo': '📞 Хочу демо-дзвінок',
+            'cta:test': '💻 Хочу потестувати',
+            'cta:questions': '❓ Більше питань',
+        };
+        const userText = choiceMap[data] || data.slice(4);
+
+        const ctaUser = await db.user.findUnique({ where: { telegramId: BigInt(from.id) } }).catch(() => null);
+        if (ctaUser) {
+            const ctaSession = await db.session.findFirst({
+                where: { userId: ctaUser.id, botId, state: { not: 'completed' } },
+                orderBy: { startedAt: 'desc' },
+            }).catch(() => null);
+            if (ctaSession) {
+                await tgRequest(token, 'editMessageReplyMarkup', {
+                    chat_id: chatId, message_id: msgId, reply_markup: { inline_keyboard: [] },
+                }).catch(() => {});
+                await tgRequest(token, 'answerCallbackQuery', {
+                    callback_query_id: callbackQuery.id,
+                    text: '✅ Отримав',
+                    show_alert: false,
+                }).catch(() => {});
+                await db.message.create({
+                    data: { sessionId: ctaSession.id, role: 'user', content: userText, metadata: { source: 'callback_cta', callbackData: data } },
+                }).catch(() => {});
+                const sinceTime = new Date();
+                await executeFlowStep({ sessionId: ctaSession.id, incomingUserMessage: userText }).catch(() => {});
+                await deliverSessionMessages(botId, ctaSession.id, Number(chatId), sinceTime);
+                return;
+            }
+        }
+    }
+
     if (!data.startsWith('cm_') || !from?.id) return;
 
     // Find the user

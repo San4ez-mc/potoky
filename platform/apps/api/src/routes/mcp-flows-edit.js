@@ -28,6 +28,11 @@ const EDIT_TOOL_NAMES = new Set([
     'create_connector',
     'update_connector',
     'delete_connector',
+    // Project management
+    'list_projects',
+    'create_project',
+    'update_project',
+    'delete_project',
 ]);
 
 const EDIT_TOOLS = TOOLS.filter((tool) => EDIT_TOOL_NAMES.has(tool.name));

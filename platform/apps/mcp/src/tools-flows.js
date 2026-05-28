@@ -250,6 +250,48 @@ const TOOLS = [
             required: ['id'],
         },
     },
+    // ── Project management ────────────────────────────────────────────────────
+    {
+        name: 'list_projects',
+        description: 'List all projects on the platform with their bot counts',
+        inputSchema: { type: 'object', properties: {}, required: [] },
+    },
+    {
+        name: 'create_project',
+        description: 'Create a new project. Returns the new project object.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                name: { type: 'string', description: 'Display name of the project' },
+                slug: { type: 'string', description: 'URL-safe slug (lowercase, hyphens). Auto-generated from name if omitted.' },
+                description: { type: 'string', description: 'Optional project description' },
+            },
+            required: ['name'],
+        },
+    },
+    {
+        name: 'update_project',
+        description: 'Update a project name, slug, or description',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                id: { type: 'string', description: 'Project UUID' },
+                name: { type: 'string' },
+                slug: { type: 'string' },
+                description: { type: 'string' },
+            },
+            required: ['id'],
+        },
+    },
+    {
+        name: 'delete_project',
+        description: 'Delete a project by id. Fails if the project still has bots — move or delete them first.',
+        inputSchema: {
+            type: 'object',
+            properties: { id: { type: 'string', description: 'Project UUID' } },
+            required: ['id'],
+        },
+    },
     {
         name: 'get_node_stats',
         description: 'Get node statistics — get node performance stats and error indicator for a bot node',
@@ -720,6 +762,85 @@ async function getApiLogs({ service, limit = 50, page = 0 }) {
     });
 }
 
+// ── Project CRUD ──────────────────────────────────────────────────────────
+
+function slugifyProject(name) {
+    return name
+        .toLowerCase()
+        .trim()
+        .replace(/['"]/g, '')
+        .replace(/[^a-z0-9а-яіїєґ\s-]/g, '')
+        .replace(/\s+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 80);
+}
+
+async function listProjects() {
+    const projects = await prisma.project.findMany({
+        include: { _count: { select: { bots: true } } },
+        orderBy: { name: 'asc' },
+    });
+    return projects.map(p => ({
+        id: p.id,
+        name: p.name,
+        slug: p.slug,
+        description: p.description || null,
+        botsCount: p._count.bots,
+        createdAt: p.createdAt,
+    }));
+}
+
+async function createProject({ name, slug, description }) {
+    if (!name?.trim()) throw new Error('name is required');
+    const finalSlug = (slug || slugifyProject(name)).trim();
+    if (!finalSlug) throw new Error('slug cannot be empty');
+
+    const existing = await prisma.project.findUnique({ where: { slug: finalSlug } });
+    if (existing) throw new Error(`Project with slug "${finalSlug}" already exists (id: ${existing.id})`);
+
+    const project = await prisma.project.create({
+        data: {
+            name: name.trim(),
+            slug: finalSlug,
+            description: description?.trim() || null,
+        },
+    });
+    return { id: project.id, name: project.name, slug: project.slug, description: project.description };
+}
+
+async function updateProject({ id, name, slug, description }) {
+    const project = await prisma.project.findUnique({ where: { id } });
+    if (!project) throw new Error(`Project not found: ${id}`);
+
+    const data = {};
+    if (name !== undefined) data.name = name.trim();
+    if (slug !== undefined) {
+        const trimmed = slug.trim();
+        if (!trimmed) throw new Error('slug cannot be empty');
+        data.slug = trimmed;
+    }
+    if (description !== undefined) data.description = description?.trim() || null;
+
+    if (!Object.keys(data).length) throw new Error('No fields to update');
+
+    const updated = await prisma.project.update({ where: { id }, data });
+    return { id: updated.id, name: updated.name, slug: updated.slug, description: updated.description };
+}
+
+async function deleteProject({ id }) {
+    const project = await prisma.project.findUnique({
+        where: { id },
+        include: { _count: { select: { bots: true } } },
+    });
+    if (!project) throw new Error(`Project not found: ${id}`);
+    if (project._count.bots > 0) {
+        throw new Error(`Cannot delete project "${project.name}" — it still has ${project._count.bots} bot(s). Move or delete them first.`);
+    }
+    await prisma.project.delete({ where: { id } });
+    return { deleted: id, name: project.name };
+}
+
 async function callTool(name, args = {}) {
     switch (name) {
         case 'list_funnels': return listFunnels();
@@ -741,6 +862,11 @@ async function callTool(name, args = {}) {
         case 'delete_connector': return deleteConnector(args);
         case 'get_node_stats': return getNodeStats(args);
         case 'get_api_logs': return getApiLogs(args);
+        // Projects
+        case 'list_projects': return listProjects();
+        case 'create_project': return createProject(args);
+        case 'update_project': return updateProject(args);
+        case 'delete_project': return deleteProject(args);
         default: throw new Error(`Unknown tool: ${name}`);
     }
 }

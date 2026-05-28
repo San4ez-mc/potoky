@@ -105,12 +105,7 @@ async function resolveFunnelClaudeKey(sessionId) {
 async function resolveFallbackKeys(sessionId) {
     const result = { openai: null, gemini: null };
 
-    // Global env first
-    const envOpenAI = normalizeApiKey(process.env.OPENAI_API_KEY);
-    const envGemini = normalizeApiKey(process.env.GEMINI_API_KEY);
-    if (envOpenAI) result.openai = envOpenAI;
-    if (envGemini) result.gemini = envGemini;
-
+    // Keys must be set per-funnel only — no global env fallback
     if (!sessionId) return result;
 
     // Per-funnel keys override env

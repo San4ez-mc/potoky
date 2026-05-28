@@ -53,7 +53,11 @@ export const api = {
 
     // Bots
     getBot: (id) => req('GET', `/bots/${id}`),
-    updateBot: (id, name, description) => req('PATCH', `/bots/${id}`, { name, description }),
+    updateBot: (id, name, description, projectId) => req('PATCH', `/bots/${id}`, {
+        name, description,
+        ...(projectId !== undefined && { projectId }),
+    }),
+    getAllBots: () => req('GET', '/projects/bots/all'),
     getBotSessions: (id, page = 0) => req('GET', `/bots/${id}/sessions?page=${page}`),
     createFunnel: (projectId, data) => req('POST', `/projects/${projectId}/bots`, data),
     deleteFunnel: (projectId, botId) => req('DELETE', `/projects/${projectId}/bots/${botId}`),

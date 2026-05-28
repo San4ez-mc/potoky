@@ -309,10 +309,9 @@ export function FunnelEditor() {
     const handleSaveEdit = async (form) => {
         setIsSavingEdit(true);
         try {
-            // API call to update bot name and description
-            await api.updateBot(botId, form.name, form.description);
-            
-            // Update local store
+            // Pass projectId if it changed (null = remove from project)
+            const projectId = form.projectId || null;
+            await api.updateBot(botId, form.name, form.description, projectId);
             loadFunnel(botId);
             setEditModalOpen(false);
         } catch (e) {

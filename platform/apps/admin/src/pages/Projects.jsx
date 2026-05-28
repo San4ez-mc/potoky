@@ -71,10 +71,14 @@ function BotsPanel({ project, onRefresh }) {
     const navigate = useNavigate();
     const [bots, setBots] = useState(null);
     const [loading, setLoading] = useState(true);
-    const [showAddForm, setShowAddForm] = useState(false);
+    const [addMode, setAddMode] = useState(null); // null | 'create' | 'assign'
     const [addForm, setAddForm] = useState({ name: '', slug: '', description: '' });
     const [addError, setAddError] = useState('');
     const [adding, setAdding] = useState(false);
+    // Assign existing
+    const [allBots, setAllBots] = useState([]);
+    const [assignBotId, setAssignBotId] = useState('');
+    const [assignLoading, setAssignLoading] = useState(false);
 
     useEffect(() => {
         api.getProjectBots(project.id)
@@ -82,6 +86,33 @@ function BotsPanel({ project, onRefresh }) {
             .catch(() => setBots([]))
             .finally(() => setLoading(false));
     }, [project.id]);
+
+    const openAssign = () => {
+        setAddMode('assign');
+        setAddError('');
+        setAssignBotId('');
+        api.getAllBots().then(list => {
+            // Show bots not already in this project
+            setAllBots(list.filter(b => b.projectId !== project.id));
+        }).catch(() => setAllBots([]));
+    };
+
+    const handleAssign = async () => {
+        if (!assignBotId) { setAddError('Оберіть воронку'); return; }
+        setAssignLoading(true);
+        setAddError('');
+        try {
+            await api.updateBot(assignBotId, undefined, undefined, project.id);
+            const updated = await api.getProjectBots(project.id);
+            setBots(updated);
+            setAddMode(null);
+            onRefresh();
+        } catch (err) {
+            setAddError(err.message || 'Помилка при призначенні');
+        } finally {
+            setAssignLoading(false);
+        }
+    };
 
     const handleAdd = async () => {
         if (!addForm.name.trim() || !addForm.slug.trim()) {
@@ -98,7 +129,7 @@ function BotsPanel({ project, onRefresh }) {
             });
             setBots(prev => [...(prev || []), newBot]);
             setAddForm({ name: '', slug: '', description: '' });
-            setShowAddForm(false);
+            setAddMode(null);
             onRefresh();
         } catch (err) {
             setAddError(err.message || 'Помилка при створенні');
@@ -123,15 +154,60 @@ function BotsPanel({ project, onRefresh }) {
                 <span className="text-xs font-medium text-gray-400 uppercase tracking-wide">
                     Воронки ({bots?.length ?? 0})
                 </span>
-                <button
-                    onClick={() => { setShowAddForm(!showAddForm); setAddError(''); }}
-                    className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
-                >
-                    {showAddForm ? 'Скасувати' : '+ Додати воронку'}
-                </button>
+                <div className="flex items-center gap-2">
+                    {addMode ? (
+                        <button
+                            onClick={() => { setAddMode(null); setAddError(''); }}
+                            className="text-xs text-gray-400 hover:text-white transition-colors"
+                        >
+                            Скасувати
+                        </button>
+                    ) : (
+                        <>
+                            <button
+                                onClick={openAssign}
+                                className="text-xs text-purple-400 hover:text-purple-300 transition-colors"
+                            >
+                                + Існуючу
+                            </button>
+                            <button
+                                onClick={() => { setAddMode('create'); setAddError(''); }}
+                                className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                            >
+                                + Нову
+                            </button>
+                        </>
+                    )}
+                </div>
             </div>
 
-            {showAddForm && (
+            {addMode === 'assign' && (
+                <div className="mb-3 p-3 bg-purple-900/20 rounded-lg border border-purple-800/50 space-y-2">
+                    <div className="text-xs text-purple-300 font-medium">Додати існуючу воронку до проекту</div>
+                    {addError && <div className="text-xs text-red-400">{addError}</div>}
+                    <select
+                        value={assignBotId}
+                        onChange={(e) => setAssignBotId(e.target.value)}
+                        className="w-full px-2.5 py-1.5 bg-gray-900 border border-gray-700 rounded text-sm text-white focus:outline-none focus:border-purple-500"
+                    >
+                        <option value="">Оберіть воронку...</option>
+                        {allBots.map(b => (
+                            <option key={b.id} value={b.id}>
+                                {b.name} {b.projectId ? '(в іншому проекті)' : '(без проекту)'}
+                            </option>
+                        ))}
+                    </select>
+                    <button
+                        onClick={handleAssign}
+                        disabled={assignLoading || !assignBotId}
+                        className="w-full py-1.5 bg-purple-700 hover:bg-purple-600 disabled:opacity-50 text-white text-sm rounded transition-colors"
+                    >
+                        {assignLoading ? 'Призначення...' : 'Додати до проекту'}
+                    </button>
+                </div>
+            )}
+
+            {addMode === 'create' && (
                 <div className="mb-3 p-3 bg-gray-800/50 rounded-lg border border-gray-700 space-y-2">
                     {addError && <div className="text-xs text-red-400">{addError}</div>}
                     <input
@@ -179,7 +255,7 @@ function BotsPanel({ project, onRefresh }) {
                         onNavigate={(botId) => navigate(`/funnels/${botId}`)}
                     />
                 ))}
-                {bots?.length === 0 && !showAddForm && (
+                {bots?.length === 0 && !addMode && (
                     <div className="text-xs text-gray-600 py-2 text-center">Немає воронок. Додайте першу ↑</div>
                 )}
             </div>

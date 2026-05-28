@@ -304,8 +304,20 @@ router.post('/bot/:slug',
 
                 // Reuse or create a dedicated webhook system user
                 // telegramId is BigInt — use a reserved numeric ID (1 = system)
+                // Optional: pass _ownerTelegramId in body to run as a specific user
+                // (used by content-scheduler so loadFile reads the owner's BotFiles)
                 const WEBHOOK_SYSTEM_TG_ID = BigInt(1);
-                let user = await db.user.findFirst({ where: { telegramId: WEBHOOK_SYSTEM_TG_ID } });
+                const ownerTgId = contextFromBody._ownerTelegramId
+                    ? BigInt(String(contextFromBody._ownerTelegramId))
+                    : null;
+
+                let user = ownerTgId
+                    ? await db.user.findUnique({ where: { telegramId: ownerTgId } })
+                    : null;
+
+                if (!user) {
+                    user = await db.user.findFirst({ where: { telegramId: WEBHOOK_SYSTEM_TG_ID } });
+                }
                 if (!user) {
                     // Resolve projectId from the bot's project
                     const botWithProject = await db.bot.findUnique({

@@ -317,6 +317,7 @@ pm2 logs platform-api --lines 20
 | WayForPay | `350490a6-63f0-4fb5-8fc8-20d05a37558b` | Wayforpay для курсу по фінансах |
 | Google Apps Script | `694fce00-6aef-4831-bae0-0325cec1f871` | Скрипт для створення гугл таблиць |
 | ElevenLabs | `a27d7049-1973-4fdf-b8d5-660c0c7044b1` | ElevenLabs |
+| Google Gemini | *(додай instance після прив'язки ключа)* | — |
 
 ### Правило
 

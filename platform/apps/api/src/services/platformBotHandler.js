@@ -36,6 +36,25 @@ async function tgRequest(token, method, payload) {
     return res;
 }
 
+/**
+ * Mark all active sessions for a user+bot as unsubscribed when we get 403.
+ */
+async function markUnsubscribed(botId, telegramChatId) {
+    try {
+        await db.session.updateMany({
+            where: {
+                botId,
+                isActive: true,
+                user: { telegramId: BigInt(telegramChatId) },
+            },
+            data: { isActive: false, state: 'unsubscribed' },
+        });
+        logger.info('[platformBotHandler] Marked user as unsubscribed', { botId, telegramChatId });
+    } catch (err) {
+        logger.warn('[platformBotHandler] Failed to mark unsubscribed', { error: err.message });
+    }
+}
+
 async function sendTelegramMessage(token, chatId, text, extra = {}) {
     const MAX_LEN = 4000;
     const parts = [];
@@ -755,7 +774,12 @@ async function deliverSessionMessages(botId, sessionId, telegramChatId, sinceTim
                     keyboard ? { reply_markup: keyboard } : {});
             }
         } catch (err) {
-            logger.warn('[platformBotHandler] deliverSessionMessages: send failed', { msgId: msg.id, error: err.message });
+            const errText = String(err.message || '').toLowerCase();
+            const isBlocked = errText.includes('blocked') || errText.includes('forbidden') || errText.includes('403') || errText.includes('user is deactivated');
+            if (isBlocked) {
+                await markUnsubscribed(botId, telegramChatId);
+            }
+            logger.warn('[platformBotHandler] deliverSessionMessages: send failed', { msgId: msg.id, error: err.message, isBlocked });
         }
     }
 }

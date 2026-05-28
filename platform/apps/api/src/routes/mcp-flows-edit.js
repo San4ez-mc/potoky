@@ -33,6 +33,11 @@ const EDIT_TOOL_NAMES = new Set([
     'create_project',
     'update_project',
     'delete_project',
+    // Broadcasts
+    'list_broadcasts',
+    'get_broadcast_subscribers',
+    'create_broadcast',
+    'cancel_broadcast',
 ]);
 
 const EDIT_TOOLS = TOOLS.filter((tool) => EDIT_TOOL_NAMES.has(tool.name));

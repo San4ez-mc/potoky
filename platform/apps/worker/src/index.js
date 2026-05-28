@@ -329,9 +329,18 @@ broadcastQueue.process(async (job) => {
             updatedRecipients[i] = { ...r, sent: true };
             sent++;
         } catch (err) {
-            updatedRecipients[i] = { ...r, sent: false, error: err.message };
+            const errMsg = String(err.message || '').toLowerCase();
+            const isBlocked = errMsg.includes('blocked') || errMsg.includes('forbidden') || errMsg.includes('403') || errMsg.includes('deactivated');
+            if (isBlocked && r.botId) {
+                // Mark user session as unsubscribed
+                db.session.updateMany({
+                    where: { botId: r.botId, isActive: true, user: { telegramId: BigInt(r.telegramId) } },
+                    data: { isActive: false, state: 'unsubscribed' },
+                }).catch(() => {});
+            }
+            updatedRecipients[i] = { ...r, sent: false, error: err.message, unsubscribed: isBlocked };
             failed++;
-            logger.error('Broadcast send error', { broadcastId, telegramId: r.telegramId, error: err.message });
+            logger.error('Broadcast send error', { broadcastId, telegramId: r.telegramId, error: err.message, isBlocked });
         }
         // Rate limit: 30 msg/sec max, use 50ms delay
         if (i < recipients.length - 1) await new Promise(resolve => setTimeout(resolve, 50));

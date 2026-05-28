@@ -318,6 +318,62 @@ const TOOLS = [
             required: [],
         },
     },
+    // ── Broadcasts ───────────────────────────────────────────────────────────
+    {
+        name: 'list_broadcasts',
+        description: 'List recent broadcast campaigns with status and stats (sent/failed counts)',
+        inputSchema: {
+            type: 'object',
+            properties: { limit: { type: 'number', description: 'Max results, default 20' } },
+            required: [],
+        },
+    },
+    {
+        name: 'get_broadcast_subscribers',
+        description: 'Get real (non-test) subscribers for a list of bot IDs. Returns telegramId, name, username, botId, isUnsubscribed flag.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                botIds: { type: 'array', items: { type: 'string' }, description: 'List of bot UUIDs to get subscribers from' },
+            },
+            required: ['botIds'],
+        },
+    },
+    {
+        name: 'create_broadcast',
+        description: 'Create and queue a broadcast to subscribers of specified bots. Unsubscribed users are excluded by default.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                name: { type: 'string', description: 'Optional name for the broadcast' },
+                botIds: { type: 'array', items: { type: 'string' }, description: 'Bot UUIDs whose subscribers receive the message' },
+                message: {
+                    type: 'object',
+                    description: 'Message content',
+                    properties: {
+                        text: { type: 'string', description: 'Message text (Markdown)' },
+                        photoUrl: { type: 'string', description: 'URL or Telegram file_id of photo (optional)' },
+                        documentUrl: { type: 'string', description: 'URL or Telegram file_id of document (optional)' },
+                        documentName: { type: 'string', description: 'Document filename for display' },
+                        caption: { type: 'string', description: 'Caption for photo/document (if different from text)' },
+                        parseMode: { type: 'string', enum: ['Markdown', 'HTML'], description: 'Parse mode, default Markdown' },
+                    },
+                },
+                scheduledAt: { type: 'string', description: 'ISO datetime to schedule the broadcast. Omit for immediate send.' },
+                includeUnsubscribed: { type: 'boolean', description: 'Include users who unsubscribed. Default: false.' },
+            },
+            required: ['botIds', 'message'],
+        },
+    },
+    {
+        name: 'cancel_broadcast',
+        description: 'Cancel a scheduled broadcast (only possible while status is "scheduled")',
+        inputSchema: {
+            type: 'object',
+            properties: { id: { type: 'string', description: 'Broadcast UUID' } },
+            required: ['id'],
+        },
+    },
 ];
 
 async function listFunnels() {
@@ -841,6 +897,110 @@ async function deleteProject({ id }) {
     return { deleted: id, name: project.name };
 }
 
+// ── Broadcasts ───────────────────────────────────────────────────────────────
+
+async function listBroadcasts({ limit = 20 } = {}) {
+    const broadcasts = await prisma.broadcast.findMany({
+        orderBy: { createdAt: 'desc' },
+        take: Number(limit) || 20,
+        select: { id: true, name: true, status: true, scheduledAt: true, sentAt: true, stats: true, createdAt: true },
+    });
+    return broadcasts.map(b => ({
+        id: b.id,
+        name: b.name || null,
+        status: b.status,
+        scheduledAt: b.scheduledAt,
+        sentAt: b.sentAt,
+        stats: b.stats,
+        createdAt: b.createdAt,
+    }));
+}
+
+async function getBroadcastSubscribers({ botIds = [] } = {}) {
+    if (!botIds.length) return [];
+    const sessions = await prisma.session.findMany({
+        where: {
+            botId: { in: botIds },
+            isTest: false,
+            user: { telegramId: { not: null } },
+        },
+        orderBy: { lastActive: 'desc' },
+        select: {
+            botId: true,
+            state: true,
+            user: { select: { id: true, telegramId: true, firstName: true, lastName: true, username: true } },
+        },
+    });
+    const seen = new Set();
+    const result = [];
+    for (const s of sessions) {
+        const key = String(s.user.telegramId);
+        if (!seen.has(key)) {
+            seen.add(key);
+            result.push({
+                userId: s.user.id,
+                telegramId: String(s.user.telegramId),
+                firstName: s.user.firstName || '',
+                username: s.user.username || '',
+                botId: s.botId,
+                isUnsubscribed: s.state === 'unsubscribed',
+            });
+        }
+    }
+    return result;
+}
+
+async function createBroadcastMcp({ name, botIds = [], message = {}, scheduledAt, includeUnsubscribed = false }) {
+    if (!botIds.length) throw new Error('botIds is required');
+    if (!message.text && !message.photoUrl && !message.documentUrl) {
+        throw new Error('message must have text, photoUrl, or documentUrl');
+    }
+
+    // Get subscribers
+    const allSubs = await getBroadcastSubscribers({ botIds });
+    const recipients = includeUnsubscribed ? allSubs : allSubs.filter(s => !s.isUnsubscribed);
+    if (!recipients.length) throw new Error('No eligible recipients found');
+
+    const isScheduled = scheduledAt && new Date(scheduledAt) > new Date();
+    const status = isScheduled ? 'scheduled' : 'sending';
+
+    const broadcast = await prisma.broadcast.create({
+        data: {
+            name: name || null,
+            status,
+            scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
+            message,
+            recipients,
+            stats: { total: recipients.length, sent: 0, failed: 0 },
+        },
+    });
+
+    // Enqueue via Bull
+    const Bull = require('bull');
+    const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+    const broadcastQueue = new Bull('broadcasts', REDIS_URL);
+    const delay = isScheduled ? Math.max(0, new Date(scheduledAt).getTime() - Date.now()) : 0;
+    await broadcastQueue.add({ broadcastId: broadcast.id }, { delay, attempts: 2 });
+    await broadcastQueue.close();
+
+    return {
+        id: broadcast.id,
+        name: broadcast.name,
+        status: broadcast.status,
+        scheduledAt: broadcast.scheduledAt,
+        recipientCount: recipients.length,
+        stats: broadcast.stats,
+    };
+}
+
+async function cancelBroadcastMcp({ id }) {
+    const bc = await prisma.broadcast.findUnique({ where: { id } });
+    if (!bc) throw new Error(`Broadcast not found: ${id}`);
+    if (bc.status !== 'scheduled') throw new Error(`Cannot cancel broadcast with status "${bc.status}"`);
+    await prisma.broadcast.update({ where: { id }, data: { status: 'cancelled' } });
+    return { cancelled: id, name: bc.name };
+}
+
 async function callTool(name, args = {}) {
     switch (name) {
         case 'list_funnels': return listFunnels();
@@ -867,6 +1027,11 @@ async function callTool(name, args = {}) {
         case 'create_project': return createProject(args);
         case 'update_project': return updateProject(args);
         case 'delete_project': return deleteProject(args);
+        // Broadcasts
+        case 'list_broadcasts': return listBroadcasts(args);
+        case 'get_broadcast_subscribers': return getBroadcastSubscribers(args);
+        case 'create_broadcast': return createBroadcastMcp(args);
+        case 'cancel_broadcast': return cancelBroadcastMcp(args);
         default: throw new Error(`Unknown tool: ${name}`);
     }
 }

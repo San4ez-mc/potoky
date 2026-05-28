@@ -24,6 +24,8 @@ const READ_TOOL_NAMES = new Set([
     'list_connectors',
     'get_connector',
     'list_projects',
+    'list_broadcasts',
+    'get_broadcast_subscribers',
 ]);
 
 const READ_TOOLS = TOOLS.filter((tool) => READ_TOOL_NAMES.has(tool.name));

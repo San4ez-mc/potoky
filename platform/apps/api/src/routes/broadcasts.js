@@ -42,20 +42,22 @@ router.get('/subscribers', asyncHandler(async (req, res) => {
     if (!botIds.length) return res.json({ ok: true, data: [] });
 
     // Get distinct users who have non-test sessions with these bots
+    // Order by lastActive desc so the most recent session wins (for isUnsubscribed status)
     const sessions = await db.session.findMany({
         where: {
             botId: { in: botIds },
             isTest: false,
             user: { telegramId: { not: null } },
         },
-        distinct: ['userId', 'botId'],
+        orderBy: { lastActive: 'desc' },
         select: {
             botId: true,
+            state: true,
             user: { select: { id: true, telegramId: true, firstName: true, lastName: true, username: true } },
         },
     });
 
-    // Deduplicate: one entry per unique telegramId (prefer keeping first bot found)
+    // Deduplicate: one entry per unique telegramId (prefer keeping first/most-recent session)
     const seen = new Set();
     const result = [];
     for (const s of sessions) {
@@ -69,6 +71,7 @@ router.get('/subscribers', asyncHandler(async (req, res) => {
                 lastName: s.user.lastName || '',
                 username: s.user.username || '',
                 botId: s.botId,
+                isUnsubscribed: s.state === 'unsubscribed',
             });
         }
     }

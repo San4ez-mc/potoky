@@ -190,7 +190,8 @@ export function Broadcasts() {
         api.getBroadcastSubscribers(selectedBotIds)
             .then(data => {
                 setSubscribers(data || []);
-                setSelectedSubIds(new Set((data || []).map(s => s.telegramId)));
+                // Pre-select only active (non-unsubscribed) users
+                setSelectedSubIds(new Set((data || []).filter(s => !s.isUnsubscribed).map(s => s.telegramId)));
             })
             .catch(() => {})
             .finally(() => setSubsLoading(false));
@@ -363,7 +364,10 @@ export function Broadcasts() {
                         Підписники
                         {subscribers.length > 0 && (
                             <span className="ml-2 text-gray-500 font-normal">
-                                ({selectedSubIds.size} / {subscribers.length} вибрано)
+                                ({selectedSubIds.size} / {subscribers.length} вибрано
+                                {subscribers.filter(s => s.isUnsubscribed).length > 0 && (
+                                    `, ${subscribers.filter(s => s.isUnsubscribed).length} відписались`
+                                )})
                             </span>
                         )}
                     </h3>
@@ -413,7 +417,12 @@ export function Broadcasts() {
                                             className="accent-brand"
                                         />
                                         <div className="flex-1 min-w-0">
-                                            <div className="text-sm text-white truncate">{displayName}</div>
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-sm text-white truncate">{displayName}</span>
+                                                {sub.isUnsubscribed && (
+                                                    <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-red-900/40 text-red-400 border border-red-800/50">відписався</span>
+                                                )}
+                                            </div>
                                             <div className="text-xs text-gray-500">
                                                 {sub.username ? `@${sub.username} · ` : ''}{sub.telegramId}
                                             </div>

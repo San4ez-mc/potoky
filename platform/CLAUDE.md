@@ -302,4 +302,35 @@ pm2 logs platform-api --lines 20
 
 ---
 
+## 16. Правило: конектори — тільки збережені екземпляри
+
+### Що є в системі (Збережені конектори)
+
+| Тип | ID екземпляру | Назва |
+|-----|--------------|-------|
+| Claude Sonnet | `2ec53ba5-144e-463b-9758-c217c4a69b0e` | Claude Sonnet для воронок |
+| Claude Haiku | `4a8000aa-837f-4a73-bf5c-224949ebaf9a` | Claude Haiku для воронок |
+| Claude Opus | `6a438f34-40b4-4b86-9aac-84a8f060a806` | Claude Opus для воронок |
+| Telegram Bot (Den) | `1cd281cb-1bcc-4210-8f64-1dfca80c0af9` | Den. Бот для продаж |
+| Telegram Bot (фін.курс) | `f5b2d95b-bd44-4f96-adce-c4d7d01750dc` | Бот для фінансового курсу |
+| Telegram Bot (Майкл) | `9c3a7f38-557b-469d-95a8-61ed4d926355` | Майкл - Бот з домашніми завданнями |
+| WayForPay | `350490a6-63f0-4fb5-8fc8-20d05a37558b` | Wayforpay для курсу по фінансах |
+| Google Apps Script | `694fce00-6aef-4831-bae0-0325cec1f871` | Скрипт для створення гугл таблиць |
+| ElevenLabs | `a27d7049-1973-4fdf-b8d5-660c0c7044b1` | ElevenLabs |
+
+### Правило
+
+**Не створювати per-funnel funnelKeys типу `AI_CONNECTOR_ID`, `CLAUDE_CONNECTOR_ID` для глобальних конекторів.**
+
+- Замість `connectorId: "{{env.AI_CONNECTOR_ID}}"` → вставляти UUID прямо: `connectorId: "2ec53ba5-..."`
+- Перед додаванням нового конектора — завжди перевіряти `list_connectors` і пропонувати вибрати з існуючих екземплярів
+- Якщо потрібного конектора немає в списку — запитати користувача, чи треба створити новий збережений конектор у UI (`/connectors`)
+- `TELEGRAM_CONNECTOR_ID` — **виняток**: залишається в funnelKey, бо кожен бот має різний токен
+
+### Урок з помилки (2026-05-28)
+
+`AI_CONNECTOR_ID = 30edf58a` — це **ID типу конектора** (definition), а не збереженого екземпляру. Правильний **instance ID** = `2ec53ba5`. Через цю помилку Claude нода не могла знайти конектор і падала. Завжди використовувати instance UUID з `list_connectors → instances[].id`.
+
+---
+
 *Оновлено: 2026-05-28. Якщо є нові правила — додавай сюди.*

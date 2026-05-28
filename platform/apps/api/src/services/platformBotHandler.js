@@ -404,6 +404,15 @@ async function handlePlatformBotUpdate(botId, update) {
         });
     }
 
+    // ── Phase 4.5: persist telegramChatId in session context ─────────────────
+    // Content-manager bot uses this for deliverTo (sends generated content back here)
+    if (chatId && session?.context?.telegramChatId !== chatId) {
+        await db.session.update({
+            where: { id: session.id },
+            data: { context: { ...(session.context || {}), telegramChatId: chatId } },
+        }).catch(() => {});
+    }
+
     // ── Phase 5: execute flow step ────────────────────────────────────────────
     sinceTime = new Date();
     await tgRequest(token, 'sendChatAction', { chat_id: chatId, action: 'typing' }).catch(() => {});

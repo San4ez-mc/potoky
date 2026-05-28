@@ -32,12 +32,18 @@ function isTransientClaudeError(error) {
     if (status === 503) return true;
     // 500 = internal server error on Anthropic side
     if (status === 500) return true;
+    // 402 = Payment Required (billing issue — Claude account not paid)
+    if (status === 402) return true;
+    // 401 = Unauthorized (invalid/expired API key — try fallback)
+    if (status === 401) return true;
     // Timeout (set by our own timer)
     if (msg.includes('timeout')) return true;
     // Network-level errors
     if (msg.includes('econnrefused') || msg.includes('enotfound') || msg.includes('network')) return true;
     // Explicit overload message
     if (msg.includes('overloaded')) return true;
+    // Billing/payment messages from Anthropic
+    if (msg.includes('billing') || msg.includes('payment') || msg.includes('credit')) return true;
 
     return false;
 }

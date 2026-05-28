@@ -168,6 +168,27 @@ async function resolveFallbackKeys(sessionId) {
         } catch { /* ignore */ }
     }
 
+    // Global fallback — look up any active saved connector instance by type
+    if (!result.openai) {
+        try {
+            const c = await db.savedConnector.findFirst({
+                where: { type: 'openai_gpt4', isActive: true },
+                select: { config: true },
+            });
+            if (c) result.openai = extractApiKeyFromConnector(c);
+        } catch { /* ignore */ }
+    }
+
+    if (!result.gemini) {
+        try {
+            const c = await db.savedConnector.findFirst({
+                where: { type: 'google_gemini', isActive: true },
+                select: { config: true },
+            });
+            if (c) result.gemini = extractApiKeyFromConnector(c);
+        } catch { /* ignore */ }
+    }
+
     return result;
 }
 

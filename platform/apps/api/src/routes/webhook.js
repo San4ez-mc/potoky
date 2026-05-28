@@ -163,8 +163,87 @@ router.post('/instagram/:botId',
     })
 );
 
+// ---------------------------------------------------------------------------
+// deliverResultToTelegram — sends generated content to a Telegram chat.
+// Called after a webhook-triggered flow completes if context.deliverTo is set.
+// context.deliverTo = { botToken, chatId, caption? }
+// Checks known output context variables in priority order across all content funnels.
+// ---------------------------------------------------------------------------
+async function deliverResultToTelegram(ctx, slug) {
+    const { botToken, chatId, caption } = ctx.deliverTo || {};
+    if (!botToken || !chatId) return;
+
+    const tgBase = `https://api.telegram.org/bot${botToken}`;
+
+    try {
+        // ── Carousel: array of base64 slides ─────────────────────────────────
+        const slidesRaw = ctx.slidesBase64;
+        if (Array.isArray(slidesRaw) && slidesRaw.length > 0) {
+            // Send up to 10 images as a media group
+            const mediaGroup = slidesRaw.slice(0, 10).map((b64, i) => ({
+                type: 'photo',
+                media: `attach://slide${i}`,
+                ...(i === 0 && caption ? { caption } : {}),
+            }));
+            const form = new FormData();
+            form.set('chat_id', String(chatId));
+            form.set('media', JSON.stringify(mediaGroup));
+            slidesRaw.slice(0, 10).forEach((b64, i) => {
+                const buf = Buffer.from(b64, 'base64');
+                form.set(`slide${i}`, new Blob([buf], { type: 'image/png' }), `slide${i}.png`);
+            });
+            await fetch(`${tgBase}/sendMediaGroup`, { method: 'POST', body: form });
+            logger.info('[webhookBot] Carousel delivered to Telegram', { slug, chatId, count: slidesRaw.length });
+            return;
+        }
+
+        // ── Single image base64 ───────────────────────────────────────────────
+        const imgB64 = ctx.finalImageBase64 || ctx.imageBase64 || ctx.outputImageBase64;
+        if (imgB64) {
+            const form = new FormData();
+            const buf = Buffer.from(imgB64, 'base64');
+            form.set('chat_id', String(chatId));
+            form.set('photo', new Blob([buf], { type: 'image/png' }), 'result.png');
+            if (caption) form.set('caption', caption);
+            await fetch(`${tgBase}/sendPhoto`, { method: 'POST', body: form });
+            logger.info('[webhookBot] Image delivered to Telegram', { slug, chatId });
+            return;
+        }
+
+        // ── Video URL ─────────────────────────────────────────────────────────
+        const videoUrl = ctx.videoUrl || ctx.outputVideoUrl || ctx.outputUrl;
+        if (videoUrl && /\.(mp4|mov|webm)/i.test(videoUrl)) {
+            await fetch(`${tgBase}/sendVideo`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: String(chatId), video: videoUrl, caption: caption || '' }),
+            });
+            logger.info('[webhookBot] Video delivered to Telegram', { slug, chatId, videoUrl });
+            return;
+        }
+
+        // ── Generic URL (image) ───────────────────────────────────────────────
+        const anyUrl = ctx.outputUrl || ctx.resultUrl;
+        if (anyUrl) {
+            await fetch(`${tgBase}/sendPhoto`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: String(chatId), photo: anyUrl, caption: caption || '' }),
+            });
+            logger.info('[webhookBot] URL-based result delivered to Telegram', { slug, chatId });
+            return;
+        }
+
+        logger.warn('[webhookBot] deliverTo set but no recognisable output found in context', { slug, ctxKeys: Object.keys(ctx) });
+    } catch (err) {
+        logger.error('[webhookBot] deliverResultToTelegram failed', { slug, error: err.message });
+    }
+}
+
 // POST /webhook/bot/:slug — direct webhook trigger for content funnels
 // Accepts any JSON body, injects it into session context, runs the flow asynchronously.
+// Optional: include deliverTo: { botToken, chatId, caption? } in the body to receive
+// the generated result directly in Telegram when the flow completes.
 router.post('/bot/:slug',
     asyncHandler(async (req, res) => {
         const { slug } = req.params;
@@ -239,6 +318,15 @@ router.post('/bot/:slug',
                 logger.info('[webhookBot] Session created, running flow', { slug, sessionId: session.id });
                 await executeFlowStep({ sessionId: session.id });
                 logger.info('[webhookBot] Flow step executed', { slug, sessionId: session.id });
+
+                // ── deliverTo: forward result to Telegram ──────────────────────
+                if (contextFromBody.deliverTo?.chatId && contextFromBody.deliverTo?.botToken) {
+                    const finalCtx = (await db.session.findUnique({
+                        where: { id: session.id },
+                        select: { context: true },
+                    }))?.context || {};
+                    await deliverResultToTelegram(finalCtx, slug);
+                }
 
             } catch (error) {
                 logger.error('[webhookBot] Unhandled error', {

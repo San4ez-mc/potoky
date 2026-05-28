@@ -14,7 +14,6 @@ Run: uvicorn app:app --host 0.0.0.0 --port 4200
 
 import os
 import json
-import asyncio
 import logging
 from pathlib import Path
 from typing import Optional
@@ -104,20 +103,20 @@ async def add_source(notebook_id: str, req: AddSourceRequest):
     nb = notebooks[notebook_id]
 
     try:
-        from notebooklm import NotebookLM
-        nlm = NotebookLM()
+        from notebooklm import NotebookLMClient
 
-        # Create NotebookLM notebook if not yet created
-        if not nb.get("notebooklm_id"):
-            nb["notebooklm_id"] = await asyncio.to_thread(
-                nlm.create_notebook, nb["name"]
-            )
+        async with NotebookLMClient.from_storage() as client:
+            # Create NotebookLM notebook if not yet created
+            if not nb.get("notebooklm_id"):
+                created = await client.notebooks.create(nb["name"])
+                nb["notebooklm_id"] = created.id
 
-        # Add source
-        if req.type == "url":
-            await asyncio.to_thread(nlm.add_source, nb["notebooklm_id"], req.content, source_type="url")
-        else:
-            await asyncio.to_thread(nlm.add_source, nb["notebooklm_id"], req.content, source_type="text")
+            # Add source
+            if req.type == "url":
+                await client.sources.add_url(nb["notebooklm_id"], req.content, wait=True)
+            else:
+                title = req.title or "Text source"
+                await client.sources.add_text(nb["notebooklm_id"], title, req.content, wait=True)
 
         nb["sources"].append({"type": req.type, "content": req.content[:200], "title": req.title})
         save_notebooks(notebooks)
@@ -144,9 +143,12 @@ async def query_notebook(notebook_id: str, req: QueryRequest):
         raise HTTPException(400, "Notebook has no sources in NotebookLM yet. Add sources first.")
 
     try:
-        from notebooklm import NotebookLM
-        nlm = NotebookLM()
-        answer = await asyncio.to_thread(nlm.query, nb["notebooklm_id"], req.question)
+        from notebooklm import NotebookLMClient
+
+        async with NotebookLMClient.from_storage() as client:
+            result = await client.chat.ask(nb["notebooklm_id"], req.question)
+
+        answer = result.answer if hasattr(result, "answer") else str(result)
         return {"ok": True, "answer": answer, "notebookId": notebook_id}
 
     except ImportError:

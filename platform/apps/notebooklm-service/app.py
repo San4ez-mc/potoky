@@ -36,7 +36,7 @@ app.add_middleware(
 )
 
 # ── Storage ───────────────────────────────────────────────────────────────────
-DATA_DIR = Path(os.environ.get("DATA_DIR", "/var/www/notebooklm-service/data"))
+DATA_DIR = Path(os.environ.get("DATA_DIR", "/var/www/notebooklm.flows.fineko.space/data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 NOTEBOOKS_FILE = DATA_DIR / "notebooks.json"
 

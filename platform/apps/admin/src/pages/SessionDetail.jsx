@@ -414,7 +414,6 @@ export function SessionDetail() {
             {/* Header */}
             <div className="px-6 py-3 border-b border-gray-800 bg-gray-900 shrink-0">
                 <div className="flex items-center gap-4">
-                    <button onClick={() => navigate(backUrl)} className="text-gray-500 hover:text-gray-300 text-sm transition-colors">← Назад</button>
                     <div>
                         <div className="flex items-center gap-2">
                             <span className="text-sm font-semibold text-white">{userName}</span>

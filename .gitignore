@@ -34,3 +34,6 @@ php-mvc/public/uploads/images/*
 php-mvc/public/uploads/generated/*
 php-mvc/public/uploads/source_images/*
 !php-mvc/public/uploads/source_images/README.md
+.claude/worktrees/
+боти/
+бот з контент планом/

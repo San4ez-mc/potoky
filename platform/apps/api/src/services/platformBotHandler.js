@@ -287,10 +287,105 @@ async function resolveTargetBot(botId, startPayload, userId) {
 }
 
 // ---------------------------------------------------------------------------
+// Inline keyboard callback handler (quality check buttons from deliverResultToTelegram)
+// Handles: cm_approve, cm_regen, cm_fix
+// ---------------------------------------------------------------------------
+
+async function handleCallbackQuery(botId, callbackQuery) {
+    const token = await getBotToken(botId);
+    if (!token) return;
+
+    const data = callbackQuery.data || '';
+    const chatId = callbackQuery.message?.chat?.id;
+    const msgId = callbackQuery.message?.message_id;
+    const from = callbackQuery.from;
+
+    // Always answer to remove the loading spinner from the button
+    await tgRequest(token, 'answerCallbackQuery', {
+        callback_query_id: callbackQuery.id,
+    }).catch(() => {});
+
+    if (!data.startsWith('cm_') || !from?.id) return;
+
+    // Find the user
+    const user = await db.user.findUnique({ where: { telegramId: BigInt(from.id) } }).catch(() => null);
+    if (!user) return;
+
+    // Find their active content-manager session
+    const session = await db.session.findFirst({
+        where: {
+            userId: user.id,
+            state: { not: 'completed' },
+            bot: { slug: 'content-manager' },
+        },
+        orderBy: { lastActive: 'desc' },
+    }).catch(() => null);
+    if (!session) return;
+
+    // Remove inline keyboard buttons from the original message
+    await tgRequest(token, 'editMessageReplyMarkup', {
+        chat_id: chatId,
+        message_id: msgId,
+        reply_markup: { inline_keyboard: [] },
+    }).catch(() => {});
+
+    let userMessage = null;
+
+    if (data === 'cm_approve') {
+        // Confirm and inject "approve" as a user message into the session
+        await tgRequest(token, 'sendMessage', {
+            chat_id: chatId,
+            text: '✅ Збережено в план!',
+        }).catch(() => {});
+        userMessage = '✅ Підходить, збережи в план';
+
+    } else if (data === 'cm_regen') {
+        // Tell Claude to regenerate same content
+        await tgRequest(token, 'sendMessage', {
+            chat_id: chatId,
+            text: '🔄 Запускаю генерацію ще раз...',
+        }).catch(() => {});
+        userMessage = '🔄 Перегенеруй те саме з тими ж параметрами';
+
+    } else if (data === 'cm_fix') {
+        // Just prompt the user to describe what to fix; session already waiting
+        await tgRequest(token, 'sendMessage', {
+            chat_id: chatId,
+            text: '✏️ Напиши що потрібно виправити:',
+        }).catch(() => {});
+        return; // session stays waitingForUser — next message from user continues naturally
+    }
+
+    if (!userMessage) return;
+
+    // Persist user "message" and advance the flow
+    await db.message.create({
+        data: {
+            sessionId: session.id,
+            role: 'user',
+            content: userMessage,
+            metadata: { source: 'callback_query', callbackData: data },
+        },
+    }).catch(() => {});
+
+    const sinceTime = new Date();
+    await executeFlowStep({ sessionId: session.id, incomingUserMessage: userMessage }).catch(err => {
+        logger.error('[platformBotHandler] handleCallbackQuery: executeFlowStep failed', { error: err.message });
+    });
+    await deliverSessionMessages(session.botId, session.id, Number(chatId), sinceTime);
+}
+
+// ---------------------------------------------------------------------------
 // Main handler
 // ---------------------------------------------------------------------------
 
 async function handlePlatformBotUpdate(botId, update) {
+    // ── Handle inline keyboard callbacks (quality check buttons) ─────────────
+    if (update.callback_query) {
+        await handleCallbackQuery(botId, update.callback_query);
+        return;
+    }
+
     const message = update.message || update.edited_message;
     if (!message) {
         logger.debug('[platformBotHandler] No message in update, skipping', { botId });

@@ -168,18 +168,20 @@ router.post('/instagram/:botId',
 // Called after a webhook-triggered flow completes if context.deliverTo is set.
 // context.deliverTo = { botToken, chatId, caption? }
 // Checks known output context variables in priority order across all content funnels.
+// After delivery sends a quality-check inline keyboard (✅ / 🔄 / ✏️) so the
+// content-manager bot can handle approve / regenerate / fix callbacks.
 // ---------------------------------------------------------------------------
 async function deliverResultToTelegram(ctx, slug) {
     const { botToken, chatId, caption } = ctx.deliverTo || {};
     if (!botToken || !chatId) return;
 
     const tgBase = `https://api.telegram.org/bot${botToken}`;
+    let delivered = false;
 
     try {
         // ── Carousel: array of base64 slides ─────────────────────────────────
         const slidesRaw = ctx.slidesBase64;
-        if (Array.isArray(slidesRaw) && slidesRaw.length > 0) {
-            // Send up to 10 images as a media group
+        if (!delivered && Array.isArray(slidesRaw) && slidesRaw.length > 0) {
             const mediaGroup = slidesRaw.slice(0, 10).map((b64, i) => ({
                 type: 'photo',
                 media: `attach://slide${i}`,
@@ -194,47 +196,75 @@ async function deliverResultToTelegram(ctx, slug) {
             });
             await fetch(`${tgBase}/sendMediaGroup`, { method: 'POST', body: form });
             logger.info('[webhookBot] Carousel delivered to Telegram', { slug, chatId, count: slidesRaw.length });
-            return;
+            delivered = true;
         }
 
         // ── Single image base64 ───────────────────────────────────────────────
-        const imgB64 = ctx.finalImageBase64 || ctx.imageBase64 || ctx.outputImageBase64;
-        if (imgB64) {
-            const form = new FormData();
-            const buf = Buffer.from(imgB64, 'base64');
-            form.set('chat_id', String(chatId));
-            form.set('photo', new Blob([buf], { type: 'image/png' }), 'result.png');
-            if (caption) form.set('caption', caption);
-            await fetch(`${tgBase}/sendPhoto`, { method: 'POST', body: form });
-            logger.info('[webhookBot] Image delivered to Telegram', { slug, chatId });
-            return;
+        if (!delivered) {
+            const imgB64 = ctx.finalImageBase64 || ctx.imageBase64 || ctx.outputImageBase64;
+            if (imgB64) {
+                const form = new FormData();
+                const buf = Buffer.from(imgB64, 'base64');
+                form.set('chat_id', String(chatId));
+                form.set('photo', new Blob([buf], { type: 'image/png' }), 'result.png');
+                if (caption) form.set('caption', caption);
+                await fetch(`${tgBase}/sendPhoto`, { method: 'POST', body: form });
+                logger.info('[webhookBot] Image delivered to Telegram', { slug, chatId });
+                delivered = true;
+            }
         }
 
         // ── Video URL ─────────────────────────────────────────────────────────
-        const videoUrl = ctx.videoUrl || ctx.outputVideoUrl || ctx.outputUrl;
-        if (videoUrl && /\.(mp4|mov|webm)/i.test(videoUrl)) {
-            await fetch(`${tgBase}/sendVideo`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ chat_id: String(chatId), video: videoUrl, caption: caption || '' }),
-            });
-            logger.info('[webhookBot] Video delivered to Telegram', { slug, chatId, videoUrl });
-            return;
+        if (!delivered) {
+            const videoUrl = ctx.videoUrl || ctx.outputVideoUrl || ctx.outputUrl;
+            if (videoUrl && /\.(mp4|mov|webm)/i.test(videoUrl)) {
+                await fetch(`${tgBase}/sendVideo`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chat_id: String(chatId), video: videoUrl, caption: caption || '' }),
+                });
+                logger.info('[webhookBot] Video delivered to Telegram', { slug, chatId, videoUrl });
+                delivered = true;
+            }
         }
 
         // ── Generic URL (image) ───────────────────────────────────────────────
-        const anyUrl = ctx.outputUrl || ctx.resultUrl;
-        if (anyUrl) {
-            await fetch(`${tgBase}/sendPhoto`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ chat_id: String(chatId), photo: anyUrl, caption: caption || '' }),
-            });
-            logger.info('[webhookBot] URL-based result delivered to Telegram', { slug, chatId });
+        if (!delivered) {
+            const anyUrl = ctx.outputUrl || ctx.resultUrl;
+            if (anyUrl) {
+                await fetch(`${tgBase}/sendPhoto`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chat_id: String(chatId), photo: anyUrl, caption: caption || '' }),
+                });
+                logger.info('[webhookBot] URL-based result delivered to Telegram', { slug, chatId });
+                delivered = true;
+            }
+        }
+
+        if (!delivered) {
+            logger.warn('[webhookBot] deliverTo set but no recognisable output found in context', { slug, ctxKeys: Object.keys(ctx) });
             return;
         }
 
-        logger.warn('[webhookBot] deliverTo set but no recognisable output found in context', { slug, ctxKeys: Object.keys(ctx) });
+        // ── Quality-check keyboard (✅ Підходить / 🔄 Ще раз / ✏️ Виправити) ─
+        // The content-manager bot handles these callback_query events.
+        await fetch(`${tgBase}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                chat_id: String(chatId),
+                text: '📋 Як тобі результат?',
+                reply_markup: {
+                    inline_keyboard: [[
+                        { text: '✅ Підходить', callback_data: 'cm_approve' },
+                        { text: '🔄 Ще раз', callback_data: 'cm_regen' },
+                        { text: '✏️ Виправити', callback_data: 'cm_fix' },
+                    ]],
+                },
+            }),
+        }).catch(err => logger.warn('[webhookBot] Failed to send quality keyboard', { slug, error: err.message }));
+
     } catch (err) {
         logger.error('[webhookBot] deliverResultToTelegram failed', { slug, error: err.message });
     }

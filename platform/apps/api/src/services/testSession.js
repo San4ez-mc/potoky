@@ -1090,6 +1090,17 @@ ${sourceContent || '(немає даних)'}
                 continue;
             }
 
+            // Parse custom headers from node data (supports {{env.KEY}} templates)
+            let customHeaders = {};
+            if (data.headers) {
+                try {
+                    const rawHeaders = typeof data.headers === 'string' ? JSON.parse(data.headers) : data.headers;
+                    for (const [k, v] of Object.entries(rawHeaders)) {
+                        customHeaders[k] = typeof v === 'string' ? renderTemplate(v, scope) : String(v);
+                    }
+                } catch (_) { /* ignore malformed headers */ }
+            }
+
             try {
                 let bodyPayload = null;
                 if (method === 'POST' || method === 'PUT' || method === 'PATCH') {
@@ -1121,7 +1132,8 @@ ${sourceContent || '(немає даних)'}
                         port: pu.port || (isHttps ? 443 : 80),
                         path: pu.pathname + pu.search,
                         method: reqMethod,
-                        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                        // Merge defaults with custom headers (custom takes precedence)
+                        headers: Object.assign({ 'Content-Type': 'application/json', 'Accept': 'application/json' }, customHeaders),
                     };
                     if (payload) opts.headers['Content-Length'] = Buffer.byteLength(payload);
                     const req = mod.request(opts, (res) => {

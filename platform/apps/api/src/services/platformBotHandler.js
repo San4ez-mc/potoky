@@ -421,7 +421,7 @@ async function handlePlatformBotUpdate(botId, update) {
         logger.error('[platformBotHandler] executeFlowStep failed', {
             targetBotId, sessionId: session.id, error: err.message, stack: err.stack,
         });
-        const errText = 'Ой, щось пішло не так 🤷 Спробуй ще раз — або /start якщо зовсім щось дивне відбулось.';
+        const errText = 'От халепа 😅 Щось пішло не так, але Олександру вже пішло сповіщення — все виправиться найближчим часом і тобі прийде наступне повідомлення.';
         // Persist error response so it's visible in session messages tab
         await db.message.create({
             data: {

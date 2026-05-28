@@ -348,7 +348,7 @@ export function FunnelEditor() {
 
     return (
         <ReactFlowProvider>
-            <div className="flex flex-col h-screen">
+            <div className="flex flex-col h-[calc(100vh-3rem)]">
                 <TopBar
                     bot={bot}
                     isDirty={isDirty}

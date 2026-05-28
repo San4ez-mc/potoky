@@ -421,7 +421,17 @@ async function handlePlatformBotUpdate(botId, update) {
         logger.error('[platformBotHandler] executeFlowStep failed', {
             targetBotId, sessionId: session.id, error: err.message, stack: err.stack,
         });
-        await sendTelegramMessage(token, chatId, 'Вибачте, сталася помилка. Спробуйте ще раз або /start.');
+        const errText = 'Ой, щось пішло не так 🤷 Спробуй ще раз — або /start якщо зовсім щось дивне відбулось.';
+        // Persist error response so it's visible in session messages tab
+        await db.message.create({
+            data: {
+                sessionId: session.id,
+                role: 'assistant',
+                content: errText,
+                metadata: { source: 'error-handler', error: err.message },
+            },
+        }).catch(() => {});
+        await sendTelegramMessage(token, chatId, errText);
         return;
     }
     clearInterval(typingTimer);

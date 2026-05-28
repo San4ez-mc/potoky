@@ -171,6 +171,10 @@ async function resolveBotToken(botId) {
         }
         const direct = keyMap.TELEGRAM_BOT_TOKEN;
         if (direct && /^\d+:[A-Za-z0-9_-]{20,}$/.test(direct.trim())) return direct.trim();
+
+        // Fallback to env (same as getBotToken in platformBotHandler)
+        const envToken = process.env.TELEGRAM_BOT_TOKEN?.trim();
+        if (envToken && /^\d+:[A-Za-z0-9_-]{20,}$/.test(envToken)) return envToken;
     } catch { /* fall through */ }
     return null;
 }
@@ -288,7 +292,7 @@ router.post('/:id/restart',
             db.session.update({
                 where: { id: session.id },
                 data: {
-                    state: null,
+                    state: '',
                     context: {},
                     isActive: true,
                     completedAt: null,

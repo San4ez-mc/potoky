@@ -55,17 +55,42 @@ async function sendFollowUpViaTelegram(token, chatId, text) {
     }
 }
 
+// ── NLM helper: generate unique re-engagement message ────────────────────────
+async function getFollowUpFromNlm(nlmUrl, followUpNum, recentMsgs) {
+    try {
+        const ctx = recentMsgs
+            .map(m => `${m.role === 'user' ? 'Клієнт' : 'Бот'}: ${String(m.content || '').slice(0, 300)}`)
+            .join('\n');
+
+        const queries = [
+            `Склади перше ненав'язливе нагадування від продавця після 1 дня мовчання. Контекст діалогу:\n${ctx}\n\nВикористовуй техніки онлайн-продажів з бази знань. 2-3 речення, тепло, без тиску, одне відкрите питання наприкінці. Тільки текст повідомлення.`,
+            `Склади останнє нагадування (через тиждень мовчання). Контекст:\n${ctx}\n\nВикористай несподіваний підхід — корисний інсайт, провокативне питання, або особисте спостереження. 2-3 речення, ненав'язливо. Тільки текст повідомлення.`,
+        ];
+
+        const query = queries[Math.min(followUpNum - 1, 1)];
+        const res = await fetch(`${nlmUrl}/notebooks/content-rules/query`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question: query }),
+            signal: AbortSignal.timeout(8000),
+        });
+        if (!res.ok) return null;
+        const data = await res.json();
+        return data?.answer?.trim() || null;
+    } catch { return null; }
+}
+
 async function checkInactiveSessions() {
     try {
-        const cutoff = new Date(Date.now() - FOLLOW_UP_DELAY_HOURS * 60 * 60 * 1000);
+        // Broad cutoff — per-session timing is checked individually below
+        const broadCutoff = new Date(Date.now() - 20 * 60 * 60 * 1000); // min 20h
 
-        // Find active, non-test sessions that haven't had activity for >FOLLOW_UP_DELAY_HOURS hours
         const staleSessions = await db.session.findMany({
             where: {
                 isActive: true,
-                isTest: false,          // Never send follow-ups to test sessions
-                state: { not: 'unsubscribed' },
-                lastActive: { lte: cutoff },
+                isTest: false,
+                state: { notIn: ['unsubscribed', 'completed'] },
+                lastActive: { lte: broadCutoff },
             },
             include: {
                 user: { select: { telegramId: true } },
@@ -85,28 +110,24 @@ async function checkInactiveSessions() {
                 const ctx = (typeof session.context === 'object' ? session.context : JSON.parse(session.context || '{}')) || {};
                 const runtime = ctx.flowRuntime || {};
 
-                // Only act if we're waiting for user input
                 if (!runtime.waitingForUser) continue;
 
-                // Max 1 follow-up per session
                 const followUpCount = ctx.followUpCount || 0;
-                if (followUpCount >= 1) continue;
+                // Max 2 follow-ups: #1 after 24h, #2 after 7 days, then stop
+                if (followUpCount >= 2) continue;
 
-                // Per-bot delay override via FOLLOW_UP_DELAY_HOURS funnelKey
-                const delayKey = await db.funnelKey.findUnique({
-                    where: { botId_key: { botId: session.botId, key: 'FOLLOW_UP_DELAY_HOURS' } },
-                    select: { value: true },
-                });
-                const sessionDelayHours = delayKey ? Number(delayKey.value) : FOLLOW_UP_DELAY_HOURS;
-                const sessionCutoff = new Date(Date.now() - sessionDelayHours * 60 * 60 * 1000);
-                if (session.lastActive > sessionCutoff) continue; // Not stale enough yet
+                // Timing per follow-up number
+                const DELAYS_HOURS = [24, 168]; // 24h for 1st, 7 days for 2nd
+                const requiredHours = DELAYS_HOURS[followUpCount] ?? 24;
+                const requiredCutoff = new Date(Date.now() - requiredHours * 60 * 60 * 1000);
+                if (session.lastActive > requiredCutoff) continue;
 
                 const telegramId = session.user?.telegramId;
                 if (!telegramId) continue;
 
-                // Get bot's Telegram token — check TELEGRAM_CONNECTOR_ID first, then TELEGRAM_BOT_TOKEN
+                // Resolve token
                 const allKeys = await db.funnelKey.findMany({
-                    where: { botId: session.botId, key: { in: ['TELEGRAM_CONNECTOR_ID', 'TELEGRAM_BOT_TOKEN'] } },
+                    where: { botId: session.botId, key: { in: ['TELEGRAM_CONNECTOR_ID', 'TELEGRAM_BOT_TOKEN', 'NOTEBOOKLM_URL'] } },
                     select: { key: true, value: true },
                 });
                 const km = Object.fromEntries(allKeys.map(k => [k.key, k.value]));
@@ -118,43 +139,47 @@ async function checkInactiveSessions() {
                 if (!token) token = km.TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN || null;
                 if (!token) continue;
 
-                // Get follow-up message from bot key or use default
-                const followUpMsgKey = await db.funnelKey.findUnique({
-                    where: { botId_key: { botId: session.botId, key: 'FOLLOW_UP_MESSAGE' } },
-                    select: { value: true },
+                // Get last 6 messages for context
+                const recentMsgs = await db.message.findMany({
+                    where: { sessionId: session.id },
+                    orderBy: { createdAt: 'desc' },
+                    take: 6,
+                    select: { role: true, content: true },
                 });
+                recentMsgs.reverse();
 
-                const followUpText = followUpMsgKey?.value
-                    || `Привіт! 👋 Ми ще на зв'язку — якщо є питання або хочеш продовжити розмову, просто напиши. Буду радий допомогти! 😊`;
+                // Generate unique follow-up via NLM, fallback to static key
+                let followUpText = null;
+                if (km.NOTEBOOKLM_URL) {
+                    followUpText = await getFollowUpFromNlm(km.NOTEBOOKLM_URL, followUpCount + 1, recentMsgs);
+                }
+                if (!followUpText) {
+                    const staticKey = await db.funnelKey.findUnique({
+                        where: { botId_key: { botId: session.botId, key: 'FOLLOW_UP_MESSAGE' } },
+                        select: { value: true },
+                    });
+                    followUpText = staticKey?.value
+                        || (followUpCount === 0
+                            ? `Привіт! 👋 Ми ще на зв'язку — якщо є питання, просто напиши. Буду радий допомогти! 😊`
+                            : `Гей, востаннє нагадаю — без тиску. Якщо надумаєш — просто напиши. Удачі! 👋`);
+                }
 
                 await sendFollowUpViaTelegram(token, String(telegramId), followUpText);
-
-                // Mark pair as processed so no other session of this user+bot fires today
                 processedPairs.add(pairKey);
 
-                // Update session context to track follow-up sent
                 const updatedCtx = { ...ctx, followUpCount: followUpCount + 1 };
-                await db.session.update({
-                    where: { id: session.id },
-                    data: { context: updatedCtx },
-                });
-                // Mark all OTHER stale sessions of this user+bot as notified too (prevent cross-run duplicates)
+                await db.session.update({ where: { id: session.id }, data: { context: updatedCtx } });
+
+                // Mark other sessions of same user+bot
                 const others = staleSessions.filter(s => s.userId === session.userId && s.botId === session.botId && s.id !== session.id);
                 for (const other of others) {
                     const otherCtx = (typeof other.context === 'object' ? other.context : JSON.parse(other.context || '{}')) || {};
-                    db.session.update({ where: { id: other.id }, data: { context: { ...otherCtx, followUpCount: 1 } } }).catch(() => {});
+                    db.session.update({ where: { id: other.id }, data: { context: { ...otherCtx, followUpCount: 99 } } }).catch(() => {});
                 }
 
-                logger.info('Follow-up sent', {
-                    sessionId: session.id,
-                    botId: session.botId,
-                    chatId: String(telegramId),
-                });
+                logger.info('Follow-up sent', { sessionId: session.id, followUpNum: followUpCount + 1, chatId: String(telegramId) });
             } catch (sessionError) {
-                logger.warn('Follow-up failed for session', {
-                    sessionId: session.id,
-                    error: sessionError.message,
-                });
+                logger.warn('Follow-up failed for session', { sessionId: session.id, error: sessionError.message });
             }
         }
     } catch (err) {
@@ -243,8 +268,22 @@ async function sendHomeworkReminders() {
                 // Only sessions stuck waiting for a homework event
                 if (!runtime.waitEventNodeId) continue;
 
-                // Only once per day
-                if (ctx.homeworkReminderDate === today) continue;
+                // Max 2 reminders: #1 on day 1, #2 on day 7. Use count+lastDate.
+                const reminderCount = ctx.homeworkReminderCount || 0;
+                if (reminderCount >= 2) continue; // Already sent both, stop
+
+                // Check timing: #1 = first morning after getting stuck, #2 = 7 days later
+                const lastSent = ctx.homeworkReminderLastDate; // YYYY-MM-DD
+                if (reminderCount === 0) {
+                    // Don't re-send today if somehow triggered twice
+                    if (lastSent === today) continue;
+                } else if (reminderCount === 1) {
+                    // #2: wait 7 days from last sent date
+                    if (lastSent) {
+                        const daysSinceLast = (new Date(today) - new Date(lastSent)) / (1000 * 60 * 60 * 24);
+                        if (daysSinceLast < 7) continue;
+                    }
+                }
 
                 const telegramId = session.user?.telegramId;
                 if (!telegramId) continue;
@@ -252,20 +291,40 @@ async function sendHomeworkReminders() {
                 const token = await resolveBotToken(session.botId);
                 if (!token) continue;
 
-                // Get custom reminder message from funnelKey, or use default
-                const reminderKey = await db.funnelKey.findUnique({
-                    where: { botId_key: { botId: session.botId, key: 'HOMEWORK_REMINDER_TEXT' } },
+                // Try NLM for unique reminder text
+                const nlmKey = await db.funnelKey.findUnique({
+                    where: { botId_key: { botId: session.botId, key: 'NOTEBOOKLM_URL' } },
                     select: { value: true },
                 });
 
+                let reminderText = null;
                 const firstName = session.user?.firstName || 'друже';
-                const reminderText = reminderKey?.value
-                    || `🌅 Доброго ранку, ${firstName}!\n\nНагадую, що тебе чекає домашнє завдання від Майкла. Виконай його і повертайся за наступним уроком! 💪`;
+
+                if (nlmKey?.value) {
+                    const q = reminderCount === 0
+                        ? `Склади мотивуюче нагадування студенту (ім'я: ${firstName}) про домашнє завдання. Він проходить курс і застрягнув на домашці. Коротко, тепло, підбадьорливо. 2 речення. Тільки текст.`
+                        : `Склади останнє нагадування студенту (ім'я: ${firstName}) про домашнє завдання після 7 днів мовчання. М'яко, без тиску, з нагадуванням що урок чекає. 2 речення. Тільки текст.`;
+                    reminderText = await getFollowUpFromNlm(nlmKey.value, reminderCount + 1, []);
+                }
+
+                if (!reminderText) {
+                    const reminderKey = await db.funnelKey.findUnique({
+                        where: { botId_key: { botId: session.botId, key: 'HOMEWORK_REMINDER_TEXT' } },
+                        select: { value: true },
+                    });
+                    reminderText = reminderKey?.value
+                        || (reminderCount === 0
+                            ? `🌅 Доброго ранку, ${firstName}!\n\nНагадую, що тебе чекає домашнє завдання від Майкла. Виконай його і одразу отримаєш наступний урок! 💪`
+                            : `👋 ${firstName}, тут ще є незакінчена практика від Майкла.\n\nКоли будеш готовий — повертайся, наступний урок вже чекає! 🎯`);
+                }
 
                 await sendReminderMessage(token, String(telegramId), reminderText);
 
-                // Mark reminder sent today
-                const updatedCtx = { ...ctx, homeworkReminderDate: today };
+                const updatedCtx = {
+                    ...ctx,
+                    homeworkReminderCount: reminderCount + 1,
+                    homeworkReminderLastDate: today,
+                };
                 await db.session.update({ where: { id: session.id }, data: { context: updatedCtx } });
 
                 logger.info('Homework reminder sent', {

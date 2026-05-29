@@ -628,6 +628,13 @@ async function handlePlatformBotUpdate(botId, update) {
 
         await persistUserMessage(session.id, text);
 
+        // Reset follow-up counter when user responds — so future follow-ups can be sent again
+        const currentCtx = session.context || {};
+        if ((currentCtx.followUpCount || 0) > 0) {
+            const resetCtx = { ...currentCtx, followUpCount: 0 };
+            session = await db.session.update({ where: { id: session.id }, data: { context: resetCtx } });
+        }
+
         logger.info('[platformBotHandler] Continuing session', {
             targetBotId, userId: user.id, sessionId: session.id, text: text.slice(0, 80),
         });

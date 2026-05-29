@@ -503,12 +503,21 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null }) {
 
         runtime.nodesVisited.push(node.id);
         const data = asObject(node.data);
+        const _nowDate = new Date();
         const scope = {
             context: ctx,
             user: sanitizeBigInt(session.user),
             session: { id: session.id, state: session.state },
             input: runtime.lastUserMessage || '',
             env: funnelEnv,
+            now: {
+                iso: _nowDate.toISOString(),
+                date: _nowDate.toISOString().slice(0, 10),       // YYYY-MM-DD
+                year: _nowDate.getFullYear(),
+                month: _nowDate.getMonth() + 1,                   // 1-12
+                monthName: _nowDate.toLocaleDateString('uk-UA', { month: 'long' }),
+                day: _nowDate.getDate(),
+            },
         };
 
         if (node.type === 'start') {
@@ -577,6 +586,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null }) {
                 // In finalization stage lastUserMessage is already cleared — provide explicit instruction
                 const userContent = runtime.lastUserMessage
                     || (inFinalizationStage ? 'Підтверджено. Згенеруй фінальний документ.' : '');
+                // (scope.now з поточною датою доступний у renderTemplate для systemPrompt)
 
                 if (historyForNode.length > 0) {
                     messages = [...historyForNode, { role: 'user', content: userContent }];

@@ -116,6 +116,15 @@ function slugify(value) {
         .slice(0, 100);
 }
 
+const relTime = (d) => {
+    const diff = Date.now() - new Date(d).getTime();
+    if (diff < 3600000) return Math.floor(diff / 60000) + 'хв';
+    if (diff < 86400000) return Math.floor(diff / 3600000) + 'год';
+    return Math.floor(diff / 86400000) + 'д';
+};
+
+const CHANNEL_EMOJI = { telegram: '✈️', instagram: '📸', webhook: '🔗' };
+
 const FILTER_STORAGE_KEY = 'botsListFilters';
 
 function loadSavedFilters() {
@@ -133,6 +142,9 @@ export function Bots() {
     const [projectFilter, setProjectFilter] = useState(savedFilters?.projectFilter ?? 'all');
     const [searchQuery, setSearchQuery] = useState(savedFilters?.searchQuery ?? '');
     const [nameSort, setNameSort] = useState(savedFilters?.nameSort ?? 'asc');
+    const [dateSort, setDateSort] = useState(savedFilters?.dateSort ?? null); // null | 'asc' | 'desc'
+    const [channelFilter, setChannelFilter] = useState(savedFilters?.channelFilter ?? 'all');
+    const [botLabelFilter, setBotLabelFilter] = useState(savedFilters?.botLabelFilter ?? '');
     const [showSystemBots, setShowSystemBots] = useState(savedFilters?.showSystemBots ?? false);
     const [loading, setLoading] = useState(true);
     const [createModalOpen, setCreateModalOpen] = useState(false);
@@ -141,16 +153,31 @@ export function Bots() {
     const [createForm, setCreateForm] = useState({ projectId: '', name: '', slug: '', description: '' });
     const [editInfoBot, setEditInfoBot] = useState(null);
     const navigate = useNavigate();
+    const searchRef = useRef(null);
+
+    // Focus search on "/" keypress
+    useEffect(() => {
+        const handler = (e) => {
+            if (e.key === '/' && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
+                e.preventDefault();
+                searchRef.current?.focus();
+            }
+        };
+        document.addEventListener('keydown', handler);
+        return () => document.removeEventListener('keydown', handler);
+    }, []);
 
     // Persist filters to sessionStorage whenever they change
     useEffect(() => {
         try {
-            sessionStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify({ projectFilter, searchQuery, nameSort, showSystemBots }));
+            sessionStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify({
+                projectFilter, searchQuery, nameSort, dateSort, channelFilter, botLabelFilter, showSystemBots,
+            }));
         } catch { /* ignore */ }
-    }, [projectFilter, searchQuery, nameSort, showSystemBots]);
+    }, [projectFilter, searchQuery, nameSort, dateSort, channelFilter, botLabelFilter, showSystemBots]);
 
-    useEffect(() => {
-        api.getProjects()
+    const fetchData = () => {
+        return api.getProjects()
             .then(async (projs) => {
                 const withBots = await Promise.all(
                     projs.map(async (p) => ({
@@ -168,43 +195,75 @@ export function Bots() {
                         projectSlug: project.slug,
                     }))
                 );
-
                 setRows(allRows);
-            })
-            .finally(() => setLoading(false));
+            });
+    };
+
+    useEffect(() => {
+        fetchData().finally(() => setLoading(false));
     }, []);
+
+    // Toggle name sort (remove date sort when clicking name)
+    const toggleNameSort = () => {
+        setDateSort(null);
+        setNameSort(prev => prev === 'asc' ? 'desc' : 'asc');
+    };
+
+    // Toggle date sort (remove name sort when clicking date)
+    const toggleDateSort = () => {
+        setNameSort(null);
+        setDateSort(prev => prev === 'desc' ? 'asc' : 'desc');
+    };
 
     const filteredRows = useMemo(() => {
         const query = searchQuery.trim().toLowerCase();
+        const labelQuery = botLabelFilter.trim().toLowerCase();
 
-        const baseRows = projectFilter === 'all'
-            ? rows
-            : rows.filter((row) => row.projectId === projectFilter);
+        let result = projectFilter === 'all' ? rows : rows.filter(r => r.projectId === projectFilter);
 
-        // Hide system bots by default unless toggle is on
-        const visibleRows = showSystemBots
-            ? baseRows
-            : baseRows.filter((row) => row.settings?.isSystem !== true);
+        // Hide system bots by default
+        if (!showSystemBots) result = result.filter(r => r.settings?.isSystem !== true);
 
-        const searchedRows = query
-            ? visibleRows.filter((row) =>
-                String(row.name || '').toLowerCase().includes(query) ||
-                String(row.slug || '').toLowerCase().includes(query)
-            )
-            : visibleRows;
+        // Channel filter
+        if (channelFilter !== 'all') {
+            result = result.filter(r => (r.channels || []).includes(channelFilter));
+        }
 
-        return [...searchedRows].sort((a, b) => {
+        // Bot label filter
+        if (labelQuery) {
+            result = result.filter(r => (r.botLabel || '').toLowerCase().includes(labelQuery));
+        }
+
+        // Search
+        if (query) {
+            result = result.filter(r =>
+                String(r.name || '').toLowerCase().includes(query) ||
+                String(r.slug || '').toLowerCase().includes(query)
+            );
+        }
+
+        return [...result].sort((a, b) => {
             // System bots always sort last
             const aSystem = a.settings?.isSystem === true;
             const bSystem = b.settings?.isSystem === true;
             if (aSystem !== bSystem) return aSystem ? 1 : -1;
 
-            const left = String(a.name || '').toLowerCase();
-            const right = String(b.name || '').toLowerCase();
-            const comparison = left.localeCompare(right, 'uk');
-            return nameSort === 'desc' ? -comparison : comparison;
+            if (dateSort) {
+                const aDate = a.metrics?.flowUpdatedAt ? new Date(a.metrics.flowUpdatedAt).getTime() : 0;
+                const bDate = b.metrics?.flowUpdatedAt ? new Date(b.metrics.flowUpdatedAt).getTime() : 0;
+                return dateSort === 'desc' ? bDate - aDate : aDate - bDate;
+            }
+
+            if (nameSort) {
+                const left = String(a.name || '').toLowerCase();
+                const right = String(b.name || '').toLowerCase();
+                const comparison = left.localeCompare(right, 'uk');
+                return nameSort === 'desc' ? -comparison : comparison;
+            }
+
+            return 0;
         });
-    }, [rows, projectFilter, searchQuery, nameSort, showSystemBots]);
+    }, [rows, projectFilter, searchQuery, nameSort, dateSort, channelFilter, botLabelFilter, showSystemBots]);
 
     const openCreateModal = () => {
         const initialProjectId = projectFilter !== 'all' ? projectFilter : (projects[0]?.id || '');
@@ -221,22 +280,10 @@ export function Bots() {
 
     const handleCreateFunnel = async () => {
         const projectId = createForm.projectId || (projectFilter !== 'all' ? projectFilter : '');
-
-        if (!projectId) {
-            setCreateError('Оберіть проєкт');
-            return;
-        }
-
-        if (!createForm.name.trim()) {
-            setCreateError('Назва воронки обов\'язкова');
-            return;
-        }
-
+        if (!projectId) { setCreateError('Оберіть проєкт'); return; }
+        if (!createForm.name.trim()) { setCreateError('Назва воронки обов\'язкова'); return; }
         const slug = createForm.slug.trim() || slugify(createForm.name);
-        if (!slug) {
-            setCreateError('Slug не може бути порожнім');
-            return;
-        }
+        if (!slug) { setCreateError('Slug не може бути порожнім'); return; }
 
         setCreating(true);
         setCreateError('');
@@ -246,28 +293,8 @@ export function Bots() {
                 slug,
                 description: createForm.description.trim() || undefined,
             });
-
             closeCreateModal();
-            await api.getProjects()
-                .then(async (projs) => {
-                    const withBots = await Promise.all(
-                        projs.map(async (p) => ({
-                            ...p,
-                            bots: await api.getProjectBots(p.id).catch(() => []),
-                        }))
-                    );
-                    setProjects(withBots.map(p => ({ id: p.id, name: p.name, slug: p.slug })));
-                    const allRows = withBots.flatMap((project) =>
-                        (project.bots || []).map((bot) => ({
-                            ...bot,
-                            projectId: project.id,
-                            projectName: project.name,
-                            projectSlug: project.slug,
-                        }))
-                    );
-                    setRows(allRows);
-                });
-
+            await fetchData();
             navigate(`/funnel/${created.id}`);
         } catch (error) {
             setCreateError(error.message || 'Не вдалося створити воронку');
@@ -286,138 +313,245 @@ export function Bots() {
         </div>
     );
 
+    const SortArrow = ({ active, dir }) => (
+        <span className={`ml-1 text-[10px] ${active ? 'text-brand' : 'text-gray-600'}`}>
+            {active ? (dir === 'asc' ? '↑' : '↓') : '↕'}
+        </span>
+    );
+
     return (
-        <div className="p-6 space-y-6">
+        <div className="p-6 space-y-5">
+            {/* Header */}
             <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3">
                 <div>
                     <h1 className="text-xl font-semibold text-white">Воронки</h1>
                     <p className="text-sm text-gray-400">Список усіх воронок з основними показниками.</p>
                 </div>
-                <div className="flex flex-col sm:flex-row gap-3 sm:items-end w-full md:w-auto">
-                    <div className="w-full md:w-72">
-                        <label className="text-xs text-gray-500 block mb-1">Пошук по назві/slug</label>
+                <button
+                    onClick={openCreateModal}
+                    className="px-4 py-2 rounded-lg bg-brand hover:bg-brand/90 text-white text-sm font-medium transition-colors shrink-0"
+                >
+                    + Нова воронка
+                </button>
+            </div>
+
+            {/* Filters */}
+            <div className="flex flex-wrap gap-2 items-end">
+                {/* Search */}
+                <div className="flex-1 min-w-[180px] max-w-xs">
+                    <label className="text-xs text-gray-500 block mb-1">Пошук <span className="text-gray-600 font-mono">/</span></label>
+                    <input
+                        ref={searchRef}
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="Назва або slug..."
+                        className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-brand"
+                    />
+                </div>
+
+                {/* Project filter */}
+                <div className="flex-1 min-w-[160px] max-w-xs">
+                    <label className="text-xs text-gray-500 block mb-1">Проєкт</label>
+                    <select
+                        value={projectFilter}
+                        onChange={(e) => setProjectFilter(e.target.value)}
+                        className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+                    >
+                        <option value="all">Всі проєкти</option>
+                        {projects.map(project => (
+                            <option key={project.id} value={project.id}>{project.name}</option>
+                        ))}
+                    </select>
+                </div>
+
+                {/* Channel filter */}
+                <div className="min-w-[150px]">
+                    <label className="text-xs text-gray-500 block mb-1">Канал</label>
+                    <select
+                        value={channelFilter}
+                        onChange={(e) => setChannelFilter(e.target.value)}
+                        className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+                    >
+                        <option value="all">Всі боти</option>
+                        <option value="telegram">✈️ Telegram</option>
+                        <option value="instagram">📸 Instagram</option>
+                        <option value="webhook">🔗 Webhook</option>
+                    </select>
+                </div>
+
+                {/* Bot label filter */}
+                <div className="min-w-[160px] max-w-xs">
+                    <label className="text-xs text-gray-500 block mb-1">Фільтр за ботом</label>
+                    <input
+                        value={botLabelFilter}
+                        onChange={(e) => setBotLabelFilter(e.target.value)}
+                        placeholder="Напр. Ден..."
+                        className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-brand"
+                    />
+                </div>
+
+                {/* System bots checkbox */}
+                <div className="flex items-center self-end pb-2">
+                    <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer select-none hover:text-gray-200 transition-colors">
                         <input
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            placeholder="Наприклад: bot 1.1"
-                            className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-brand"
+                            type="checkbox"
+                            checked={showSystemBots}
+                            onChange={(e) => setShowSystemBots(e.target.checked)}
+                            className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-brand focus:ring-brand focus:ring-offset-gray-900"
+                            title="Системні воронки обробляють /start без параметра і не відображаються в основному списку"
                         />
-                    </div>
-                    <div className="w-full md:w-72">
-                        <label className="text-xs text-gray-500 block mb-1">Фільтр по проєкту</label>
-                        <select
-                            value={projectFilter}
-                            onChange={(e) => setProjectFilter(e.target.value)}
-                            className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
-                        >
-                            <option value="all">Всі проєкти</option>
-                            {projects.map(project => (
-                                <option key={project.id} value={project.id}>{project.name}</option>
-                            ))}
-                        </select>
-                    </div>
-                    <div className="w-full md:w-56">
-                        <label className="text-xs text-gray-500 block mb-1">Сортування назви</label>
-                        <select
-                            value={nameSort}
-                            onChange={(e) => setNameSort(e.target.value)}
-                            className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
-                        >
-                            <option value="asc">А-Я</option>
-                            <option value="desc">Я-А</option>
-                        </select>
-                    </div>
-                    <button
-                        onClick={() => setShowSystemBots(v => !v)}
-                        title="Системні воронки обробляють /start без параметра і не відображаються в основному списку"
-                        className={`px-3 py-2 rounded-lg text-xs font-medium transition-colors border ${
-                            showSystemBots
-                                ? 'bg-gray-700 border-gray-500 text-gray-200'
-                                : 'bg-gray-900 border-gray-700 text-gray-400 hover:text-gray-200'
-                        }`}
-                    >
-                        ⚙ Системні
-                    </button>
-                    <button
-                        onClick={openCreateModal}
-                        className="px-4 py-2 rounded-lg bg-brand hover:bg-brand/90 text-white text-sm font-medium transition-colors"
-                    >
-                        + Нова воронка
-                    </button>
+                        Показати системні
+                    </label>
                 </div>
             </div>
 
+            {/* Table */}
             <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-                <table className="w-full min-w-[980px]">
+                <table className="w-full min-w-[1040px]">
                     <thead>
                         <tr className="border-b border-gray-800 bg-gray-950/70">
-                            <th className="text-left px-4 py-3 text-xs text-gray-400 font-medium">Воронка</th>
+                            <th className="text-left px-4 py-3 text-xs text-gray-400 font-medium">
+                                <button
+                                    onClick={toggleNameSort}
+                                    className="flex items-center hover:text-gray-200 transition-colors"
+                                >
+                                    Воронка
+                                    <SortArrow active={!!nameSort && !dateSort} dir={nameSort} />
+                                </button>
+                            </th>
                             <th className="text-left px-4 py-3 text-xs text-gray-400 font-medium">Проєкт</th>
+                            <th className="text-left px-4 py-3 text-xs text-gray-400 font-medium">Канали</th>
                             <th className="text-left px-4 py-3 text-xs text-gray-400 font-medium">Користувачі</th>
                             <th className="text-left px-4 py-3 text-xs text-gray-400 font-medium">Сесії</th>
                             <th className="text-left px-4 py-3 text-xs text-gray-400 font-medium">Активні</th>
                             <th className="text-left px-4 py-3 text-xs text-gray-400 font-medium">Помилки</th>
-                            <th className="text-left px-4 py-3 text-xs text-gray-400 font-medium">Оновлено</th>
+                            <th className="text-left px-4 py-3 text-xs text-gray-400 font-medium">
+                                <button
+                                    onClick={toggleDateSort}
+                                    className="flex items-center hover:text-gray-200 transition-colors"
+                                >
+                                    Оновлено
+                                    <SortArrow active={!!dateSort} dir={dateSort} />
+                                </button>
+                            </th>
                             <th className="px-4 py-3" />
                         </tr>
                     </thead>
                     <tbody>
-                        {filteredRows.map((bot) => (
-                            <tr key={bot.id} className={`border-b border-gray-800/60 hover:bg-gray-800/35 transition-colors align-top ${bot.settings?.isSystem ? 'opacity-70' : ''}`}>
-                                <td className="px-4 py-3 max-w-xs">
-                                    <div className="flex items-center gap-2">
-                                        <span className="font-medium text-white">{bot.name}</span>
-                                        {bot.settings?.isSystem && (
-                                            <span title="Системна воронка — обробляє /start без параметра для нових користувачів. Не видаляється." className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-700 text-gray-400 border border-gray-600">
-                                                ⚙ sys
+                        {filteredRows.map((bot) => {
+                            const activeSessions = bot.metrics?.activeSessions ?? 0;
+                            const errors = bot.metrics?.unresolvedErrors ?? 0;
+                            const updatedAt = bot.metrics?.flowUpdatedAt;
+
+                            return (
+                                <tr
+                                    key={bot.id}
+                                    className={`border-b border-gray-800/60 hover:bg-gray-800/35 transition-colors align-top ${bot.settings?.isSystem ? 'opacity-70' : ''}`}
+                                >
+                                    {/* Name / slug / description */}
+                                    <td className="px-4 py-3 max-w-xs">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                            <span className="font-medium text-white">{bot.name}</span>
+                                            {bot.settings?.isSystem && (
+                                                <span title="Системна воронка — обробляє /start без параметра. Не видаляється." className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-700 text-gray-400 border border-gray-600">
+                                                    ⚙ sys
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div className="text-xs text-gray-500 font-mono">/{bot.slug}</div>
+                                        {bot.botLabel && (
+                                            <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded text-[10px] bg-blue-900/30 border border-blue-800/50 text-blue-300">
+                                                {bot.botLabel}
                                             </span>
                                         )}
-                                    </div>
-                                    <div className="text-xs text-gray-500 font-mono">/{bot.slug}</div>
-                                    {bot.description && (
-                                        <div className="text-xs text-gray-400 mt-1 line-clamp-2 leading-relaxed">{bot.description}</div>
-                                    )}
-                                </td>
-                                <td className="px-4 py-3 text-sm text-gray-300">{bot.projectName}</td>
-                                <td className="px-4 py-3 text-sm text-gray-300">{bot.metrics?.usersCount ?? 0}</td>
-                                <td className="px-4 py-3 text-sm text-gray-300">{bot.metrics?.totalSessions ?? 0}</td>
-                                <td className="px-4 py-3 text-sm text-emerald-400">{bot.metrics?.activeSessions ?? 0}</td>
-                                <td className="px-4 py-3 text-sm">
-                                    <span className={(bot.metrics?.unresolvedErrors ?? 0) > 0 ? 'text-red-400' : 'text-gray-400'}>
-                                        {bot.metrics?.unresolvedErrors ?? 0}
-                                    </span>
-                                </td>
-                                <td className="px-4 py-3 text-xs text-gray-500">
-                                    {bot.metrics?.flowUpdatedAt ? format(new Date(bot.metrics.flowUpdatedAt), 'dd.MM.yyyy HH:mm') : '—'}
-                                </td>
-                                <td className="px-4 py-3">
-                                    <div className="flex justify-end gap-2 flex-wrap">
-                                        <button
-                                            onClick={() => setEditInfoBot(bot)}
-                                            title={bot.description ? bot.description : 'Переглянути / редагувати опис'}
-                                            className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs rounded-lg transition-colors"
-                                        >
-                                            ℹ Інфо
-                                        </button>
-                                        <button
-                                            onClick={() => navigate(`/funnel/${bot.id}`)}
-                                            className="px-3 py-1.5 bg-brand/20 hover:bg-brand/30 text-brand-light text-xs rounded-lg transition-colors"
-                                        >
-                                            Редагувати
-                                        </button>
-                                        <button
-                                            onClick={() => navigate(`/bots/${bot.id}/sessions`)}
-                                            className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs rounded-lg transition-colors"
-                                        >
-                                            Сесії
-                                        </button>
-                                    </div>
-                                </td>
-                            </tr>
-                        ))}
+                                        {bot.description && (
+                                            <div className="text-xs text-gray-400 mt-1 line-clamp-2 leading-relaxed">{bot.description}</div>
+                                        )}
+                                    </td>
+
+                                    {/* Project */}
+                                    <td className="px-4 py-3 text-sm text-gray-300 whitespace-nowrap">{bot.projectName}</td>
+
+                                    {/* Channels */}
+                                    <td className="px-4 py-3">
+                                        <div className="flex gap-1 flex-wrap">
+                                            {(bot.channels || []).map(ch => (
+                                                <span key={ch} title={ch} className="text-base leading-none">
+                                                    {CHANNEL_EMOJI[ch] || '📡'}
+                                                </span>
+                                            ))}
+                                            {(!bot.channels || bot.channels.length === 0) && (
+                                                <span className="text-gray-600 text-xs">—</span>
+                                            )}
+                                        </div>
+                                    </td>
+
+                                    {/* Users */}
+                                    <td className="px-4 py-3 text-sm text-gray-300">{bot.metrics?.usersCount ?? 0}</td>
+
+                                    {/* Total sessions */}
+                                    <td className="px-4 py-3 text-sm text-gray-300">{bot.metrics?.totalSessions ?? 0}</td>
+
+                                    {/* Active sessions */}
+                                    <td className="px-4 py-3 text-sm">
+                                        <span className={activeSessions > 0 ? 'text-emerald-400 font-medium' : 'text-gray-500'}>
+                                            {activeSessions}
+                                        </span>
+                                    </td>
+
+                                    {/* Errors */}
+                                    <td className="px-4 py-3 text-sm">
+                                        {errors > 0 ? (
+                                            <span className="inline-flex items-center justify-center px-1.5 py-0.5 rounded text-[11px] font-semibold bg-red-900/40 text-red-400 border border-red-800/50">
+                                                {errors}
+                                            </span>
+                                        ) : (
+                                            <span className="text-gray-600">—</span>
+                                        )}
+                                    </td>
+
+                                    {/* Updated */}
+                                    <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
+                                        {updatedAt ? (
+                                            <>
+                                                <div>{format(new Date(updatedAt), 'dd.MM.yy HH:mm')}</div>
+                                                <div className="text-gray-600">{relTime(updatedAt)} тому</div>
+                                            </>
+                                        ) : '—'}
+                                    </td>
+
+                                    {/* Actions */}
+                                    <td className="px-4 py-3">
+                                        <div className="flex justify-end gap-2 flex-wrap">
+                                            <button
+                                                onClick={() => setEditInfoBot(bot)}
+                                                title={bot.description ? bot.description : 'Переглянути / редагувати опис'}
+                                                className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs rounded-lg transition-colors"
+                                            >
+                                                ℹ Інфо
+                                            </button>
+                                            <button
+                                                onClick={() => navigate(`/funnel/${bot.id}`)}
+                                                className="px-3 py-1.5 bg-brand/20 hover:bg-brand/30 text-brand-light text-xs rounded-lg transition-colors"
+                                            >
+                                                Редагувати
+                                            </button>
+                                            <button
+                                                onClick={() => navigate(`/bots/${bot.id}/sessions`)}
+                                                className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs rounded-lg transition-colors"
+                                            >
+                                                Сесії
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            );
+                        })}
                         {filteredRows.length === 0 && (
                             <tr>
-                                <td colSpan={8} className="px-4 py-12 text-center text-gray-500 text-sm">Немає воронок за обраним фільтром</td>
+                                <td colSpan={9} className="px-4 py-12 text-center text-gray-500 text-sm">
+                                    Немає воронок за обраним фільтром
+                                </td>
                             </tr>
                         )}
                     </tbody>

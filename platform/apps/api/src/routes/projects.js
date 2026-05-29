@@ -43,15 +43,46 @@ router.get('/:id/bots',
 
         const botsWithMetrics = await Promise.all(
             bots.map(async (bot) => {
-                const [activeSessions, unresolvedErrors, distinctUsers] = await Promise.all([
-                    db.session.count({ where: { botId: bot.id, isActive: true } }),
+                const [activeSessions, unresolvedErrors, distinctUsers, channelKeys] = await Promise.all([
+                    db.session.count({ where: { botId: bot.id, isActive: true, isTest: false } }),
                     db.appError.count({ where: { botId: bot.id, resolved: false } }),
                     db.session.findMany({
-                        where: { botId: bot.id },
+                        where: { botId: bot.id, isTest: false },
                         distinct: ['userId'],
                         select: { userId: true },
                     }),
+                    db.funnelKey.findMany({
+                        where: {
+                            botId: bot.id,
+                            key: { in: ['TELEGRAM_CONNECTOR_ID', 'TELEGRAM_BOT_TOKEN', 'INSTAGRAM_ACCESS_TOKEN', 'FUNNEL_CHANNELS'] },
+                        },
+                        select: { key: true, value: true },
+                    }),
                 ]);
+
+                // Build channels array
+                const km = Object.fromEntries(channelKeys.map(k => [k.key, k.value]));
+                const channels = [];
+                if (km.FUNNEL_CHANNELS) {
+                    try {
+                        JSON.parse(km.FUNNEL_CHANNELS).forEach(c => { if (!channels.includes(c)) channels.push(c); });
+                    } catch { /* ignore parse errors */ }
+                } else {
+                    if (km.TELEGRAM_CONNECTOR_ID || km.TELEGRAM_BOT_TOKEN) channels.push('telegram');
+                    if (km.INSTAGRAM_ACCESS_TOKEN) channels.push('instagram');
+                }
+
+                // Resolve connector label
+                let botLabel = null;
+                if (km.TELEGRAM_CONNECTOR_ID) {
+                    try {
+                        const sc = await db.savedConnector.findUnique({
+                            where: { id: km.TELEGRAM_CONNECTOR_ID },
+                            select: { name: true },
+                        });
+                        botLabel = sc?.name || null;
+                    } catch { /* ignore */ }
+                }
 
                 return {
                     id: bot.id,
@@ -63,6 +94,8 @@ router.get('/:id/bots',
                     isActive: bot.isActive,
                     settings: bot.settings,
                     createdAt: bot.createdAt,
+                    channels,
+                    botLabel,
                     metrics: {
                         totalSessions: bot._count.sessions,
                         activeSessions,
@@ -130,16 +163,17 @@ router.get('/:id/stats',
         const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
         const [uniqueUserRows, activeUserRows, errors] = await Promise.all([
-            // Unique users who have any session with this project's bots
+            // Unique real users (exclude test sessions)
             db.session.findMany({
-                where: { bot: { projectId: req.params.id } },
+                where: { bot: { projectId: req.params.id }, isTest: false },
                 distinct: ['userId'],
                 select: { userId: true },
             }),
-            // Unique users active in last 7 days
+            // Unique real users active in last 7 days
             db.session.findMany({
                 where: {
                     bot: { projectId: req.params.id },
+                    isTest: false,
                     lastActive: { gte: sevenDaysAgo },
                 },
                 distinct: ['userId'],

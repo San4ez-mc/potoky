@@ -132,9 +132,21 @@ async function extractIncomingMedia(message, token) {
         type = 'animation';
         fileId = message.animation.file_id;
         mimeType = message.animation.mime_type || null;
+    } else if (message.voice) {
+        type = 'voice';
+        fileId = message.voice.file_id;
+        mimeType = message.voice.mime_type || 'audio/ogg';
+    } else if (message.audio) {
+        type = 'audio';
+        fileId = message.audio.file_id;
+        fileName = message.audio.file_name || null;
+        mimeType = message.audio.mime_type || null;
     } else if (message.document) {
         const mt = message.document.mime_type || '';
-        type = mt.startsWith('video') ? 'video' : (mt.startsWith('image') ? 'photo' : 'document');
+        type = mt.startsWith('video') ? 'video'
+            : mt.startsWith('image') ? 'photo'
+            : mt.startsWith('audio') ? 'audio'
+            : 'document';
         fileId = message.document.file_id;
         fileName = message.document.file_name || null;
         mimeType = mt || null;
@@ -162,6 +174,68 @@ async function extractIncomingMedia(message, token) {
         mimeType,
         caption: message.caption || '',
     };
+}
+
+/**
+ * Resolve an OpenAI API key for a bot (for Whisper transcription).
+ * Order: funnelKey OPENAI_API_KEY/GPT_API_KEY → saved connector via *_CONNECTOR_ID
+ * → any active openai_gpt4 connector.
+ */
+async function resolveOpenAIKey(botId) {
+    try {
+        const keys = await db.funnelKey.findMany({
+            where: { botId, key: { in: ['OPENAI_API_KEY', 'GPT_API_KEY', 'OPENAI_CONNECTOR_ID', 'GPT_CONNECTOR_ID'] } },
+            select: { key: true, value: true },
+        });
+        const km = Object.fromEntries(keys.map(k => [k.key, k.value]));
+        const direct = (km.OPENAI_API_KEY || km.GPT_API_KEY || '').trim();
+        if (direct) return direct;
+        const cid = (km.OPENAI_CONNECTOR_ID || km.GPT_CONNECTOR_ID || '').trim();
+        if (cid) {
+            const c = await db.savedConnector.findUnique({ where: { id: cid }, select: { config: true } });
+            const k = c?.config?.api_key || c?.config?.apiKey || c?.config?.key;
+            if (k) return String(k).trim();
+        }
+        const any = await db.savedConnector.findFirst({ where: { type: 'openai_gpt4', isActive: true }, select: { config: true } });
+        if (any) {
+            const k = any.config?.api_key || any.config?.apiKey || any.config?.key;
+            if (k) return String(k).trim();
+        }
+    } catch (err) {
+        logger.warn('[platformBotHandler] resolveOpenAIKey failed', { error: err.message });
+    }
+    return '';
+}
+
+/**
+ * Transcribe an audio file (Telegram voice note) via OpenAI Whisper (whisper-1).
+ * Returns plain text or null.
+ */
+async function transcribeAudio(fileUrl, apiKey, language = 'uk') {
+    try {
+        const fileRes = await fetch(fileUrl);
+        if (!fileRes.ok) return null;
+        const buf = Buffer.from(await fileRes.arrayBuffer());
+        const form = new FormData();
+        form.append('file', new Blob([buf], { type: 'audio/ogg' }), 'voice.ogg');
+        form.append('model', 'whisper-1');
+        if (language) form.append('language', language);
+        const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${apiKey}` },
+            body: form,
+        });
+        if (!res.ok) {
+            const errTxt = await res.text().catch(() => '');
+            logger.warn('[platformBotHandler] Whisper error', { status: res.status, body: errTxt.slice(0, 200) });
+            return null;
+        }
+        const data = await res.json();
+        return (data.text || '').trim() || null;
+    } catch (err) {
+        logger.warn('[platformBotHandler] transcribeAudio failed', { error: err.message });
+        return null;
+    }
 }
 
 /**
@@ -586,7 +660,7 @@ async function handlePlatformBotUpdate(botId, update) {
     const chatId = message.chat?.id;
     const from = message.from;
     // Use text, or fall back to media caption so "ось фото, додай завтра" works
-    const text = message.text || message.caption || '';
+    let text = message.text || message.caption || '';
 
     if (!from || !chatId) {
         logger.debug('[platformBotHandler] Missing from/chatId, skipping', { botId });
@@ -601,6 +675,24 @@ async function handlePlatformBotUpdate(botId, update) {
     if (!token) {
         logger.error('[platformBotHandler] No TELEGRAM_BOT_TOKEN for bot', { botId });
         return;
+    }
+
+    // ── Phase 1.5: incoming media + голосова транскрибація (OpenAI Whisper) ──
+    // Дозволяє надиктовувати зміни голосом — текст піде в агента як звичайне повідомлення.
+    const incomingMedia = await extractIncomingMedia(message, token).catch(() => null);
+    if (incomingMedia && (incomingMedia.type === 'voice' || incomingMedia.type === 'audio')
+        && incomingMedia.fileUrl && !message.text) {
+        const oaiKey = await resolveOpenAIKey(botId);
+        if (oaiKey) {
+            const transcript = await transcribeAudio(incomingMedia.fileUrl, oaiKey, 'uk');
+            if (transcript) {
+                incomingMedia.transcript = transcript;
+                text = text ? `${text}\n${transcript}` : transcript;
+                logger.info('[platformBotHandler] Voice transcribed', { chars: transcript.length });
+            }
+        } else {
+            logger.warn('[platformBotHandler] Voice received but no OpenAI key for transcription', { botId });
+        }
     }
 
     // ── Phase 2: find or create user (use webhook bot for projectId on new users) ──
@@ -701,7 +793,7 @@ async function handlePlatformBotUpdate(botId, update) {
     // ── Phase 4.5: persist telegramChatId + incoming media in session context ──
     // Content-manager bot uses telegramChatId for deliverTo (sends generated content back here)
     // and lastUserMedia to let the agent reuse a sent photo/video as a background.
-    const incomingMedia = await extractIncomingMedia(message, token).catch(() => null);
+    // incomingMedia вже витягнуто у Phase 1.5 (з можливою транскрипцією голосу).
     if (chatId && (session?.context?.telegramChatId !== chatId || incomingMedia)) {
         const nextCtx = { ...(session.context || {}), telegramChatId: chatId };
         if (incomingMedia) {

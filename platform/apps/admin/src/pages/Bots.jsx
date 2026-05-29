@@ -419,12 +419,12 @@ export function Bots() {
                                     <SortArrow active={!!nameSort && !dateSort} dir={nameSort} />
                                 </button>
                             </th>
-                            <th className="text-left px-4 py-3 text-xs text-gray-400 font-medium">Проєкт</th>
-                            <th className="text-left px-4 py-3 text-xs text-gray-400 font-medium">Канали</th>
-                            <th className="text-left px-4 py-3 text-xs text-gray-400 font-medium">Користувачі</th>
-                            <th className="text-left px-4 py-3 text-xs text-gray-400 font-medium">Сесії</th>
-                            <th className="text-left px-4 py-3 text-xs text-gray-400 font-medium">Активні</th>
-                            <th className="text-left px-4 py-3 text-xs text-gray-400 font-medium">Помилки</th>
+                            <th className="text-left px-4 py-2.5 text-xs text-gray-400 font-medium">Проєкт</th>
+                            <th className="text-left px-4 py-2.5 text-xs text-gray-400 font-medium">Канали</th>
+                            <th className="text-left px-4 py-2.5 text-xs text-gray-400 font-medium">Користувачі</th>
+                            <th className="text-left px-4 py-2.5 text-xs text-gray-400 font-medium">Сесії</th>
+                            <th className="text-left px-4 py-2.5 text-xs text-gray-400 font-medium">Активні</th>
+                            <th className="text-left px-4 py-2.5 text-xs text-gray-400 font-medium">Помилки</th>
                             <th className="text-left px-4 py-3 text-xs text-gray-400 font-medium">
                                 <button
                                     onClick={toggleDateSort}
@@ -446,31 +446,26 @@ export function Bots() {
                             return (
                                 <tr
                                     key={bot.id}
-                                    className={`border-b border-gray-800/60 hover:bg-gray-800/35 transition-colors align-top ${bot.settings?.isSystem ? 'opacity-70' : ''}`}
+                                    className={`border-b border-gray-800/60 hover:bg-gray-800/20 transition-colors align-middle ${bot.settings?.isSystem ? 'opacity-60' : ''}`}
                                 >
-                                    {/* Name / slug / description */}
-                                    <td className="px-4 py-3 max-w-xs">
-                                        <div className="flex items-center gap-2 flex-wrap">
-                                            <span className="font-medium text-white">{bot.name}</span>
+                                    {/* Name / slug — compact single line */}
+                                    <td className="px-4 py-2.5" style={{ maxWidth: '260px' }}>
+                                        <div className="flex items-center gap-1.5 min-w-0">
+                                            <span className="font-medium text-white text-sm truncate" title={bot.name}>{bot.name}</span>
                                             {bot.settings?.isSystem && (
-                                                <span title="Системна воронка — обробляє /start без параметра. Не видаляється." className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-700 text-gray-400 border border-gray-600">
-                                                    ⚙ sys
-                                                </span>
+                                                <span title="Системна воронка" className="shrink-0 px-1 py-0.5 rounded text-[9px] bg-gray-700 text-gray-400 border border-gray-600">sys</span>
                                             )}
                                         </div>
-                                        <div className="text-xs text-gray-500 font-mono">/{bot.slug}</div>
-                                        {bot.botLabel && (
-                                            <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded text-[10px] bg-blue-900/30 border border-blue-800/50 text-blue-300">
-                                                {bot.botLabel}
-                                            </span>
-                                        )}
-                                        {bot.description && (
-                                            <div className="text-xs text-gray-400 mt-1 line-clamp-2 leading-relaxed">{bot.description}</div>
-                                        )}
+                                        <div className="flex items-center gap-1.5 mt-0.5">
+                                            <span className="text-[11px] text-gray-500 font-mono truncate">/{bot.slug}</span>
+                                            {bot.botLabel && (
+                                                <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] bg-blue-900/30 border border-blue-800/50 text-blue-300">{bot.botLabel}</span>
+                                            )}
+                                        </div>
                                     </td>
 
                                     {/* Project */}
-                                    <td className="px-4 py-3 text-sm text-gray-300 whitespace-nowrap">{bot.projectName}</td>
+                                    <td className="px-4 py-2.5 text-xs text-gray-400 whitespace-nowrap">{bot.projectName}</td>
 
                                     {/* Channels */}
                                     <td className="px-4 py-3">
@@ -487,10 +482,10 @@ export function Bots() {
                                     </td>
 
                                     {/* Users */}
-                                    <td className="px-4 py-3 text-sm text-gray-300">{bot.metrics?.usersCount ?? 0}</td>
+                                    <td className="px-4 py-2.5 text-sm text-gray-300">{bot.metrics?.usersCount ?? 0}</td>
 
                                     {/* Total sessions */}
-                                    <td className="px-4 py-3 text-sm text-gray-300">{bot.metrics?.totalSessions ?? 0}</td>
+                                    <td className="px-4 py-2.5 text-sm text-gray-300">{bot.metrics?.totalSessions ?? 0}</td>
 
                                     {/* Active sessions */}
                                     <td className="px-4 py-3 text-sm">

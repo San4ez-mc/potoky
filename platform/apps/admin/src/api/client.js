@@ -103,8 +103,8 @@ export const api = {
     },
 
     // Users
-    getUsers: (page = 0, search = '') => {
-        const params = new URLSearchParams({ page });
+    getUsers: (page = 0, search = '', realOnly = true) => {
+        const params = new URLSearchParams({ page, realOnly: String(realOnly) });
         if (search) params.set('search', search);
         return req('GET', `/users?${params}`);
     },

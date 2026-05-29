@@ -14,6 +14,8 @@ const paginationSchema = z.object({
     page: z.coerce.number().int().min(0).default(0),
     limit: z.coerce.number().int().min(1).max(100).default(50),
     search: z.string().optional(),
+    // realOnly=true (default) — only users with at least one real (non-test) session
+    realOnly: z.preprocess(v => v === 'false' ? false : true, z.boolean()).default(true),
 });
 
 function normalizeUser(user) {
@@ -27,17 +29,27 @@ function normalizeUser(user) {
 router.get('/',
     validateParams({ query: paginationSchema }),
     asyncHandler(async (req, res) => {
-        const { page, limit, search } = req.query;
+        const { page, limit, search, realOnly } = req.query;
 
-        const where = search
-            ? {
-                OR: [
-                    { firstName: { contains: search, mode: 'insensitive' } },
-                    { lastName: { contains: search, mode: 'insensitive' } },
-                    { username: { contains: search, mode: 'insensitive' } },
-                ],
-            }
-            : undefined;
+        const where = {
+            // Hide test-runner accounts: real only = must have at least 1 non-test session
+            ...(realOnly ? {
+                sessions: { some: { isTest: false } },
+            } : {}),
+            // Hide system/webhook accounts
+            ...(realOnly ? {
+                username: { not: { startsWith: 'test_' } },
+            } : {}),
+            ...(search ? {
+                AND: [{
+                    OR: [
+                        { firstName: { contains: search, mode: 'insensitive' } },
+                        { lastName: { contains: search, mode: 'insensitive' } },
+                        { username: { contains: search, mode: 'insensitive' } },
+                    ],
+                }],
+            } : {}),
+        };
 
         const [users, total] = await Promise.all([
             db.user.findMany({
@@ -47,12 +59,12 @@ router.get('/',
                 skip: page * limit,
                 include: {
                     project: { select: { id: true, name: true } },
-                    _count: { select: { sessions: true } },
+                    _count: { select: { sessions: { where: realOnly ? { isTest: false } : {} } } },
                 },
             }),
             db.user.count({ where }),
         ]);
-        res.json({ ok: true, data: users.map(normalizeUser), meta: { total, page, limit } });
+        res.json({ ok: true, data: users.map(normalizeUser), meta: { total, page, limit, realOnly } });
     })
 );
 

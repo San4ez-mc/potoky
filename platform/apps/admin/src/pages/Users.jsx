@@ -9,13 +9,14 @@ export function Users() {
     const [page, setPage] = useState(0);
     const [search, setSearch] = useState('');
     const [searchInput, setSearchInput] = useState('');
+    const [realOnly, setRealOnly] = useState(true);
     const [loading, setLoading] = useState(true);
 
     const LIMIT = 50;
 
-    const load = useCallback((p, q) => {
+    const load = useCallback((p, q, ro) => {
         setLoading(true);
-        api.getUsers(p, q)
+        api.getUsers(p, q, ro)
             .then(res => {
                 const data = res?.data ?? res ?? [];
                 const meta = res?.meta ?? {};
@@ -26,7 +27,7 @@ export function Users() {
             .finally(() => setLoading(false));
     }, []);
 
-    useEffect(() => { load(page, search); }, [page, search, load]);
+    useEffect(() => { load(page, search, realOnly); }, [page, search, realOnly, load]);
 
     const handleSearch = (e) => {
         e.preventDefault();
@@ -40,6 +41,11 @@ export function Users() {
         setPage(0);
     };
 
+    const toggleRealOnly = () => {
+        setPage(0);
+        setRealOnly(v => !v);
+    };
+
     return (
         <div className="p-6">
             <div className="flex items-center justify-between mb-4">
@@ -47,6 +53,17 @@ export function Users() {
                     Підписники
                     {total > 0 && <span className="ml-2 text-sm text-gray-500 font-normal">{total}</span>}
                 </h1>
+                <button
+                    onClick={toggleRealOnly}
+                    className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${
+                        realOnly
+                            ? 'border-brand/50 bg-brand/10 text-brand-light'
+                            : 'border-gray-700 text-gray-400 hover:text-white'
+                    }`}
+                    title={realOnly ? 'Показати всіх (включно з тестовими)' : 'Показати тільки реальних'}
+                >
+                    {realOnly ? '👤 Тільки реальні' : '🔬 Всі (з тестовими)'}
+                </button>
             </div>
 
             {/* Search */}

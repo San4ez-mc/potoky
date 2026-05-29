@@ -827,6 +827,45 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null }) {
                 },
             });
 
+            // ── Інтеграція з content.fineko.space: контент-план → дашборд ──
+            // Якщо це content_plan і налаштовані ключі — пушимо пости в PHP-дашборд.
+            if (normalizedFileType === 'content_plan' && scope.env.CONTENT_IMPORT_URL && scope.env.CONTENT_PROJECT_ID) {
+                const importStart = Date.now();
+                try {
+                    const importUrl = `${scope.env.CONTENT_IMPORT_URL}?token=${encodeURIComponent(scope.env.CONTENT_IMPORT_TOKEN || '')}`;
+                    const importBody = `{"projectId":${parseInt(scope.env.CONTENT_PROJECT_ID, 10) || 0},"plan":${fileContent}}`;
+                    const importRes = await fetch(importUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: importBody,
+                    });
+                    const importText = await importRes.text();
+                    await logFlowApiCall({
+                        sessionId: session.id,
+                        service: 'content.fineko.space',
+                        method: 'POST /import-content-plan',
+                        requestData: { projectId: scope.env.CONTENT_PROJECT_ID, bodyLen: importBody.length },
+                        responseData: { body: truncateStr(importText, 2000) },
+                        statusCode: importRes.status,
+                        durationMs: Date.now() - importStart,
+                        error: importRes.ok ? null : `HTTP ${importRes.status}`,
+                    });
+                    if (!importRes.ok) {
+                        await logFlowError({
+                            sessionId: session.id, botId: session.botId, errorType: 'content_import',
+                            message: `Імпорт плану в дашборд впав: HTTP ${importRes.status} — ${truncateStr(importText, 500)}`,
+                            context: { nodeId: node.id },
+                        });
+                    }
+                } catch (err) {
+                    await logFlowError({
+                        sessionId: session.id, botId: session.botId, errorType: 'content_import',
+                        message: `Імпорт плану в дашборд впав: ${err.message}`,
+                        stack: err.stack, context: { nodeId: node.id },
+                    });
+                }
+            }
+
             runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
             continue;
         }

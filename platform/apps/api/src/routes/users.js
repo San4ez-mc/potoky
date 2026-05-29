@@ -130,6 +130,50 @@ router.post('/:id/mcp-token',
     })
 );
 
+// GET /api/users/:id/photo — proxy Telegram profile photo
+router.get('/:id/photo',
+    validateParams({ params: z.object({ id: z.string().uuid() }) }),
+    asyncHandler(async (req, res) => {
+        const user = await db.user.findUnique({ where: { id: req.params.id }, select: { metadata: true } });
+        if (!user?.metadata?.photoFilePath) return res.status(404).end();
+
+        const filePath = user.metadata.photoFilePath;
+
+        // Find any bot this user has a session with to get its token
+        const session = await db.session.findFirst({
+            where: { user: { id: req.params.id } },
+            select: { botId: true },
+        });
+        if (!session) return res.status(404).end();
+
+        // Get bot token (check TELEGRAM_CONNECTOR_ID first, then TELEGRAM_BOT_TOKEN)
+        const keys = await db.funnelKey.findMany({
+            where: { botId: session.botId, key: { in: ['TELEGRAM_CONNECTOR_ID', 'TELEGRAM_BOT_TOKEN'] } },
+            select: { key: true, value: true },
+        });
+        const km = Object.fromEntries(keys.map(k => [k.key, k.value]));
+        let token = null;
+        if (km.TELEGRAM_CONNECTOR_ID) {
+            const sc = await db.savedConnector.findUnique({ where: { id: km.TELEGRAM_CONNECTOR_ID }, select: { config: true } });
+            token = sc?.config?.token || null;
+        }
+        if (!token) token = km.TELEGRAM_BOT_TOKEN || null;
+        if (!token) return res.status(404).end();
+
+        const photoUrl = `https://api.telegram.org/file/bot${token}/${filePath}`;
+        try {
+            const tgRes = await fetch(photoUrl);
+            if (!tgRes.ok) return res.status(404).end();
+            res.setHeader('Content-Type', tgRes.headers.get('content-type') || 'image/jpeg');
+            res.setHeader('Cache-Control', 'public, max-age=86400');
+            const buf = await tgRes.arrayBuffer();
+            res.send(Buffer.from(buf));
+        } catch {
+            res.status(404).end();
+        }
+    })
+);
+
 // GET /api/users/:id/mcp-token  — get existing MCP token (or generate if missing)
 router.get('/:id/mcp-token',
     validateParams({ params: z.object({ id: z.string().uuid() }) }),

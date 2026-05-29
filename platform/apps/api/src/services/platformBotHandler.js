@@ -106,6 +106,38 @@ async function getBotToken(botId) {
     return null;
 }
 
+/**
+ * Fetch and store Telegram profile photo for a user (fire-and-forget, non-blocking).
+ */
+async function fetchAndStoreProfilePhoto(userId, telegramId, token) {
+    try {
+        const res = await fetch(`https://api.telegram.org/bot${token}/getUserProfilePhotos?user_id=${telegramId}&limit=1`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const photos = data?.result?.photos;
+        if (!photos?.length) return;
+        // Pick the largest size of the first photo
+        const sizes = photos[0];
+        const largest = sizes[sizes.length - 1];
+        const fileId = largest?.file_id;
+        if (!fileId) return;
+        // Get file path
+        const fileRes = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`);
+        if (!fileRes.ok) return;
+        const fileData = await fileRes.json();
+        const filePath = fileData?.result?.file_path;
+        if (!filePath) return;
+        // Store in user metadata
+        const user = await db.user.findUnique({ where: { id: userId }, select: { metadata: true } });
+        await db.user.update({
+            where: { id: userId },
+            data: { metadata: { ...(user?.metadata || {}), photoFileId: fileId, photoFilePath: filePath } },
+        });
+    } catch (err) {
+        logger.warn('[platformBotHandler] Failed to fetch profile photo', { userId, error: err.message });
+    }
+}
+
 async function findOrCreateUser(from, botId) {
     const telegramId = BigInt(from.id);
 
@@ -126,12 +158,18 @@ async function findOrCreateUser(from, botId) {
                 },
             });
         }
+        // Fetch photo if not yet stored (fire-and-forget)
+        if (!existing.metadata?.photoFileId) {
+            getBotToken(botId).then(token => {
+                if (token) fetchAndStoreProfilePhoto(existing.id, String(telegramId), token);
+            }).catch(() => {});
+        }
         return existing;
     }
 
     const bot = await db.bot.findUnique({ where: { id: botId }, select: { projectId: true } });
 
-    return db.user.create({
+    const user = await db.user.create({
         data: {
             telegramId,
             firstName: from.first_name || null,
@@ -142,6 +180,11 @@ async function findOrCreateUser(from, botId) {
             metadata: { source: 'telegram-platform-bot' },
         },
     });
+    // Fetch photo for new user (fire-and-forget)
+    getBotToken(botId).then(token => {
+        if (token) fetchAndStoreProfilePhoto(user.id, String(telegramId), token);
+    }).catch(() => {});
+    return user;
 }
 
 async function findActiveSession(userId, botId) {

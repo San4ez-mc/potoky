@@ -204,19 +204,18 @@ export function Sessions() {
             ) : (
                 <div className="w-full rounded-xl border border-gray-800 overflow-hidden bg-gray-900">
                     <div className="overflow-x-auto">
-                        <table className="w-full table-fixed text-xs">
+                        <table className="w-full text-xs" style={{ minWidth: '780px' }}>
                             <thead className="bg-gray-950 border-b border-gray-800 text-xs uppercase tracking-wider text-gray-400">
                                 <tr>
-                                    <th className="px-2 py-2 text-left w-8">✓</th>
-                                    <th className="px-2 py-2 text-left w-32">Статус</th>
+                                    <th className="px-2 py-2 text-left" style={{ width: '28px' }}>✓</th>
+                                    <th className="px-2 py-2 text-left" style={{ width: '110px' }}>Статус</th>
                                     <th className="px-2 py-2 text-left">Користувач</th>
-                                    <th className="px-2 py-2 text-left w-16">Бот</th>
-                                    <th className="px-2 py-2 text-left w-20">Стан</th>
-                                    <th className="px-2 py-2 text-right w-20">Пов./API</th>
-                                    <th className="px-2 py-2 text-right w-16">Пом.</th>
-                                    <th className="px-2 py-2 text-left w-24">Початок</th>
-                                    <th className="px-2 py-2 text-left w-16">ID</th>
-                                    <th className="px-2 py-2 text-right w-48">Дії</th>
+                                    <th className="px-2 py-2 text-left" style={{ width: '90px' }}>Бот</th>
+                                    <th className="px-2 py-2 text-left" style={{ width: '80px' }}>Стан</th>
+                                    <th className="px-2 py-2 text-right" style={{ width: '70px' }}>Пов./API</th>
+                                    <th className="px-2 py-2 text-right" style={{ width: '44px' }}>Пом.</th>
+                                    <th className="px-2 py-2 text-left" style={{ width: '90px' }}>Початок</th>
+                                    <th className="px-2 py-2 text-right" style={{ width: '170px' }}>Дії</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -274,7 +273,6 @@ export function Sessions() {
                                             <td className="px-2 py-2 align-top text-xs text-gray-500 whitespace-nowrap">
                                                 {s.startedAt ? format(new Date(s.startedAt), 'dd.MM HH:mm') : '—'}
                                             </td>
-                                            <td className="px-2 py-2 align-top text-xs text-gray-600 font-mono whitespace-nowrap">{s.id.slice(0, 6)}…</td>
                                             <td className="px-2 py-2 align-top">
                                                 <div className="flex items-center justify-end gap-1">
                                                     <button

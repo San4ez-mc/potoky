@@ -83,15 +83,30 @@ async function checkInactiveSessions() {
                 const followUpCount = ctx.followUpCount || 0;
                 if (followUpCount >= 1) continue;
 
+                // Per-bot delay override via FOLLOW_UP_DELAY_HOURS funnelKey
+                const delayKey = await db.funnelKey.findUnique({
+                    where: { botId_key: { botId: session.botId, key: 'FOLLOW_UP_DELAY_HOURS' } },
+                    select: { value: true },
+                });
+                const sessionDelayHours = delayKey ? Number(delayKey.value) : FOLLOW_UP_DELAY_HOURS;
+                const sessionCutoff = new Date(Date.now() - sessionDelayHours * 60 * 60 * 1000);
+                if (session.lastActive > sessionCutoff) continue; // Not stale enough yet
+
                 const telegramId = session.user?.telegramId;
                 if (!telegramId) continue;
 
-                // Get bot's Telegram token
-                const tokenKey = await db.funnelKey.findUnique({
-                    where: { botId_key: { botId: session.botId, key: 'TELEGRAM_BOT_TOKEN' } },
-                    select: { value: true },
+                // Get bot's Telegram token — check TELEGRAM_CONNECTOR_ID first, then TELEGRAM_BOT_TOKEN
+                const allKeys = await db.funnelKey.findMany({
+                    where: { botId: session.botId, key: { in: ['TELEGRAM_CONNECTOR_ID', 'TELEGRAM_BOT_TOKEN'] } },
+                    select: { key: true, value: true },
                 });
-                const token = tokenKey?.value || process.env.TELEGRAM_BOT_TOKEN;
+                const km = Object.fromEntries(allKeys.map(k => [k.key, k.value]));
+                let token = null;
+                if (km.TELEGRAM_CONNECTOR_ID) {
+                    const sc = await db.savedConnector.findUnique({ where: { id: km.TELEGRAM_CONNECTOR_ID }, select: { config: true } });
+                    token = sc?.config?.token || null;
+                }
+                if (!token) token = km.TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN || null;
                 if (!token) continue;
 
                 // Get follow-up message from bot key or use default

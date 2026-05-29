@@ -91,10 +91,23 @@ export function Users() {
                             </tr>
                         </thead>
                         <tbody>
-                            {users.map(user => (
+                            {users.map(user => {
+                                const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ') || '—';
+                                const photoUrl = user.metadata?.photoFileId
+                                    ? `/api/users/${user.id}/photo`
+                                    : null;
+                                const initials = (user.firstName?.[0] || user.username?.[0] || '?').toUpperCase();
+                                return (
                                 <tr key={user.id} className="border-b border-gray-800/50 hover:bg-gray-800/30 transition-colors">
-                                    <td className="px-4 py-3 text-sm text-white">
-                                        {[user.firstName, user.lastName].filter(Boolean).join(' ') || '—'}
+                                    <td className="px-4 py-3">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-8 h-8 rounded-full shrink-0 overflow-hidden bg-brand/20 flex items-center justify-center text-brand text-sm font-bold">
+                                                {photoUrl
+                                                    ? <img src={photoUrl} alt="" className="w-full h-full object-cover" onError={e => { e.target.style.display='none'; }} />
+                                                    : initials}
+                                            </div>
+                                            <span className="text-sm text-white">{fullName}</span>
+                                        </div>
                                     </td>
                                     <td className="px-4 py-3 text-sm text-gray-400">
                                         {user.username ? `@${user.username}` : '—'}
@@ -109,15 +122,24 @@ export function Users() {
                                         {user.createdAt ? format(new Date(user.createdAt), 'dd.MM.yyyy') : ''}
                                     </td>
                                     <td className="px-4 py-3">
-                                        <Link
-                                            to={`/users/${user.id}`}
-                                            className="text-xs text-brand-light hover:text-brand whitespace-nowrap"
-                                        >
-                                            Сесії →
-                                        </Link>
+                                        <div className="flex items-center gap-1.5 justify-end">
+                                            <Link
+                                                to={`/users/${user.id}`}
+                                                className="px-2 py-1 text-xs rounded border border-gray-700 text-gray-300 hover:bg-gray-800 whitespace-nowrap transition-colors"
+                                            >
+                                                Відкрити
+                                            </Link>
+                                            <Link
+                                                to={`/users/${user.id}`}
+                                                className="px-2 py-1 text-xs rounded border border-blue-800 text-blue-400 hover:bg-blue-900/30 whitespace-nowrap transition-colors"
+                                            >
+                                                Сесії →
+                                            </Link>
+                                        </div>
                                     </td>
                                 </tr>
-                            ))}
+                                );
+                            })}
                             {users.length === 0 && (
                                 <tr>
                                     <td colSpan={6} className="px-4 py-12 text-center text-gray-500">

@@ -568,9 +568,14 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null }) {
             const exitCondition = data.exitCondition || 'json_output';
             const isUserConfirmExit = exitCondition === 'user_confirms';
 
+            // Auto-resume after an internal tool step (e.g. query_kb) — the flow looped
+            // back to the agent with a fresh result and should continue WITHOUT waiting
+            // for a new user message.
+            const resumeAfterTool = ctx.__resumeAfterTool === true;
+
             // Check if we need user input (not in finalization stage for user_confirms)
             const inFinalizationStage = isUserConfirmExit && runtime.userConfirmationReceived;
-            if (!runtime.lastUserMessage && !inFinalizationStage) {
+            if (!runtime.lastUserMessage && !inFinalizationStage && !resumeAfterTool) {
                 runtime.waitingForUser = true;
                 break;
             }
@@ -585,7 +590,10 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null }) {
 
                 // In finalization stage lastUserMessage is already cleared — provide explicit instruction
                 const userContent = runtime.lastUserMessage
-                    || (inFinalizationStage ? 'Підтверджено. Згенеруй фінальний документ.' : '');
+                    || (inFinalizationStage ? 'Підтверджено. Згенеруй фінальний документ.'
+                        : (resumeAfterTool ? 'Використай результат з бази знань вище і продовж виконання мого попереднього запиту.' : ''));
+                // Consume the resume flag so we don't loop forever
+                if (resumeAfterTool) delete ctx.__resumeAfterTool;
                 // (scope.now з поточною датою доступний у renderTemplate для systemPrompt)
 
                 if (historyForNode.length > 0) {

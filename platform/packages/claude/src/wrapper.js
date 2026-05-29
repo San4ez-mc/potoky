@@ -11,8 +11,8 @@ const TIMEOUT_MS = parseInt(process.env.CLAUDE_TIMEOUT_MS || '30000', 10);
 // Longer timeout for fallback providers — large generations (e.g. month content plans) need more time
 const FALLBACK_TIMEOUT_MS = parseInt(process.env.FALLBACK_TIMEOUT_MS || '120000', 10);
 
-// OpenAI fallback model — GPT-4o-mini is cheap & fast; override via env
-const OPENAI_FALLBACK_MODEL = process.env.OPENAI_FALLBACK_MODEL || 'gpt-4o-mini';
+// OpenAI fallback model — gpt-4o надійніший за mini для структурованого JSON; override via env
+const OPENAI_FALLBACK_MODEL = process.env.OPENAI_FALLBACK_MODEL || 'gpt-4o';
 // Gemini fallback model (gemini-1.5-flash retired — use current flash model)
 const GEMINI_FALLBACK_MODEL = process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.0-flash';
 

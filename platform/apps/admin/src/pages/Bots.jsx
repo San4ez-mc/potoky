@@ -406,7 +406,7 @@ export function Bots() {
             </div>
 
             {/* Table */}
-            <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+            <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-x-auto">
                 <table className="w-full min-w-[1040px]">
                     <thead>
                         <tr className="border-b border-gray-800 bg-gray-950/70">

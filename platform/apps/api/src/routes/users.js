@@ -36,9 +36,14 @@ router.get('/',
             ...(realOnly ? {
                 sessions: { some: { isTest: false } },
             } : {}),
-            // Hide system/webhook accounts
+            // Hide system/webhook/test accounts by username pattern
             ...(realOnly ? {
-                username: { not: { startsWith: 'test_' } },
+                NOT: {
+                    OR: [
+                        { username: { startsWith: 'test_' } },
+                        { username: { contains: 'webhook' } },
+                    ],
+                },
             } : {}),
             ...(search ? {
                 AND: [{

@@ -136,6 +136,55 @@ function sanitizeBigInt(value) {
     return value;
 }
 
+// ── Спостережуваність: логування в api_calls / app_errors для UI вкладок сесії ──
+function truncateStr(v, n = 5000) {
+    if (v == null) return '';
+    const s = typeof v === 'string' ? v : safeJsonStringify(v);
+    return s.length > n ? s.slice(0, n) : s;
+}
+
+async function logFlowApiCall({ sessionId, service, method, requestData, responseData, statusCode, durationMs, error }) {
+    try {
+        await db.apiCall.create({
+            data: {
+                sessionId: sessionId || null,
+                service: String(service || 'http').slice(0, 50),
+                method: String(method || '').slice(0, 100),
+                requestData: requestData || {},
+                responseData: responseData || {},
+                statusCode: typeof statusCode === 'number' ? statusCode : null,
+                durationMs: typeof durationMs === 'number' ? durationMs : null,
+                error: error ? truncateStr(error) : null,
+            },
+        });
+    } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn('[flow] logFlowApiCall failed', e.message);
+    }
+}
+
+async function logFlowError({ sessionId, botId, errorType, message, stack, context }) {
+    try {
+        await db.appError.create({
+            data: {
+                sessionId: sessionId || null,
+                botId: botId || null,
+                errorType: String(errorType || 'flow_error').slice(0, 100),
+                message: truncateStr(message),
+                stack: stack ? truncateStr(stack) : null,
+                context: context || {},
+            },
+        });
+    } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn('[flow] logFlowError failed', e.message);
+    }
+}
+
+function hostFromUrl(u) {
+    try { return new URL(u).host; } catch { return 'http'; }
+}
+
 function renderTemplate(input, scope) {
     if (typeof input !== 'string') return input || '';
     return input.replace(/\{\{\s*([^}]+)\s*\}\}/g, (_m, expr) => {
@@ -615,12 +664,26 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null }) {
                 if (!Number.isNaN(t)) claudeOptions.extra = { temperature: t };
             }
 
-            const responseText = await callClaude({
-                sessionId: session.id,
-                systemPrompt,
-                messages,
-                options: claudeOptions,
-            });
+            let responseText;
+            try {
+                responseText = await callClaude({
+                    sessionId: session.id,
+                    systemPrompt,
+                    messages,
+                    options: claudeOptions,
+                });
+            } catch (aiErr) {
+                // callClaude вже пише невдалий виклик у api_calls — додатково фіксуємо у вкладці Помилки
+                await logFlowError({
+                    sessionId: session.id,
+                    botId: session.botId,
+                    errorType: 'ai_node',
+                    message: `AI-нода «${data.label || node.id}» впала: ${aiErr.message}`,
+                    stack: aiErr.stack,
+                    context: { nodeId: node.id, nodeLabel: data.label || '', model: data.model || null },
+                });
+                throw aiErr;
+            }
 
             if (mode === 'dialog') {
                 // For user_confirms in finalization stage: skip exit condition check, just finalize and move on
@@ -1185,7 +1248,7 @@ ${sourceContent || '(немає даних)'}
                         } else {
                             const chunks = [];
                             res.on('data', (chunk) => chunks.push(chunk));
-                            res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+                            res.on('end', () => resolve({ statusCode: res.statusCode, body: Buffer.concat(chunks).toString('utf8') }));
                             res.on('error', reject);
                         }
                     });
@@ -1194,8 +1257,33 @@ ${sourceContent || '(немає даних)'}
                     req.end();
                 });
 
-                const responseText = await doRequest(url, method, bodyPayload);
-                console.log(`[httpRequest] url=${url.slice(0, 80)} status=ok responseLen=${responseText.length} preview=${responseText.slice(0, 300)}`);
+                const httpStart = Date.now();
+                const httpResult = await doRequest(url, method, bodyPayload);
+                const responseText = typeof httpResult === 'string' ? httpResult : httpResult.body;
+                const httpStatus = typeof httpResult === 'object' ? httpResult.statusCode : null;
+                console.log(`[httpRequest] url=${url.slice(0, 80)} status=${httpStatus} responseLen=${responseText.length} preview=${responseText.slice(0, 300)}`);
+
+                // Лог у api_calls для вкладки API сесії
+                await logFlowApiCall({
+                    sessionId: session.id,
+                    service: hostFromUrl(url),
+                    method: `${method} ${new URL(url).pathname}`,
+                    requestData: { url, method, headers: customHeaders, body: truncateStr(bodyPayload, 2000) },
+                    responseData: { body: truncateStr(responseText, 3000) },
+                    statusCode: httpStatus,
+                    durationMs: Date.now() - httpStart,
+                    error: (httpStatus && httpStatus >= 400) ? `HTTP ${httpStatus}` : null,
+                });
+                // HTTP-помилка (4xx/5xx) — також у вкладку Помилки
+                if (httpStatus && httpStatus >= 400) {
+                    await logFlowError({
+                        sessionId: session.id,
+                        botId: session.botId,
+                        errorType: 'http_request',
+                        message: `HTTP ${httpStatus} від ${url}`,
+                        context: { nodeId: node.id, nodeLabel: data.label || '', response: truncateStr(responseText, 1000) },
+                    });
+                }
 
                 if (outputVar) {
                     try {
@@ -1209,6 +1297,25 @@ ${sourceContent || '(немає даних)'}
                 }
             } catch (_error) {
                 console.error(`[httpRequest] error: ${_error.message}`);
+                // Мережева помилка/таймаут — у обидві вкладки
+                await logFlowApiCall({
+                    sessionId: session.id,
+                    service: hostFromUrl(url),
+                    method: `${method} ${url}`,
+                    requestData: { url, method },
+                    responseData: {},
+                    statusCode: null,
+                    durationMs: null,
+                    error: _error.message,
+                });
+                await logFlowError({
+                    sessionId: session.id,
+                    botId: session.botId,
+                    errorType: 'http_request',
+                    message: `httpRequest до ${url} впав: ${_error.message}`,
+                    stack: _error.stack,
+                    context: { nodeId: node.id, nodeLabel: data.label || '' },
+                });
             }
 
             runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
@@ -1242,6 +1349,14 @@ ${sourceContent || '(немає даних)'}
                 } catch (err) {
                     // eslint-disable-next-line no-console
                     console.warn('[flow] js node execution failed', node.id, err.message);
+                    await logFlowError({
+                        sessionId: session.id,
+                        botId: session.botId,
+                        errorType: 'js_node',
+                        message: `JS-нода «${data.label || node.id}» впала: ${err.message}`,
+                        stack: err.stack,
+                        context: { nodeId: node.id, nodeLabel: data.label || '' },
+                    });
                 }
             }
             runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
@@ -1540,6 +1655,13 @@ ${sourceContent || '(немає даних)'}
 
                 if (!savedConnector) {
                     console.warn(`[connector] Connector type "${connectorType}" not found or inactive`);
+                    await logFlowError({
+                        sessionId: session.id,
+                        botId: session.botId,
+                        errorType: 'connector',
+                        message: `Конектор типу «${connectorType}» не знайдено або неактивний`,
+                        context: { nodeId: node.id, nodeLabel: data.label || '', connectorType },
+                    });
                     runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
                     continue;
                 }
@@ -1695,6 +1817,24 @@ ${_baseUrl}/legal/terms — Правила використання`;
                 }
             } catch (connectorError) {
                 console.error(`[connector:${connectorType}] Error:`, connectorError.message);
+                await logFlowApiCall({
+                    sessionId: session.id,
+                    service: connectorType || 'connector',
+                    method: action || 'call',
+                    requestData: { connectorType, action },
+                    responseData: {},
+                    statusCode: null,
+                    durationMs: null,
+                    error: connectorError.message,
+                });
+                await logFlowError({
+                    sessionId: session.id,
+                    botId: session.botId,
+                    errorType: 'connector',
+                    message: `Конектор «${connectorType}» (${action}) впав: ${connectorError.message}`,
+                    stack: connectorError.stack,
+                    context: { nodeId: node.id, nodeLabel: data.label || '', connectorType, action },
+                });
             }
 
             runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);

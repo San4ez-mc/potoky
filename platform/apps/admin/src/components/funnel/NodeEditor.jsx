@@ -172,6 +172,18 @@ function MessageNodeEditor({ data, update }) {
                     <div className="text-[10px] text-gray-600">URL підтримує змінні: <code className="text-gray-400">{'{{env.VAR}}'}</code> або <code className="text-gray-400">{'{{context.var}}'}</code>. Назва файлу — як він відображатиметься у Telegram.</div>
                 </div>
             </Field>
+            <Field label="Формат тексту (parse_mode)">
+                <select
+                    value={data.parseMode || ''}
+                    onChange={e => update({ parseMode: e.target.value || undefined })}
+                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+                >
+                    <option value="">Без розмітки (звичайний текст)</option>
+                    <option value="HTML">HTML</option>
+                    <option value="Markdown">Markdown</option>
+                    <option value="MarkdownV2">MarkdownV2</option>
+                </select>
+            </Field>
         </div>
     );
 }
@@ -237,6 +249,27 @@ function ClaudeNodeEditor({ data, update }) {
                     Одиночний: один виклик і перехід далі. Діалог: бот спілкується поки не виконається умова завершення.
                 </div>
             </Field>
+            <div className="grid grid-cols-2 gap-2">
+                <Field label="Max tokens">
+                    <input
+                        type="number" min="256" step="256"
+                        value={data.maxTokens ?? ''}
+                        onChange={e => update({ maxTokens: e.target.value === '' ? undefined : parseInt(e.target.value, 10) })}
+                        placeholder="1000"
+                        className={selectCls}
+                    />
+                </Field>
+                <Field label="Temperature">
+                    <input
+                        type="number" min="0" max="1" step="0.1"
+                        value={data.temperature ?? ''}
+                        onChange={e => update({ temperature: e.target.value === '' ? undefined : parseFloat(e.target.value) })}
+                        placeholder="0.7"
+                        className={selectCls}
+                    />
+                </Field>
+            </div>
+            <div className="-mt-1 text-[10px] text-gray-500">Для довгих відповідей (контент-плани) став maxTokens 8000-16000.</div>
             <Field label="System Prompt">
                 <CodeBlock value={data.systemPrompt} onChange={v => update({ systemPrompt: v })} language="markdown" />
             </Field>
@@ -845,37 +878,59 @@ function LoadFileNodeEditor({ data, update }) {
 }
 
 function HttpRequestNodeEditor({ data, update }) {
+    const selectCls = "w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand";
     return (
         <div className="space-y-3">
             <Field label="URL">
-                <TextInput value={data.url} onChange={v => update({ url: v })} placeholder="https://script.google.com/..." />
+                <TextInput value={data.url} onChange={v => update({ url: v })} placeholder="https://... або {{env.SERVICE_URL}}/path" />
             </Field>
             <Field label="Метод">
                 <select
                     value={data.method || 'POST'}
                     onChange={e => update({ method: e.target.value })}
-                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+                    className={selectCls}
                 >
                     <option value="GET">GET</option>
                     <option value="POST">POST</option>
                     <option value="PUT">PUT</option>
+                    <option value="PATCH">PATCH</option>
                     <option value="DELETE">DELETE</option>
                 </select>
             </Field>
-            <Field label="Body Template (JSON)">
+            <Field label="Заголовки (headers, JSON)">
                 <CodeBlock
-                    value={data.bodyTemplate ? JSON.stringify(data.bodyTemplate, null, 2) : '{}'}
-                    onChange={v => {
-                        try { update({ bodyTemplate: JSON.parse(v) }); } catch { }
-                    }}
+                    value={data.headers ? JSON.stringify(data.headers, null, 2) : '{\n  "Content-Type": "application/json"\n}'}
+                    onChange={v => { try { update({ headers: JSON.parse(v) }); } catch { } }}
                     language="json"
                 />
+                <div className="mt-1 text-[10px] text-gray-500">Значення підтримують <code className="text-gray-400">{'{{env.KEY}}'}</code> та <code className="text-gray-400">{'{{context.x}}'}</code>.</div>
             </Field>
-            <Field label="Зберегти відповідь у">
-                <TextInput value={data.outputVar} onChange={v => update({ outputVar: v })} placeholder="context.sheetsUrl" />
+            <Field label="Тіло запиту (body — рядок/JSON з шаблонами)">
+                <CodeBlock
+                    value={typeof data.body === 'string' ? data.body : (data.body ? JSON.stringify(data.body, null, 2) : '')}
+                    onChange={v => update({ body: v })}
+                    language="json"
+                />
+                <div className="mt-1 text-[10px] text-gray-500">Рядок з підстановкою <code className="text-gray-400">{'{{context.x}}'}</code>/<code className="text-gray-400">{'{{env.KEY}}'}</code>. Для POST/PUT/PATCH.</div>
             </Field>
-            <Field label="Шлях в response (JSON path)">
-                <TextInput value={data.responsePath} onChange={v => update({ responsePath: v })} placeholder="spreadsheetUrl" />
+            <Field label="Зберегти відповідь у (outputVar)">
+                <TextInput value={data.outputVar} onChange={v => update({ outputVar: v })} placeholder="context.response" />
+            </Field>
+            <Field label="Поле з відповіді (responseField, JSON path)">
+                <TextInput value={data.responseField} onChange={v => update({ responseField: v })} placeholder="answer  або  data.url" />
+                <div className="mt-1 text-[10px] text-gray-500">Якщо задано — збережеться лише це поле з JSON-відповіді. Порожнє — вся відповідь.</div>
+            </Field>
+            <Field label="Тип відповіді (responseType)">
+                <select value={data.responseType || 'json'} onChange={e => update({ responseType: e.target.value })} className={selectCls}>
+                    <option value="json">JSON</option>
+                    <option value="text">Текст</option>
+                </select>
+            </Field>
+            <Field label="Ігнорувати помилки?">
+                <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={!!data.ignoreErrors} onChange={e => update({ ignoreErrors: e.target.checked })} className="accent-brand" />
+                    <span className="text-sm text-gray-300">Продовжити воронку навіть якщо запит впав</span>
+                </label>
             </Field>
         </div>
     );
@@ -1065,6 +1120,37 @@ function KnowledgeBaseNodeEditor({ data, update }) {
     );
 }
 
+// Fallback-редактор для типів без власного редактора — редагування data як сирий JSON.
+// Гарантує, що БУДЬ-ЯКУ ноду можна налаштувати через інтерфейс (нічого суто-кодового).
+function GenericJsonNodeEditor({ type, data, update }) {
+    const { label, description, ...rest } = data || {};
+    const [text, setText] = useState(() => JSON.stringify(rest, null, 2));
+    const [err, setErr] = useState('');
+
+    const apply = (v) => {
+        setText(v);
+        try {
+            const parsed = JSON.parse(v || '{}');
+            setErr('');
+            update({ ...parsed });
+        } catch (e) {
+            setErr('Некоректний JSON');
+        }
+    };
+
+    return (
+        <div className="space-y-3">
+            <div className="bg-amber-950/30 border border-amber-800 rounded-lg px-3 py-2 text-[11px] text-amber-300">
+                Тип «{type}» не має спеціального редактора. Нижче — усі поля ноди як JSON. Редагуй прямо тут.
+            </div>
+            <Field label="Дані ноди (JSON)">
+                <CodeBlock value={text} onChange={apply} language="json" />
+            </Field>
+            {err && <div className="text-xs text-red-400">{err}</div>}
+        </div>
+    );
+}
+
 export function NodeEditor({ embedded = false, onClose }) {
     const { selectedNode, updateNodeData, connectors, deleteNode } = useFunnelStore();
 
@@ -1100,7 +1186,7 @@ export function NodeEditor({ embedded = false, onClose }) {
             case 'generateDocument': return <GenerateDocumentNodeEditor data={data} update={update} />;
             case 'fetchTelegramProfile': return <FetchTelegramProfileNodeEditor />;
             case 'knowledgeBase': return <KnowledgeBaseNodeEditor data={data} update={update} />;
-            default: return <div className="text-gray-500 text-sm">Немає налаштувань для цього вузла</div>;
+            default: return <GenericJsonNodeEditor type={type} data={data} update={update} />;
         }
     };
 

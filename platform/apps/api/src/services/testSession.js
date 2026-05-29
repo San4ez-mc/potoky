@@ -288,6 +288,33 @@ function extractJsonSegment(text) {
         }
     }
 
+    // Балансування дужок: знаходимо ПЕРШИЙ повний JSON-обʼєкт від firstBrace,
+    // ігноруючи зайві трейлінг-символи (типова помилка слабших моделей: зайва "}").
+    if (firstBrace !== -1) {
+        let depth = 0;
+        let inString = false;
+        let escape = false;
+        for (let i = firstBrace; i < raw.length; i++) {
+            const ch = raw[i];
+            if (escape) { escape = false; continue; }
+            if (ch === '\\') { escape = true; continue; }
+            if (ch === '"') { inString = !inString; continue; }
+            if (inString) continue;
+            if (ch === '{') depth++;
+            else if (ch === '}') {
+                depth--;
+                if (depth === 0) {
+                    const candidate = raw.slice(firstBrace, i + 1);
+                    const parsed = tryParse(candidate);
+                    if (parsed !== null) {
+                        return { parsed, start: firstBrace, end: i + 1 };
+                    }
+                    break; // перший збалансований блок не парситься — далі немає сенсу
+                }
+            }
+        }
+    }
+
     return null;
 }
 

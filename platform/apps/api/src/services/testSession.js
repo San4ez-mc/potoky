@@ -1211,9 +1211,29 @@ ${sourceContent || '(немає даних)'}
             const code = data.code || '';
             if (code) {
                 try {
-                    vm.runInNewContext(code, { context: ctx }, { timeout: 2000 });
-                } catch (_err) {
-                    // Silently skip JS execution errors
+                    // Wrap in IIFE so node code can use `return {...}` to update context.
+                    // Two patterns supported:
+                    //   1) direct mutation: `context.foo = 1` (ctx passed by reference)
+                    //   2) returned object: `return { foo: 1 }` → merged into context root
+                    const sandbox = {
+                        context: ctx,
+                        user: sanitizeBigInt(session.user),
+                        session: { id: session.id, state: session.state },
+                        input: runtime.lastUserMessage || '',
+                        __jsResult: undefined,
+                    };
+                    vm.runInNewContext(
+                        `__jsResult = (function(){ "use strict";\n${code}\n})();`,
+                        sandbox,
+                        { timeout: 2000 }
+                    );
+                    const res = sandbox.__jsResult;
+                    if (res && typeof res === 'object' && !Array.isArray(res)) {
+                        Object.assign(ctx, res);
+                    }
+                } catch (err) {
+                    // eslint-disable-next-line no-console
+                    console.warn('[flow] js node execution failed', node.id, err.message);
                 }
             }
             runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);

@@ -59,20 +59,29 @@ async function checkInactiveSessions() {
     try {
         const cutoff = new Date(Date.now() - FOLLOW_UP_DELAY_HOURS * 60 * 60 * 1000);
 
-        // Find active sessions that haven't had activity for >FOLLOW_UP_DELAY_HOURS hours
+        // Find active, non-test sessions that haven't had activity for >FOLLOW_UP_DELAY_HOURS hours
         const staleSessions = await db.session.findMany({
             where: {
                 isActive: true,
+                isTest: false,          // Never send follow-ups to test sessions
+                state: { not: 'unsubscribed' },
                 lastActive: { lte: cutoff },
             },
             include: {
                 user: { select: { telegramId: true } },
                 bot: { select: { id: true, name: true } },
             },
+            orderBy: { lastActive: 'desc' },
         });
+
+        // Dedup: only 1 follow-up per (userId, botId) pair per run
+        const processedPairs = new Set();
 
         for (const session of staleSessions) {
             try {
+                const pairKey = `${session.userId}:${session.botId}`;
+                if (processedPairs.has(pairKey)) continue;
+
                 const ctx = (typeof session.context === 'object' ? session.context : JSON.parse(session.context || '{}')) || {};
                 const runtime = ctx.flowRuntime || {};
 
@@ -120,12 +129,21 @@ async function checkInactiveSessions() {
 
                 await sendFollowUpViaTelegram(token, String(telegramId), followUpText);
 
+                // Mark pair as processed so no other session of this user+bot fires today
+                processedPairs.add(pairKey);
+
                 // Update session context to track follow-up sent
                 const updatedCtx = { ...ctx, followUpCount: followUpCount + 1 };
                 await db.session.update({
                     where: { id: session.id },
                     data: { context: updatedCtx },
                 });
+                // Mark all OTHER stale sessions of this user+bot as notified too (prevent cross-run duplicates)
+                const others = staleSessions.filter(s => s.userId === session.userId && s.botId === session.botId && s.id !== session.id);
+                for (const other of others) {
+                    const otherCtx = (typeof other.context === 'object' ? other.context : JSON.parse(other.context || '{}')) || {};
+                    db.session.update({ where: { id: other.id }, data: { context: { ...otherCtx, followUpCount: 1 } } }).catch(() => {});
+                }
 
                 logger.info('Follow-up sent', {
                     sessionId: session.id,

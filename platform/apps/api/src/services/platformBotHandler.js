@@ -33,7 +33,8 @@ async function tgRequest(token, method, payload) {
         const text = await res.text().catch(() => '');
         logger.warn('[platformBotHandler] Telegram API error', { method, status: res.status, body: text });
     }
-    return res;
+    // Parse and return JSON so callers can read result.message_id
+    try { return await res.json(); } catch { return {}; }
 }
 
 /**
@@ -804,8 +805,9 @@ async function deliverSessionMessages(botId, sessionId, telegramChatId, sinceTim
                 ? { inline_keyboard: meta.keyboard }
                 : null;
             const attachment = meta.attachment;
+            let tgResult;
             if (attachment?.type === 'document' && attachment.url) {
-                await tgRequest(token, 'sendDocument', {
+                tgResult = await tgRequest(token, 'sendDocument', {
                     chat_id: telegramChatId,
                     document: attachment.url,
                     caption: attachment.caption || msg.content || undefined,
@@ -813,8 +815,28 @@ async function deliverSessionMessages(botId, sessionId, telegramChatId, sinceTim
                     ...(keyboard ? { reply_markup: keyboard } : {}),
                 });
             } else {
-                await sendTelegramMessage(token, telegramChatId, msg.content,
-                    keyboard ? { reply_markup: keyboard } : {});
+                // sendTelegramMessage splits long messages — only last part gets keyboard
+                // For message_id tracking we call tgRequest directly for single-part messages
+                const text = String(msg.content || '');
+                if (text.length <= 4000) {
+                    tgResult = await tgRequest(token, 'sendMessage', {
+                        chat_id: telegramChatId,
+                        text,
+                        parse_mode: 'HTML',
+                        ...(keyboard ? { reply_markup: keyboard } : {}),
+                    });
+                } else {
+                    await sendTelegramMessage(token, telegramChatId, text,
+                        keyboard ? { reply_markup: keyboard } : {});
+                }
+            }
+            // Store telegram message_id in DB metadata
+            const tgMsgId = tgResult?.result?.message_id;
+            if (tgMsgId) {
+                db.message.update({
+                    where: { id: msg.id },
+                    data: { metadata: { ...meta, telegramMessageId: tgMsgId } },
+                }).catch(() => {});
             }
         } catch (err) {
             const errText = String(err.message || '').toLowerCase();

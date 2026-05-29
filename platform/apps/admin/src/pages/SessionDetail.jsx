@@ -194,19 +194,33 @@ function MessageContent({ content, metadata }) {
 
 // ─── Chat bubble ────────────────────────────────────────────────────────────
 
-function ChatBubble({ msg, highlighted, refProp }) {
+function ChatBubble({ msg, highlighted, refProp, onDelete }) {
     const isUser = msg.role === 'user';
     const isSystem = msg.role === 'system';
+    const canDelete = !isUser && !isSystem;
+    const hasTgId = Boolean(msg.metadata?.telegramMessageId);
+
     return (
         <div
             ref={refProp}
-            className={`flex ${isUser ? 'justify-end' : 'justify-start'} transition-all duration-300 ${highlighted ? 'scale-[1.01]' : ''}`}
+            className={`flex ${isUser ? 'justify-end' : 'justify-start'} group transition-all duration-300 ${highlighted ? 'scale-[1.01]' : ''}`}
         >
+            {/* Delete button (left of bot messages) */}
+            {canDelete && (
+                <button
+                    onClick={() => onDelete(msg)}
+                    title={hasTgId ? 'Видалити з Telegram і сесії' : 'Видалити лише з сесії (без Telegram message_id)'}
+                    className="self-start mt-2 mr-1 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded text-gray-600 hover:text-red-400 hover:bg-red-900/20"
+                >
+                    🗑
+                </button>
+            )}
             <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm transition-colors ${highlighted ? 'ring-1 ring-brand/50' : ''} ${isUser ? 'bg-brand text-white' : isSystem ? 'bg-gray-800/50 text-gray-400 border border-gray-700' : 'bg-gray-800 text-gray-100'}`}>
                 {isSystem && <div className="text-xs text-gray-500 mb-1 font-mono">system</div>}
                 <MessageContent content={msg.content} metadata={msg.metadata} />
-                <div className={`text-[10px] mt-1.5 ${isUser ? 'text-brand-light/70' : 'text-gray-500'}`}>
-                    {format(new Date(msg.createdAt), 'HH:mm:ss')}
+                <div className={`text-[10px] mt-1.5 flex items-center gap-1 ${isUser ? 'text-brand-light/70' : 'text-gray-500'}`}>
+                    <span>{format(new Date(msg.createdAt), 'HH:mm:ss')}</span>
+                    {hasTgId && <span title="Telegram message_id збережено">✓TG</span>}
                 </div>
             </div>
         </div>
@@ -317,6 +331,7 @@ export function SessionDetail() {
     const [sendError, setSendError] = useState('');
     const [restarting, setRestarting] = useState(false);
     const [highlightedMsgId, setHighlightedMsgId] = useState(null);
+    const [deletingMsgId, setDeletingMsgId] = useState(null);
 
     // Refs for scrolling to highlighted message
     const msgRefs = useRef({});
@@ -383,6 +398,23 @@ export function SessionDetail() {
             setSendError(err.message || 'Не вдалося перезапустити чат');
         } finally {
             setRestarting(false);
+        }
+    };
+
+    const handleDeleteMessage = async (msg) => {
+        const hasTg = Boolean(msg.metadata?.telegramMessageId);
+        const confirmText = hasTg
+            ? 'Видалити повідомлення з Telegram і сесії?'
+            : 'Telegram message_id не збережено — видалити лише з сесії (з чату не зникне)?';
+        if (!window.confirm(confirmText)) return;
+        setDeletingMsgId(msg.id);
+        try {
+            await api.deleteSessionMessage(id, msg.id);
+            setMessages(prev => prev.filter(m => m.id !== msg.id));
+        } catch (err) {
+            setSendError(err.message || 'Не вдалося видалити');
+        } finally {
+            setDeletingMsgId(null);
         }
     };
 
@@ -460,6 +492,7 @@ export function SessionDetail() {
                                     msg={m}
                                     highlighted={highlightedMsgId === m.id}
                                     refProp={el => { if (el) msgRefs.current[m.id] = el; else delete msgRefs.current[m.id]; }}
+                                    onDelete={handleDeleteMessage}
                                 />
                             ))}
                             {messages.length === 0 && (

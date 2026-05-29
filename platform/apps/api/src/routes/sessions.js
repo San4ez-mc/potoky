@@ -191,23 +191,27 @@ async function sendViaBot(botId, chatId, text, photoBuffer) {
             const form = new FormData();
             form.append('chat_id', String(chatId));
             form.append('photo', photoBuffer, { filename: 'photo.jpg', contentType: 'image/jpeg' });
+            if (text) form.append('caption', text);
             const res = await fetch(`${apiBase}/sendPhoto`, { method: 'POST', body: form, headers: form.getHeaders() });
             if (!res.ok) {
                 const txt = await res.text().catch(() => '');
                 throw new Error(`ETELEGRAM: ${res.status} ${txt}`);
             }
+            const data = await res.json().catch(() => ({}));
+            return data?.result?.message_id || null;
         } else {
             const res = await fetch(`${apiBase}/sendMessage`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ chat_id: String(chatId), text, parse_mode: 'HTML' }),
+                body: JSON.stringify({ chat_id: String(chatId), text, parse_mode: 'HTML', disable_web_page_preview: true }),
             });
             if (!res.ok) {
                 const txt = await res.text().catch(() => '');
                 throw new Error(`ETELEGRAM: ${res.status} ${txt}`);
             }
+            const data = await res.json().catch(() => ({}));
+            return data?.result?.message_id || null;
         }
-        return;
     }
 
     // Fallback: global singleton
@@ -254,7 +258,7 @@ router.post('/:id/send',
             }
         }
 
-        await sendViaBot(session.botId, session.user.telegramId, text, photoBuffer);
+        const tgMessageId = await sendViaBot(session.botId, session.user.telegramId, text, photoBuffer);
 
         await db.message.create({
             data: {
@@ -266,6 +270,7 @@ router.post('/:id/send',
                     hasPhoto: Boolean(photoBuffer),
                     photoName: photoBuffer ? photoName : null,
                     photoMimeType: photoBuffer ? photoMimeType : null,
+                    ...(tgMessageId ? { telegramMessageId: tgMessageId } : {}),
                 },
             },
         });
@@ -421,6 +426,44 @@ router.get('/:sessionId/context',
                 filesCount: files.length,
             },
         });
+    })
+);
+
+// DELETE /api/sessions/:id/messages/:msgId — delete message from Telegram + DB
+router.delete('/:id/messages/:msgId',
+    validateParams({
+        params: z.object({ id: z.string().uuid(), msgId: z.string().uuid() }),
+    }),
+    asyncHandler(async (req, res) => {
+        const session = await db.session.findUnique({
+            where: { id: req.params.id },
+            include: { user: true },
+        });
+        if (!session) throw new NotFoundError('Session', req.params.id);
+
+        const msg = await db.message.findUnique({ where: { id: req.params.msgId } });
+        if (!msg || msg.sessionId !== session.id) {
+            return res.status(404).json({ ok: false, error: { message: 'Message not found' } });
+        }
+
+        const tgMsgId = msg.metadata?.telegramMessageId;
+        const chatId = session.user?.telegramId;
+
+        // Try to delete from Telegram if we have the message_id
+        if (tgMsgId && chatId) {
+            const token = await resolveBotToken(session.botId);
+            if (token) {
+                await fetch(`https://api.telegram.org/bot${token}/deleteMessage`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chat_id: String(chatId), message_id: tgMsgId }),
+                }).catch(() => {}); // Don't fail if TG delete fails (message too old etc.)
+            }
+        }
+
+        // Delete from DB
+        await db.message.delete({ where: { id: msg.id } });
+        res.json({ ok: true, telegramDeleted: Boolean(tgMsgId && chatId) });
     })
 );
 

@@ -94,6 +94,7 @@ export const api = {
     sendSessionMessage: (id, payload) => req('POST', `/sessions/${id}/send`, payload),
     restartSession: (id) => req('POST', `/sessions/${id}/restart`),
     deleteSession: (id) => req('DELETE', `/sessions/${id}`),
+    deleteSessionMessage: (sessionId, msgId) => req('DELETE', `/sessions/${sessionId}/messages/${msgId}`),
     deleteSessionsBulk: (ids) => req('POST', '/sessions/bulk-delete', { ids }),
     markSessionTest: (id, isTest) => req('PATCH', `/sessions/${id}/mark-test`, { isTest }),
     getBotSessions: (botId, page = 0, params = {}) => {

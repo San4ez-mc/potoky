@@ -184,12 +184,38 @@ export function EnvironmentPanel({ embedded = false }) {
 
     const handleSelectTgConnector = async (connectorId) => {
         await upsertKey(TG_CONNECTOR_KEY, connectorId, 'Telegram Bot Connector', false);
-        // If connector has a username in its config, auto-fill TELEGRAM_BOT_USERNAME
+        if (!connectorId) return;
         const connector = tgConnectors.find(c => c.id === connectorId);
-        if (connector?.config?.username) {
+        if (!connector) return;
+
+        // 1) Якщо в config вже є username — підставити
+        let username = connector?.config?.username;
+
+        // 2) Якщо username немає, але є токен — підтягнути через getMe і дозаписати в конектор
+        const token = connector?.config?.token;
+        if (!username && token && /^\d+:[A-Za-z0-9_-]{20,}$/.test(String(token).trim())) {
+            try {
+                const res = await fetch(`https://api.telegram.org/bot${String(token).trim()}/getMe`);
+                const data = await res.json();
+                if (data.ok && data.result?.username) {
+                    username = data.result.username;
+                    // дозаписати username у збережений конектор, щоб наступного разу не питати
+                    try {
+                        await api.updateSavedConnector(connector.id, {
+                            config: { ...connector.config, username },
+                        });
+                        setTgConnectors(prev => prev.map(c => c.id === connector.id
+                            ? { ...c, config: { ...c.config, username } }
+                            : c));
+                    } catch { /* ignore */ }
+                }
+            } catch { /* ignore */ }
+        }
+
+        if (username) {
             const existing = keys.find(k => k.key === 'TELEGRAM_BOT_USERNAME');
             if (!existing?.value) {
-                await upsertKey('TELEGRAM_BOT_USERNAME', connector.config.username, 'Telegram Bot Username', false);
+                await upsertKey('TELEGRAM_BOT_USERNAME', username, 'Telegram Bot Username', false);
             }
         }
     };

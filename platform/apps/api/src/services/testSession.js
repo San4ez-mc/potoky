@@ -589,11 +589,19 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null }) {
                 messages = parseClaudeMessages(data.messagesTemplate, scope, runtime.lastUserMessage || '');
             }
 
+            const claudeOptions = {};
+            if (data.model) claudeOptions.model = data.model;
+            if (data.maxTokens) claudeOptions.maxTokens = parseInt(data.maxTokens, 10) || undefined;
+            if (data.temperature != null && data.temperature !== '') {
+                const t = parseFloat(data.temperature);
+                if (!Number.isNaN(t)) claudeOptions.extra = { temperature: t };
+            }
+
             const responseText = await callClaude({
                 sessionId: session.id,
                 systemPrompt,
                 messages,
-                options: data.model ? { model: data.model } : {},
+                options: claudeOptions,
             });
 
             if (mode === 'dialog') {

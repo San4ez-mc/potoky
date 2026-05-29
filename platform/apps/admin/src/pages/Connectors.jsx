@@ -1,5 +1,15 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client.js';
+
+async function fetchTgBotInfo(token) {
+    if (!token || !/^\d+:[A-Za-z0-9_-]{20,}$/.test(token.trim())) return null;
+    try {
+        const res = await fetch(`https://api.telegram.org/bot${token.trim()}/getMe`);
+        const data = await res.json();
+        if (data.ok) return data.result;
+    } catch { /* ignore */ }
+    return null;
+}
 
 function ConnectorModal({ connector, connectorDefs, onClose, onSaved }) {
     const isEdit = Boolean(connector?.id);
@@ -14,6 +24,8 @@ function ConnectorModal({ connector, connectorDefs, onClose, onSaved }) {
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
     const [visibleSecrets, setVisibleSecrets] = useState({});
+    const [tgFetchStatus, setTgFetchStatus] = useState(''); // 'loading' | 'ok' | 'error'
+    const tgFetchTimer = useRef(null);
 
     const def = connectorDefs.find((d) => d.type === form.type);
     const fields = def?.schema?.fields || [];
@@ -21,6 +33,27 @@ function ConnectorModal({ connector, connectorDefs, onClose, onSaved }) {
     const setField = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
     const setConfig = (key, value) => setForm((prev) => ({ ...prev, config: { ...prev.config, [key]: value } }));
     const toggleSecretVisibility = (key) => setVisibleSecrets((prev) => ({ ...prev, [key]: !prev[key] }));
+
+    const handleTgTokenChange = (value) => {
+        setConfig('token', value);
+        setTgFetchStatus('');
+        if (tgFetchTimer.current) clearTimeout(tgFetchTimer.current);
+        tgFetchTimer.current = setTimeout(async () => {
+            if (!value.trim()) return;
+            setTgFetchStatus('loading');
+            const info = await fetchTgBotInfo(value);
+            if (info) {
+                setTgFetchStatus('ok');
+                setForm((prev) => ({
+                    ...prev,
+                    name: prev.name || `@${info.username}`,
+                    config: { ...prev.config, token: value, username: info.username },
+                }));
+            } else {
+                setTgFetchStatus('error');
+            }
+        }, 800);
+    };
 
     const save = async () => {
         if (!form.name.trim()) {
@@ -114,6 +147,7 @@ function ConnectorModal({ connector, connectorDefs, onClose, onSaved }) {
                                                     style={field.secret && !visibleSecrets[field.key] ? { WebkitTextSecurity: 'disc' } : undefined}
                                                     className={`w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white font-mono ${field.secret ? 'pr-10' : ''}`}
                                                 />
+
                                                 {field.secret && (
                                                     <button
                                                         type="button"
@@ -134,10 +168,23 @@ function ConnectorModal({ connector, connectorDefs, onClose, onSaved }) {
                                                 <input
                                                     type={field.secret && !visibleSecrets[field.key] ? 'password' : 'text'}
                                                     value={form.config[field.key] || ''}
-                                                    onChange={(e) => setConfig(field.key, e.target.value)}
+                                                    onChange={(e) => {
+                                                        if (form.type === 'telegram_bot' && field.key === 'token') {
+                                                            handleTgTokenChange(e.target.value);
+                                                        } else {
+                                                            setConfig(field.key, e.target.value);
+                                                        }
+                                                    }}
                                                     placeholder={field.placeholder || ''}
                                                     className={`w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono ${field.secret ? 'pr-10' : ''}`}
                                                 />
+                                                {form.type === 'telegram_bot' && field.key === 'token' && tgFetchStatus && (
+                                                    <span className={`absolute left-3 -bottom-5 text-xs ${tgFetchStatus === 'ok' ? 'text-green-400' : tgFetchStatus === 'error' ? 'text-red-400' : 'text-gray-400'}`}>
+                                                        {tgFetchStatus === 'loading' && '⏳ Перевірка токена...'}
+                                                        {tgFetchStatus === 'ok' && `✅ Бот: @${form.config.username}`}
+                                                        {tgFetchStatus === 'error' && '❌ Токен недійсний'}
+                                                    </span>
+                                                )}
                                                 {field.secret && (
                                                     <button
                                                         type="button"

@@ -41,23 +41,62 @@ async function resolveTelegramToken(keyMap) {
         try {
             const connector = await db.savedConnector.findUnique({ where: { id: connectorId }, select: { config: true } });
             const t = connector?.config?.token;
-            if (isValidTelegramToken(t)) return t.trim();
+            if (isValidTelegramToken(t)) return { token: t.trim(), connectorId };
         } catch { /* ignore */ }
     }
     // 2. Direct key
     const direct = keyMap.TELEGRAM_BOT_TOKEN;
-    if (isValidTelegramToken(direct)) return direct.trim();
+    if (isValidTelegramToken(direct)) return { token: direct.trim(), connectorId: null };
     // 3. Global env
     const envVal = process.env.TELEGRAM_BOT_TOKEN;
-    if (isValidTelegramToken(envVal)) return envVal.trim();
-    return null;
+    if (isValidTelegramToken(envVal)) return { token: envVal.trim(), connectorId: null };
+    return { token: null, connectorId: null };
+}
+
+// Підтягує username бота через getMe, записує у funnelKey TELEGRAM_BOT_USERNAME
+// (якщо ще не заданий) і дозаписує в config збереженого конектора.
+async function ensureBotUsername(botId, token, connectorId, keyMap) {
+    try {
+        const existing = keyMap.TELEGRAM_BOT_USERNAME;
+        const meRes = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+        const meJson = await meRes.json();
+        const username = meJson?.ok ? meJson.result?.username : null;
+        if (!username) return null;
+
+        // funnelKey
+        if (!existing) {
+            await db.funnelKey.upsert({
+                where: { botId_key: { botId, key: 'TELEGRAM_BOT_USERNAME' } },
+                update: { value: username },
+                create: { botId, key: 'TELEGRAM_BOT_USERNAME', value: username, label: 'Telegram Bot Username', isSecret: false },
+            });
+        }
+
+        // конектор
+        if (connectorId) {
+            try {
+                const conn = await db.savedConnector.findUnique({ where: { id: connectorId }, select: { config: true } });
+                if (conn && !conn.config?.username) {
+                    await db.savedConnector.update({
+                        where: { id: connectorId },
+                        data: { config: { ...conn.config, username } },
+                    });
+                }
+            } catch { /* ignore */ }
+        }
+        return username;
+    } catch {
+        return null;
+    }
 }
 
 async function syncTelegram(botId, keyMap) {
-    const token = await resolveTelegramToken(keyMap);
+    const { token, connectorId } = await resolveTelegramToken(keyMap);
     if (!token) {
         return { ok: false, skipped: true, reason: 'TELEGRAM_BOT_TOKEN missing or invalid' };
     }
+
+    const botUsername = await ensureBotUsername(botId, token, connectorId, keyMap);
 
     const secret = keyMap.TELEGRAM_WEBHOOK_SECRET || process.env.TELEGRAM_WEBHOOK_SECRET || null;
     const url = `${getBaseUrl()}/webhook/telegram/${botId}`;
@@ -86,6 +125,7 @@ async function syncTelegram(botId, keyMap) {
 
     return {
         ok: true,
+        botUsername: botUsername || null,
         webhookUrl: infoJson?.result?.url || url,
         pendingUpdateCount: infoJson?.result?.pending_update_count ?? null,
         lastErrorMessage: infoJson?.result?.last_error_message || null,

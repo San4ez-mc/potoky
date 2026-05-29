@@ -25,6 +25,18 @@ const KEY_HINTS = {
         hint: 'ID збереженого Claude-конектора зі вкладки Конектори',
         url: null,
     },
+    'OPENAI_CONNECTOR_ID': {
+        hint: 'ID збереженого OpenAI/GPT конектора зі вкладки Конектори',
+        url: null,
+    },
+    'GPT_CONNECTOR_ID': {
+        hint: 'ID збереженого OpenAI/GPT конектора зі вкладки Конектори',
+        url: null,
+    },
+    'GEMINI_CONNECTOR_ID': {
+        hint: 'ID збереженого Gemini конектора зі вкладки Конектори',
+        url: null,
+    },
     'FAL_AI_KEY': {
         hint: 'fal.ai Dashboard → API Keys',
         url: 'https://fal.ai/dashboard/keys',
@@ -65,6 +77,14 @@ const KEY_HINTS = {
         hint: 'OpenAI Platform → API Keys',
         url: 'https://platform.openai.com/api-keys',
     },
+    'GPT_API_KEY': {
+        hint: 'OpenAI Platform → API Keys',
+        url: 'https://platform.openai.com/api-keys',
+    },
+    'GEMINI_API_KEY': {
+        hint: 'Google Gemini API Key',
+        url: 'https://cloud.google.com/vertex-ai/docs/generative-ai',
+    },
     'FOLLOW_UP_MESSAGE': {
         hint: 'Текст повідомлення-нагадування, якщо користувач не відповів протягом кількох годин',
         url: null,
@@ -77,6 +97,8 @@ const KEY_TO_CONNECTOR_HINT = {
     'CLAUDE_API_KEY':      { type: 'claude_sonnet', field: 'api_key' },
     'ANTHROPIC_API_KEY':   { type: 'claude_sonnet', field: 'api_key' },
     'OPENAI_API_KEY':      { type: 'openai_gpt4',   field: 'api_key' },
+    'GPT_API_KEY':         { type: 'openai_gpt4',   field: 'api_key' },
+    'GEMINI_API_KEY':      { type: 'google_gemini', field: 'api_key' },
     'TELEGRAM_BOT_TOKEN':  { type: 'telegram_bot',  field: 'token'   },
 };
 
@@ -193,6 +215,76 @@ function SaveAsConnectorModal({ keyName, keyValue, connectorDefs, onSave, onClos
         const def = connectorDefs.find(d => d.type === type);
         const fields = def?.schema?.fields || [];
         const preferred = hint?.type === type ? fields.find(f => f.key === hint?.field) : null;
+
+                <div className="rounded-lg p-3 border bg-sky-900/10 border-sky-900/40 space-y-2">
+                    <div className="text-xs text-sky-300 font-medium">GPT / OpenAI для цієї воронки</div>
+                    <div className="text-xs text-gray-400">
+                        Це перший запасний провайдер, якщо Claude тимчасово недоступний.
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                        <button
+                            onClick={handleUseManualGPTKey}
+                            className="text-xs px-2 py-1 rounded bg-sky-900/30 hover:bg-sky-900/50 text-sky-200 border border-sky-800"
+                        >
+                            Ввести GPT_API_KEY
+                        </button>
+                    </div>
+                    <div className="flex gap-2">
+                        <select
+                            value={selectedOpenAIConnectorId}
+                            onChange={(e) => setSelectedOpenAIConnectorId(e.target.value)}
+                            className="flex-1 bg-gray-900 border border-gray-700 rounded px-2.5 py-1.5 text-xs text-white"
+                            disabled={loadingConnectors || savedOpenAIConnectors.length === 0}
+                        >
+                            <option value="">{loadingConnectors ? 'Завантаження...' : 'Оберіть OpenAI/GPT конектор'}</option>
+                            {savedOpenAIConnectors.map((item) => (
+                                <option key={item.id} value={item.id}>{item.name}</option>
+                            ))}
+                        </select>
+                        <button
+                            onClick={handleUseSavedOpenAIConnector}
+                            disabled={!selectedOpenAIConnectorId}
+                            className="text-xs px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 disabled:opacity-50"
+                        >
+                            Використати
+                        </button>
+                    </div>
+                </div>
+
+                <div className="rounded-lg p-3 border bg-violet-900/10 border-violet-900/40 space-y-2">
+                    <div className="text-xs text-violet-300 font-medium">Gemini для цієї воронки</div>
+                    <div className="text-xs text-gray-400">
+                        Це другий запасний провайдер, якщо GPT не спрацював.
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                        <button
+                            onClick={handleUseManualGeminiKey}
+                            className="text-xs px-2 py-1 rounded bg-violet-900/30 hover:bg-violet-900/50 text-violet-200 border border-violet-800"
+                        >
+                            Ввести GEMINI_API_KEY
+                        </button>
+                    </div>
+                    <div className="flex gap-2">
+                        <select
+                            value={selectedGeminiConnectorId}
+                            onChange={(e) => setSelectedGeminiConnectorId(e.target.value)}
+                            className="flex-1 bg-gray-900 border border-gray-700 rounded px-2.5 py-1.5 text-xs text-white"
+                            disabled={loadingConnectors || savedGeminiConnectors.length === 0}
+                        >
+                            <option value="">{loadingConnectors ? 'Завантаження...' : 'Оберіть Gemini конектор'}</option>
+                            {savedGeminiConnectors.map((item) => (
+                                <option key={item.id} value={item.id}>{item.name}</option>
+                            ))}
+                        </select>
+                        <button
+                            onClick={handleUseSavedGeminiConnector}
+                            disabled={!selectedGeminiConnectorId}
+                            className="text-xs px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 disabled:opacity-50"
+                        >
+                            Використати
+                        </button>
+                    </div>
+                </div>
         setFieldKey(preferred?.key || fields[0]?.key || '');
     }, [type]);
 
@@ -529,12 +621,22 @@ export function KeysPanel({ embedded = false }) {
     const [allSavedConnectors, setAllSavedConnectors] = useState([]);
     const [connectorDefs, setConnectorDefs] = useState([]);
     const [selectedConnectorId, setSelectedConnectorId] = useState('');
+    const [selectedOpenAIConnectorId, setSelectedOpenAIConnectorId] = useState('');
+    const [selectedGeminiConnectorId, setSelectedGeminiConnectorId] = useState('');
     const [loadingConnectors, setLoadingConnectors] = useState(false);
     const [saveAsConnectorKey, setSaveAsConnectorKey] = useState(null); // { key, value, isSecret, label }
     const [saveAsSuccess, setSaveAsSuccess] = useState('');
     const visibleKeys = useMemo(() => keys, [keys]);
     const savedClaudeConnectors = useMemo(
         () => allSavedConnectors.filter((item) => String(item.type || '').startsWith('claude_')),
+        [allSavedConnectors]
+    );
+    const savedOpenAIConnectors = useMemo(
+        () => allSavedConnectors.filter((item) => String(item.type || '').startsWith('openai_')),
+        [allSavedConnectors]
+    );
+    const savedGeminiConnectors = useMemo(
+        () => allSavedConnectors.filter((item) => item.type === 'google_gemini'),
         [allSavedConnectors]
     );
 
@@ -558,6 +660,10 @@ export function KeysPanel({ embedded = false }) {
     useEffect(() => {
         const current = keys.find((item) => item.key === 'CLAUDE_CONNECTOR_ID');
         if (current?.value) setSelectedConnectorId(String(current.value));
+        const openaiCurrent = keys.find((item) => item.key === 'OPENAI_CONNECTOR_ID' || item.key === 'GPT_CONNECTOR_ID');
+        if (openaiCurrent?.value) setSelectedOpenAIConnectorId(String(openaiCurrent.value));
+        const geminiCurrent = keys.find((item) => item.key === 'GEMINI_CONNECTOR_ID');
+        if (geminiCurrent?.value) setSelectedGeminiConnectorId(String(geminiCurrent.value));
     }, [keys]);
 
     // Get required keys based on enabled channels
@@ -605,6 +711,26 @@ export function KeysPanel({ embedded = false }) {
         await upsertKey('CLAUDE_CONNECTOR_ID', selectedConnectorId, 'Claude Connector ID', false);
     };
 
+    const handleUseSavedOpenAIConnector = async () => {
+        if (!selectedOpenAIConnectorId) return;
+        await upsertKey('OPENAI_CONNECTOR_ID', selectedOpenAIConnectorId, 'OpenAI Connector ID', false);
+    };
+
+    const handleUseSavedGeminiConnector = async () => {
+        if (!selectedGeminiConnectorId) return;
+        await upsertKey('GEMINI_CONNECTOR_ID', selectedGeminiConnectorId, 'Gemini Connector ID', false);
+    };
+
+    const handleUseManualGPTKey = () => {
+        setEditing({ key: 'GPT_API_KEY', value: '', label: 'GPT API Key', isSecret: true });
+        setIsNew(true);
+    };
+
+    const handleUseManualGeminiKey = () => {
+        setEditing({ key: 'GEMINI_API_KEY', value: '', label: 'Gemini API Key', isSecret: true });
+        setIsNew(true);
+    };
+
     const handleUseManualClaudeKey = () => {
         setEditing({ key: 'CLAUDE_API_KEY', value: '', label: 'Claude API Key', isSecret: true });
         setIsNew(true);
@@ -633,7 +759,7 @@ export function KeysPanel({ embedded = false }) {
                 <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
                     <div>
                         <div className="text-sm font-semibold text-white">Ключі воронки</div>
-                        <div className="text-xs text-gray-500">Env змінні для цього бота</div>
+                        <div className="text-xs text-gray-500">Ключі і конектори для цієї воронки</div>
                     </div>
                     <button
                         onClick={handleNew}

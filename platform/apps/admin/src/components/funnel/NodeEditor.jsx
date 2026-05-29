@@ -207,13 +207,13 @@ function ClaudeNodeEditor({ data, update }) {
                     onChange={e => update({ connectorId: e.target.value })}
                     className={selectCls}
                 >
-                    <option value="">{'— Env змінна ({{env.CLAUDE_CONNECTOR_ID}}) —'}</option>
+                    <option value="">{'— Виберіть збережений Claude-конектор —'}</option>
                     {savedConnectors.map(sc => (
                         <option key={sc.id} value={sc.id}>{sc.name}</option>
                     ))}
                 </select>
                 {!data.connectorId && (
-                    <div className="mt-1 text-[11px] text-gray-500">Якщо не обрано — буде використано <code className="text-gray-400">{'{{env.CLAUDE_CONNECTOR_ID}}'}</code></div>
+                    <div className="mt-1 text-[11px] text-gray-500">Рекомендовано зберегти Claude-конектор в ключах воронки як CLAUDE_CONNECTOR_ID для коректної роботи.</div>
                 )}
             </Field>
             <Field label="Модель">

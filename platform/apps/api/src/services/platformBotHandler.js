@@ -108,6 +108,63 @@ async function getBotToken(botId) {
 }
 
 /**
+ * Extract incoming media (photo / video / document / animation) from a Telegram
+ * message and resolve a downloadable URL. Returns null if no media present.
+ * Result: { type, fileId, fileUrl, fileName, mimeType, caption }
+ */
+async function extractIncomingMedia(message, token) {
+    if (!message) return null;
+    let type = null;
+    let fileId = null;
+    let fileName = null;
+    let mimeType = null;
+
+    if (Array.isArray(message.photo) && message.photo.length) {
+        // largest size is last
+        const largest = message.photo[message.photo.length - 1];
+        type = 'photo';
+        fileId = largest?.file_id;
+    } else if (message.video) {
+        type = 'video';
+        fileId = message.video.file_id;
+        mimeType = message.video.mime_type || null;
+    } else if (message.animation) {
+        type = 'animation';
+        fileId = message.animation.file_id;
+        mimeType = message.animation.mime_type || null;
+    } else if (message.document) {
+        const mt = message.document.mime_type || '';
+        type = mt.startsWith('video') ? 'video' : (mt.startsWith('image') ? 'photo' : 'document');
+        fileId = message.document.file_id;
+        fileName = message.document.file_name || null;
+        mimeType = mt || null;
+    }
+
+    if (!fileId) return null;
+
+    let fileUrl = null;
+    try {
+        const res = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`);
+        const data = await res.json();
+        const filePath = data?.result?.file_path;
+        if (filePath) {
+            fileUrl = `https://api.telegram.org/file/bot${token}/${filePath}`;
+        }
+    } catch (err) {
+        logger.warn('[platformBotHandler] getFile failed for incoming media', { error: err.message });
+    }
+
+    return {
+        type,
+        fileId,
+        fileUrl,
+        fileName,
+        mimeType,
+        caption: message.caption || '',
+    };
+}
+
+/**
  * Fetch and store Telegram profile photo for a user (fire-and-forget, non-blocking).
  */
 async function fetchAndStoreProfilePhoto(userId, telegramId, token) {
@@ -528,14 +585,15 @@ async function handlePlatformBotUpdate(botId, update) {
 
     const chatId = message.chat?.id;
     const from = message.from;
-    const text = message.text || '';
+    // Use text, or fall back to media caption so "ось фото, додай завтра" works
+    const text = message.text || message.caption || '';
 
     if (!from || !chatId) {
         logger.debug('[platformBotHandler] Missing from/chatId, skipping', { botId });
         return;
     }
 
-    const isStart = text.startsWith('/start');
+    const isStart = (message.text || '').startsWith('/start');
     const startPayload = isStart ? text.slice('/start'.length).trim() : '';
 
     // ── Phase 1: token (use webhook bot — same connector for all bots in project) ──
@@ -640,13 +698,22 @@ async function handlePlatformBotUpdate(botId, update) {
         });
     }
 
-    // ── Phase 4.5: persist telegramChatId in session context ─────────────────
-    // Content-manager bot uses this for deliverTo (sends generated content back here)
-    if (chatId && session?.context?.telegramChatId !== chatId) {
-        await db.session.update({
+    // ── Phase 4.5: persist telegramChatId + incoming media in session context ──
+    // Content-manager bot uses telegramChatId for deliverTo (sends generated content back here)
+    // and lastUserMedia to let the agent reuse a sent photo/video as a background.
+    const incomingMedia = await extractIncomingMedia(message, token).catch(() => null);
+    if (chatId && (session?.context?.telegramChatId !== chatId || incomingMedia)) {
+        const nextCtx = { ...(session.context || {}), telegramChatId: chatId };
+        if (incomingMedia) {
+            nextCtx.lastUserMedia = incomingMedia;
+            logger.info('[platformBotHandler] Captured incoming media', {
+                sessionId: session.id, type: incomingMedia.type, hasUrl: !!incomingMedia.fileUrl,
+            });
+        }
+        session = await db.session.update({
             where: { id: session.id },
-            data: { context: { ...(session.context || {}), telegramChatId: chatId } },
-        }).catch(() => {});
+            data: { context: nextCtx },
+        }).catch(() => session);
     }
 
     // ── Phase 5: execute flow step ────────────────────────────────────────────

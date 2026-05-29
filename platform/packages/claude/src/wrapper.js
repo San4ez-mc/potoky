@@ -89,19 +89,20 @@ async function resolveFunnelClaudeKey(sessionId) {
 
     const keyMap = keys.reduce((acc, item) => { acc[item.key] = item.value; return acc; }, {});
 
-    const direct = normalizeApiKey(keyMap.CLAUDE_API_KEY) || normalizeApiKey(keyMap.ANTHROPIC_API_KEY);
-    if (direct) return direct;
-
     const connectorId = normalizeApiKey(keyMap.CLAUDE_CONNECTOR_ID);
-    if (!connectorId) return '';
+    if (connectorId) {
+        const connector = await db.savedConnector.findUnique({
+            where: { id: connectorId },
+            select: { id: true, type: true, isActive: true, config: true },
+        });
+        if (connector?.isActive) {
+            const connectorKey = extractApiKeyFromConnector(connector);
+            if (connectorKey) return connectorKey;
+        }
+    }
 
-    const connector = await db.savedConnector.findUnique({
-        where: { id: connectorId },
-        select: { id: true, type: true, isActive: true, config: true },
-    });
-    if (!connector || !connector.isActive) return '';
-
-    return extractApiKeyFromConnector(connector);
+    const direct = normalizeApiKey(keyMap.CLAUDE_API_KEY) || normalizeApiKey(keyMap.ANTHROPIC_API_KEY);
+    return direct;
 }
 
 /**
@@ -131,7 +132,7 @@ async function resolveFallbackKeys(sessionId) {
         funnelKeys = await db.funnelKey.findMany({
             where: {
                 botId,
-                key: { in: ['OPENAI_API_KEY', 'GPT_API_KEY', 'GEMINI_API_KEY', 'OPENAI_CONNECTOR_ID', 'GEMINI_CONNECTOR_ID'] },
+                key: { in: ['OPENAI_API_KEY', 'GPT_API_KEY', 'GEMINI_API_KEY', 'OPENAI_CONNECTOR_ID', 'GPT_CONNECTOR_ID', 'GEMINI_CONNECTOR_ID'] },
             },
             select: { key: true, value: true },
         });
@@ -139,36 +140,46 @@ async function resolveFallbackKeys(sessionId) {
 
     const km = funnelKeys.reduce((acc, k) => { acc[k.key] = k.value; return acc; }, {});
 
-    const directOpenAI = normalizeApiKey(km.OPENAI_API_KEY) || normalizeApiKey(km.GPT_API_KEY);
-    if (directOpenAI) result.openai = directOpenAI;
-
-    const directGemini = normalizeApiKey(km.GEMINI_API_KEY);
-    if (directGemini) result.gemini = directGemini;
-
-    // Resolve connector references
-    const openaiConnectorId = normalizeApiKey(km.OPENAI_CONNECTOR_ID);
-    if (openaiConnectorId && !result.openai) {
+    // Prefer saved connector references first, then direct funnel key values.
+    const openaiConnectorId = normalizeApiKey(km.OPENAI_CONNECTOR_ID) || normalizeApiKey(km.GPT_CONNECTOR_ID);
+    if (openaiConnectorId) {
         try {
             const c = await db.savedConnector.findUnique({
                 where: { id: openaiConnectorId },
                 select: { config: true, isActive: true },
             });
-            if (c?.isActive) result.openai = extractApiKeyFromConnector(c);
+            if (c?.isActive) {
+                const key = extractApiKeyFromConnector(c);
+                if (key) result.openai = key;
+            }
         } catch { /* ignore */ }
     }
 
+    if (!result.openai) {
+        const directOpenAI = normalizeApiKey(km.OPENAI_API_KEY) || normalizeApiKey(km.GPT_API_KEY);
+        if (directOpenAI) result.openai = directOpenAI;
+    }
+
     const geminiConnectorId = normalizeApiKey(km.GEMINI_CONNECTOR_ID);
-    if (geminiConnectorId && !result.gemini) {
+    if (geminiConnectorId) {
         try {
             const c = await db.savedConnector.findUnique({
                 where: { id: geminiConnectorId },
                 select: { config: true, isActive: true },
             });
-            if (c?.isActive) result.gemini = extractApiKeyFromConnector(c);
+            if (c?.isActive) {
+                const key = extractApiKeyFromConnector(c);
+                if (key) result.gemini = key;
+            }
         } catch { /* ignore */ }
     }
 
-    // Global fallback — look up any active saved connector instance by type
+    if (!result.gemini) {
+        const directGemini = normalizeApiKey(km.GEMINI_API_KEY);
+        if (directGemini) result.gemini = directGemini;
+    }
+
+    // Global fallback to any active saved connector instance by type.
     if (!result.openai) {
         try {
             const c = await db.savedConnector.findFirst({

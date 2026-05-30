@@ -906,7 +906,11 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null }) {
             if (fileType === 'content_plan' && outputVar && scope.env.CONTENT_PLAN_URL && scope.env.CONTENT_PROJECT_ID) {
                 const planStart = Date.now();
                 try {
-                    const url = `${scope.env.CONTENT_PLAN_URL}?token=${encodeURIComponent(scope.env.CONTENT_IMPORT_TOKEN || '')}&projectId=${parseInt(scope.env.CONTENT_PROJECT_ID, 10) || 0}`;
+                    // Вікно дат, щоб не тягнути всю історію проєкту (інакше промпт роздувається на десятки тис. токенів)
+                    const _d = new Date();
+                    const _from = new Date(_d.getTime() - 7 * 864e5).toISOString().slice(0, 10);
+                    const _to = new Date(_d.getTime() + 90 * 864e5).toISOString().slice(0, 10);
+                    const url = `${scope.env.CONTENT_PLAN_URL}?token=${encodeURIComponent(scope.env.CONTENT_IMPORT_TOKEN || '')}&projectId=${parseInt(scope.env.CONTENT_PROJECT_ID, 10) || 0}&date_from=${_from}&date_to=${_to}`;
                     const res = await fetch(url);
                     const j = await res.json().catch(() => null);
                     await logFlowApiCall({

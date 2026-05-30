@@ -902,6 +902,35 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null }) {
             const outputVar = data.outputVar ? String(data.outputVar).replace(/^context\./, '') : '';
             const onMissing = data.onMissing || 'skip';
 
+            // ── content_plan: читаємо АКТУАЛЬНИЙ план з дашборда (те саме джерело, що й запис) ──
+            if (fileType === 'content_plan' && outputVar && scope.env.CONTENT_PLAN_URL && scope.env.CONTENT_PROJECT_ID) {
+                const planStart = Date.now();
+                try {
+                    const url = `${scope.env.CONTENT_PLAN_URL}?token=${encodeURIComponent(scope.env.CONTENT_IMPORT_TOKEN || '')}&projectId=${parseInt(scope.env.CONTENT_PROJECT_ID, 10) || 0}`;
+                    const res = await fetch(url);
+                    const j = await res.json().catch(() => null);
+                    await logFlowApiCall({
+                        sessionId: session.id, service: 'content.fineko.space', method: 'GET /get-content-plan',
+                        requestData: { projectId: scope.env.CONTENT_PROJECT_ID },
+                        responseData: { count: j?.posts?.length ?? 0 },
+                        statusCode: res.status, durationMs: Date.now() - planStart,
+                        error: res.ok ? null : `HTTP ${res.status}`,
+                    });
+                    if (j && j.ok && Array.isArray(j.posts)) {
+                        setByPath(ctx, outputVar, { posts: j.posts });
+                        runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
+                        continue;
+                    }
+                } catch (err) {
+                    await logFlowError({
+                        sessionId: session.id, botId: session.botId, errorType: 'content_plan_load',
+                        message: `Завантаження плану з дашборда впало: ${err.message}`, stack: err.stack,
+                        context: { nodeId: node.id },
+                    });
+                    // падіння — підемо на платформне сховище нижче
+                }
+            }
+
             if (fileType && outputVar) {
                 const file = await db.file.findFirst({
                     where: { userId: session.userId, fileType },

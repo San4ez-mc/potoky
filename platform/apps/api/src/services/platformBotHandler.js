@@ -806,6 +806,31 @@ async function handlePlatformBotUpdate(botId, update) {
             where: { id: session.id },
             data: { context: nextCtx },
         }).catch(() => session);
+
+        // Push photo/video to content dashboard situational media library (fire-and-forget)
+        if (incomingMedia && ['photo', 'video', 'animation'].includes(incomingMedia.type) && incomingMedia.fileUrl) {
+            const mediaKeys = await db.funnelKey.findMany({
+                where: { botId: targetBotId, key: { in: ['SITUATIONAL_MEDIA_URL', 'CONTENT_IMPORT_TOKEN', 'CONTENT_PROJECT_ID'] } },
+                select: { key: true, value: true },
+            }).catch(() => []);
+            const mk = Object.fromEntries(mediaKeys.map(k => [k.key, k.value]));
+            if (mk.SITUATIONAL_MEDIA_URL && mk.CONTENT_IMPORT_TOKEN) {
+                const projectId = parseInt(mk.CONTENT_PROJECT_ID || '0', 10) || 0;
+                fetch(mk.SITUATIONAL_MEDIA_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Import-Token': mk.CONTENT_IMPORT_TOKEN },
+                    body: JSON.stringify({
+                        projectId,
+                        type: incomingMedia.type,
+                        fileUrl: incomingMedia.fileUrl,
+                        caption: incomingMedia.caption || '',
+                        mimeType: incomingMedia.mimeType || '',
+                    }),
+                }).then(r => r.json()).then(d => {
+                    if (!d.ok) logger.warn('[platformBotHandler] Situational media save failed', d);
+                }).catch(err => logger.warn('[platformBotHandler] Situational media upload error', { error: err.message }));
+            }
+        }
     }
 
     // ── Phase 5: execute flow step ────────────────────────────────────────────

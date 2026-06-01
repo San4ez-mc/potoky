@@ -365,7 +365,7 @@ router.get('/:botId/nodes/:nodeId/stats',
         const sessionsPassedThrough = await db.session.count({
             where: {
                 botId,
-                createdAt: { gte: timeFrom },
+                startedAt: { gte: timeFrom },
             },
         });
 

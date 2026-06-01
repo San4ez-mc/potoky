@@ -366,24 +366,45 @@ async function callClaude({ sessionId, systemPrompt, messages, options = {} }) {
     let claudeError = null;
 
     try {
-        const response = await Promise.race([
-            client.messages.create(requestBody),
-            new Promise((_, reject) =>
-                setTimeout(() => reject(new ClaudeError(`Claude timeout after ${TIMEOUT_MS}ms`)), TIMEOUT_MS)
-            ),
-        ]);
+        // Streaming mode: TIMEOUT_MS = first-chunk timeout; full response has no hard cap.
+        await new Promise((resolve, reject) => {
+            let firstChunkReceived = false;
+            let firstChunkTimer = setTimeout(
+                () => reject(new ClaudeError(`Claude timeout after ${TIMEOUT_MS}ms (no first chunk)`)),
+                TIMEOUT_MS
+            );
 
-        responseText = response.content
-            .filter(block => block.type === 'text')
-            .map(block => block.text)
-            .join('');
+            const stream = client.messages.stream(requestBody);
 
-        options._usage = {
-            inputTokens: response.usage?.input_tokens || 0,
-            outputTokens: response.usage?.output_tokens || 0,
-            cacheReadTokens: response.usage?.cache_read_input_tokens || 0,
-            cacheWriteTokens: response.usage?.cache_creation_input_tokens || 0,
-        };
+            stream.on('text', (text) => {
+                if (!firstChunkReceived) {
+                    firstChunkReceived = true;
+                    clearTimeout(firstChunkTimer);
+                }
+                responseText += text;
+            });
+
+            stream.on('error', (err) => {
+                clearTimeout(firstChunkTimer);
+                reject(err);
+            });
+
+            stream.on('finalMessage', (msg) => {
+                clearTimeout(firstChunkTimer);
+                options._usage = {
+                    inputTokens: msg.usage?.input_tokens || 0,
+                    outputTokens: msg.usage?.output_tokens || 0,
+                    cacheReadTokens: msg.usage?.cache_read_input_tokens || 0,
+                    cacheWriteTokens: msg.usage?.cache_creation_input_tokens || 0,
+                };
+                resolve();
+            });
+
+            stream.on('end', () => {
+                clearTimeout(firstChunkTimer);
+                resolve();
+            });
+        });
 
     } catch (error) {
         statusCode = error.status || 500;

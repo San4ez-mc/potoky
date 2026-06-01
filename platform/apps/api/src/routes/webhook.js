@@ -301,6 +301,7 @@ router.post('/bot/:slug',
                 }
 
                 const startNode = flow.nodes.find((n) => n.type === 'start') || flow.nodes[0];
+                const contextFromBody = (req.body && typeof req.body === 'object') ? req.body : {};
 
                 // Reuse or create a dedicated webhook system user
                 // telegramId is BigInt — use a reserved numeric ID (1 = system)
@@ -333,8 +334,6 @@ router.post('/bot/:slug',
                         },
                     });
                 }
-
-                const contextFromBody = (req.body && typeof req.body === 'object') ? req.body : {};
 
                 const session = await db.session.create({
                     data: {

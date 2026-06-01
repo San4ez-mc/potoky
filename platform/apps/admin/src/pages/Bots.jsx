@@ -146,12 +146,14 @@ export function Bots() {
     const [channelFilter, setChannelFilter] = useState(savedFilters?.channelFilter ?? 'all');
     const [botLabelFilter, setBotLabelFilter] = useState(savedFilters?.botLabelFilter ?? '');
     const [showSystemBots, setShowSystemBots] = useState(savedFilters?.showSystemBots ?? false);
+    const [showArchived, setShowArchived] = useState(savedFilters?.showArchived ?? false);
     const [loading, setLoading] = useState(true);
     const [createModalOpen, setCreateModalOpen] = useState(false);
     const [creating, setCreating] = useState(false);
     const [createError, setCreateError] = useState('');
     const [createForm, setCreateForm] = useState({ projectId: '', name: '', slug: '', description: '' });
     const [editInfoBot, setEditInfoBot] = useState(null);
+    const [archiveConfirm, setArchiveConfirm] = useState(null); // botId being confirmed
     const navigate = useNavigate();
     const searchRef = useRef(null);
 
@@ -171,10 +173,10 @@ export function Bots() {
     useEffect(() => {
         try {
             sessionStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify({
-                projectFilter, searchQuery, nameSort, dateSort, channelFilter, botLabelFilter, showSystemBots,
+                projectFilter, searchQuery, nameSort, dateSort, channelFilter, botLabelFilter, showSystemBots, showArchived,
             }));
         } catch { /* ignore */ }
-    }, [projectFilter, searchQuery, nameSort, dateSort, channelFilter, botLabelFilter, showSystemBots]);
+    }, [projectFilter, searchQuery, nameSort, dateSort, channelFilter, botLabelFilter, showSystemBots, showArchived]);
 
     const fetchData = () => {
         return api.getProjects()
@@ -220,6 +222,9 @@ export function Bots() {
         const labelQuery = botLabelFilter.trim().toLowerCase();
 
         let result = projectFilter === 'all' ? rows : rows.filter(r => r.projectId === projectFilter);
+
+        // Show/hide archived (isActive=false)
+        if (!showArchived) result = result.filter(r => r.isActive !== false);
 
         // Hide system bots by default
         if (!showSystemBots) result = result.filter(r => r.settings?.isSystem !== true);
@@ -305,6 +310,22 @@ export function Bots() {
 
     const handleEditInfoSaved = (updated) => {
         setRows(prev => prev.map(r => r.id === updated.id ? { ...r, name: updated.name, description: updated.description } : r));
+    };
+
+    const handleArchive = async (bot) => {
+        const isArchiving = bot.isActive !== false;
+        try {
+            if (isArchiving) {
+                await api.archiveBot(bot.id);
+            } else {
+                await api.unarchiveBot(bot.id);
+            }
+            setRows(prev => prev.map(r => r.id === bot.id ? { ...r, isActive: !isArchiving } : r));
+        } catch (e) {
+            alert('Помилка: ' + (e.message || 'невідома'));
+        } finally {
+            setArchiveConfirm(null);
+        }
     };
 
     if (loading) return (
@@ -403,6 +424,19 @@ export function Bots() {
                         Показати системні
                     </label>
                 </div>
+
+                {/* Archived checkbox */}
+                <div className="flex items-center self-end pb-2">
+                    <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer select-none hover:text-gray-200 transition-colors">
+                        <input
+                            type="checkbox"
+                            checked={showArchived}
+                            onChange={(e) => setShowArchived(e.target.checked)}
+                            className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-brand focus:ring-brand focus:ring-offset-gray-900"
+                        />
+                        Показати архівовані
+                    </label>
+                </div>
             </div>
 
             {/* Table */}
@@ -446,7 +480,7 @@ export function Bots() {
                             return (
                                 <tr
                                     key={bot.id}
-                                    className={`border-b border-gray-800/60 hover:bg-gray-800/20 transition-colors align-middle ${bot.settings?.isSystem ? 'opacity-60' : ''}`}
+                                    className={`border-b border-gray-800/60 hover:bg-gray-800/20 transition-colors align-middle ${bot.settings?.isSystem ? 'opacity-60' : ''} ${bot.isActive === false ? 'opacity-40' : ''}`}
                                 >
                                     {/* Name / slug — compact single line */}
                                     <td className="px-4 py-2.5" style={{ maxWidth: '260px' }}>
@@ -518,25 +552,58 @@ export function Bots() {
                                     {/* Actions */}
                                     <td className="px-4 py-3">
                                         <div className="flex justify-end gap-2 flex-wrap">
-                                            <button
-                                                onClick={() => setEditInfoBot(bot)}
-                                                title={bot.description ? bot.description : 'Переглянути / редагувати опис'}
-                                                className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs rounded-lg transition-colors"
-                                            >
-                                                ℹ Інфо
-                                            </button>
-                                            <button
-                                                onClick={() => navigate(`/funnel/${bot.id}`)}
-                                                className="px-3 py-1.5 bg-brand/20 hover:bg-brand/30 text-brand-light text-xs rounded-lg transition-colors"
-                                            >
-                                                Редагувати
-                                            </button>
-                                            <button
-                                                onClick={() => navigate(`/bots/${bot.id}/sessions`)}
-                                                className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs rounded-lg transition-colors"
-                                            >
-                                                Сесії
-                                            </button>
+                                            {bot.isActive === false ? (
+                                                <button
+                                                    onClick={() => handleArchive(bot)}
+                                                    className="px-3 py-1.5 bg-emerald-900/30 hover:bg-emerald-900/50 text-emerald-400 text-xs rounded-lg transition-colors border border-emerald-800/40"
+                                                >
+                                                    ↩ Відновити
+                                                </button>
+                                            ) : archiveConfirm === bot.id ? (
+                                                <>
+                                                    <button
+                                                        onClick={() => handleArchive(bot)}
+                                                        className="px-3 py-1.5 bg-orange-900/50 hover:bg-orange-900/70 text-orange-300 text-xs rounded-lg transition-colors border border-orange-800/50"
+                                                    >
+                                                        Підтвердити
+                                                    </button>
+                                                    <button
+                                                        onClick={() => setArchiveConfirm(null)}
+                                                        className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-400 text-xs rounded-lg transition-colors"
+                                                    >
+                                                        ✕
+                                                    </button>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <button
+                                                        onClick={() => setEditInfoBot(bot)}
+                                                        title={bot.description ? bot.description : 'Переглянути / редагувати опис'}
+                                                        className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs rounded-lg transition-colors"
+                                                    >
+                                                        ℹ Інфо
+                                                    </button>
+                                                    <button
+                                                        onClick={() => navigate(`/funnel/${bot.id}`)}
+                                                        className="px-3 py-1.5 bg-brand/20 hover:bg-brand/30 text-brand-light text-xs rounded-lg transition-colors"
+                                                    >
+                                                        Редагувати
+                                                    </button>
+                                                    <button
+                                                        onClick={() => navigate(`/bots/${bot.id}/sessions`)}
+                                                        className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs rounded-lg transition-colors"
+                                                    >
+                                                        Сесії
+                                                    </button>
+                                                    <button
+                                                        onClick={() => setArchiveConfirm(bot.id)}
+                                                        className="px-3 py-1.5 bg-gray-800 hover:bg-orange-900/30 text-gray-500 hover:text-orange-400 text-xs rounded-lg transition-colors"
+                                                        title="Архівувати воронку (вимкнути, сховати зі списку)"
+                                                    >
+                                                        📦
+                                                    </button>
+                                                </>
+                                            )}
                                         </div>
                                     </td>
                                 </tr>

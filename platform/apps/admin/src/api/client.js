@@ -57,6 +57,8 @@ export const api = {
         name, description,
         ...(projectId !== undefined && { projectId }),
     }),
+    archiveBot: (id) => req('PATCH', `/bots/${id}`, { isActive: false }),
+    unarchiveBot: (id) => req('PATCH', `/bots/${id}`, { isActive: true }),
     getAllBots: () => req('GET', '/projects/bots/all'),
     getBotSessions: (id, page = 0) => req('GET', `/bots/${id}/sessions?page=${page}`),
     createFunnel: (projectId, data) => req('POST', `/projects/${projectId}/bots`, data),

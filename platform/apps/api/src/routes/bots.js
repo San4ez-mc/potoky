@@ -35,6 +35,7 @@ router.patch('/:id',
             description: z.string().optional(),
             goal: z.string().optional(),
             projectId: z.string().uuid().nullable().optional(),
+            isActive: z.boolean().optional(),
         }),
     }),
     asyncHandler(async (req, res) => {
@@ -54,6 +55,7 @@ router.patch('/:id',
                 ...(req.body.description !== undefined && { description: req.body.description }),
                 ...(req.body.goal !== undefined && { goal: req.body.goal }),
                 ...(req.body.projectId !== undefined && { projectId: req.body.projectId }),
+                ...(req.body.isActive !== undefined && { isActive: req.body.isActive }),
             },
         });
         res.json({ ok: true, data: updated });

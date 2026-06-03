@@ -619,6 +619,16 @@ async function handleCallbackQuery(botId, callbackQuery) {
             text: '✏️ Напиши що потрібно виправити:',
         }).catch(() => {});
         return; // session stays waitingForUser — next message from user continues naturally
+
+    } else if (data.startsWith('cm_quick:')) {
+        const option = data.slice('cm_quick:'.length);
+        const quickMessages = {
+            instagram: 'Напиши великий продаючий пост для Instagram',
+            threads:   'Напиши пост для Threads',
+            plan:      'Створи контент-план на наступні 7 днів',
+            media:     'Запусти AI медіа — я скажу деталі',
+        };
+        userMessage = quickMessages[option] || option;
     }
 
     if (!userMessage) return;

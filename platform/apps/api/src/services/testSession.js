@@ -696,9 +696,12 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null }) {
             // for a new user message.
             const resumeAfterTool = ctx.__resumeAfterTool === true;
 
-            // Check if we need user input (not in finalization stage for user_confirms)
+            // Check if we need user input (not in finalization stage for user_confirms).
+            // Skip the check when the node provides its own messagesTemplate — that means
+            // it builds the user message from context variables and never needs live input.
             const inFinalizationStage = isUserConfirmExit && runtime.userConfirmationReceived;
-            if (!runtime.lastUserMessage && !inFinalizationStage && !resumeAfterTool) {
+            const selfContained = mode === 'single' && !!data.messagesTemplate;
+            if (!runtime.lastUserMessage && !inFinalizationStage && !resumeAfterTool && !selfContained) {
                 runtime.waitingForUser = true;
                 break;
             }

@@ -446,7 +446,7 @@ async function resolveTargetBot(botId, startPayload, userId) {
             where: {
                 userId,
                 isTest: false,
-                bot: { projectId, slug: { notIn: AUTOMATED_SLUGS } },
+                bot: { projectId, slug: { notIn: AUTOMATED_SLUGS }, isActive: true },
             },
             orderBy: { startedAt: 'desc' },
             select: { botId: true, bot: { select: { settings: true } } },
@@ -735,16 +735,23 @@ async function handlePlatformBotUpdate(botId, update) {
     }
 
     // ── Phase 3.5: archived bot guard ─────────────────────────────────────────
-    // Retired bots are silently rerouted to the webhook bot. Existing archived
-    // sessions are completed so they can never resume.
+    // A bot is "archived" if isActive=false (set via the UI Archive button) OR
+    // if its slug is in the hardcoded ARCHIVED_BOT_SLUGS list (legacy fallback).
+    // Archived bots are silently rerouted to the webhook bot (current active version).
     const resolvedBotRecord = await db.bot.findUnique({
         where: { id: targetBotId },
-        select: { id: true, slug: true },
+        select: { id: true, slug: true, isActive: true },
     }).catch(() => null);
 
-    if (resolvedBotRecord && ARCHIVED_BOT_SLUGS.includes(resolvedBotRecord.slug)) {
+    const isArchivedBot = resolvedBotRecord && (
+        resolvedBotRecord.isActive === false ||
+        ARCHIVED_BOT_SLUGS.includes(resolvedBotRecord.slug)
+    );
+
+    if (isArchivedBot) {
         logger.info('[platformBotHandler] Archived bot — rerouting to webhook bot', {
             archivedSlug: resolvedBotRecord.slug, archivedBotId: targetBotId, webhookBotId: botId,
+            reason: resolvedBotRecord.isActive === false ? 'isActive=false' : 'slug in ARCHIVED_BOT_SLUGS',
         });
         // Complete any lingering archived sessions for this user
         await db.session.updateMany({
@@ -806,10 +813,14 @@ async function handlePlatformBotUpdate(botId, update) {
                     where: {
                         userId: user.id,
                         state: { not: 'completed' },
-                        bot: { projectId: originBot.projectId, slug: { notIn: ARCHIVED_BOT_SLUGS } },
+                        bot: {
+                            projectId: originBot.projectId,
+                            slug: { notIn: ARCHIVED_BOT_SLUGS },
+                            isActive: true,
+                        },
                     },
                     orderBy: { lastActive: 'desc' },
-                    include: { bot: { select: { slug: true } } },
+                    include: { bot: { select: { slug: true, isActive: true } } },
                 });
                 if (session) targetBotId = session.botId;
             }

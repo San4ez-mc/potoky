@@ -437,7 +437,9 @@ async function resolveTargetBot(botId, startPayload, userId) {
         // Returning user: find last non-test, non-system session in same project.
         // Exclude automated/scheduler bots — they create background sessions and
         // should not become the "last interacted" target for returning users.
-        const AUTOMATED_SLUGS = ['content-scheduler'];
+        // Also exclude the legacy content-manager slug — users should be routed to
+        // content-manager-v2 (the webhook bot) instead of the old deprecated version.
+        const AUTOMATED_SLUGS = ['content-scheduler', 'content-manager'];
         const lastSession = await db.session.findFirst({
             where: {
                 userId,
@@ -717,6 +719,9 @@ async function handlePlatformBotUpdate(botId, update) {
         return;
     }
 
+    // Bots that are permanently retired — sessions never resume, routing skips them.
+    const ARCHIVED_BOT_SLUGS = ['content-manager'];
+
     // ── Phase 3: resolve target bot ────────────────────────────────────────────
     let targetBotId = botId;
     let lessonSlug = null;
@@ -725,6 +730,28 @@ async function handlePlatformBotUpdate(botId, update) {
         const resolved = await resolveTargetBot(botId, startPayload, user.id);
         targetBotId = resolved.targetBotId;
         lessonSlug = resolved.lessonSlug;
+    }
+
+    // ── Phase 3.5: archived bot guard ─────────────────────────────────────────
+    // Retired bots are silently rerouted to the webhook bot. Existing archived
+    // sessions are completed so they can never resume.
+    const resolvedBotRecord = await db.bot.findUnique({
+        where: { id: targetBotId },
+        select: { id: true, slug: true },
+    }).catch(() => null);
+
+    if (resolvedBotRecord && ARCHIVED_BOT_SLUGS.includes(resolvedBotRecord.slug)) {
+        logger.info('[platformBotHandler] Archived bot — rerouting to webhook bot', {
+            archivedSlug: resolvedBotRecord.slug, archivedBotId: targetBotId, webhookBotId: botId,
+        });
+        // Complete any lingering archived sessions for this user
+        await db.session.updateMany({
+            where: { userId: user.id, botId: targetBotId, state: { not: 'completed' } },
+            data: { state: 'completed' },
+        }).catch(() => {});
+        // Restart on the current webhook bot instead
+        targetBotId = botId;
+        lessonSlug = null;
     }
 
     // ── Phase 4: verify flow definition exists ─────────────────────────────────
@@ -769,19 +796,27 @@ async function handlePlatformBotUpdate(botId, update) {
         session = await findActiveSession(user.id, targetBotId);
 
         if (!session) {
-            // Also try across all bots in the same project (handles cross-bot continuation)
+            // Also try across all bots in the same project (handles cross-bot continuation),
+            // but skip archived bots — they must never resume.
             const originBot = await db.bot.findUnique({ where: { id: botId }, select: { projectId: true } });
             if (originBot?.projectId) {
                 session = await db.session.findFirst({
                     where: {
                         userId: user.id,
                         state: { not: 'completed' },
-                        bot: { projectId: originBot.projectId },
+                        bot: { projectId: originBot.projectId, slug: { notIn: ARCHIVED_BOT_SLUGS } },
                     },
                     orderBy: { lastActive: 'desc' },
+                    include: { bot: { select: { slug: true } } },
                 });
                 if (session) targetBotId = session.botId;
             }
+        }
+
+        // If found session belongs to an archived bot — complete it and prompt restart
+        if (session && ARCHIVED_BOT_SLUGS.includes(session.bot?.slug)) {
+            await db.session.update({ where: { id: session.id }, data: { state: 'completed' } }).catch(() => {});
+            session = null;
         }
 
         if (!session) {

@@ -434,12 +434,15 @@ async function resolveTargetBot(botId, startPayload, userId) {
 
     // ── Rules 3 & 4: plain /start (no payload) ────────────────────────────
     if (!startPayload && userId && projectId) {
-        // Returning user: find last non-test, non-system session in same project
+        // Returning user: find last non-test, non-system session in same project.
+        // Exclude automated/scheduler bots — they create background sessions and
+        // should not become the "last interacted" target for returning users.
+        const AUTOMATED_SLUGS = ['content-scheduler'];
         const lastSession = await db.session.findFirst({
             where: {
                 userId,
                 isTest: false,
-                bot: { projectId },
+                bot: { projectId, slug: { notIn: AUTOMATED_SLUGS } },
             },
             orderBy: { startedAt: 'desc' },
             select: { botId: true, bot: { select: { settings: true } } },

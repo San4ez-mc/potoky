@@ -642,6 +642,21 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null }) {
         select: { key: true, value: true },
     });
     const funnelEnv = Object.fromEntries(funnelKeyRows.map((k) => [k.key, k.value]));
+
+    // Auto-resolve TELEGRAM_BOT_TOKEN from TELEGRAM_CONNECTOR_ID when not set directly.
+    // Bots that store the token inside a savedConnector (e.g. CM2) need this so that
+    // {{env.TELEGRAM_BOT_TOKEN}} in httpRequest bodies resolves to the actual token
+    // (used by deliverTo mechanics for content funnels).
+    if (!funnelEnv.TELEGRAM_BOT_TOKEN && funnelEnv.TELEGRAM_CONNECTOR_ID) {
+        const tgConn = await db.savedConnector.findUnique({
+            where: { id: funnelEnv.TELEGRAM_CONNECTOR_ID },
+            select: { config: true },
+        }).catch(() => null);
+        if (tgConn?.config?.token) {
+            funnelEnv.TELEGRAM_BOT_TOKEN = tgConn.config.token;
+        }
+    }
+
     if (!runtime.currentNodeId) {
         runtime.currentNodeId = findStartNode(flow.nodes)?.id || null;
     }

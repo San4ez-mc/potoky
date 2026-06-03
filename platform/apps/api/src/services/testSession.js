@@ -240,6 +240,25 @@ function truncateHistory(messages, maxItems = 24) {
     return messages.slice(messages.length - maxItems);
 }
 
+// Replaces literal newlines/carriage-returns inside JSON string values with their
+// escape sequences. Claude sometimes outputs raw \n inside strings, making JSON.parse fail.
+function sanitizeJsonLiteralNewlines(text) {
+    let out = '';
+    let inStr = false;
+    let esc = false;
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (esc) { out += ch; esc = false; continue; }
+        if (ch === '\\') { out += ch; esc = true; continue; }
+        if (ch === '"') { inStr = !inStr; out += ch; continue; }
+        if (inStr && ch === '\n') { out += '\\n'; continue; }
+        if (inStr && ch === '\r') { out += '\\r'; continue; }
+        if (inStr && ch === '\t') { out += '\\t'; continue; }
+        out += ch;
+    }
+    return out;
+}
+
 function extractJsonSegment(text) {
     if (!text || typeof text !== 'string') return null;
 
@@ -266,11 +285,20 @@ function extractJsonSegment(text) {
 
     const fencedMatch = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
     if (fencedMatch && fencedMatch[1]) {
-        const parsedFenced = tryParse(fencedMatch[1].trim());
+        const fencedContent = fencedMatch[1].trim();
+        const parsedFenced = tryParse(fencedContent);
         if (parsedFenced !== null) {
             const start = fencedMatch.index || 0;
             const end = start + fencedMatch[0].length;
             return { parsed: parsedFenced, start, end };
+        }
+        // Fallback: sanitize literal newlines inside JSON strings (Claude sometimes
+        // emits raw \n instead of \\n inside string values, making JSON invalid).
+        const sanitized = sanitizeJsonLiteralNewlines(fencedContent);
+        const parsedSanitized = tryParse(sanitized);
+        if (parsedSanitized !== null) {
+            const start = fencedMatch.index || 0;
+            return { parsed: parsedSanitized, start, end: start + fencedMatch[0].length };
         }
     }
 

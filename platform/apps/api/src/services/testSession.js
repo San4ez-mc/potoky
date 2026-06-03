@@ -448,6 +448,53 @@ function findStartNode(nodes) {
     return nodes.find((node) => node.type === 'start') || nodes[0] || null;
 }
 
+// ─── Context compression for Claude prompts ───────────────────────────────────
+// Prevents 429 rate-limit errors by shrinking large context fields before they
+// are interpolated into system prompts or message templates.
+// Applied automatically to every claude node — original ctx is never mutated.
+function compressContextForPrompt(ctx) {
+    const c = { ...ctx };
+
+    // contentPlan: collapse posts array → one metadata line per post
+    if (c.contentPlan && Array.isArray(c.contentPlan.posts)) {
+        const lines = c.contentPlan.posts.map(p => {
+            const hook = String(p.content || '').replace(/\n/g, ' ').slice(0, 70);
+            return `${p.date}|${p.platform}|${p.audience || ''}|${hook}`;
+        });
+        c.contentPlan = `[${lines.length} постів у плані]\n${lines.join('\n')}`;
+    }
+
+    // Long text fields — cap at reasonable limits
+    const CAPS = {
+        nlm_overview:        3000,
+        p1_aggregated:       4000,
+        allRules:            2500,
+        p1_rules:            2500,
+        p1_avatars:          2000,
+        kbResponse:          2500,
+        structurePreviewText: 1500,
+        batchPreviewText:    1500,
+        completionText:       800,
+    };
+    for (const [key, limit] of Object.entries(CAPS)) {
+        if (typeof c[key] === 'string' && c[key].length > limit) {
+            c[key] = c[key].slice(0, limit) + '\n[…скорочено]';
+        }
+    }
+
+    // Strip large intermediate fields that are never needed in prompts
+    const STRIP = [
+        'generatedBatch', 'qualityResults', 'rewrittenPosts',
+        'importPayload', 'batchFinalForSave', 'batchFinal',
+        'p1_existing_raw', 'webhookBodyStart',
+    ];
+    for (const key of STRIP) {
+        if (key in c) delete c[key];
+    }
+
+    return c;
+}
+
 // ─── Knowledge Base smart search ──────────────────────────────────────────────
 // Keyword relevance scoring — no external deps, works fully offline.
 // Returns up to 3 most relevant blocks as formatted text, or all blocks if
@@ -656,7 +703,13 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null }) {
                 break;
             }
 
-            const systemPrompt = renderTemplate(data.systemPrompt || 'You are a helpful assistant.', scope);
+            // Build a compressed scope for prompt rendering — prevents 429 rate-limit
+            // errors caused by large context fields (contentPlan, nlm_overview, etc.).
+            // The live ctx is never modified; only the prompt interpolation sees the
+            // compressed version.
+            const claudeScope = { ...scope, context: compressContextForPrompt(ctx) };
+
+            const systemPrompt = renderTemplate(data.systemPrompt || 'You are a helpful assistant.', claudeScope);
             let messages;
 
             if (mode === 'dialog') {
@@ -670,17 +723,16 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null }) {
                         : (resumeAfterTool ? 'Використай результат з бази знань вище і продовж виконання мого попереднього запиту.' : ''));
                 // Consume the resume flag so we don't loop forever
                 if (resumeAfterTool) delete ctx.__resumeAfterTool;
-                // (scope.now з поточною датою доступний у renderTemplate для systemPrompt)
 
                 if (historyForNode.length > 0) {
                     messages = [...historyForNode, { role: 'user', content: userContent }];
                 } else if (data.messagesTemplate) {
-                    messages = parseClaudeMessages(data.messagesTemplate, scope, userContent);
+                    messages = parseClaudeMessages(data.messagesTemplate, claudeScope, userContent);
                 } else {
                     messages = [{ role: 'user', content: userContent }];
                 }
             } else {
-                messages = parseClaudeMessages(data.messagesTemplate, scope, runtime.lastUserMessage || '');
+                messages = parseClaudeMessages(data.messagesTemplate, claudeScope, runtime.lastUserMessage || '');
             }
 
             const claudeOptions = {};

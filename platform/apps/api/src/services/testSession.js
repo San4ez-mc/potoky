@@ -322,6 +322,13 @@ function extractJsonValue(text) {
     return extractJsonSegment(text)?.parsed ?? null;
 }
 
+// Like extractJsonValue but returns null (not the raw string) when no valid JSON found.
+// Used for single-mode json_output nodes so outputVar gets null on parse failure
+// rather than the raw text blob.
+function tryParseJsonStrict(text) {
+    return extractJsonSegment(text)?.parsed ?? null;
+}
+
 function containsMarkdown(text) {
     if (!text || typeof text !== 'string') return false;
     return /```/.test(text) || /^#{1,6}\s+/m.test(text);
@@ -854,11 +861,22 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null }) {
                 continue;
             }
 
-            await persistAssistantMessage(session.id, responseText, { nodeId: node.id, nodeType: node.type });
-            lastAssistant = responseText;
-
-            if (data.outputVar) {
-                setByPath(ctx, String(data.outputVar).replace(/^context\./, ''), responseText);
+            // For single-mode json_output nodes: don't show raw JSON to the user.
+            // The parsed value goes to outputVar; the message is persisted as hidden
+            // so it's in the DB for debugging but never delivered to Telegram.
+            const isSingleJsonExit = mode === 'single' && String(exitCondition).trim() === 'json_output';
+            if (isSingleJsonExit) {
+                await persistAssistantMessage(session.id, responseText, { nodeId: node.id, nodeType: node.type, hidden: true });
+                const singleParsed = tryParseJsonStrict(responseText);
+                if (data.outputVar) {
+                    setByPath(ctx, String(data.outputVar).replace(/^context\./, ''), singleParsed !== null ? singleParsed : responseText);
+                }
+            } else {
+                await persistAssistantMessage(session.id, responseText, { nodeId: node.id, nodeType: node.type });
+                lastAssistant = responseText;
+                if (data.outputVar) {
+                    setByPath(ctx, String(data.outputVar).replace(/^context\./, ''), responseText);
+                }
             }
 
             runtime.lastUserMessage = '';

@@ -355,10 +355,12 @@ async function getNewAssistantMessages(sessionId, since) {
     if (since) {
         where.createdAt = { gt: since };
     }
-    return db.message.findMany({
+    const msgs = await db.message.findMany({
         where,
         orderBy: { createdAt: 'asc' },
     });
+    // Filter out hidden messages (e.g. raw JSON from json_output Claude nodes)
+    return msgs.filter(m => !m.metadata?.hidden);
 }
 
 async function persistUserMessage(sessionId, content) {

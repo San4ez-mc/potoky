@@ -94,6 +94,7 @@ export const api = {
     getSessionApiCalls: (id) => req('GET', `/sessions/${id}/api-calls`),
     getSessionErrors: (id) => req('GET', `/sessions/${id}/errors`),
     sendSessionMessage: (id, payload) => req('POST', `/sessions/${id}/send`, payload),
+    updateSessionFlags: (id, flags) => req('PATCH', `/sessions/${id}/flags`, flags),
     restartSession: (id) => req('POST', `/sessions/${id}/restart`),
     deleteSession: (id) => req('DELETE', `/sessions/${id}`),
     deleteSessionMessage: (sessionId, msgId) => req('DELETE', `/sessions/${sessionId}/messages/${msgId}`),

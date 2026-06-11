@@ -275,15 +275,33 @@ router.post('/:id/send',
             },
         });
 
-        // Mark session as admin-engaged so future user messages trigger a notification
-        if (!session.context?.adminEngaged) {
-            await db.session.update({
-                where: { id: session.id },
-                data: { context: { ...(session.context || {}), adminEngaged: true } },
-            });
-        }
+        // Mark session as admin-engaged + auto-pause funnel so bot doesn't interrupt
+        const ctxUpdate = { ...(session.context || {}) };
+        if (!ctxUpdate.adminEngaged) ctxUpdate.adminEngaged = true;
+        if (!ctxUpdate.funnelPaused) ctxUpdate.funnelPaused = true;
+        await db.session.update({ where: { id: session.id }, data: { context: ctxUpdate } });
 
         res.json({ ok: true });
+    })
+);
+
+// PATCH /api/sessions/:id/flags — toggle adminEngaged / funnelPaused in session context
+router.patch('/:id/flags',
+    validateParams({
+        params: z.object({ id: z.string().uuid() }),
+        body: z.object({
+            adminEngaged: z.boolean().optional(),
+            funnelPaused: z.boolean().optional(),
+        }),
+    }),
+    asyncHandler(async (req, res) => {
+        const session = await db.session.findUnique({ where: { id: req.params.id } });
+        if (!session) throw new NotFoundError('Session', req.params.id);
+        const ctx = { ...(session.context || {}) };
+        if (req.body.adminEngaged !== undefined) ctx.adminEngaged = req.body.adminEngaged;
+        if (req.body.funnelPaused !== undefined) ctx.funnelPaused = req.body.funnelPaused;
+        const updated = await db.session.update({ where: { id: session.id }, data: { context: ctx } });
+        res.json({ ok: true, data: { context: updated.context } });
     })
 );
 

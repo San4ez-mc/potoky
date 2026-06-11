@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams, Link } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { format } from 'date-fns';
 import mermaid from 'mermaid';
@@ -192,9 +192,30 @@ function MessageContent({ content, metadata }) {
     );
 }
 
+// ─── User avatar ────────────────────────────────────────────────────────────
+
+function UserAvatar({ user, photoUrl, size = 'sm' }) {
+    const [imgError, setImgError] = useState(false);
+    const initials = [user?.firstName, user?.lastName].filter(Boolean).map(s => s[0]).join('').toUpperCase()
+        || (user?.username ? user.username[0].toUpperCase() : '?');
+    const dim = size === 'sm' ? 'w-7 h-7 text-[10px]' : 'w-9 h-9 text-xs';
+
+    if (photoUrl && !imgError) {
+        return (
+            <img src={photoUrl} onError={() => setImgError(true)} alt={initials}
+                className={`${dim} rounded-full shrink-0 object-cover border border-gray-700`} />
+        );
+    }
+    return (
+        <div className={`${dim} rounded-full shrink-0 bg-gradient-to-br from-brand/60 to-brand-light/60 flex items-center justify-center font-semibold text-white border border-brand/30`}>
+            {initials}
+        </div>
+    );
+}
+
 // ─── Chat bubble ────────────────────────────────────────────────────────────
 
-function ChatBubble({ msg, highlighted, refProp, onDelete }) {
+function ChatBubble({ msg, highlighted, refProp, onDelete, user, userPhotoUrl }) {
     const isUser = msg.role === 'user';
     const isSystem = msg.role === 'system';
     const canDelete = !isUser && !isSystem;
@@ -215,7 +236,13 @@ function ChatBubble({ msg, highlighted, refProp, onDelete }) {
                     🗑
                 </button>
             )}
-            <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm transition-colors ${highlighted ? 'ring-1 ring-brand/50' : ''} ${isUser ? 'bg-brand text-white' : isSystem ? 'bg-gray-800/50 text-gray-400 border border-gray-700' : 'bg-gray-800 text-gray-100'}`}>
+            {/* User avatar (left side for user messages) */}
+            {isUser && (
+                <div className="self-end mb-1 mr-2 order-first">
+                    <UserAvatar user={user} photoUrl={userPhotoUrl} />
+                </div>
+            )}
+            <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm transition-colors ${highlighted ? 'ring-1 ring-brand/50' : ''} ${isUser ? 'bg-brand text-white' : isSystem ? 'bg-gray-800/50 text-gray-400 border border-gray-700' : 'bg-gray-800 text-gray-100'}`}>
                 {isSystem && <div className="text-xs text-gray-500 mb-1 font-mono">system</div>}
                 <MessageContent content={msg.content} metadata={msg.metadata} />
                 <div className={`text-[10px] mt-1.5 flex items-center gap-1 ${isUser ? 'text-brand-light/70' : 'text-gray-500'}`}>
@@ -332,6 +359,8 @@ export function SessionDetail() {
     const [restarting, setRestarting] = useState(false);
     const [highlightedMsgId, setHighlightedMsgId] = useState(null);
     const [deletingMsgId, setDeletingMsgId] = useState(null);
+    const [adminEngaged, setAdminEngaged] = useState(false);
+    const [funnelPaused, setFunnelPaused] = useState(false);
 
     // Refs for scrolling to highlighted message
     const msgRefs = useRef({});
@@ -352,8 +381,29 @@ export function SessionDetail() {
                     .then(f => setFunnel(f.data || f))
                     .catch(() => {});
             }
+        }).then(([s]) => {
+            const sess = s.data || s;
+            setAdminEngaged(Boolean(sess?.context?.adminEngaged));
+            setFunnelPaused(Boolean(sess?.context?.funnelPaused));
         }).finally(() => setLoading(false));
     }, [id]);
+
+    const toggleFlag = async (flag, value) => {
+        if (flag === 'adminEngaged') setAdminEngaged(value);
+        else if (flag === 'funnelPaused') setFunnelPaused(value);
+        try {
+            const res = await api.updateSessionFlags(id, { [flag]: value });
+            const ctx = res?.context ?? res?.data?.context;
+            if (ctx) {
+                setAdminEngaged(Boolean(ctx.adminEngaged));
+                setFunnelPaused(Boolean(ctx.funnelPaused));
+            }
+        } catch (err) {
+            // revert on error
+            if (flag === 'adminEngaged') setAdminEngaged(!value);
+            else if (flag === 'funnelPaused') setFunnelPaused(!value);
+        }
+    };
 
     // Auto-poll for new messages when session is active
     useEffect(() => {
@@ -457,10 +507,17 @@ export function SessionDetail() {
         <div className="flex flex-col h-[calc(100vh-3rem)]">
             {/* Header */}
             <div className="px-6 py-3 border-b border-gray-800 bg-gray-900 shrink-0">
-                <div className="flex items-center gap-4">
-                    <div>
-                        <div className="flex items-center gap-2">
-                            <span className="text-sm font-semibold text-white">{userName}</span>
+                <div className="flex items-center gap-4 flex-wrap">
+                    <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                            {session.user?.id ? (
+                                <Link to={`/users/${session.user.id}?back=${encodeURIComponent(window.location.pathname + window.location.search)}`}
+                                    className="text-sm font-semibold text-white hover:text-brand-light transition-colors">
+                                    {userName}
+                                </Link>
+                            ) : (
+                                <span className="text-sm font-semibold text-white">{userName}</span>
+                            )}
                             {session.bot && <span className="text-xs text-gray-500 font-mono">/{session.bot.slug}</span>}
                             <span className={`text-xs px-2 py-0.5 rounded-full border ${session.isActive ? 'text-emerald-400 bg-emerald-900/30 border-emerald-800' : 'text-gray-500 bg-gray-900 border-gray-700'}`}>
                                 {session.isActive ? 'активна' : 'завершена'}
@@ -473,7 +530,25 @@ export function SessionDetail() {
                             {id.slice(0, 8)}… · стан: <span className="font-mono">{session.state}</span> · {messages.length} повідомлень
                         </div>
                     </div>
-                    <div className="flex gap-2 ml-auto items-center">
+                    <div className="flex gap-2 ml-auto items-center flex-wrap">
+                        {/* Funnel paused toggle */}
+                        <button
+                            onClick={() => toggleFlag('funnelPaused', !funnelPaused)}
+                            title={funnelPaused ? 'Воронка призупинена — бот не відповідає. Натисни щоб відновити' : 'Призупинити воронку — бот не відповідатиме'}
+                            className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors ${funnelPaused ? 'border-orange-700 text-orange-300 bg-orange-900/20' : 'border-gray-700 text-gray-400 hover:bg-gray-800'}`}
+                        >
+                            <span>{funnelPaused ? '⏸' : '▶'}</span>
+                            <span>{funnelPaused ? 'Пауза (бот мовчить)' : 'Воронка активна'}</span>
+                        </button>
+                        {/* Admin notifications toggle */}
+                        <button
+                            onClick={() => toggleFlag('adminEngaged', !adminEngaged)}
+                            title={adminEngaged ? 'Сповіщення про нові повідомлення увімкнені. Натисни щоб вимкнути' : 'Увімкнути сповіщення про нові повідомлення'}
+                            className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors ${adminEngaged ? 'border-brand/60 text-brand-light bg-brand/10' : 'border-gray-700 text-gray-400 hover:bg-gray-800'}`}
+                        >
+                            <span>{adminEngaged ? '🔔' : '🔕'}</span>
+                            <span>{adminEngaged ? 'Сповіщення' : 'Без сповіщень'}</span>
+                        </button>
                         <button
                             onClick={restartChat}
                             disabled={restarting}
@@ -505,6 +580,8 @@ export function SessionDetail() {
                                     highlighted={highlightedMsgId === m.id}
                                     refProp={el => { if (el) msgRefs.current[m.id] = el; else delete msgRefs.current[m.id]; }}
                                     onDelete={handleDeleteMessage}
+                                    user={session.user}
+                                    userPhotoUrl={session.context?.tg_photo_url || null}
                                 />
                             ))}
                             {messages.length === 0 && (

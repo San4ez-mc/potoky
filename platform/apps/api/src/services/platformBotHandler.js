@@ -911,6 +911,12 @@ async function handlePlatformBotUpdate(botId, update) {
         }
     }
 
+    // ── Phase 4.9: skip flow if admin paused the funnel ──────────────────────
+    if (session.context?.funnelPaused) {
+        logger.info('[platformBotHandler] Funnel paused — skipping flow execution', { sessionId: session.id });
+        return;
+    }
+
     // ── Phase 5: execute flow step ────────────────────────────────────────────
     sinceTime = new Date();
     await tgRequest(token, 'sendChatAction', { chat_id: chatId, action: 'typing' }).catch(() => {});

@@ -280,7 +280,7 @@ function ChatBubble({ msg, highlighted, refProp, onDelete, onEdit, user, userPho
                             autoFocus
                             value={editDraft}
                             onChange={e => setEditDraft(e.target.value)}
-                            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveEdit(); } if (e.key === 'Escape') cancelEdit(); }}
+                            onKeyDown={e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); saveEdit(); } if (e.key === 'Escape') cancelEdit(); }}
                             className="w-full bg-black/20 border border-white/20 rounded px-2 py-1 text-sm resize-none outline-none min-h-[60px]"
                             rows={3}
                         />
@@ -628,10 +628,14 @@ export function SessionDetail() {
                     <div className="w-px h-4 bg-gray-700 mx-1" />
 
                     {/* Tabs */}
-                    {['chat', 'api', 'context'].map(t => (
-                        <button key={t} onClick={() => setTab(t)}
-                            className={`text-xs px-2.5 py-1 rounded transition-colors ${tab === t ? 'bg-brand/20 text-brand-light' : 'text-gray-500 hover:text-white hover:bg-gray-800'}`}>
-                            {t === 'chat' ? `💬 ${messages.length}` : t === 'api' ? `📡 ${apiCalls.length}` : '⚙️'}
+                    {[
+                        { key: 'chat',    label: `💬 ${messages.length}`, title: 'Чат — повідомлення сесії' },
+                        { key: 'api',     label: `📡 ${apiCalls.length}`, title: 'API виклики — HTTP запити воронки' },
+                        { key: 'context', label: '⚙️',                   title: 'Контекст — поточні змінні сесії' },
+                    ].map(t => (
+                        <button key={t.key} onClick={() => setTab(t.key)} title={t.title}
+                            className={`text-xs px-2.5 py-1 rounded transition-colors ${tab === t.key ? 'bg-brand/20 text-brand-light' : 'text-gray-500 hover:text-white hover:bg-gray-800'}`}>
+                            {t.label}
                         </button>
                     ))}
                 </div>
@@ -697,23 +701,26 @@ export function SessionDetail() {
                         {sendError && (
                             <div className="text-xs text-red-300 bg-red-900/20 border border-red-900/40 rounded px-2 py-1.5">{sendError}</div>
                         )}
-                        <div className="flex items-center gap-2">
-                            <input type="text" value={draft} onChange={e => setDraft(e.target.value)}
-                                onKeyDown={e => e.key === 'Enter' && !e.shiftKey && sendManualMessage()}
-                                placeholder="Написати повідомлення..."
-                                className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white" />
-                            <label title="Прикріпити фото" className="w-9 h-9 flex items-center justify-center rounded border border-gray-600 text-gray-300 hover:bg-gray-800 cursor-pointer text-base">
-                                📷
-                                <input type="file" accept="image/*" className="hidden" onChange={e => { setPhotoFile(e.target.files?.[0] || null); setDocFile(null); }} />
-                            </label>
-                            <label title="Прикріпити документ (PDF, Word, тощо)" className="w-9 h-9 flex items-center justify-center rounded border border-gray-600 text-gray-300 hover:bg-gray-800 cursor-pointer text-base">
-                                📎
-                                <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,.zip,.rar,application/*,text/plain" className="hidden" onChange={e => { setDocFile(e.target.files?.[0] || null); setPhotoFile(null); }} />
-                            </label>
-                            <button onClick={sendManualMessage} disabled={sending}
-                                className="px-4 py-2 text-sm rounded bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white">
-                                {sending ? '...' : 'Надіслати'}
-                            </button>
+                        <div className="flex gap-2">
+                            <textarea value={draft} onChange={e => setDraft(e.target.value)}
+                                onKeyDown={e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); sendManualMessage(); } }}
+                                placeholder="Написати повідомлення... (Ctrl+Enter щоб надіслати)"
+                                rows={3}
+                                className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white resize-none" />
+                            <div className="flex flex-col gap-1.5">
+                                <label title="Прикріпити фото" className="w-9 h-9 flex items-center justify-center rounded border border-gray-600 text-gray-300 hover:bg-gray-800 cursor-pointer text-base">
+                                    📷
+                                    <input type="file" accept="image/*" className="hidden" onChange={e => { setPhotoFile(e.target.files?.[0] || null); setDocFile(null); }} />
+                                </label>
+                                <label title="Прикріпити документ (PDF, Word, тощо)" className="w-9 h-9 flex items-center justify-center rounded border border-gray-600 text-gray-300 hover:bg-gray-800 cursor-pointer text-base">
+                                    📎
+                                    <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,.zip,.rar,application/*,text/plain" className="hidden" onChange={e => { setDocFile(e.target.files?.[0] || null); setPhotoFile(null); }} />
+                                </label>
+                                <button onClick={sendManualMessage} disabled={sending} title="Надіслати повідомлення (Ctrl+Enter)"
+                                    className="flex-1 px-3 py-1.5 text-sm rounded bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white">
+                                    {sending ? '⏳' : '↑'}
+                                </button>
+                            </div>
                         </div>
                         {(photoFile || docFile) && (
                             <div className="text-xs text-gray-400 flex items-center justify-between bg-gray-800/60 rounded px-2 py-1">

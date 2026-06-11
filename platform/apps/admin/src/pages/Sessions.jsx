@@ -22,11 +22,11 @@ export function Sessions() {
         const params = new URLSearchParams();
         params.set('page', String(page));
         if (errorsOnly) params.set('hasErrors', 'true');
-        if (testOnly) params.set('isTest', 'true');
+        if (sessionType !== 'all') params.set('sessionType', sessionType);
         return botId
             ? `/bots/${botId}/sessions?${params.toString()}`
             : `/sessions?${params.toString()}`;
-    }, [botId, page, errorsOnly, testOnly]);
+    }, [botId, page, errorsOnly, sessionType]);
 
     const buildFilters = () => {
         const filters = {};

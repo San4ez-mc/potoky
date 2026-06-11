@@ -97,6 +97,7 @@ export const api = {
     updateSessionFlags: (id, flags) => req('PATCH', `/sessions/${id}/flags`, flags),
     restartSession: (id) => req('POST', `/sessions/${id}/restart`),
     deleteSession: (id) => req('DELETE', `/sessions/${id}`),
+    editSessionMessage: (sessionId, msgId, content) => req('PATCH', `/sessions/${sessionId}/messages/${msgId}`, { content }),
     deleteSessionMessage: (sessionId, msgId) => req('DELETE', `/sessions/${sessionId}/messages/${msgId}`),
     deleteSessionsBulk: (ids) => req('POST', '/sessions/bulk-delete', { ids }),
     markSessionTest: (id, isTest) => req('PATCH', `/sessions/${id}/mark-test`, { isTest }),

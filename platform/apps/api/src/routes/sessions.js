@@ -180,41 +180,48 @@ async function resolveBotToken(botId) {
 }
 
 // ─── Helper: send via per-bot token (or fallback to global) ──────────────────
-async function sendViaBot(botId, chatId, text, photoBuffer) {
+// opts: { photoBuffer, docBuffer, docName, docMimeType }
+async function sendViaBot(botId, chatId, text, photoBuffer, opts = {}) {
     const token = await resolveBotToken(botId);
+    const { docBuffer, docName, docMimeType } = opts;
 
     if (token) {
-        // Direct Telegram API — uses the session's own bot token
         const apiBase = `https://api.telegram.org/bot${token}`;
+        const FormData = require('form-data');
+
+        if (docBuffer) {
+            const form = new FormData();
+            form.append('chat_id', String(chatId));
+            form.append('document', docBuffer, { filename: docName || 'document', contentType: docMimeType || 'application/octet-stream' });
+            if (text) form.append('caption', text);
+            const res = await fetch(`${apiBase}/sendDocument`, { method: 'POST', body: form, headers: form.getHeaders() });
+            if (!res.ok) { const txt = await res.text().catch(() => ''); throw new Error(`ETELEGRAM: ${res.status} ${txt}`); }
+            const data = await res.json().catch(() => ({}));
+            return data?.result?.message_id || null;
+        }
+
         if (photoBuffer) {
-            const FormData = require('form-data');
             const form = new FormData();
             form.append('chat_id', String(chatId));
             form.append('photo', photoBuffer, { filename: 'photo.jpg', contentType: 'image/jpeg' });
             if (text) form.append('caption', text);
             const res = await fetch(`${apiBase}/sendPhoto`, { method: 'POST', body: form, headers: form.getHeaders() });
-            if (!res.ok) {
-                const txt = await res.text().catch(() => '');
-                throw new Error(`ETELEGRAM: ${res.status} ${txt}`);
-            }
-            const data = await res.json().catch(() => ({}));
-            return data?.result?.message_id || null;
-        } else {
-            const res = await fetch(`${apiBase}/sendMessage`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ chat_id: String(chatId), text, parse_mode: 'HTML', disable_web_page_preview: true }),
-            });
-            if (!res.ok) {
-                const txt = await res.text().catch(() => '');
-                throw new Error(`ETELEGRAM: ${res.status} ${txt}`);
-            }
+            if (!res.ok) { const txt = await res.text().catch(() => ''); throw new Error(`ETELEGRAM: ${res.status} ${txt}`); }
             const data = await res.json().catch(() => ({}));
             return data?.result?.message_id || null;
         }
+
+        const res = await fetch(`${apiBase}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: String(chatId), text, parse_mode: 'HTML', disable_web_page_preview: true }),
+        });
+        if (!res.ok) { const txt = await res.text().catch(() => ''); throw new Error(`ETELEGRAM: ${res.status} ${txt}`); }
+        const data = await res.json().catch(() => ({}));
+        return data?.result?.message_id || null;
     }
 
-    // Fallback: global singleton
+    // Fallback: global singleton (photo only, docs not supported via global)
     if (photoBuffer) {
         await sendPhoto(Number(chatId), photoBuffer, text || '', {});
     } else {
@@ -237,39 +244,50 @@ router.post('/:id/send',
         const photoBase64 = typeof req.body?.photoBase64 === 'string' ? req.body.photoBase64 : '';
         const photoName = typeof req.body?.photoName === 'string' ? req.body.photoName : 'image';
         const photoMimeType = typeof req.body?.photoMimeType === 'string' ? req.body.photoMimeType : 'image/jpeg';
+        const docBase64 = typeof req.body?.docBase64 === 'string' ? req.body.docBase64 : '';
+        const docName = typeof req.body?.docName === 'string' ? req.body.docName : 'document';
+        const docMimeType = typeof req.body?.docMimeType === 'string' ? req.body.docMimeType : 'application/octet-stream';
 
-        if (!text && !photoBase64) {
-            return res.status(400).json({ ok: false, error: { message: 'Надішліть текст або фото' } });
+        if (!text && !photoBase64 && !docBase64) {
+            return res.status(400).json({ ok: false, error: { message: 'Надішліть текст, фото або документ' } });
         }
+
+        const decodeBase64 = (b64, label) => {
+            const normalized = b64.includes(',') ? b64.split(',')[1] : b64;
+            const buf = Buffer.from(normalized, 'base64');
+            if (!buf || buf.length === 0) throw new Error(`Порожній ${label}`);
+            if (buf.length > 50 * 1024 * 1024) throw new Error(`${label} завеликий (макс 50MB)`);
+            return buf;
+        };
 
         let photoBuffer = null;
         if (photoBase64) {
-            const normalized = photoBase64.includes(',') ? photoBase64.split(',')[1] : photoBase64;
-            try {
-                photoBuffer = Buffer.from(normalized, 'base64');
-            } catch {
-                return res.status(400).json({ ok: false, error: { message: 'Некоректний формат фото' } });
-            }
-            if (!photoBuffer || photoBuffer.length === 0) {
-                return res.status(400).json({ ok: false, error: { message: 'Порожнє фото' } });
-            }
-            if (photoBuffer.length > 8 * 1024 * 1024) {
-                return res.status(400).json({ ok: false, error: { message: 'Фото завелике (макс 8MB)' } });
-            }
+            try { photoBuffer = decodeBase64(photoBase64, 'фото'); }
+            catch (e) { return res.status(400).json({ ok: false, error: { message: e.message } }); }
         }
 
-        const tgMessageId = await sendViaBot(session.botId, session.user.telegramId, text, photoBuffer);
+        let docBuffer = null;
+        if (docBase64) {
+            try { docBuffer = decodeBase64(docBase64, 'документ'); }
+            catch (e) { return res.status(400).json({ ok: false, error: { message: e.message } }); }
+        }
 
+        const tgMessageId = await sendViaBot(session.botId, session.user.telegramId, text, photoBuffer, { docBuffer, docName, docMimeType });
+
+        const contentLabel = docBuffer ? `📎 ${docName}` : photoBuffer ? '📷 Фото' : text;
         await db.message.create({
             data: {
                 sessionId: session.id,
                 role: 'assistant',
-                content: text || '📷 Фото',
+                content: text || contentLabel,
                 metadata: {
                     source: 'admin_manual',
                     hasPhoto: Boolean(photoBuffer),
+                    hasDoc: Boolean(docBuffer),
                     photoName: photoBuffer ? photoName : null,
                     photoMimeType: photoBuffer ? photoMimeType : null,
+                    docName: docBuffer ? docName : null,
+                    docMimeType: docBuffer ? docMimeType : null,
                     ...(tgMessageId ? { telegramMessageId: tgMessageId } : {}),
                 },
             },
@@ -499,6 +517,50 @@ router.get('/:sessionId/context',
 );
 
 // DELETE /api/sessions/:id/messages/:msgId — delete message from Telegram + DB
+// PATCH /api/sessions/:id/messages/:msgId — edit message content (+ Telegram editMessageText)
+router.patch('/:id/messages/:msgId',
+    validateParams({
+        params: z.object({ id: z.string().uuid(), msgId: z.string().uuid() }),
+        body: z.object({ content: z.string().min(1).max(4096) }),
+    }),
+    asyncHandler(async (req, res) => {
+        const session = await db.session.findUnique({
+            where: { id: req.params.id },
+            include: { user: { select: { telegramId: true } } },
+        });
+        if (!session) throw new NotFoundError('Session', req.params.id);
+
+        const msg = await db.message.findUnique({ where: { id: req.params.msgId } });
+        if (!msg || msg.sessionId !== session.id) {
+            return res.status(404).json({ ok: false, error: { message: 'Message not found' } });
+        }
+
+        const newContent = req.body.content.trim();
+        const tgMsgId = msg.metadata?.telegramMessageId;
+        const chatId = session.user?.telegramId;
+        let tgEdited = false;
+
+        if (tgMsgId && chatId) {
+            const token = await resolveBotToken(session.botId);
+            if (token) {
+                const editRes = await fetch(`https://api.telegram.org/bot${token}/editMessageText`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chat_id: String(chatId), message_id: tgMsgId, text: newContent, parse_mode: 'HTML' }),
+                }).catch(() => null);
+                if (editRes?.ok) tgEdited = true;
+            }
+        }
+
+        const updated = await db.message.update({
+            where: { id: msg.id },
+            data: { content: newContent, metadata: { ...(msg.metadata || {}), edited: true } },
+        });
+
+        res.json({ ok: true, data: updated, telegramEdited: tgEdited });
+    })
+);
+
 router.delete('/:id/messages/:msgId',
     validateParams({
         params: z.object({ id: z.string().uuid(), msgId: z.string().uuid() }),

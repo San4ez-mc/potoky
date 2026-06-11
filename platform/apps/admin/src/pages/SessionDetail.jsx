@@ -226,12 +226,28 @@ function UserAvatar({ user, photoApiUrl }) {
 // ─── Chat bubble ────────────────────────────────────────────────────────────
 // Layout: user messages LEFT, bot/admin messages RIGHT (CRM style)
 
-function ChatBubble({ msg, highlighted, refProp, onDelete, user, userPhotoApiUrl }) {
+function ChatBubble({ msg, highlighted, refProp, onDelete, onEdit, user, userPhotoApiUrl }) {
     const isUser = msg.role === 'user';
     const isSystem = msg.role === 'system';
+    const canEdit = !isUser && !isSystem;
     const canDelete = !isUser && !isSystem;
     const hasTgId = Boolean(msg.metadata?.telegramMessageId);
     const isAdminManual = msg.metadata?.source === 'admin_manual';
+    const hasDoc = Boolean(msg.metadata?.hasDoc);
+
+    const [editing, setEditing] = useState(false);
+    const [editDraft, setEditDraft] = useState(msg.content);
+    const [saving, setSaving] = useState(false);
+
+    const startEdit = () => { setEditDraft(msg.content); setEditing(true); };
+    const cancelEdit = () => setEditing(false);
+    const saveEdit = async () => {
+        if (!editDraft.trim() || editDraft === msg.content) { setEditing(false); return; }
+        setSaving(true);
+        await onEdit(msg, editDraft.trim());
+        setSaving(false);
+        setEditing(false);
+    };
 
     return (
         <div
@@ -256,22 +272,48 @@ function ChatBubble({ msg, highlighted, refProp, onDelete, user, userPhotoApiUrl
             }`}>
                 {isSystem && <div className="text-xs text-gray-500 mb-1 font-mono">system</div>}
                 {isAdminManual && <div className="text-[10px] text-emerald-300/80 mb-1">👤 адмін</div>}
-                <MessageContent content={msg.content} metadata={msg.metadata} />
+
+                {editing ? (
+                    <div className="space-y-1.5">
+                        <textarea
+                            autoFocus
+                            value={editDraft}
+                            onChange={e => setEditDraft(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveEdit(); } if (e.key === 'Escape') cancelEdit(); }}
+                            className="w-full bg-black/20 border border-white/20 rounded px-2 py-1 text-sm resize-none outline-none min-h-[60px]"
+                            rows={3}
+                        />
+                        <div className="flex gap-2 justify-end">
+                            <button onClick={cancelEdit} className="text-[11px] px-2 py-0.5 rounded bg-white/10 hover:bg-white/20">Скасувати</button>
+                            <button onClick={saveEdit} disabled={saving} className="text-[11px] px-2 py-0.5 rounded bg-white/30 hover:bg-white/40 disabled:opacity-50">{saving ? '...' : 'Зберегти'}</button>
+                        </div>
+                    </div>
+                ) : (
+                    <>
+                        {hasDoc && <div className="text-[11px] opacity-70 mb-1">📎 {msg.metadata.docName || 'документ'}</div>}
+                        <MessageContent content={msg.content} metadata={msg.metadata} />
+                        {msg.metadata?.edited && <span className="text-[10px] opacity-50 ml-1">(ред.)</span>}
+                    </>
+                )}
+
                 <div className={`text-[10px] mt-1.5 flex items-center gap-1 justify-end ${isUser ? 'text-gray-400' : 'text-white/50'}`}>
                     <span>{format(new Date(msg.createdAt), 'HH:mm:ss')}</span>
                     {hasTgId && <span title="Telegram message_id збережено">✓</span>}
                 </div>
             </div>
 
-            {/* Delete button — right of bot messages */}
-            {canDelete && (
-                <button
-                    onClick={() => onDelete(msg)}
-                    title={hasTgId ? 'Видалити з Telegram і сесії' : 'Видалити лише з сесії'}
-                    className="self-start mt-2 ml-1 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded text-gray-600 hover:text-red-400 hover:bg-red-900/20"
-                >
-                    🗑
-                </button>
+            {/* Edit + Delete buttons — right of bot messages */}
+            {(canEdit || canDelete) && !editing && (
+                <div className="self-start mt-1 ml-1 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-0.5">
+                    {canEdit && (
+                        <button onClick={startEdit} title="Редагувати"
+                            className="w-6 h-6 flex items-center justify-center rounded text-gray-600 hover:text-blue-400 hover:bg-blue-900/20 text-xs">✏️</button>
+                    )}
+                    {canDelete && (
+                        <button onClick={() => onDelete(msg)} title={hasTgId ? 'Видалити з Telegram і сесії' : 'Видалити лише з сесії'}
+                            className="w-6 h-6 flex items-center justify-center rounded text-gray-600 hover:text-red-400 hover:bg-red-900/20 text-xs">🗑</button>
+                    )}
+                </div>
             )}
         </div>
     );
@@ -382,6 +424,7 @@ export function SessionDetail() {
     const [restarting, setRestarting] = useState(false);
     const [highlightedMsgId, setHighlightedMsgId] = useState(null);
     const [deletingMsgId, setDeletingMsgId] = useState(null);
+    const [docFile, setDocFile] = useState(null);
     const [adminEngaged, setAdminEngaged] = useState(false);
     const [funnelPaused, setFunnelPaused] = useState(false);
 
@@ -486,6 +529,15 @@ export function SessionDetail() {
         }
     };
 
+    const handleEditMessage = async (msg, newContent) => {
+        try {
+            const updated = await api.editSessionMessage(id, msg.id, newContent);
+            setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, content: newContent, metadata: { ...(m.metadata || {}), edited: true } } : m));
+        } catch (err) {
+            setSendError(err.message || 'Не вдалося відредагувати повідомлення');
+        }
+    };
+
     const handleDeleteMessage = async (msg) => {
         const hasTg = Boolean(msg.metadata?.telegramMessageId);
         const confirmText = hasTg
@@ -504,7 +556,7 @@ export function SessionDetail() {
     };
 
     const sendManualMessage = async () => {
-        if (!draft.trim() && !photoFile) { setSendError('Введіть повідомлення або додайте фото'); return; }
+        if (!draft.trim() && !photoFile && !docFile) { setSendError('Введіть повідомлення, додайте фото або документ'); return; }
         setSending(true);
         setSendError('');
         try {
@@ -514,11 +566,17 @@ export function SessionDetail() {
                 payload.photoName = photoFile.name;
                 payload.photoMimeType = photoFile.type || 'image/jpeg';
             }
+            if (docFile) {
+                payload.docBase64 = await fileToBase64(docFile);
+                payload.docName = docFile.name;
+                payload.docMimeType = docFile.type || 'application/octet-stream';
+            }
             await api.sendSessionMessage(id, payload);
             const refreshed = await api.getSessionMessages(id);
             setMessages(refreshed.data || refreshed);
             setDraft('');
             setPhotoFile(null);
+            setDocFile(null);
         } catch (err) {
             setSendError(err.message || 'Не вдалося надіслати повідомлення');
         } finally {
@@ -590,6 +648,7 @@ export function SessionDetail() {
                                     highlighted={highlightedMsgId === m.id}
                                     refProp={el => { if (el) msgRefs.current[m.id] = el; else delete msgRefs.current[m.id]; }}
                                     onDelete={handleDeleteMessage}
+                                    onEdit={handleEditMessage}
                                     user={session.user}
                                     userPhotoApiUrl={`/api/sessions/${session.id}/user-photo`}
                                 />
@@ -641,19 +700,23 @@ export function SessionDetail() {
                                 onKeyDown={e => e.key === 'Enter' && !e.shiftKey && sendManualMessage()}
                                 placeholder="Написати повідомлення..."
                                 className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white" />
-                            <label className="px-3 py-2 text-xs rounded border border-gray-600 text-gray-300 hover:bg-gray-800 cursor-pointer">
-                                📷 Фото
-                                <input type="file" accept="image/*" className="hidden" onChange={e => setPhotoFile(e.target.files?.[0] || null)} />
+                            <label title="Прикріпити фото" className="w-9 h-9 flex items-center justify-center rounded border border-gray-600 text-gray-300 hover:bg-gray-800 cursor-pointer text-base">
+                                📷
+                                <input type="file" accept="image/*" className="hidden" onChange={e => { setPhotoFile(e.target.files?.[0] || null); setDocFile(null); }} />
+                            </label>
+                            <label title="Прикріпити документ (PDF, Word, тощо)" className="w-9 h-9 flex items-center justify-center rounded border border-gray-600 text-gray-300 hover:bg-gray-800 cursor-pointer text-base">
+                                📎
+                                <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,.zip,.rar,application/*,text/plain" className="hidden" onChange={e => { setDocFile(e.target.files?.[0] || null); setPhotoFile(null); }} />
                             </label>
                             <button onClick={sendManualMessage} disabled={sending}
                                 className="px-4 py-2 text-sm rounded bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white">
-                                {sending ? 'Надсилання...' : 'Надіслати'}
+                                {sending ? '...' : 'Надіслати'}
                             </button>
                         </div>
-                        {photoFile && (
-                            <div className="text-xs text-gray-400 flex items-center justify-between">
-                                <span>Обрано: {photoFile.name}</span>
-                                <button onClick={() => setPhotoFile(null)} className="text-gray-300 hover:text-white">Прибрати</button>
+                        {(photoFile || docFile) && (
+                            <div className="text-xs text-gray-400 flex items-center justify-between bg-gray-800/60 rounded px-2 py-1">
+                                <span>{photoFile ? `📷 ${photoFile.name}` : `📎 ${docFile.name}`}</span>
+                                <button onClick={() => { setPhotoFile(null); setDocFile(null); }} className="text-gray-400 hover:text-white ml-2">✕</button>
                             </div>
                         )}
                     </div>

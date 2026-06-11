@@ -13,8 +13,10 @@ export function Sessions() {
     const [deleting, setDeleting] = useState(false);
     const [errorsModal, setErrorsModal] = useState(null);
     const [errorsOnly, setErrorsOnly] = useState(false);
-    const [testOnly, setTestOnly] = useState(false);
-    const [realOnly, setRealOnly] = useState(false);
+    // 'all' | 'test' | 'real'
+    const [sessionType, setSessionType] = useState('all');
+    // 'all' | 'bot' | 'webhook'
+    const [source, setSource] = useState('all');
 
     const backTo = useMemo(() => {
         const params = new URLSearchParams();
@@ -29,8 +31,9 @@ export function Sessions() {
     const buildFilters = () => {
         const filters = {};
         if (errorsOnly) filters.hasErrors = 'true';
-        if (testOnly) filters.isTest = 'true';
-        else if (realOnly) filters.isTest = 'false';  // mutually exclusive with testOnly
+        if (sessionType === 'test') filters.isTest = 'true';
+        else if (sessionType === 'real') filters.isTest = 'false';
+        if (source !== 'all') filters.source = source;
         return filters;
     };
 
@@ -57,7 +60,7 @@ export function Sessions() {
 
     useEffect(() => {
         loadSessions();
-    }, [botId, page, errorsOnly, testOnly, realOnly]);
+    }, [botId, page, errorsOnly, sessionType, source]);
 
     const visibleIds = sessions.map(s => s.id);
     const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.includes(id));
@@ -162,23 +165,29 @@ export function Sessions() {
                     {meta.total > 0 && <div className="text-sm text-gray-500 mt-0.5">Всього: {meta.total}</div>}
                 </div>
                 <div className="flex items-center gap-3 flex-wrap justify-end">
-                    <button
-                        onClick={() => { setPage(0); setTestOnly(v => { if (!v) setRealOnly(false); return !v; }); }}
-                        className={`px-3 py-2 text-xs rounded-lg border transition-colors ${testOnly ? 'border-violet-700 text-violet-300 bg-violet-900/20' : 'border-gray-700 text-gray-300 hover:bg-gray-800'}`}
-                    >
-                        {testOnly ? 'Лише тестові ✓' : 'Лише тестові'}
-                    </button>
-                    <button
-                        onClick={() => { setPage(0); setRealOnly(v => { if (!v) setTestOnly(false); return !v; }); }}
-                        className={`px-3 py-2 text-xs rounded-lg border transition-colors ${realOnly ? 'border-emerald-700 text-emerald-300 bg-emerald-900/20' : 'border-gray-700 text-gray-300 hover:bg-gray-800'}`}
-                    >
-                        {realOnly ? 'Справжні ✓' : 'Справжні'}
-                    </button>
+                    {/* Type radio */}
+                    <div className="flex items-center rounded-lg border border-gray-700 overflow-hidden text-xs">
+                        {[['all', 'Всі'], ['real', 'Справжні'], ['test', 'Тестові']].map(([val, label]) => (
+                            <button key={val} onClick={() => { setPage(0); setSessionType(val); }}
+                                className={`px-3 py-2 transition-colors ${sessionType === val ? 'bg-brand/20 text-brand-light' : 'text-gray-300 hover:bg-gray-800'}`}>
+                                {label}
+                            </button>
+                        ))}
+                    </div>
+                    {/* Source radio */}
+                    <div className="flex items-center rounded-lg border border-gray-700 overflow-hidden text-xs">
+                        {[['all', 'Всі'], ['bot', 'Telegram боти'], ['webhook', 'Webhook/API']].map(([val, label]) => (
+                            <button key={val} onClick={() => { setPage(0); setSource(val); }}
+                                className={`px-3 py-2 transition-colors ${source === val ? 'bg-brand/20 text-brand-light' : 'text-gray-300 hover:bg-gray-800'}`}>
+                                {label}
+                            </button>
+                        ))}
+                    </div>
                     <button
                         onClick={() => { setPage(0); setErrorsOnly(v => !v); }}
                         className={`px-3 py-2 text-xs rounded-lg border transition-colors ${errorsOnly ? 'border-amber-700 text-amber-300 bg-amber-900/20' : 'border-gray-700 text-gray-300 hover:bg-gray-800'}`}
                     >
-                        {errorsOnly ? 'Лише з помилками: ON' : 'Лише з помилками'}
+                        {errorsOnly ? 'З помилками ✓' : 'З помилками'}
                     </button>
                     <label className="text-xs text-gray-400 flex items-center gap-2">
                         <input

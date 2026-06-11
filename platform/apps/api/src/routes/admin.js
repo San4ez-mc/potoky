@@ -93,6 +93,18 @@ router.patch('/errors/:id/resolve',
     })
 );
 
+// GET /api/admin/sessions/unread-count — active bot sessions with last message from user
+router.get('/sessions/unread-count',
+    asyncHandler(async (req, res) => {
+        const activeBotSessions = await db.session.findMany({
+            where: { isActive: true, isTest: false, user: { NOT: { username: 'webhook_system' } } },
+            include: { messages: { orderBy: { createdAt: 'desc' }, take: 1 } },
+        });
+        const count = activeBotSessions.filter(s => s.messages[0]?.role === 'user').length;
+        res.json({ ok: true, data: { count } });
+    })
+);
+
 // GET /api/admin/sessions — all sessions across all bots
 router.get('/sessions',
     validateParams({
@@ -101,12 +113,13 @@ router.get('/sessions',
             isActive: z.enum(['true', 'false']).optional(),
             hasErrors: z.enum(['true', 'false']).optional(),
             isTest: z.enum(['true', 'false']).optional(),
+            source: z.enum(['bot', 'webhook']).optional(),
             page: z.coerce.number().int().min(0).default(0),
             limit: z.coerce.number().int().min(1).max(100).default(50),
         }),
     }),
     asyncHandler(async (req, res) => {
-        const { botId, isActive, hasErrors, isTest, page, limit } = req.query;
+        const { botId, isActive, hasErrors, isTest, source, page, limit } = req.query;
         const where = {};
         if (botId) where.botId = botId;
         if (isActive !== undefined) where.isActive = isActive === 'true';
@@ -114,6 +127,8 @@ router.get('/sessions',
         if (hasErrors !== undefined) {
             where.errors = hasErrors === 'true' ? { some: {} } : { none: {} };
         }
+        if (source === 'webhook') where.user = { username: 'webhook_system' };
+        if (source === 'bot') where.user = { NOT: { username: 'webhook_system' } };
 
         const [sessions, total] = await Promise.all([
             db.session.findMany({

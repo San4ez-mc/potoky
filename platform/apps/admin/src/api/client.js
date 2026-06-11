@@ -119,6 +119,7 @@ export const api = {
 
     // Admin
     getAnalytics: () => req('GET', '/admin/analytics'),
+    getUnreadSessionsCount: () => req('GET', '/admin/sessions/unread-count'),
     getAllSessions: (params = {}) => {
         const q = new URLSearchParams(params).toString();
         return reqWithMeta('GET', `/admin/sessions${q ? '?' + q : ''}`);

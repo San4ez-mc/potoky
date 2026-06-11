@@ -51,14 +51,6 @@ export function Layout() {
                         </button>
                     )}
                     <div className="text-sm font-semibold text-white">{meta.title}</div>
-                    <div className="flex-1" />
-                    <div className="hidden md:flex items-center gap-1">
-                        <Link to="/funnels" className="text-xs px-2 py-1 rounded text-gray-400 hover:text-white hover:bg-gray-800">Воронки</Link>
-                        <Link to="/projects" className="text-xs px-2 py-1 rounded text-gray-400 hover:text-white hover:bg-gray-800">Проєкти</Link>
-                        <Link to="/sessions" className="text-xs px-2 py-1 rounded text-gray-400 hover:text-white hover:bg-gray-800">Сесії</Link>
-                        <Link to="/users" className="text-xs px-2 py-1 rounded text-gray-400 hover:text-white hover:bg-gray-800">Користувачі</Link>
-                        <Link to="/dashboard" className="text-xs px-2 py-1 rounded text-gray-400 hover:text-white hover:bg-gray-800">Дашборд</Link>
-                    </div>
                 </div>
                 <Outlet />
             </main>

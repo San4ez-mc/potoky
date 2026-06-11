@@ -194,14 +194,25 @@ function MessageContent({ content, metadata }) {
 
 // ─── User avatar ────────────────────────────────────────────────────────────
 
-function UserAvatar({ user, photoUrl }) {
-    const [imgError, setImgError] = useState(false);
+function UserAvatar({ user, photoApiUrl }) {
+    const [blobUrl, setBlobUrl] = useState(null);
+    const [failed, setFailed] = useState(false);
     const initials = [user?.firstName, user?.lastName].filter(Boolean).map(s => s[0]).join('').toUpperCase()
         || (user?.username ? user.username[0].toUpperCase() : '?');
 
-    if (photoUrl && !imgError) {
+    useEffect(() => {
+        if (!photoApiUrl) return;
+        let revoke;
+        fetch(photoApiUrl, { credentials: 'include' })
+            .then(r => r.ok ? r.blob() : Promise.reject())
+            .then(blob => { revoke = URL.createObjectURL(blob); setBlobUrl(revoke); })
+            .catch(() => setFailed(true));
+        return () => { if (revoke) URL.revokeObjectURL(revoke); };
+    }, [photoApiUrl]);
+
+    if (blobUrl) {
         return (
-            <img src={photoUrl} onError={() => setImgError(true)} alt={initials}
+            <img src={blobUrl} alt={initials}
                 className="w-8 h-8 rounded-full shrink-0 object-cover border border-gray-600" />
         );
     }
@@ -215,7 +226,7 @@ function UserAvatar({ user, photoUrl }) {
 // ─── Chat bubble ────────────────────────────────────────────────────────────
 // Layout: user messages LEFT, bot/admin messages RIGHT (CRM style)
 
-function ChatBubble({ msg, highlighted, refProp, onDelete, user, userPhotoUrl }) {
+function ChatBubble({ msg, highlighted, refProp, onDelete, user, userPhotoApiUrl }) {
     const isUser = msg.role === 'user';
     const isSystem = msg.role === 'system';
     const canDelete = !isUser && !isSystem;
@@ -230,7 +241,7 @@ function ChatBubble({ msg, highlighted, refProp, onDelete, user, userPhotoUrl })
             {/* User avatar — left of user messages */}
             {isUser && (
                 <div className="self-end mb-1 mr-2 shrink-0">
-                    <UserAvatar user={user} photoUrl={userPhotoUrl} />
+                    <UserAvatar user={user} photoApiUrl={userPhotoApiUrl} />
                 </div>
             )}
 
@@ -517,65 +528,52 @@ export function SessionDetail() {
 
     return (
         <div className="flex flex-col h-[calc(100vh-3rem)]">
-            {/* Header */}
-            <div className="px-6 py-3 border-b border-gray-800 bg-gray-900 shrink-0">
-                <div className="flex items-center gap-4 flex-wrap">
-                    <div className="min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                            {session.user?.id ? (
-                                <Link to={`/users/${session.user.id}?back=${encodeURIComponent(window.location.pathname + window.location.search)}`}
-                                    className="text-sm font-semibold text-white hover:text-brand-light transition-colors">
-                                    {userName}
-                                </Link>
-                            ) : (
-                                <span className="text-sm font-semibold text-white">{userName}</span>
-                            )}
-                            {session.bot && <span className="text-xs text-gray-500 font-mono">/{session.bot.slug}</span>}
-                            <span className={`text-xs px-2 py-0.5 rounded-full border ${session.isActive ? 'text-emerald-400 bg-emerald-900/30 border-emerald-800' : 'text-gray-500 bg-gray-900 border-gray-700'}`}>
-                                {session.isActive ? 'активна' : 'завершена'}
-                            </span>
-                            {session.isTest && (
-                                <span className="text-xs px-2 py-0.5 rounded-full border text-violet-400 bg-violet-900/30 border-violet-800">тест</span>
-                            )}
-                        </div>
-                        <div className="text-xs text-gray-500 mt-0.5">
-                            {id.slice(0, 8)}… · стан: <span className="font-mono">{session.state}</span> · {messages.length} повідомлень
-                        </div>
-                    </div>
-                    <div className="flex gap-2 ml-auto items-center flex-wrap">
-                        {/* Funnel paused toggle */}
-                        <button
-                            onClick={() => toggleFlag('funnelPaused', !funnelPaused)}
-                            title={funnelPaused ? 'Воронка призупинена — бот не відповідає. Натисни щоб відновити' : 'Призупинити воронку — бот не відповідатиме'}
-                            className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors ${funnelPaused ? 'border-orange-700 text-orange-300 bg-orange-900/20' : 'border-gray-700 text-gray-400 hover:bg-gray-800'}`}
-                        >
-                            <span>{funnelPaused ? '⏸' : '▶'}</span>
-                            <span>{funnelPaused ? 'Пауза (бот мовчить)' : 'Воронка активна'}</span>
+            {/* Compact header — single row */}
+            <div className="px-3 py-1.5 border-b border-gray-800 bg-gray-900 shrink-0 flex items-center gap-2 min-h-0">
+                {/* User info */}
+                <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                    {session.user?.id ? (
+                        <Link to={`/users/${session.user.id}?back=${encodeURIComponent(window.location.pathname + window.location.search)}`}
+                            className="text-sm font-semibold text-white hover:text-brand-light transition-colors truncate max-w-[140px]">
+                            {userName}
+                        </Link>
+                    ) : (
+                        <span className="text-sm font-semibold text-white truncate max-w-[140px]">{userName}</span>
+                    )}
+                    {session.bot && <span className="text-[11px] text-gray-500 font-mono hidden sm:inline truncate max-w-[120px]">/{session.bot.slug}</span>}
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${session.isActive ? 'bg-emerald-400' : 'bg-gray-600'}`} title={session.isActive ? 'активна' : 'завершена'} />
+                    {session.isTest && <span className="text-[10px] px-1.5 py-0.5 rounded border text-violet-400 border-violet-800 bg-violet-900/20 shrink-0">тест</span>}
+                    <span className="text-[11px] text-gray-600 hidden lg:inline shrink-0">{id.slice(0, 8)}… · {messages.length} повідомлень</span>
+                </div>
+
+                {/* Action toggles — icon only */}
+                <div className="flex items-center gap-1 shrink-0">
+                    <button
+                        onClick={() => toggleFlag('funnelPaused', !funnelPaused)}
+                        title={funnelPaused ? 'Пауза активна — натисни щоб відновити воронку' : 'Призупинити воронку'}
+                        className={`w-7 h-7 flex items-center justify-center rounded text-base transition-colors ${funnelPaused ? 'bg-orange-900/40 text-orange-300' : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800'}`}
+                    >{funnelPaused ? '⏸' : '▶'}</button>
+                    <button
+                        onClick={() => toggleFlag('adminEngaged', !adminEngaged)}
+                        title={adminEngaged ? 'Сповіщення увімкнені — натисни щоб вимкнути' : 'Увімкнути сповіщення'}
+                        className={`w-7 h-7 flex items-center justify-center rounded text-base transition-colors ${adminEngaged ? 'bg-brand/20 text-brand-light' : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800'}`}
+                    >{adminEngaged ? '🔔' : '🔕'}</button>
+                    <button
+                        onClick={restartChat}
+                        disabled={restarting}
+                        title="Перезапустити воронку з початку"
+                        className="w-7 h-7 flex items-center justify-center rounded text-base text-gray-500 hover:text-amber-400 hover:bg-gray-800 disabled:opacity-40 transition-colors"
+                    >{restarting ? '⏳' : '🔄'}</button>
+
+                    <div className="w-px h-4 bg-gray-700 mx-1" />
+
+                    {/* Tabs */}
+                    {['chat', 'api', 'context'].map(t => (
+                        <button key={t} onClick={() => setTab(t)}
+                            className={`text-xs px-2.5 py-1 rounded transition-colors ${tab === t ? 'bg-brand/20 text-brand-light' : 'text-gray-500 hover:text-white hover:bg-gray-800'}`}>
+                            {t === 'chat' ? `💬 ${messages.length}` : t === 'api' ? `📡 ${apiCalls.length}` : '⚙️'}
                         </button>
-                        {/* Admin notifications toggle */}
-                        <button
-                            onClick={() => toggleFlag('adminEngaged', !adminEngaged)}
-                            title={adminEngaged ? 'Сповіщення про нові повідомлення увімкнені. Натисни щоб вимкнути' : 'Увімкнути сповіщення про нові повідомлення'}
-                            className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors ${adminEngaged ? 'border-brand/60 text-brand-light bg-brand/10' : 'border-gray-700 text-gray-400 hover:bg-gray-800'}`}
-                        >
-                            <span>{adminEngaged ? '🔔' : '🔕'}</span>
-                            <span>{adminEngaged ? 'Сповіщення' : 'Без сповіщень'}</span>
-                        </button>
-                        <button
-                            onClick={restartChat}
-                            disabled={restarting}
-                            title="Очистити чат і запустити воронку з початку (як новий /start)"
-                            className="text-xs px-3 py-1.5 rounded-lg border border-amber-800 text-amber-400 hover:bg-amber-900/20 disabled:opacity-50 transition-colors"
-                        >
-                            {restarting ? '⏳ Перезапуск...' : '🔄 Перезапустити чат'}
-                        </button>
-                        {['chat', 'api', 'context'].map(t => (
-                            <button key={t} onClick={() => setTab(t)}
-                                className={`text-sm px-3 py-1.5 rounded-lg transition-colors ${tab === t ? 'bg-brand/20 text-brand-light' : 'text-gray-400 hover:text-white'}`}>
-                                {t === 'chat' ? `💬 Чат (${messages.length})` : t === 'api' ? `📡 API (${apiCalls.length})` : '⚙️ Context'}
-                            </button>
-                        ))}
-                    </div>
+                    ))}
                 </div>
             </div>
 
@@ -593,7 +591,7 @@ export function SessionDetail() {
                                     refProp={el => { if (el) msgRefs.current[m.id] = el; else delete msgRefs.current[m.id]; }}
                                     onDelete={handleDeleteMessage}
                                     user={session.user}
-                                    userPhotoUrl={`/api/sessions/${session.id}/user-photo`}
+                                    userPhotoApiUrl={`/api/sessions/${session.id}/user-photo`}
                                 />
                             ))}
                             {messages.length === 0 && (

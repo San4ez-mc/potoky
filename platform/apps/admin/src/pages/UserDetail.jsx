@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { format } from 'date-fns';
+import { UserPhotoWithZoom } from '../components/UserPhoto.jsx';
 
 function CopyButton({ text }) {
     const [copied, setCopied] = useState(false);
@@ -79,10 +80,12 @@ export function UserDetail() {
             <Link to="/users" className="text-xs text-gray-500 hover:text-gray-300 mb-4 inline-block">← Всі користувачі</Link>
 
             {/* Header */}
-            <div className="flex items-center gap-4 mb-6">
-                <div className="w-12 h-12 rounded-full bg-brand/20 flex items-center justify-center text-brand text-xl font-bold">
-                    {(user.firstName?.[0] || user.username?.[0] || '?').toUpperCase()}
-                </div>
+            <div className="flex items-center gap-5 mb-6">
+                <UserPhotoWithZoom
+                    userId={user.id}
+                    initials={(user.firstName?.[0] || user.username?.[0] || '?').toUpperCase()}
+                    size="w-20 h-20 text-2xl"
+                />
                 <div>
                     <h1 className="text-xl font-semibold text-white">{fullName}</h1>
                     <div className="text-sm text-gray-400">

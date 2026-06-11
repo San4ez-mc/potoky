@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { format } from 'date-fns';
+import { UserPhoto } from '../components/UserPhoto.jsx';
 
 // ─── localStorage helpers for read-tracking ─────────────────────────────────
 const STORAGE_KEY = 'sessions_read_at';
@@ -281,8 +282,17 @@ export function Sessions() {
                                             </td>
                                             {/* User */}
                                             <td className="px-2 py-2 align-middle max-w-0">
-                                                <div className={`text-sm font-medium truncate ${unread ? 'text-white' : 'text-gray-200'}`} title={fullName}>{fullName}</div>
-                                                <div className="text-[11px] text-gray-500 truncate">{[tgHandle, tgId].filter(Boolean).join(' · ')}</div>
+                                                <div className="flex items-center gap-2">
+                                                    <UserPhoto
+                                                        userId={s.user?.id}
+                                                        initials={(s.user?.firstName?.[0] || s.user?.username?.[0] || '?').toUpperCase()}
+                                                        size="w-7 h-7 text-xs"
+                                                    />
+                                                    <div className="min-w-0">
+                                                        <div className={`text-sm font-medium truncate ${unread ? 'text-white' : 'text-gray-200'}`} title={fullName}>{fullName}</div>
+                                                        <div className="text-[11px] text-gray-500 truncate">{[tgHandle, tgId].filter(Boolean).join(' · ')}</div>
+                                                    </div>
+                                                </div>
                                             </td>
                                             {/* Bot */}
                                             <td className="px-2 py-2 align-middle text-[11px] text-gray-400 font-mono truncate max-w-0" title={s.bot?.slug}>

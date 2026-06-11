@@ -161,7 +161,7 @@ export function Sessions() {
                     </h1>
                     {meta.total > 0 && <div className="text-sm text-gray-500 mt-0.5">Всього: {meta.total}</div>}
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 flex-wrap justify-end">
                     <button
                         onClick={() => { setPage(0); setTestOnly(v => { if (!v) setRealOnly(false); return !v; }); }}
                         className={`px-3 py-2 text-xs rounded-lg border transition-colors ${testOnly ? 'border-violet-700 text-violet-300 bg-violet-900/20' : 'border-gray-700 text-gray-300 hover:bg-gray-800'}`}

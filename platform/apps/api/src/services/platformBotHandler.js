@@ -839,6 +839,23 @@ async function handlePlatformBotUpdate(botId, update) {
 
         await persistUserMessage(session.id, text);
 
+        // Notify admin if they previously engaged in this session manually
+        if (session.context?.adminEngaged) {
+            const adminKeys = await db.funnelKey.findMany({
+                where: { botId: targetBotId, key: { in: ['ADMIN_TELEGRAM_ID', 'TELEGRAM_CONNECTOR_ID', 'TELEGRAM_BOT_TOKEN'] } },
+                select: { key: true, value: true },
+            }).catch(() => []);
+            const ak = Object.fromEntries(adminKeys.map(k => [k.key, k.value]));
+            const adminId = ak.ADMIN_TELEGRAM_ID;
+            let notifyToken = token; // already resolved bot token
+            if (adminId && notifyToken) {
+                const userName = [user.firstName, user.lastName].filter(Boolean).join(' ') || user.username || `id:${user.telegramId}`;
+                const sessionUrl = `https://flows.fineko.space/platform/apps/admin/#/sessions/${session.id}`;
+                const notifyText = `💬 Нове повідомлення від ${userName}:\n\n${text.slice(0, 300)}${text.length > 300 ? '…' : ''}\n\n👉 ${sessionUrl}`;
+                tgRequest(notifyToken, 'sendMessage', { chat_id: Number(adminId), text: notifyText, disable_web_page_preview: true }).catch(() => {});
+            }
+        }
+
         // Reset follow-up counter when user responds — so future follow-ups can be sent again
         const currentCtx = session.context || {};
         if ((currentCtx.followUpCount || 0) > 0) {

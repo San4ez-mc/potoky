@@ -275,6 +275,14 @@ router.post('/:id/send',
             },
         });
 
+        // Mark session as admin-engaged so future user messages trigger a notification
+        if (!session.context?.adminEngaged) {
+            await db.session.update({
+                where: { id: session.id },
+                data: { context: { ...(session.context || {}), adminEngaged: true } },
+            });
+        }
+
         res.json({ ok: true });
     })
 );

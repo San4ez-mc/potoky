@@ -355,6 +355,18 @@ export function SessionDetail() {
         }).finally(() => setLoading(false));
     }, [id]);
 
+    // Auto-poll for new messages when session is active
+    useEffect(() => {
+        if (!session?.isActive || tab !== 'chat') return;
+        const interval = setInterval(async () => {
+            try {
+                const refreshed = await api.getSessionMessages(id);
+                setMessages(refreshed.data || refreshed);
+            } catch {}
+        }, 4000);
+        return () => clearInterval(interval);
+    }, [id, session?.isActive, tab]);
+
     // Build nodeId → node lookup map from funnel
     const nodeMap = useMemo(() => {
         if (!funnel?.nodes) return {};

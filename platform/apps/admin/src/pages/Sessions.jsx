@@ -3,6 +3,26 @@ import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { format } from 'date-fns';
 
+// ─── localStorage helpers for read-tracking ─────────────────────────────────
+const STORAGE_KEY = 'sessions_read_at';
+
+function getReadMap() {
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch { return {}; }
+}
+function markSessionsRead(ids) {
+    const map = getReadMap();
+    const now = Date.now();
+    ids.forEach(id => { map[id] = now; });
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(map));
+}
+export function markOneSessionRead(id) { markSessionsRead([id]); }
+function isUnread(session, readMap) {
+    const lastMsg = session.messages?.[0];
+    if (!lastMsg || lastMsg.role !== 'user') return false;
+    const readAt = readMap[session.id] || 0;
+    return new Date(lastMsg.createdAt).getTime() > readAt;
+}
+
 export function Sessions() {
     const { botId } = useParams();
     const [sessions, setSessions] = useState([]);
@@ -13,10 +33,9 @@ export function Sessions() {
     const [deleting, setDeleting] = useState(false);
     const [errorsModal, setErrorsModal] = useState(null);
     const [errorsOnly, setErrorsOnly] = useState(false);
-    // 'all' | 'test' | 'real'
     const [sessionType, setSessionType] = useState('all');
-    // 'all' | 'bot' | 'webhook'
     const [source, setSource] = useState('all');
+    const [readMap, setReadMap] = useState(() => getReadMap());
 
     const backTo = useMemo(() => {
         const params = new URLSearchParams();
@@ -164,12 +183,12 @@ export function Sessions() {
                     </h1>
                     {meta.total > 0 && <div className="text-sm text-gray-500 mt-0.5">Всього: {meta.total}</div>}
                 </div>
-                <div className="flex items-center gap-3 flex-wrap justify-end">
+                <div className="flex items-center gap-2 flex-wrap justify-end">
                     {/* Type radio */}
                     <div className="flex items-center rounded-lg border border-gray-700 overflow-hidden text-xs">
                         {[['all', 'Всі'], ['real', 'Справжні'], ['test', 'Тестові']].map(([val, label]) => (
                             <button key={val} onClick={() => { setPage(0); setSessionType(val); }}
-                                className={`px-3 py-2 transition-colors ${sessionType === val ? 'bg-brand/20 text-brand-light' : 'text-gray-300 hover:bg-gray-800'}`}>
+                                className={`px-3 py-1.5 transition-colors ${sessionType === val ? 'bg-brand/20 text-brand-light' : 'text-gray-300 hover:bg-gray-800'}`}>
                                 {label}
                             </button>
                         ))}
@@ -178,32 +197,34 @@ export function Sessions() {
                     <div className="flex items-center rounded-lg border border-gray-700 overflow-hidden text-xs">
                         {[['all', 'Всі'], ['bot', 'Telegram боти'], ['webhook', 'Webhook/API']].map(([val, label]) => (
                             <button key={val} onClick={() => { setPage(0); setSource(val); }}
-                                className={`px-3 py-2 transition-colors ${source === val ? 'bg-brand/20 text-brand-light' : 'text-gray-300 hover:bg-gray-800'}`}>
+                                className={`px-3 py-1.5 transition-colors ${source === val ? 'bg-brand/20 text-brand-light' : 'text-gray-300 hover:bg-gray-800'}`}>
                                 {label}
                             </button>
                         ))}
                     </div>
                     <button
                         onClick={() => { setPage(0); setErrorsOnly(v => !v); }}
-                        className={`px-3 py-2 text-xs rounded-lg border transition-colors ${errorsOnly ? 'border-amber-700 text-amber-300 bg-amber-900/20' : 'border-gray-700 text-gray-300 hover:bg-gray-800'}`}
+                        className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${errorsOnly ? 'border-amber-700 text-amber-300 bg-amber-900/20' : 'border-gray-700 text-gray-300 hover:bg-gray-800'}`}
                     >
-                        {errorsOnly ? 'З помилками ✓' : 'З помилками'}
+                        З помилками{errorsOnly ? ' ✓' : ''}
+                    </button>
+                    <button
+                        onClick={() => { markSessionsRead(sessions.map(s => s.id)); setReadMap(getReadMap()); }}
+                        title="Позначити всі сесії на цій сторінці як прочитані"
+                        className="px-3 py-1.5 text-xs rounded-lg border border-gray-700 text-gray-400 hover:bg-gray-800"
+                    >
+                        ✓ Прочитано
                     </button>
                     <label className="text-xs text-gray-400 flex items-center gap-2">
-                        <input
-                            type="checkbox"
-                            checked={allVisibleSelected}
-                            onChange={toggleSelectAllVisible}
-                            className="rounded border-gray-600 bg-gray-800"
-                        />
+                        <input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAllVisible} className="rounded border-gray-600 bg-gray-800" />
                         Всі на сторінці
                     </label>
                     <button
                         onClick={handleDeleteBulk}
                         disabled={selectedIds.length === 0 || deleting}
-                        className="px-3 py-2 text-sm rounded-lg border border-red-800 text-red-400 hover:bg-red-900/30 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="px-3 py-1.5 text-xs rounded-lg border border-red-800 text-red-400 hover:bg-red-900/30 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                        Видалити вибрані ({selectedIds.length})
+                        Видалити ({selectedIds.length})
                     </button>
                 </div>
             </div>
@@ -213,103 +234,96 @@ export function Sessions() {
             ) : (
                 <div className="w-full rounded-xl border border-gray-800 overflow-hidden bg-gray-900">
                     <div className="overflow-x-auto">
-                        <table className="w-full text-xs" style={{ minWidth: '780px' }}>
-                            <thead className="bg-gray-950 border-b border-gray-800 text-xs uppercase tracking-wider text-gray-400">
+                        <table className="w-full text-xs" style={{ minWidth: '700px' }}>
+                            <thead className="bg-gray-950 border-b border-gray-800 text-[11px] uppercase tracking-wider text-gray-500">
                                 <tr>
-                                    <th className="px-2 py-2 text-left" style={{ width: '28px' }}>✓</th>
-                                    <th className="px-2 py-2 text-left" style={{ width: '110px' }}>Статус</th>
+                                    <th className="px-2 py-2 text-left w-6"></th>
+                                    <th className="px-2 py-2 text-left w-4"></th>
+                                    <th className="px-2 py-2 text-left w-24">Статус</th>
                                     <th className="px-2 py-2 text-left">Користувач</th>
-                                    <th className="px-2 py-2 text-left" style={{ width: '90px' }}>Бот</th>
-                                    <th className="px-2 py-2 text-left" style={{ width: '80px' }}>Стан</th>
-                                    <th className="px-2 py-2 text-right" style={{ width: '70px' }}>Пов./API</th>
-                                    <th className="px-2 py-2 text-right" style={{ width: '44px' }}>Пом.</th>
-                                    <th className="px-2 py-2 text-left" style={{ width: '90px' }}>Початок</th>
-                                    <th className="px-2 py-2 text-right" style={{ width: '170px' }}>Дії</th>
+                                    <th className="px-2 py-2 text-left w-36">Бот</th>
+                                    <th className="px-2 py-2 text-left w-32">Стан</th>
+                                    <th className="px-2 py-2 text-right w-16">Пов./API</th>
+                                    <th className="px-2 py-2 text-right w-10">Пом.</th>
+                                    <th className="px-2 py-2 text-left w-20">Початок</th>
+                                    <th className="px-2 py-2 text-right w-20">Дії</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {sessions.map((s) => {
-                                    const fullName = [
-                                        s.user?.firstName || '',
-                                        s.user?.lastName || '',
-                                    ].filter(Boolean).join(' ') || s.user?.username || `id:${s.user?.telegramId || '?'}`;
-
-                                    const tgHandle = s.user?.username ? `@${s.user.username}` : '—';
-                                    const tgId = s.user?.telegramId ? String(s.user.telegramId) : '—';
+                                    const fullName = [s.user?.firstName || '', s.user?.lastName || '']
+                                        .filter(Boolean).join(' ') || s.user?.username || `id:${s.user?.telegramId || '?'}`;
+                                    const tgHandle = s.user?.username ? `@${s.user.username}` : null;
+                                    const tgId = s.user?.telegramId ? `ID: ${s.user.telegramId}` : null;
                                     const msgCount = s._count?.messages ?? 0;
                                     const apiCount = s._count?.apiCalls ?? 0;
                                     const errCount = s._count?.errors ?? 0;
                                     const isSelected = selectedIds.includes(s.id);
+                                    const unread = isUnread(s, readMap);
 
                                     return (
-                                        <tr key={s.id} className={`border-b border-gray-800/80 hover:bg-gray-800/40 ${isSelected ? 'bg-blue-900/10' : ''}`}>
-                                            <td className="px-2 py-2 align-top">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={isSelected}
-                                                    onChange={() => toggleSelected(s.id)}
-                                                    className="rounded border-gray-600 bg-gray-800"
-                                                />
+                                        <tr key={s.id} className={`border-b border-gray-800/60 hover:bg-gray-800/30 transition-colors ${isSelected ? 'bg-blue-900/10' : ''} ${unread ? 'bg-blue-950/20' : ''}`}>
+                                            {/* Checkbox */}
+                                            <td className="px-2 py-2 align-middle">
+                                                <input type="checkbox" checked={isSelected} onChange={() => toggleSelected(s.id)}
+                                                    className="rounded border-gray-600 bg-gray-800" />
                                             </td>
-                                            <td className="px-2 py-2 align-top">
-                                                <div className="flex flex-col gap-1">
-                                                    <span className={`inline-flex text-xs px-2 py-0.5 rounded-full border ${s.isActive ? 'text-emerald-400 bg-emerald-900/30 border-emerald-800' : 'text-gray-400 bg-gray-900 border-gray-700'}`}>
-                                                        {s.isActive ? 'активна' : 'завершена'}
-                                                    </span>
-                                                    {s.isTest && (
-                                                        <span className="inline-flex text-xs px-2 py-0.5 rounded-full border text-violet-400 bg-violet-900/30 border-violet-800">
-                                                            тест
-                                                        </span>
-                                                    )}
-                                                </div>
+                                            {/* Unread dot */}
+                                            <td className="px-1 py-2 align-middle">
+                                                {unread && <span className="block w-2 h-2 rounded-full bg-blue-400" title="Є непрочитані повідомлення від користувача" />}
                                             </td>
-                                            <td className="px-2 py-2 align-top">
-                                                <div className="text-sm text-white font-medium truncate" title={fullName}>{fullName}</div>
-                                                <div className="text-xs text-gray-500 truncate" title={`${tgHandle} · ID: ${tgId}`}>{tgHandle} · ID: {tgId}</div>
+                                            {/* Status */}
+                                            <td className="px-2 py-2 align-middle">
+                                                <span className={`inline-flex text-[11px] px-1.5 py-0.5 rounded-full border ${s.isActive ? 'text-emerald-400 bg-emerald-900/30 border-emerald-800' : 'text-gray-500 border-gray-700'}`}>
+                                                    {s.isActive ? 'активна' : 'завершена'}
+                                                </span>
+                                                {s.isTest && <span className="ml-1 inline-flex text-[11px] px-1.5 py-0.5 rounded-full border text-violet-400 border-violet-800">тест</span>}
                                             </td>
-                                            <td className="px-2 py-2 align-top text-xs text-gray-400 font-mono truncate" title={s.bot?.slug ? `/${s.bot.slug}` : '—'}>
+                                            {/* User */}
+                                            <td className="px-2 py-2 align-middle max-w-0">
+                                                <div className={`text-sm font-medium truncate ${unread ? 'text-white' : 'text-gray-200'}`} title={fullName}>{fullName}</div>
+                                                <div className="text-[11px] text-gray-500 truncate">{[tgHandle, tgId].filter(Boolean).join(' · ')}</div>
+                                            </td>
+                                            {/* Bot */}
+                                            <td className="px-2 py-2 align-middle text-[11px] text-gray-400 font-mono truncate max-w-0" title={s.bot?.slug}>
                                                 {s.bot?.slug ? `/${s.bot.slug}` : '—'}
                                             </td>
-                                            <td className="px-2 py-2 align-top text-xs text-gray-400 font-mono truncate" title={s.state || '—'}>{s.state || '—'}</td>
-                                            <td className="px-2 py-2 align-top text-right text-gray-300">{msgCount} / {apiCount}</td>
-                                            <td className="px-2 py-2 align-top text-right">
+                                            {/* State */}
+                                            <td className="px-2 py-2 align-middle text-[11px] text-gray-500 font-mono truncate max-w-0" title={s.state || '—'}>{s.state || '—'}</td>
+                                            {/* Counts */}
+                                            <td className="px-2 py-2 align-middle text-right text-gray-400 whitespace-nowrap">{msgCount} / {apiCount}</td>
+                                            {/* Errors */}
+                                            <td className="px-2 py-2 align-middle text-right">
                                                 {errCount > 0 ? (
-                                                    <span className="text-xs text-red-300 bg-red-900/30 border border-red-800 rounded-full px-2 py-0.5">{errCount}</span>
-                                                ) : (
-                                                    <span className="text-xs text-gray-600">0</span>
-                                                )}
+                                                    <button onClick={() => handleOpenErrors(s)}
+                                                        className="text-[11px] text-red-300 bg-red-900/30 border border-red-800 rounded-full px-1.5 py-0.5 hover:bg-red-900/50">
+                                                        {errCount}
+                                                    </button>
+                                                ) : <span className="text-gray-700">0</span>}
                                             </td>
-                                            <td className="px-2 py-2 align-top text-xs text-gray-500 whitespace-nowrap">
+                                            {/* Date */}
+                                            <td className="px-2 py-2 align-middle text-[11px] text-gray-500 whitespace-nowrap">
                                                 {s.startedAt ? format(new Date(s.startedAt), 'dd.MM HH:mm') : '—'}
                                             </td>
-                                            <td className="px-2 py-2 align-top">
+                                            {/* Actions */}
+                                            <td className="px-2 py-2 align-middle">
                                                 <div className="flex items-center justify-end gap-1">
-                                                    <button
-                                                        onClick={() => handleToggleTest(s)}
-                                                        className={`px-1.5 py-1 text-[11px] rounded border transition-colors ${s.isTest ? 'border-violet-700 text-violet-400 bg-violet-900/20 hover:bg-violet-900/40' : 'border-gray-700 text-gray-400 hover:bg-gray-800'}`}
+                                                    <button onClick={() => handleToggleTest(s)}
                                                         title={s.isTest ? 'Зняти мітку тесту' : 'Позначити як тест'}
-                                                    >
-                                                        {s.isTest ? '🔬 Тест' : 'Тест'}
+                                                        className={`w-6 h-6 flex items-center justify-center rounded text-base transition-colors ${s.isTest ? 'text-violet-400 bg-violet-900/20' : 'text-gray-600 hover:text-gray-300 hover:bg-gray-800'}`}>
+                                                        🔬
                                                     </button>
-                                                    <button
-                                                        onClick={() => handleOpenErrors(s)}
-                                                        className="px-1.5 py-1 text-[11px] rounded border border-amber-800 text-amber-400 hover:bg-amber-900/30"
-                                                    >
-                                                        Помилки
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleDeleteOne(s)}
-                                                        disabled={deleting}
-                                                        className="px-1.5 py-1 text-[11px] rounded border border-red-800 text-red-400 hover:bg-red-900/30 disabled:opacity-50"
-                                                    >
-                                                        Видалити
+                                                    <button onClick={() => handleDeleteOne(s)} disabled={deleting}
+                                                        title="Видалити сесію"
+                                                        className="w-6 h-6 flex items-center justify-center rounded text-base text-gray-600 hover:text-red-400 hover:bg-red-900/20 disabled:opacity-40">
+                                                        🗑
                                                     </button>
                                                     <Link
                                                         to={`/sessions/${s.id}?back=${encodeURIComponent(backTo)}`}
-                                                        className="px-1.5 py-1 text-[11px] rounded border border-gray-700 text-gray-300 hover:bg-gray-800"
-                                                    >
-                                                        Відкрити
-                                                    </Link>
+                                                        onClick={() => { markSessionsRead([s.id]); setReadMap(getReadMap()); }}
+                                                        className="w-6 h-6 flex items-center justify-center rounded text-gray-400 hover:text-white hover:bg-gray-700 text-sm font-bold"
+                                                        title="Відкрити сесію"
+                                                    >→</Link>
                                                 </div>
                                             </td>
                                         </tr>

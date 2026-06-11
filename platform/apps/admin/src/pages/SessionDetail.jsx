@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams, Link } from 'react-router-dom';
+import { markOneSessionRead } from './Sessions.jsx';
 import { api } from '../api/client.js';
 import { format } from 'date-fns';
 import mermaid from 'mermaid';
@@ -432,6 +433,7 @@ export function SessionDetail() {
     const msgRefs = useRef({});
 
     useEffect(() => {
+        markOneSessionRead(id);
         Promise.all([
             api.getSession(id),
             api.getSessionMessages(id),

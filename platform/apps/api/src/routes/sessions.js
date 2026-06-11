@@ -305,6 +305,49 @@ router.patch('/:id/flags',
     })
 );
 
+// GET /api/sessions/:id/user-photo — proxy Telegram profile photo for the session user
+router.get('/:id/user-photo',
+    validateParams({ params: z.object({ id: z.string().uuid() }) }),
+    asyncHandler(async (req, res) => {
+        const session = await db.session.findUnique({
+            where: { id: req.params.id },
+            include: { user: { select: { telegramId: true } } },
+        });
+        if (!session?.user?.telegramId) return res.status(404).end();
+
+        // Resolve bot token
+        const keys = await db.funnelKey.findMany({
+            where: { botId: session.botId, key: { in: ['TELEGRAM_CONNECTOR_ID', 'TELEGRAM_BOT_TOKEN'] } },
+            select: { key: true, value: true },
+        });
+        const kv = Object.fromEntries(keys.map(k => [k.key, k.value]));
+        let token = kv.TELEGRAM_BOT_TOKEN;
+        if (!token && kv.TELEGRAM_CONNECTOR_ID) {
+            const conn = await db.savedConnector.findUnique({ where: { id: kv.TELEGRAM_CONNECTOR_ID } });
+            token = conn?.config?.token;
+        }
+        if (!token) return res.status(404).end();
+
+        const tgBase = `https://api.telegram.org/bot${token}`;
+        const photosRes = await fetch(`${tgBase}/getUserProfilePhotos?user_id=${session.user.telegramId}&limit=1`);
+        const photosData = await photosRes.json();
+        const fileId = photosData?.result?.photos?.[0]?.[2]?.file_id // larger size
+            || photosData?.result?.photos?.[0]?.[0]?.file_id;
+        if (!fileId) return res.status(404).end();
+
+        const fileRes = await fetch(`${tgBase}/getFile?file_id=${fileId}`);
+        const fileData = await fileRes.json();
+        const filePath = fileData?.result?.file_path;
+        if (!filePath) return res.status(404).end();
+
+        const imgRes = await fetch(`https://api.telegram.org/file/bot${token}/${filePath}`);
+        if (!imgRes.ok) return res.status(404).end();
+        res.setHeader('Content-Type', imgRes.headers.get('content-type') || 'image/jpeg');
+        res.setHeader('Cache-Control', 'public, max-age=3600');
+        imgRes.body.pipe(res);
+    })
+);
+
 // POST /api/sessions/:id/restart — reset session to initial state and re-run flow
 router.post('/:id/restart',
     validateParams({ params: z.object({ id: z.string().uuid() }) }),

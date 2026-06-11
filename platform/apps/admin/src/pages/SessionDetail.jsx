@@ -194,62 +194,74 @@ function MessageContent({ content, metadata }) {
 
 // ─── User avatar ────────────────────────────────────────────────────────────
 
-function UserAvatar({ user, photoUrl, size = 'sm' }) {
+function UserAvatar({ user, photoUrl }) {
     const [imgError, setImgError] = useState(false);
     const initials = [user?.firstName, user?.lastName].filter(Boolean).map(s => s[0]).join('').toUpperCase()
         || (user?.username ? user.username[0].toUpperCase() : '?');
-    const dim = size === 'sm' ? 'w-7 h-7 text-[10px]' : 'w-9 h-9 text-xs';
 
     if (photoUrl && !imgError) {
         return (
             <img src={photoUrl} onError={() => setImgError(true)} alt={initials}
-                className={`${dim} rounded-full shrink-0 object-cover border border-gray-700`} />
+                className="w-8 h-8 rounded-full shrink-0 object-cover border border-gray-600" />
         );
     }
     return (
-        <div className={`${dim} rounded-full shrink-0 bg-gradient-to-br from-brand/60 to-brand-light/60 flex items-center justify-center font-semibold text-white border border-brand/30`}>
+        <div className="w-8 h-8 rounded-full shrink-0 bg-gradient-to-br from-brand/70 to-brand-light/70 flex items-center justify-center text-[11px] font-semibold text-white border border-brand/30">
             {initials}
         </div>
     );
 }
 
 // ─── Chat bubble ────────────────────────────────────────────────────────────
+// Layout: user messages LEFT, bot/admin messages RIGHT (CRM style)
 
 function ChatBubble({ msg, highlighted, refProp, onDelete, user, userPhotoUrl }) {
     const isUser = msg.role === 'user';
     const isSystem = msg.role === 'system';
     const canDelete = !isUser && !isSystem;
     const hasTgId = Boolean(msg.metadata?.telegramMessageId);
+    const isAdminManual = msg.metadata?.source === 'admin_manual';
 
     return (
         <div
             ref={refProp}
-            className={`flex ${isUser ? 'justify-end' : 'justify-start'} group transition-all duration-300 ${highlighted ? 'scale-[1.01]' : ''}`}
+            className={`flex ${isUser ? 'justify-start' : 'justify-end'} group transition-all duration-300 ${highlighted ? 'scale-[1.01]' : ''}`}
         >
-            {/* Delete button (left of bot messages) */}
+            {/* User avatar — left of user messages */}
+            {isUser && (
+                <div className="self-end mb-1 mr-2 shrink-0">
+                    <UserAvatar user={user} photoUrl={userPhotoUrl} />
+                </div>
+            )}
+
+            <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-sm transition-colors ${highlighted ? 'ring-1 ring-brand/50' : ''} ${
+                isUser
+                    ? 'bg-gray-700 text-gray-100 rounded-tl-sm'
+                    : isSystem
+                        ? 'bg-gray-800/50 text-gray-400 border border-gray-700'
+                        : isAdminManual
+                            ? 'bg-emerald-800/70 text-white rounded-tr-sm'
+                            : 'bg-brand text-white rounded-tr-sm'
+            }`}>
+                {isSystem && <div className="text-xs text-gray-500 mb-1 font-mono">system</div>}
+                {isAdminManual && <div className="text-[10px] text-emerald-300/80 mb-1">👤 адмін</div>}
+                <MessageContent content={msg.content} metadata={msg.metadata} />
+                <div className={`text-[10px] mt-1.5 flex items-center gap-1 justify-end ${isUser ? 'text-gray-400' : 'text-white/50'}`}>
+                    <span>{format(new Date(msg.createdAt), 'HH:mm:ss')}</span>
+                    {hasTgId && <span title="Telegram message_id збережено">✓</span>}
+                </div>
+            </div>
+
+            {/* Delete button — right of bot messages */}
             {canDelete && (
                 <button
                     onClick={() => onDelete(msg)}
-                    title={hasTgId ? 'Видалити з Telegram і сесії' : 'Видалити лише з сесії (без Telegram message_id)'}
-                    className="self-start mt-2 mr-1 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded text-gray-600 hover:text-red-400 hover:bg-red-900/20"
+                    title={hasTgId ? 'Видалити з Telegram і сесії' : 'Видалити лише з сесії'}
+                    className="self-start mt-2 ml-1 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded text-gray-600 hover:text-red-400 hover:bg-red-900/20"
                 >
                     🗑
                 </button>
             )}
-            {/* User avatar (left side for user messages) */}
-            {isUser && (
-                <div className="self-end mb-1 mr-2 order-first">
-                    <UserAvatar user={user} photoUrl={userPhotoUrl} />
-                </div>
-            )}
-            <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm transition-colors ${highlighted ? 'ring-1 ring-brand/50' : ''} ${isUser ? 'bg-brand text-white' : isSystem ? 'bg-gray-800/50 text-gray-400 border border-gray-700' : 'bg-gray-800 text-gray-100'}`}>
-                {isSystem && <div className="text-xs text-gray-500 mb-1 font-mono">system</div>}
-                <MessageContent content={msg.content} metadata={msg.metadata} />
-                <div className={`text-[10px] mt-1.5 flex items-center gap-1 ${isUser ? 'text-brand-light/70' : 'text-gray-500'}`}>
-                    <span>{format(new Date(msg.createdAt), 'HH:mm:ss')}</span>
-                    {hasTgId && <span title="Telegram message_id збережено">✓TG</span>}
-                </div>
-            </div>
         </div>
     );
 }
@@ -581,7 +593,7 @@ export function SessionDetail() {
                                     refProp={el => { if (el) msgRefs.current[m.id] = el; else delete msgRefs.current[m.id]; }}
                                     onDelete={handleDeleteMessage}
                                     user={session.user}
-                                    userPhotoUrl={session.context?.tg_photo_url || null}
+                                    userPhotoUrl={`/api/sessions/${session.id}/user-photo`}
                                 />
                             ))}
                             {messages.length === 0 && (

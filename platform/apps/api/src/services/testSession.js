@@ -2081,7 +2081,7 @@ ${_baseUrl}/legal/terms — Правила використання`;
             }));
 
             // Resolve API key
-            const { createClient } = require('../../../packages/claude/src/client');
+            const { createClient } = require('@platform/claude/src/client');
             const { resolveFunnelClaudeKey } = require('@platform/claude/src/wrapper');
             let apiKey = '';
             try { apiKey = await resolveFunnelClaudeKey(session.id); } catch (e) { /* ignore */ }

@@ -1,6 +1,7 @@
 'use strict';
 
 const { db } = require('@platform/db');
+const logger = require('@platform/logger');
 const { callClaude } = require('@platform/claude');
 const { BOT_REQUIREMENTS } = require('../../../../projects/finance-course/config/prerequisites');
 const { enableTestChat, disableTestChat, consumeTestMessages, sendMessage } = require('@platform/telegram');

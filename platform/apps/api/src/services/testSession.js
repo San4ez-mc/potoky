@@ -669,7 +669,8 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null }) {
     let lastAssistant = null;
     let guard = 0;
 
-    while (runtime.currentNodeId && guard < 40) {
+    // 100: батч-цикли генерації контенту (7 батчів × 3 ноди) не вміщались у 40
+    while (runtime.currentNodeId && guard < 100) {
         guard += 1;
         const node = nodesById.get(runtime.currentNodeId);
         if (!node) break;

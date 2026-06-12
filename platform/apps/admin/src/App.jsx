@@ -18,6 +18,7 @@ import { Settings } from './pages/Settings.jsx';
 import { Connectors } from './pages/Connectors.jsx';
 import { ContentStudio } from './pages/ContentStudio.jsx';
 import { Broadcasts } from './pages/Broadcasts.jsx';
+import { FunnelAnalytics } from './pages/FunnelAnalytics.jsx';
 
 function ProtectedRoute({ children }) {
     const { isAuthenticated, isLoading } = useAuthStore();
@@ -44,6 +45,14 @@ export default function App() {
                     element={
                         <ProtectedRoute>
                             <FunnelEditor />
+                        </ProtectedRoute>
+                    }
+                />
+                <Route
+                    path="/funnel/:botId/analytics"
+                    element={
+                        <ProtectedRoute>
+                            <FunnelAnalytics />
                         </ProtectedRoute>
                     }
                 />

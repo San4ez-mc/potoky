@@ -423,6 +423,66 @@ router.get('/:botId/nodes/:nodeId/stats',
     })
 );
 
+// ── ANALYTICS ─────────────────────────────────────────────────────────────────
+
+// GET /api/funnels/:botId/analytics — per-link session counts + node visit stats
+router.get('/:botId/analytics',
+    validateParams({
+        params: z.object({ botId: z.string().uuid() }),
+    }),
+    asyncHandler(async (req, res) => {
+        const { botId } = req.params;
+        const { period = '30d', includeTest = 'false' } = req.query;
+
+        const bot = await db.bot.findUnique({ where: { id: botId } });
+        if (!bot) throw new NotFoundError('Bot', botId);
+
+        const ms = period === '7d' ? 7 * 86400000 : period === '24h' ? 86400000 : 30 * 86400000;
+        const timeFrom = new Date(Date.now() - ms);
+        const testFilter = includeTest === 'true' ? {} : { isTest: false };
+
+        // Sessions in period
+        const sessions = await db.session.findMany({
+            where: { botId, startedAt: { gte: timeFrom }, ...testFilter },
+            select: { id: true, context: true, startedAt: true, isActive: true },
+        });
+
+        // Group by _linkSource
+        const linkCounts = {};
+        const nodeCounts = {};
+        let totalSessions = 0;
+        let activeSessions = 0;
+
+        for (const s of sessions) {
+            totalSessions++;
+            if (s.isActive) activeSessions++;
+
+            const ctx = (s.context && typeof s.context === 'object') ? s.context : {};
+            const linkSource = ctx._linkSource || 'direct';
+            linkCounts[linkSource] = (linkCounts[linkSource] || 0) + 1;
+
+            const visited = ctx.flowRuntime?.nodesVisited;
+            if (Array.isArray(visited)) {
+                for (const nodeId of visited) {
+                    nodeCounts[nodeId] = (nodeCounts[nodeId] || 0) + 1;
+                }
+            }
+        }
+
+        // Build link stats sorted by count
+        const linkStats = Object.entries(linkCounts)
+            .map(([source, count]) => ({ source, count }))
+            .sort((a, b) => b.count - a.count);
+
+        // Build node stats sorted by count
+        const nodeStats = Object.entries(nodeCounts)
+            .map(([nodeId, count]) => ({ nodeId, count }))
+            .sort((a, b) => b.count - a.count);
+
+        res.json({ ok: true, data: { period, totalSessions, activeSessions, linkStats, nodeStats } });
+    })
+);
+
 // ── PREREQUISITES (Gap #2: check before start) ─────────────
 
 // POST /api/funnels/:botId/check-prerequisites — check if user can start this funnel

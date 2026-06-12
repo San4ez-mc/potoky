@@ -783,9 +783,13 @@ async function handlePlatformBotUpdate(botId, update) {
 
         session = await createNewSession(user.id, targetBotId);
 
-        // Store lesson slug in context if present
-        if (lessonSlug) {
-            const updatedCtx = { ...(session.context || {}), lessonSlug };
+        // Store lesson slug and link source in context
+        const linkSuffix = startPayload ? startPayload.match(/__l(\d+)$/) : null;
+        const extraCtx = {};
+        if (lessonSlug) extraCtx.lessonSlug = lessonSlug;
+        if (linkSuffix) extraCtx._linkSource = `l${linkSuffix[1]}`;
+        if (Object.keys(extraCtx).length > 0) {
+            const updatedCtx = { ...(session.context || {}), ...extraCtx };
             session = await db.session.update({
                 where: { id: session.id },
                 data: { context: updatedCtx },

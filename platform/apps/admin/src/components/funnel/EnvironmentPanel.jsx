@@ -1,9 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { useFunnelStore } from '../../stores/funnelStore.js';
 import { api } from '../../api/client.js';
 
 const CHANNELS_KEY = 'FUNNEL_CHANNELS';
 const TG_CONNECTOR_KEY = 'TELEGRAM_CONNECTOR_ID';
+const LINK_COUNTS_KEY = 'FUNNEL_LINK_COUNTS';
+const LINK_META_KEY = 'FUNNEL_LINK_META';
 
 const CHANNEL_PRESETS = [
     {
@@ -82,7 +84,9 @@ function buildChannelLinks({ channels, keyMap, bot, counts }) {
             links.push({
                 id: `telegram-${i}`,
                 channel: 'Telegram',
-                title: `Telegram #${i + 1}`,
+                channelId: 'telegram',
+                index: i,
+                defaultTitle: `Telegram #${i + 1}`,
                 missing: !username,
                 hint: 'Заповніть TELEGRAM_BOT_USERNAME, щоб згенерувати посилання.',
                 url: username ? `https://t.me/${username}?start=${encodeURIComponent(payload)}` : '',
@@ -98,7 +102,9 @@ function buildChannelLinks({ channels, keyMap, bot, counts }) {
             links.push({
                 id: `instagram-${i}`,
                 channel: 'Instagram',
-                title: `Instagram #${i + 1}`,
+                channelId: 'instagram',
+                index: i,
+                defaultTitle: `Instagram #${i + 1}`,
                 missing: !username,
                 hint: 'Заповніть INSTAGRAM_USERNAME, щоб згенерувати посилання.',
                 url: username ? `https://ig.me/m/${username}?ref=${encodeURIComponent(ref)}` : '',
@@ -114,8 +120,11 @@ export function EnvironmentPanel({ embedded = false }) {
     const [selectedChannels, setSelectedChannels] = useState([]);
     const [isApplyingChannels, setIsApplyingChannels] = useState(false);
     const [linkCounts, setLinkCounts] = useState({ telegram: 1, instagram: 1 });
+    const [linkMeta, setLinkMeta] = useState({}); // { 'telegram-0': { name: '', desc: '' }, ... }
+    const [editingMeta, setEditingMeta] = useState(null); // linkId being edited
     const [tgConnectors, setTgConnectors] = useState([]);
-    const [copiedWebhook, setCopiedWebhook] = useState(false);
+    const [copiedId, setCopiedId] = useState(null);
+    const [savingMeta, setSavingMeta] = useState(false);
 
     const channelsKey = useMemo(
         () => keys.find(k => k.key === CHANNELS_KEY),
@@ -126,9 +135,34 @@ export function EnvironmentPanel({ embedded = false }) {
         [keys]
     );
 
+    // Load channels
     useEffect(() => {
         setSelectedChannels(parseSelectedChannels(channelsKey?.value));
     }, [channelsKey?.value]);
+
+    // Load link counts from persisted key
+    useEffect(() => {
+        const countsKey = keys.find(k => k.key === LINK_COUNTS_KEY);
+        if (countsKey?.value) {
+            try {
+                const parsed = JSON.parse(countsKey.value);
+                if (parsed && typeof parsed === 'object') {
+                    setLinkCounts(prev => ({ ...prev, ...parsed }));
+                }
+            } catch { /* ignore */ }
+        }
+    }, [keys]);
+
+    // Load link meta from persisted key
+    useEffect(() => {
+        const metaKey = keys.find(k => k.key === LINK_META_KEY);
+        if (metaKey?.value) {
+            try {
+                const parsed = JSON.parse(metaKey.value);
+                if (parsed && typeof parsed === 'object') setLinkMeta(parsed);
+            } catch { /* ignore */ }
+        }
+    }, [keys]);
 
     // Load Telegram bot connectors
     useEffect(() => {
@@ -169,18 +203,47 @@ export function EnvironmentPanel({ embedded = false }) {
         }
     };
 
-    const addGeneratedLink = (channelId) => {
-        setLinkCounts(prev => ({ ...prev, [channelId]: (prev[channelId] || 1) + 1 }));
+    const addGeneratedLink = async (channelId) => {
+        const next = { ...linkCounts, [channelId]: (linkCounts[channelId] || 1) + 1 };
+        setLinkCounts(next);
+        await upsertKey(LINK_COUNTS_KEY, JSON.stringify(next), 'Кількість посилань на воронку', false);
     };
 
-    const copyToClipboard = async (text, onDone) => {
+    const removeLink = async (channelId) => {
+        const current = linkCounts[channelId] || 1;
+        if (current <= 1) return;
+        const next = { ...linkCounts, [channelId]: current - 1 };
+        setLinkCounts(next);
+        await upsertKey(LINK_COUNTS_KEY, JSON.stringify(next), 'Кількість посилань на воронку', false);
+        // Clean up meta for removed link
+        const removedId = `${channelId}-${current - 1}`;
+        const nextMeta = { ...linkMeta };
+        delete nextMeta[removedId];
+        setLinkMeta(nextMeta);
+        await upsertKey(LINK_META_KEY, JSON.stringify(nextMeta), 'Назви та описи посилань', false);
+    };
+
+    const copyToClipboard = async (text, linkId) => {
         try {
             await navigator.clipboard.writeText(text);
-            if (onDone) onDone();
+            setCopiedId(linkId);
+            setTimeout(() => setCopiedId(null), 1500);
         } catch {
             // no-op
         }
     };
+
+    const saveLinkMeta = useCallback(async (linkId, name, desc) => {
+        const nextMeta = { ...linkMeta, [linkId]: { name, desc } };
+        setLinkMeta(nextMeta);
+        setEditingMeta(null);
+        setSavingMeta(true);
+        try {
+            await upsertKey(LINK_META_KEY, JSON.stringify(nextMeta), 'Назви та описи посилань', false);
+        } finally {
+            setSavingMeta(false);
+        }
+    }, [linkMeta, upsertKey]);
 
     const handleSelectTgConnector = async (connectorId) => {
         await upsertKey(TG_CONNECTOR_KEY, connectorId, 'Telegram Bot Connector', false);
@@ -188,10 +251,8 @@ export function EnvironmentPanel({ embedded = false }) {
         const connector = tgConnectors.find(c => c.id === connectorId);
         if (!connector) return;
 
-        // 1) Якщо в config вже є username — підставити
         let username = connector?.config?.username;
 
-        // 2) Якщо username немає, але є токен — підтягнути через getMe і дозаписати в конектор
         const token = connector?.config?.token;
         if (!username && token && /^\d+:[A-Za-z0-9_-]{20,}$/.test(String(token).trim())) {
             try {
@@ -199,7 +260,6 @@ export function EnvironmentPanel({ embedded = false }) {
                 const data = await res.json();
                 if (data.ok && data.result?.username) {
                     username = data.result.username;
-                    // дозаписати username у збережений конектор, щоб наступного разу не питати
                     try {
                         await api.updateSavedConnector(connector.id, {
                             config: { ...connector.config, username },
@@ -285,32 +345,80 @@ export function EnvironmentPanel({ embedded = false }) {
                         <div className="mt-2 pt-2 border-t border-gray-800 space-y-2">
                             <div className="text-xs text-gray-300 font-medium">Посилання на цю воронку</div>
 
-                            {generatedLinks.map(item => (
-                                <div key={item.id} className="bg-gray-950 border border-gray-800 rounded-lg p-2 space-y-1">
-                                    <div className="text-[11px] text-gray-400">{item.title}</div>
-                                    {item.missing ? (
-                                        <div className="text-[11px] text-yellow-400">{item.hint}</div>
-                                    ) : (
-                                        <>
-                                            <a
-                                                href={item.url}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                className="block text-[11px] text-brand-light hover:text-white break-all font-mono"
-                                            >
-                                                {item.url}
-                                            </a>
-                                            <button
-                                                type="button"
-                                                onClick={() => copyToClipboard(item.url)}
-                                                className="text-[11px] px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 transition-colors"
-                                            >
-                                                Копіювати
-                                            </button>
-                                        </>
-                                    )}
-                                </div>
-                            ))}
+                            {generatedLinks.map(item => {
+                                const meta = linkMeta[item.id] || {};
+                                const isEditing = editingMeta === item.id;
+
+                                return (
+                                    <div key={item.id} className="bg-gray-950 border border-gray-800 rounded-lg p-2 space-y-1.5">
+                                        {/* Title row */}
+                                        <div className="flex items-center justify-between gap-1">
+                                            <span className="text-[11px] font-medium text-gray-300">
+                                                {meta.name || item.defaultTitle}
+                                            </span>
+                                            <div className="flex gap-1">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setEditingMeta(isEditing ? null : item.id)}
+                                                    className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 transition-colors"
+                                                    title="Редагувати назву та опис"
+                                                >
+                                                    ✏
+                                                </button>
+                                                {item.index > 0 && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => removeLink(item.channelId)}
+                                                        className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 hover:bg-red-900/50 text-gray-500 hover:text-red-400 transition-colors"
+                                                        title="Видалити це посилання"
+                                                    >
+                                                        ✕
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {/* Inline meta editor */}
+                                        {isEditing && (
+                                            <LinkMetaEditor
+                                                linkId={item.id}
+                                                initial={meta}
+                                                onSave={saveLinkMeta}
+                                                onCancel={() => setEditingMeta(null)}
+                                                saving={savingMeta}
+                                            />
+                                        )}
+
+                                        {/* Description */}
+                                        {!isEditing && meta.desc && (
+                                            <div className="text-[10px] text-gray-500">{meta.desc}</div>
+                                        )}
+
+                                        {/* URL */}
+                                        {item.missing ? (
+                                            <div className="text-[11px] text-yellow-400">{item.hint}</div>
+                                        ) : (
+                                            <>
+                                                <a
+                                                    href={item.url}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="block text-[11px] text-brand-light hover:text-white break-all font-mono"
+                                                >
+                                                    {item.url}
+                                                </a>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => copyToClipboard(item.url, item.id)}
+                                                    className={`text-[11px] px-2 py-1 rounded transition-colors ${copiedId === item.id ? 'bg-emerald-900/40 text-emerald-400' : 'bg-gray-800 hover:bg-gray-700 text-gray-300'}`}
+                                                >
+                                                    {copiedId === item.id ? '✓ Скопійовано' : 'Копіювати'}
+                                                </button>
+                                            </>
+                                        )}
+                                    </div>
+                                );
+                            })}
 
                             <div className="flex gap-2">
                                 {selectedChannels.includes('telegram') && (
@@ -334,7 +442,60 @@ export function EnvironmentPanel({ embedded = false }) {
                             </div>
                         </div>
                     )}
+
+                    {/* Webhook info */}
+                    {webhookInfo && (
+                        <div className="mt-2 pt-2 border-t border-gray-800 space-y-2">
+                            <div className="text-xs text-gray-300 font-medium">Webhook URL</div>
+                            <div className="bg-gray-950 border border-gray-800 rounded-lg p-2 space-y-1">
+                                <div className="text-[10px] text-gray-500">POST запит на:</div>
+                                <div className="text-[11px] text-brand-light break-all font-mono">{webhookInfo.startUrl}</div>
+                                <div className="text-[10px] text-gray-500 mt-1">{webhookInfo.note}</div>
+                            </div>
+                        </div>
+                    )}
                 </div>
+            </div>
+        </div>
+    );
+}
+
+function LinkMetaEditor({ linkId, initial, onSave, onCancel, saving }) {
+    const [name, setName] = useState(initial.name || '');
+    const [desc, setDesc] = useState(initial.desc || '');
+
+    return (
+        <div className="space-y-1.5 pt-1 border-t border-gray-800">
+            <input
+                type="text"
+                value={name}
+                onChange={e => setName(e.target.value)}
+                placeholder="Назва посилання (напр. Реклама в каналі)"
+                className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-brand"
+            />
+            <textarea
+                value={desc}
+                onChange={e => setDesc(e.target.value)}
+                placeholder="Опис (необов'язково)"
+                rows={2}
+                className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-brand resize-none"
+            />
+            <div className="flex gap-1.5">
+                <button
+                    type="button"
+                    onClick={() => onSave(linkId, name, desc)}
+                    disabled={saving}
+                    className="flex-1 text-[11px] py-1 rounded bg-brand hover:bg-brand/90 text-white transition-colors disabled:opacity-50"
+                >
+                    {saving ? '...' : 'Зберегти'}
+                </button>
+                <button
+                    type="button"
+                    onClick={onCancel}
+                    className="text-[11px] px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 transition-colors"
+                >
+                    ✕
+                </button>
             </div>
         </div>
     );

@@ -596,6 +596,13 @@ export function Bots() {
                                                         Сесії
                                                     </button>
                                                     <button
+                                                        onClick={() => navigate(`/funnel/${bot.id}/analytics`)}
+                                                        className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs rounded-lg transition-colors"
+                                                        title="Аналітика переходів по посиланнях і статистика нод"
+                                                    >
+                                                        📊
+                                                    </button>
+                                                    <button
                                                         onClick={() => setArchiveConfirm(bot.id)}
                                                         className="px-3 py-1.5 bg-gray-800 hover:bg-orange-900/30 text-gray-500 hover:text-orange-400 text-xs rounded-lg transition-colors"
                                                         title="Архівувати воронку (вимкнути, сховати зі списку)"

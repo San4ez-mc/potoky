@@ -77,6 +77,7 @@ export const api = {
     deleteFunnelKey: (botId, key) => req('DELETE', `/funnels/${botId}/keys/${key}`),
     revealFunnelKey: (botId, key) => req('GET', `/funnels/${botId}/keys/${key}/reveal`),
     getNodeStats: (botId, nodeId, period = '30d') => req('GET', `/funnels/${botId}/nodes/${nodeId}/stats?period=${period}`),
+    getFunnelAnalytics: (botId, period = '30d') => req('GET', `/funnels/${botId}/analytics?period=${period}`),
 
     // Connectors (type definitions)
     getConnectors: () => req('GET', '/connectors'),

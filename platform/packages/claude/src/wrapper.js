@@ -560,4 +560,4 @@ function _sanitizeRequest(body) {
     };
 }
 
-module.exports = { callClaude };
+module.exports = { callClaude, resolveFunnelClaudeKey };

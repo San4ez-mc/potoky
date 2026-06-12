@@ -2057,6 +2057,129 @@ ${_baseUrl}/legal/terms — Правила використання`;
             continue;
         }
 
+        // ── AGENT NODE — agentic loop with HTTP tools ─────────────────────────────
+        if (node.type === 'agent') {
+            const agentScope = { ...scope, context: compressContextForPrompt(ctx) };
+            const systemPrompt = renderTemplate(data.systemPrompt || 'You are a helpful assistant.', agentScope);
+            const maxIterations = parseInt(data.maxIterations, 10) || 10;
+            const outputPath = data.outputVar ? String(data.outputVar).replace(/^context\./, '') : null;
+
+            // Build initial messages from template
+            let messages;
+            try {
+                messages = parseClaudeMessages(data.messagesTemplate, agentScope, runtime.lastUserMessage || '');
+            } catch (e) {
+                messages = [{ role: 'user', content: runtime.lastUserMessage || '' }];
+            }
+
+            // Build Claude tools from node.data.tools
+            const rawTools = Array.isArray(data.tools) ? data.tools : [];
+            const claudeTools = rawTools.map((t) => ({
+                name: t.name,
+                description: t.description || t.name,
+                input_schema: t.inputSchema || { type: 'object', properties: {}, required: [] },
+            }));
+
+            // Resolve API key
+            const { createClient } = require('../../../packages/claude/src/client');
+            const { resolveFunnelClaudeKey } = require('@platform/claude/src/wrapper');
+            let apiKey = '';
+            try { apiKey = await resolveFunnelClaudeKey(session.id); } catch (e) { /* ignore */ }
+            if (!apiKey) {
+                logger.warn('[agent node] No API key, skipping', { nodeId: node.id });
+                runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
+                continue;
+            }
+            const anthropic = createClient(apiKey);
+            const agentModel = data.model || 'claude-sonnet-4-6';
+            const agentMaxTokens = parseInt(data.maxTokens, 10) || 4096;
+
+            let agentResponse = '';
+            for (let iter = 0; iter < maxIterations; iter++) {
+                let response;
+                try {
+                    response = await anthropic.messages.create({
+                        model: agentModel,
+                        max_tokens: agentMaxTokens,
+                        system: systemPrompt,
+                        tools: claudeTools.length > 0 ? claudeTools : undefined,
+                        messages,
+                    });
+                } catch (e) {
+                    logger.error('[agent node] Claude error', { nodeId: node.id, error: e.message });
+                    agentResponse = `Помилка агента: ${e.message}`;
+                    break;
+                }
+
+                const textBlocks = response.content.filter((b) => b.type === 'text');
+                const toolBlocks = response.content.filter((b) => b.type === 'tool_use');
+
+                if (textBlocks.length > 0) {
+                    agentResponse = textBlocks.map((b) => b.text).join('\n');
+                }
+
+                if (response.stop_reason === 'end_turn' || toolBlocks.length === 0) {
+                    break;
+                }
+
+                // Execute tool calls
+                messages = [...messages, { role: 'assistant', content: response.content }];
+                const toolResults = [];
+
+                for (const toolCall of toolBlocks) {
+                    const toolDef = rawTools.find((t) => t.name === toolCall.name);
+                    let toolResult = '';
+                    if (toolDef && toolDef.url) {
+                        try {
+                            // Render URL with current scope + tool inputs in context
+                            const toolScope = { ...agentScope, context: { ...agentScope.context, ...toolCall.input } };
+                            const resolvedUrl = renderTemplate(toolDef.url, toolScope);
+                            const toolMethod = (toolDef.method || 'POST').toUpperCase();
+                            const toolBody = toolMethod !== 'GET' ? JSON.stringify(toolCall.input) : undefined;
+                            const toolHeaders = { 'Content-Type': 'application/json', ...(toolDef.headers || {}) };
+
+                            const httpStart = Date.now();
+                            const httpRes = await fetch(resolvedUrl, {
+                                method: toolMethod,
+                                headers: toolHeaders,
+                                body: toolBody,
+                                signal: AbortSignal.timeout(30000),
+                            });
+                            const rawText = await httpRes.text();
+                            let parsed;
+                            try { parsed = JSON.parse(rawText); } catch { parsed = rawText; }
+                            toolResult = typeof parsed === 'string' ? parsed : JSON.stringify(parsed);
+                            logger.info('[agent node] Tool call', { tool: toolCall.name, status: httpRes.status, ms: Date.now() - httpStart });
+                        } catch (e) {
+                            toolResult = `Tool error: ${e.message}`;
+                            logger.error('[agent node] Tool HTTP error', { tool: toolCall.name, error: e.message });
+                        }
+                    } else {
+                        toolResult = `Tool "${toolCall.name}" not found`;
+                    }
+
+                    toolResults.push({
+                        type: 'tool_result',
+                        tool_use_id: toolCall.id,
+                        content: toolResult,
+                    });
+                }
+
+                messages = [...messages, { role: 'user', content: toolResults }];
+            }
+
+            if (agentResponse) {
+                await persistAssistantMessage(session.id, agentResponse, { nodeId: node.id, nodeType: 'agent' });
+                lastAssistant = agentResponse;
+            }
+            if (outputPath) {
+                setByPath(ctx, outputPath, agentResponse);
+            }
+            runtime.lastUserMessage = '';
+            runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
+            continue;
+        }
+
         if (node.type === 'knowledgeBase') {
             const blocks = Array.isArray(data.blocks) ? data.blocks : [];
             const contextKey = data.contextKey ? String(data.contextKey).trim() : 'knowledge_base';

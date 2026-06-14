@@ -17,11 +17,11 @@ function markSessionsRead(ids) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(map));
 }
 export function markOneSessionRead(id) { markSessionsRead([id]); }
-function isUnread(session, readMap) {
-    const lastMsg = session.messages?.[0];
-    if (!lastMsg || lastMsg.role !== 'user') return false;
+function countUnread(session, readMap) {
     const readAt = readMap[session.id] || 0;
-    return new Date(lastMsg.createdAt).getTime() > readAt;
+    return (session.messages || []).filter(
+        m => m.role === 'user' && new Date(m.createdAt).getTime() > readAt
+    ).length;
 }
 
 export function Sessions() {
@@ -246,7 +246,8 @@ export function Sessions() {
                                     <th className="px-2 py-2 text-left w-32">Стан</th>
                                     <th className="px-2 py-2 text-right w-16">Пов./API</th>
                                     <th className="px-2 py-2 text-right w-10">Пом.</th>
-                                    <th className="px-2 py-2 text-left w-20">Початок</th>
+                                    <th className="px-2 py-2 text-right w-10">Нові</th>
+                                    <th className="px-2 py-2 text-left w-20">Остання акт.</th>
                                     <th className="px-2 py-2 text-right w-20">Дії</th>
                                 </tr>
                             </thead>
@@ -260,7 +261,8 @@ export function Sessions() {
                                     const apiCount = s._count?.apiCalls ?? 0;
                                     const errCount = s._count?.errors ?? 0;
                                     const isSelected = selectedIds.includes(s.id);
-                                    const unread = isUnread(s, readMap);
+                                    const unreadCount = countUnread(s, readMap);
+                                    const unread = unreadCount > 0;
 
                                     return (
                                         <tr key={s.id} className={`border-b border-gray-800/60 hover:bg-gray-800/30 transition-colors ${isSelected ? 'bg-blue-900/10' : ''} ${unread ? 'bg-blue-950/20' : ''}`}>
@@ -269,10 +271,8 @@ export function Sessions() {
                                                 <input type="checkbox" checked={isSelected} onChange={() => toggleSelected(s.id)}
                                                     className="rounded border-gray-600 bg-gray-800" />
                                             </td>
-                                            {/* Unread dot */}
-                                            <td className="px-1 py-2 align-middle">
-                                                {unread && <span className="block w-2 h-2 rounded-full bg-blue-400" title="Є непрочитані повідомлення від користувача" />}
-                                            </td>
+                                            {/* placeholder — unread badge moved to its own column after errors */}
+                                            <td className="px-1 py-2 align-middle"></td>
                                             {/* Status */}
                                             <td className="px-2 py-2 align-middle">
                                                 <span className={`inline-flex text-[11px] px-1.5 py-0.5 rounded-full border ${s.isActive ? 'text-emerald-400 bg-emerald-900/30 border-emerald-800' : 'text-gray-500 border-gray-700'}`}>
@@ -311,9 +311,17 @@ export function Sessions() {
                                                     </button>
                                                 ) : <span className="text-gray-700">0</span>}
                                             </td>
-                                            {/* Date */}
+                                            {/* Unread count badge */}
+                                            <td className="px-2 py-2 align-middle text-right">
+                                                {unreadCount > 0 ? (
+                                                    <span className="text-[11px] text-blue-300 bg-blue-900/40 border border-blue-700 rounded-full px-1.5 py-0.5">
+                                                        {unreadCount}
+                                                    </span>
+                                                ) : <span className="text-gray-700">—</span>}
+                                            </td>
+                                            {/* Last activity date */}
                                             <td className="px-2 py-2 align-middle text-[11px] text-gray-500 whitespace-nowrap">
-                                                {s.startedAt ? format(new Date(s.startedAt), 'dd.MM HH:mm') : '—'}
+                                                {s.lastActive ? format(new Date(s.lastActive), 'dd.MM HH:mm') : s.startedAt ? format(new Date(s.startedAt), 'dd.MM HH:mm') : '—'}
                                             </td>
                                             {/* Actions */}
                                             <td className="px-2 py-2 align-middle">

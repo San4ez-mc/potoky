@@ -79,7 +79,7 @@ router.get('/:id/sessions',
         const [sessions, total] = await Promise.all([
             db.session.findMany({
                 where,
-                orderBy: { startedAt: 'desc' },
+                orderBy: { lastActive: 'desc' },
                 take: limit,
                 skip: page * limit,
                 include: {
@@ -93,6 +93,7 @@ router.get('/:id/sessions',
                         }
                     },
                     _count: { select: { messages: true, apiCalls: true, errors: true } },
+                    messages: { orderBy: { createdAt: 'desc' }, take: 10, select: { role: true, createdAt: true } },
                 },
             }),
             db.session.count({ where }),

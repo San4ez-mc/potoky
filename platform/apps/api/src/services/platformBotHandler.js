@@ -364,14 +364,20 @@ async function getNewAssistantMessages(sessionId, since) {
 }
 
 async function persistUserMessage(sessionId, content) {
-    await db.message.create({
-        data: {
-            sessionId,
-            role: 'user',
-            content,
-            metadata: { source: 'telegram-platform-bot' },
-        },
-    });
+    await Promise.all([
+        db.message.create({
+            data: {
+                sessionId,
+                role: 'user',
+                content,
+                metadata: { source: 'telegram-platform-bot' },
+            },
+        }),
+        db.session.update({
+            where: { id: sessionId },
+            data: { lastActive: new Date() },
+        }),
+    ]);
 }
 
 // ---------------------------------------------------------------------------

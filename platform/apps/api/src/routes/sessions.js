@@ -272,7 +272,19 @@ router.post('/:id/send',
             catch (e) { return res.status(400).json({ ok: false, error: { message: e.message } }); }
         }
 
-        const tgMessageId = await sendViaBot(session.botId, session.user.telegramId, text, photoBuffer, { docBuffer, docName, docMimeType });
+        let tgMessageId = null;
+        try {
+            tgMessageId = await sendViaBot(session.botId, session.user.telegramId, text, photoBuffer, { docBuffer, docName, docMimeType });
+        } catch (tgErr) {
+            const msg = tgErr.message || '';
+            if (msg.includes('403') || msg.includes('blocked')) {
+                return res.status(422).json({ ok: false, error: { message: 'Користувач заблокував бота — повідомлення не доставлено' } });
+            }
+            if (msg.includes('400') || msg.includes('chat not found')) {
+                return res.status(422).json({ ok: false, error: { message: 'Чат не знайдено в Telegram — можливо бот ще не запущений цим користувачем' } });
+            }
+            throw tgErr;
+        }
 
         const contentLabel = docBuffer ? `📎 ${docName}` : photoBuffer ? '📷 Фото' : text;
         await db.message.create({

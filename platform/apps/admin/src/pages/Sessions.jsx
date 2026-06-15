@@ -176,18 +176,36 @@ export function Sessions() {
     };
 
     return (
-        <div className="p-6 w-full max-w-none">
-            <div className="flex items-center justify-between mb-6">
-                <div>
-                    <h1 className="text-xl font-semibold text-white">
-                        {botId ? 'Сесії бота' : 'Всі сесії'}
-                    </h1>
-                    {meta.total > 0 && <div className="text-sm text-gray-500 mt-0.5">Всього: {meta.total}</div>}
+        <div className="p-4 md:p-6 w-full max-w-none">
+            <div className="mb-4 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                    <div>
+                        <h1 className="text-xl font-semibold text-white">
+                            {botId ? 'Сесії бота' : 'Всі сесії'}
+                        </h1>
+                        {meta.total > 0 && <div className="text-sm text-gray-500 mt-0.5">Всього: {meta.total}</div>}
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                        <button
+                            onClick={() => { markSessionsRead(sessions.map(s => s.id)); setReadMap(getReadMap()); }}
+                            title="Позначити всі сесії на цій сторінці як прочитані"
+                            className="px-3 py-1.5 text-xs rounded-lg border border-gray-700 text-gray-400 hover:bg-gray-800"
+                        >
+                            ✓ Прочитано
+                        </button>
+                        <button
+                            onClick={handleDeleteBulk}
+                            disabled={selectedIds.length === 0 || deleting}
+                            className="px-3 py-1.5 text-xs rounded-lg border border-red-800 text-red-400 hover:bg-red-900/30 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            🗑 {selectedIds.length > 0 ? `(${selectedIds.length})` : ''}
+                        </button>
+                    </div>
                 </div>
-                <div className="flex items-center gap-2 flex-wrap justify-end">
+                <div className="flex flex-wrap gap-2 items-center">
                     {/* Type radio */}
                     <div className="flex items-center rounded-lg border border-gray-700 overflow-hidden text-xs">
-                        {[['all', 'Всі'], ['real', 'Справжні'], ['test', 'Тестові']].map(([val, label]) => (
+                        {[['all', 'Всі'], ['real', 'Справжні'], ['test', 'Тест']].map(([val, label]) => (
                             <button key={val} onClick={() => { setPage(0); setSessionType(val); }}
                                 className={`px-3 py-1.5 transition-colors ${sessionType === val ? 'bg-brand/20 text-brand-light' : 'text-gray-300 hover:bg-gray-800'}`}>
                                 {label}
@@ -196,7 +214,7 @@ export function Sessions() {
                     </div>
                     {/* Source radio */}
                     <div className="flex items-center rounded-lg border border-gray-700 overflow-hidden text-xs">
-                        {[['all', 'Всі'], ['bot', 'Telegram боти'], ['webhook', 'Webhook/API']].map(([val, label]) => (
+                        {[['all', 'Всі'], ['bot', 'TG'], ['webhook', 'API']].map(([val, label]) => (
                             <button key={val} onClick={() => { setPage(0); setSource(val); }}
                                 className={`px-3 py-1.5 transition-colors ${source === val ? 'bg-brand/20 text-brand-light' : 'text-gray-300 hover:bg-gray-800'}`}>
                                 {label}
@@ -209,24 +227,10 @@ export function Sessions() {
                     >
                         З помилками{errorsOnly ? ' ✓' : ''}
                     </button>
-                    <button
-                        onClick={() => { markSessionsRead(sessions.map(s => s.id)); setReadMap(getReadMap()); }}
-                        title="Позначити всі сесії на цій сторінці як прочитані"
-                        className="px-3 py-1.5 text-xs rounded-lg border border-gray-700 text-gray-400 hover:bg-gray-800"
-                    >
-                        ✓ Прочитано
-                    </button>
-                    <label className="text-xs text-gray-400 flex items-center gap-2">
+                    <label className="text-xs text-gray-400 flex items-center gap-2 ml-auto">
                         <input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAllVisible} className="rounded border-gray-600 bg-gray-800" />
-                        Всі на сторінці
+                        Всі
                     </label>
-                    <button
-                        onClick={handleDeleteBulk}
-                        disabled={selectedIds.length === 0 || deleting}
-                        className="px-3 py-1.5 text-xs rounded-lg border border-red-800 text-red-400 hover:bg-red-900/30 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        Видалити ({selectedIds.length})
-                    </button>
                 </div>
             </div>
 

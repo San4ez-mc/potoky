@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Sidebar } from './Sidebar.jsx';
 
@@ -28,6 +28,7 @@ export function Layout() {
     const location = useLocation();
     const navigate = useNavigate();
     const meta = routeMeta(location.pathname, location.search);
+    const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
     const handleBack = () => {
         if (meta.backTo) {
@@ -39,9 +40,16 @@ export function Layout() {
 
     return (
         <div className="flex h-screen overflow-hidden">
-            <Sidebar />
-            <main className="flex-1 overflow-y-auto bg-gray-950">
-                <div className="sticky top-0 z-10 h-12 px-4 bg-gray-950/95 backdrop-blur border-b border-gray-800 flex items-center gap-3">
+            <Sidebar mobileOpen={mobileSidebarOpen} onMobileClose={() => setMobileSidebarOpen(false)} />
+            <main className="flex-1 overflow-y-auto bg-gray-950 min-w-0">
+                <div className="sticky top-0 z-10 h-12 px-3 bg-gray-950/95 backdrop-blur border-b border-gray-800 flex items-center gap-2">
+                    <button
+                        onClick={() => setMobileSidebarOpen(true)}
+                        className="md:hidden flex items-center justify-center w-8 h-8 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-colors text-lg"
+                        aria-label="Відкрити меню"
+                    >
+                        ☰
+                    </button>
                     {meta.backTo && (
                         <button
                             onClick={handleBack}

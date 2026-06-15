@@ -341,7 +341,7 @@ export function Bots() {
     );
 
     return (
-        <div className="p-6 space-y-5">
+        <div className="p-4 md:p-6 space-y-4 md:space-y-5">
             {/* Header */}
             <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3">
                 <div>
@@ -439,8 +439,72 @@ export function Bots() {
                 </div>
             </div>
 
-            {/* Table */}
-            <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-x-auto">
+            {/* Mobile cards */}
+            <div className="md:hidden space-y-2">
+                {filteredRows.length === 0 && (
+                    <div className="py-12 text-center text-gray-500 text-sm">Немає воронок за обраним фільтром</div>
+                )}
+                {filteredRows.map((bot) => {
+                    const activeSessions = bot.metrics?.activeSessions ?? 0;
+                    const errors = bot.metrics?.unresolvedErrors ?? 0;
+                    const updatedAt = bot.metrics?.flowUpdatedAt;
+                    return (
+                        <div
+                            key={bot.id}
+                            className={`bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-3 ${bot.isActive === false ? 'opacity-50' : ''}`}
+                        >
+                            {/* Name row */}
+                            <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                    <div className="font-medium text-white text-sm flex items-center gap-1.5 flex-wrap">
+                                        {bot.name}
+                                        {bot.settings?.isSystem && <span className="px-1 py-0.5 rounded text-[9px] bg-gray-700 text-gray-400 border border-gray-600">sys</span>}
+                                        {bot.botLabel && <span className="px-1.5 py-0.5 rounded text-[10px] bg-blue-900/30 border border-blue-800/50 text-blue-300">{bot.botLabel}</span>}
+                                    </div>
+                                    <div className="text-[11px] text-gray-500 font-mono mt-0.5">/{bot.slug}</div>
+                                    <div className="text-xs text-gray-500 mt-0.5">{bot.projectName}</div>
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0">
+                                    {(bot.channels || []).map(ch => (
+                                        <span key={ch} className="text-base">{CHANNEL_EMOJI[ch] || '📡'}</span>
+                                    ))}
+                                </div>
+                            </div>
+                            {/* Stats row */}
+                            <div className="flex items-center gap-3 text-xs text-gray-400">
+                                <span>👥 {bot.metrics?.usersCount ?? 0}</span>
+                                <span>💬 {bot.metrics?.totalSessions ?? 0}</span>
+                                {activeSessions > 0 && <span className="text-emerald-400">● {activeSessions} активних</span>}
+                                {errors > 0 && <span className="text-red-400 font-semibold">⚠ {errors} помилок</span>}
+                                {updatedAt && <span className="text-gray-600 ml-auto">{relTime(updatedAt)} тому</span>}
+                            </div>
+                            {/* Actions */}
+                            <div className="flex flex-wrap gap-2">
+                                {bot.isActive === false ? (
+                                    <button onClick={() => handleArchive(bot)} className="flex-1 px-3 py-2 bg-emerald-900/30 text-emerald-400 text-xs rounded-lg border border-emerald-800/40">↩ Відновити</button>
+                                ) : archiveConfirm === bot.id ? (
+                                    <>
+                                        <button onClick={() => handleArchive(bot)} className="flex-1 px-3 py-2 bg-orange-900/50 text-orange-300 text-xs rounded-lg border border-orange-800/50">Підтвердити архів</button>
+                                        <button onClick={() => setArchiveConfirm(null)} className="px-3 py-2 bg-gray-800 text-gray-400 text-xs rounded-lg">✕</button>
+                                    </>
+                                ) : (
+                                    <>
+                                        <button onClick={() => navigate(`/funnel/${bot.id}`)} className="flex-1 px-3 py-2 bg-brand/20 text-brand-light text-xs rounded-lg font-medium">Редагувати</button>
+                                        <button onClick={() => navigate(`/bots/${bot.id}/sessions`)} className="px-3 py-2 bg-gray-800 text-gray-300 text-xs rounded-lg">Сесії</button>
+                                        <button onClick={() => navigate(`/funnel/${bot.id}/analytics`)} className="px-3 py-2 bg-gray-800 text-gray-300 text-xs rounded-lg">📊</button>
+                                        <button onClick={() => setEditInfoBot(bot)} className="px-3 py-2 bg-gray-800 text-gray-300 text-xs rounded-lg">ℹ</button>
+                                        <button onClick={() => setArchiveConfirm(bot.id)} className="px-3 py-2 bg-gray-800 text-gray-500 text-xs rounded-lg">📦</button>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    );
+                })}
+                <div className="px-1 py-2 text-xs text-gray-500">Всього воронок: {filteredRows.length}</div>
+            </div>
+
+            {/* Desktop table */}
+            <div className="hidden md:block bg-gray-900 border border-gray-800 rounded-xl overflow-x-auto">
                 <table className="w-full min-w-[1040px]">
                     <thead>
                         <tr className="border-b border-gray-800 bg-gray-950/70">
@@ -482,7 +546,6 @@ export function Bots() {
                                     key={bot.id}
                                     className={`border-b border-gray-800/60 hover:bg-gray-800/20 transition-colors align-middle ${bot.settings?.isSystem ? 'opacity-60' : ''} ${bot.isActive === false ? 'opacity-40' : ''}`}
                                 >
-                                    {/* Name / slug — compact single line */}
                                     <td className="px-4 py-2.5" style={{ maxWidth: '260px' }}>
                                         <div className="flex items-center gap-1.5 min-w-0">
                                             <span className="font-medium text-white text-sm truncate" title={bot.name}>{bot.name}</span>
@@ -497,49 +560,25 @@ export function Bots() {
                                             )}
                                         </div>
                                     </td>
-
-                                    {/* Project */}
                                     <td className="px-4 py-2.5 text-xs text-gray-400 whitespace-nowrap">{bot.projectName}</td>
-
-                                    {/* Channels */}
                                     <td className="px-4 py-3">
                                         <div className="flex gap-1 flex-wrap">
                                             {(bot.channels || []).map(ch => (
-                                                <span key={ch} title={ch} className="text-base leading-none">
-                                                    {CHANNEL_EMOJI[ch] || '📡'}
-                                                </span>
+                                                <span key={ch} title={ch} className="text-base leading-none">{CHANNEL_EMOJI[ch] || '📡'}</span>
                                             ))}
-                                            {(!bot.channels || bot.channels.length === 0) && (
-                                                <span className="text-gray-600 text-xs">—</span>
-                                            )}
+                                            {(!bot.channels || bot.channels.length === 0) && <span className="text-gray-600 text-xs">—</span>}
                                         </div>
                                     </td>
-
-                                    {/* Users */}
                                     <td className="px-4 py-2.5 text-sm text-gray-300">{bot.metrics?.usersCount ?? 0}</td>
-
-                                    {/* Total sessions */}
                                     <td className="px-4 py-2.5 text-sm text-gray-300">{bot.metrics?.totalSessions ?? 0}</td>
-
-                                    {/* Active sessions */}
                                     <td className="px-4 py-3 text-sm">
-                                        <span className={activeSessions > 0 ? 'text-emerald-400 font-medium' : 'text-gray-500'}>
-                                            {activeSessions}
-                                        </span>
+                                        <span className={activeSessions > 0 ? 'text-emerald-400 font-medium' : 'text-gray-500'}>{activeSessions}</span>
                                     </td>
-
-                                    {/* Errors */}
                                     <td className="px-4 py-3 text-sm">
                                         {errors > 0 ? (
-                                            <span className="inline-flex items-center justify-center px-1.5 py-0.5 rounded text-[11px] font-semibold bg-red-900/40 text-red-400 border border-red-800/50">
-                                                {errors}
-                                            </span>
-                                        ) : (
-                                            <span className="text-gray-600">—</span>
-                                        )}
+                                            <span className="inline-flex items-center justify-center px-1.5 py-0.5 rounded text-[11px] font-semibold bg-red-900/40 text-red-400 border border-red-800/50">{errors}</span>
+                                        ) : <span className="text-gray-600">—</span>}
                                     </td>
-
-                                    {/* Updated */}
                                     <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
                                         {updatedAt ? (
                                             <>
@@ -548,67 +587,22 @@ export function Bots() {
                                             </>
                                         ) : '—'}
                                     </td>
-
-                                    {/* Actions */}
                                     <td className="px-4 py-3">
                                         <div className="flex justify-end gap-2 flex-wrap">
                                             {bot.isActive === false ? (
-                                                <button
-                                                    onClick={() => handleArchive(bot)}
-                                                    className="px-3 py-1.5 bg-emerald-900/30 hover:bg-emerald-900/50 text-emerald-400 text-xs rounded-lg transition-colors border border-emerald-800/40"
-                                                >
-                                                    ↩ Відновити
-                                                </button>
+                                                <button onClick={() => handleArchive(bot)} className="px-3 py-1.5 bg-emerald-900/30 hover:bg-emerald-900/50 text-emerald-400 text-xs rounded-lg transition-colors border border-emerald-800/40">↩ Відновити</button>
                                             ) : archiveConfirm === bot.id ? (
                                                 <>
-                                                    <button
-                                                        onClick={() => handleArchive(bot)}
-                                                        className="px-3 py-1.5 bg-orange-900/50 hover:bg-orange-900/70 text-orange-300 text-xs rounded-lg transition-colors border border-orange-800/50"
-                                                    >
-                                                        Підтвердити
-                                                    </button>
-                                                    <button
-                                                        onClick={() => setArchiveConfirm(null)}
-                                                        className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-400 text-xs rounded-lg transition-colors"
-                                                    >
-                                                        ✕
-                                                    </button>
+                                                    <button onClick={() => handleArchive(bot)} className="px-3 py-1.5 bg-orange-900/50 hover:bg-orange-900/70 text-orange-300 text-xs rounded-lg transition-colors border border-orange-800/50">Підтвердити</button>
+                                                    <button onClick={() => setArchiveConfirm(null)} className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-400 text-xs rounded-lg transition-colors">✕</button>
                                                 </>
                                             ) : (
                                                 <>
-                                                    <button
-                                                        onClick={() => setEditInfoBot(bot)}
-                                                        title={bot.description ? bot.description : 'Переглянути / редагувати опис'}
-                                                        className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs rounded-lg transition-colors"
-                                                    >
-                                                        ℹ Інфо
-                                                    </button>
-                                                    <button
-                                                        onClick={() => navigate(`/funnel/${bot.id}`)}
-                                                        className="px-3 py-1.5 bg-brand/20 hover:bg-brand/30 text-brand-light text-xs rounded-lg transition-colors"
-                                                    >
-                                                        Редагувати
-                                                    </button>
-                                                    <button
-                                                        onClick={() => navigate(`/bots/${bot.id}/sessions`)}
-                                                        className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs rounded-lg transition-colors"
-                                                    >
-                                                        Сесії
-                                                    </button>
-                                                    <button
-                                                        onClick={() => navigate(`/funnel/${bot.id}/analytics`)}
-                                                        className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs rounded-lg transition-colors"
-                                                        title="Аналітика переходів по посиланнях і статистика нод"
-                                                    >
-                                                        📊
-                                                    </button>
-                                                    <button
-                                                        onClick={() => setArchiveConfirm(bot.id)}
-                                                        className="px-3 py-1.5 bg-gray-800 hover:bg-orange-900/30 text-gray-500 hover:text-orange-400 text-xs rounded-lg transition-colors"
-                                                        title="Архівувати воронку (вимкнути, сховати зі списку)"
-                                                    >
-                                                        📦
-                                                    </button>
+                                                    <button onClick={() => setEditInfoBot(bot)} title={bot.description || 'Переглянути / редагувати опис'} className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs rounded-lg transition-colors">ℹ Інфо</button>
+                                                    <button onClick={() => navigate(`/funnel/${bot.id}`)} className="px-3 py-1.5 bg-brand/20 hover:bg-brand/30 text-brand-light text-xs rounded-lg transition-colors">Редагувати</button>
+                                                    <button onClick={() => navigate(`/bots/${bot.id}/sessions`)} className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs rounded-lg transition-colors">Сесії</button>
+                                                    <button onClick={() => navigate(`/funnel/${bot.id}/analytics`)} className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs rounded-lg transition-colors" title="Аналітика">📊</button>
+                                                    <button onClick={() => setArchiveConfirm(bot.id)} className="px-3 py-1.5 bg-gray-800 hover:bg-orange-900/30 text-gray-500 hover:text-orange-400 text-xs rounded-lg transition-colors" title="Архівувати">📦</button>
                                                 </>
                                             )}
                                         </div>
@@ -618,9 +612,7 @@ export function Bots() {
                         })}
                         {filteredRows.length === 0 && (
                             <tr>
-                                <td colSpan={9} className="px-4 py-12 text-center text-gray-500 text-sm">
-                                    Немає воронок за обраним фільтром
-                                </td>
+                                <td colSpan={9} className="px-4 py-12 text-center text-gray-500 text-sm">Немає воронок за обраним фільтром</td>
                             </tr>
                         )}
                     </tbody>
@@ -628,9 +620,7 @@ export function Bots() {
                 <div className="px-4 py-2 text-xs text-gray-500 border-t border-gray-800 flex items-center justify-between">
                     <span>Всього воронок: {filteredRows.length}</span>
                     {!showSystemBots && rows.some(r => r.settings?.isSystem) && (
-                        <span className="text-gray-600">
-                            + {rows.filter(r => r.settings?.isSystem).length} системних (приховано)
-                        </span>
+                        <span className="text-gray-600">+ {rows.filter(r => r.settings?.isSystem).length} системних (приховано)</span>
                     )}
                 </div>
             </div>

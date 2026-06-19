@@ -959,11 +959,13 @@ async function handlePlatformBotUpdate(botId, update) {
         // The current user message was already persisted (persistUserMessage above) — drop it.
         if (hist.length && hist[hist.length - 1].role === 'user' && hist[hist.length - 1].content === text) hist.pop();
         hist = hist.slice(-10);
+        // tgChatId / tgBotToken let content funnels deliver generated media back to this chat.
+        const inj = { history: hist, tgChatId: String(chatId), tgBotToken: token || null };
         await db.session.update({
             where: { id: session.id },
-            data: { context: { ...(session.context || {}), history: hist } },
+            data: { context: { ...(session.context || {}), ...inj } },
         });
-        session.context = { ...(session.context || {}), history: hist };
+        session.context = { ...(session.context || {}), ...inj };
     } catch (e) {
         logger.warn('[platformBotHandler] history inject failed', { error: e.message });
     }

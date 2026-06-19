@@ -667,7 +667,26 @@ async function handleCallbackQuery(botId, callbackQuery) {
 // Main handler
 // ---------------------------------------------------------------------------
 
+// Dedup cache: prevent double-processing of Telegram updates (same update_id within 30s)
+const _processedUpdates = new Map();
+function _isAlreadyProcessed(updateId) {
+    const now = Date.now();
+    if (_processedUpdates.has(updateId)) return true;
+    _processedUpdates.set(updateId, now);
+    // Clean up old entries (older than 60s)
+    for (const [id, ts] of _processedUpdates) {
+        if (now - ts > 60000) _processedUpdates.delete(id);
+    }
+    return false;
+}
+
 async function handlePlatformBotUpdate(botId, update) {
+    // ── Deduplicate by update_id ──────────────────────────────────────────────
+    if (update.update_id && _isAlreadyProcessed(update.update_id)) {
+        logger.debug('[platformBotHandler] Duplicate update_id skipped', { updateId: update.update_id, botId });
+        return;
+    }
+
     // ── Handle inline keyboard callbacks (quality check buttons) ─────────────
     if (update.callback_query) {
         await handleCallbackQuery(botId, update.callback_query);
@@ -927,6 +946,28 @@ async function handlePlatformBotUpdate(botId, update) {
         return;
     }
 
+    // ── Inject recent conversation history → content agent can do multi-turn
+    //    (propose theme → user picks). Mirrors how the web dashboard sends history.
+    try {
+        const recentMsgs = await db.message.findMany({
+            where: { sessionId: session.id },
+            orderBy: { createdAt: 'desc' },
+            take: 12,
+            select: { role: true, content: true },
+        });
+        let hist = recentMsgs.reverse().map((m) => ({ role: m.role, content: m.content }));
+        // The current user message was already persisted (persistUserMessage above) — drop it.
+        if (hist.length && hist[hist.length - 1].role === 'user' && hist[hist.length - 1].content === text) hist.pop();
+        hist = hist.slice(-10);
+        await db.session.update({
+            where: { id: session.id },
+            data: { context: { ...(session.context || {}), history: hist } },
+        });
+        session.context = { ...(session.context || {}), history: hist };
+    } catch (e) {
+        logger.warn('[platformBotHandler] history inject failed', { error: e.message });
+    }
+
     // ── Phase 5: execute flow step ────────────────────────────────────────────
     sinceTime = new Date();
     await tgRequest(token, 'sendChatAction', { chat_id: chatId, action: 'typing' }).catch(() => {});
@@ -959,6 +1000,26 @@ async function handlePlatformBotUpdate(botId, update) {
     }
     clearInterval(typingTimer);
 
+    // ── Phase 5.5: re-activate session for continuous-conversation bots ───────
+    // Flow marks session as completed after each run. For bots that work without
+    // /start on every message, reset state to start node so next message can continue.
+    try {
+        const freshSession = await db.session.findUnique({ where: { id: session.id }, select: { state: true } });
+        if (freshSession?.state === 'completed') {
+            const flowDef = await db.flowDefinition.findUnique({ where: { botId: targetBotId } });
+            const nodes = Array.isArray(flowDef?.nodes) ? flowDef.nodes : [];
+            const startNode = nodes.find((n) => n.type === 'start') || nodes[0] || null;
+            if (startNode) {
+                await db.session.update({
+                    where: { id: session.id },
+                    data: { state: startNode.id, isActive: true, completedAt: null },
+                });
+            }
+        }
+    } catch (reactivateErr) {
+        logger.warn('[platformBotHandler] session re-activate failed', { error: reactivateErr.message });
+    }
+
     // ── Phase 6: deliver new messages ─────────────────────────────────────────
     const newMessages = await getNewAssistantMessages(session.id, sinceTime);
 
@@ -969,6 +1030,7 @@ async function handlePlatformBotUpdate(botId, update) {
     for (const msg of newMessages) {
         try {
             const meta = msg.metadata || {};
+            if (meta.hidden) continue; // skip internal LLM steps (dispatcher, ST json_output)
             const attachment = meta.attachment;
             const keyboard = Array.isArray(meta.keyboard) && meta.keyboard.length > 0
                 ? { inline_keyboard: meta.keyboard }

@@ -1552,16 +1552,20 @@ ${sourceContent || '(немає даних)'}
                         user: sanitizeBigInt(session.user),
                         session: { id: session.id, state: session.state },
                         input: runtime.lastUserMessage || '',
+                        keys: funnelEnv,
                         __jsResult: undefined,
                     };
-                    vm.runInNewContext(
-                        `__jsResult = (function(){ "use strict";\n${code}\n})();`,
-                        sandbox,
-                        { timeout: 2000 }
-                    );
-                    const res = sandbox.__jsResult;
-                    if (res && typeof res === 'object' && !Array.isArray(res)) {
-                        Object.assign(ctx, res);
+                    // Support async/await in JS nodes (fetch, Buffer, crypto, etc.)
+                    // new Function wraps user code in async IIFE so top-level await works
+                    const asyncResult = await Promise.race([
+                        new Function(
+                            'context','user','session','input','keys','fetch','Buffer','FormData','Blob','console','crypto',
+                            'return (async function(){"use strict";\n' + code + '\n})();'
+                        )(ctx, sandbox.user, sandbox.session, sandbox.input, sandbox.keys || {}, fetch, Buffer, FormData, Blob, console, require('crypto')),
+                        new Promise((_, rej) => setTimeout(() => rej(new Error('JS node timeout (60s)')), 60000)),
+                    ]);
+                    if (asyncResult && typeof asyncResult === 'object' && !Array.isArray(asyncResult)) {
+                        Object.assign(ctx, asyncResult);
                     }
                 } catch (err) {
                     // eslint-disable-next-line no-console

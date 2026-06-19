@@ -37,3 +37,19 @@ php-mvc/public/uploads/source_images/*
 .claude/worktrees/
 боти/
 бот з контент планом/
+
+# ── Local scratch / notes / generated artifacts (not platform code) ──
+.claude/settings.local.json
+content.planform2/
+/_test_story_1.png
+/carousel_default.html
+/slide*.png
+/v*_slide*.png
+/source_photo.jpg
+/platform/_*
+/ідеї/
+/Опис нод в системі.md
+/ТЗ_наступна_сесія.md
+документація і правки/
+боти/Google Sheets AI agent/
+боти/бізнес процес агента/

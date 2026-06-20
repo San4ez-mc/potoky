@@ -194,8 +194,13 @@ async function deliverResultToTelegram(ctx, slug) {
                 const buf = Buffer.from(b64, 'base64');
                 form.set(`slide${i}`, new Blob([buf], { type: 'image/png' }), `slide${i}.png`);
             });
-            await fetch(`${tgBase}/sendMediaGroup`, { method: 'POST', body: form });
-            logger.info('[webhookBot] Carousel delivered to Telegram', { slug, chatId, count: slidesRaw.length });
+            const cr = await fetch(`${tgBase}/sendMediaGroup`, { method: 'POST', body: form });
+            const cj = await cr.json().catch(() => ({}));
+            if (cj.ok === false) {
+                logger.error('[webhookBot] Carousel send FAILED', { slug, chatId, code: cj.error_code, error: cj.description });
+            } else {
+                logger.info('[webhookBot] Carousel delivered to Telegram', { slug, chatId, count: slidesRaw.length });
+            }
             delivered = true;
         }
 
@@ -208,8 +213,13 @@ async function deliverResultToTelegram(ctx, slug) {
                 form.set('chat_id', String(chatId));
                 form.set('photo', new Blob([buf], { type: 'image/png' }), 'result.png');
                 if (caption) form.set('caption', caption);
-                await fetch(`${tgBase}/sendPhoto`, { method: 'POST', body: form });
-                logger.info('[webhookBot] Image delivered to Telegram', { slug, chatId });
+                const ir = await fetch(`${tgBase}/sendPhoto`, { method: 'POST', body: form });
+                const ij = await ir.json().catch(() => ({}));
+                if (ij.ok === false) {
+                    logger.error('[webhookBot] Image send FAILED', { slug, chatId, code: ij.error_code, error: ij.description });
+                } else {
+                    logger.info('[webhookBot] Image delivered to Telegram', { slug, chatId });
+                }
                 delivered = true;
             }
         }

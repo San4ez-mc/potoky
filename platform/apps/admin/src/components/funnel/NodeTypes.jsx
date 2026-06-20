@@ -457,6 +457,7 @@ export const NODE_TYPES = {
     fetchTelegramProfile: FetchTelegramProfileNode,
     notifyAdmin: NotifyAdminNode,
     knowledgeBase: KnowledgeBaseNode,
+    agent: ClaudeNode, // AI agent (Claude + tools) — render like a Claude node instead of blank white
 };
 
 // ─── Node palette items (for drag sidebar) ────────────────────────────────────

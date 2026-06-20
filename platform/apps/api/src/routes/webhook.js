@@ -177,6 +177,9 @@ async function deliverResultToTelegram(ctx, slug) {
 
     const tgBase = `https://api.telegram.org/bot${botToken}`;
     let delivered = false;
+    // Slides/images may arrive as data URLs ("data:image/png;base64,..") — strip the
+    // prefix, otherwise Buffer.from decodes it as garbage and Telegram rejects the image.
+    const stripB64 = (s) => String(s || '').replace(/^data:[^,]*,/, '');
 
     try {
         // ── Carousel: array of base64 slides ─────────────────────────────────
@@ -191,7 +194,7 @@ async function deliverResultToTelegram(ctx, slug) {
             form.set('chat_id', String(chatId));
             form.set('media', JSON.stringify(mediaGroup));
             slidesRaw.slice(0, 10).forEach((b64, i) => {
-                const buf = Buffer.from(b64, 'base64');
+                const buf = Buffer.from(stripB64(b64), 'base64');
                 form.set(`slide${i}`, new Blob([buf], { type: 'image/png' }), `slide${i}.png`);
             });
             const cr = await fetch(`${tgBase}/sendMediaGroup`, { method: 'POST', body: form });
@@ -209,7 +212,7 @@ async function deliverResultToTelegram(ctx, slug) {
             const imgB64 = ctx.finalImageBase64 || ctx.imageBase64 || ctx.outputImageBase64;
             if (imgB64) {
                 const form = new FormData();
-                const buf = Buffer.from(imgB64, 'base64');
+                const buf = Buffer.from(stripB64(imgB64), 'base64');
                 form.set('chat_id', String(chatId));
                 form.set('photo', new Blob([buf], { type: 'image/png' }), 'result.png');
                 if (caption) form.set('caption', caption);

@@ -754,15 +754,17 @@ async function handlePlatformBotUpdate(botId, update) {
             fetch(`http://127.0.0.1:${port}/webhook/bot/${viSlug}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                // tgDeliver (not deliverTo): video funnels рендерять async (Remotion ~2-3хв) і
+                // доставляють готовий ролик самі. deliverTo на рівні /webhook/bot віддав би сирий вхід одразу.
                 body: JSON.stringify({
                     postId: `tg_${chatId}_${Date.now()}`,
                     videoUrl: incomingMedia.fileUrl,
                     callbackUrl: 'https://video.flows.fineko.space/health',
-                    deliverTo: { chatId: String(chatId), botToken: token, caption: '🎬 Готово: субтитри + чистий монтаж' },
+                    tgDeliver: { chatId: String(chatId), botToken: token, caption: '🎬 Готово: анімовані субтитри + чистий монтаж' },
                 }),
             }).catch(err => logger.warn('[platformBotHandler] video intake trigger failed', { error: err.message }));
             await sendTelegramMessage(token, chatId,
-                'Прийняв відео 🎬 Розпізнаю мову, вирізаю паузи й «екання», накладаю субтитри — поверну готовий ролик за пару хвилин.');
+                'Прийняв відео 🎬 Розпізнаю мову, вирізаю паузи й «екання», накладаю анімовані субтитри — поверну готовий ролик за 2-3 хвилини.');
             logger.info('[platformBotHandler] Video routed to montage funnel', { botId, viSlug, chatId });
             return;
         }

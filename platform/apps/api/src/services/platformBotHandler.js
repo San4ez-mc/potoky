@@ -737,6 +737,37 @@ async function handlePlatformBotUpdate(botId, update) {
         }
     }
 
+    // ── Phase 1.6: video → auto subtitles + montage (opt-in via VIDEO_INTAKE_FUNNEL) ──
+    // Коли бот має ключ VIDEO_INTAKE_FUNNEL і користувач кидає відео — одразу
+    // запускаємо воронку розумного монтажу (Whisper → вирізання пауз → субтитри),
+    // а готовий ролик повертається в цей же чат. Caption може відмінити (бібліотека/Sora).
+    if (incomingMedia && incomingMedia.type === 'video' && incomingMedia.fileUrl) {
+        const viRow = await db.funnelKey.findFirst({
+            where: { botId, key: 'VIDEO_INTAKE_FUNNEL' },
+            select: { value: true },
+        }).catch(() => null);
+        const viSlug = (viRow?.value || '').trim();
+        const cap = (message.caption || '').toLowerCase();
+        const optOut = /бібліотек|для пост|збереж|не монтуй|без монтаж|sora|омн[іi]/.test(cap);
+        if (viSlug && !optOut) {
+            const port = process.env.PORT || 3000;
+            fetch(`http://127.0.0.1:${port}/webhook/bot/${viSlug}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    postId: `tg_${chatId}_${Date.now()}`,
+                    videoUrl: incomingMedia.fileUrl,
+                    callbackUrl: 'https://video.flows.fineko.space/health',
+                    deliverTo: { chatId: String(chatId), botToken: token, caption: '🎬 Готово: субтитри + чистий монтаж' },
+                }),
+            }).catch(err => logger.warn('[platformBotHandler] video intake trigger failed', { error: err.message }));
+            await sendTelegramMessage(token, chatId,
+                'Прийняв відео 🎬 Розпізнаю мову, вирізаю паузи й «екання», накладаю субтитри — поверну готовий ролик за пару хвилин.');
+            logger.info('[platformBotHandler] Video routed to montage funnel', { botId, viSlug, chatId });
+            return;
+        }
+    }
+
     // ── Phase 2: find or create user (use webhook bot for projectId on new users) ──
     let user;
     try {

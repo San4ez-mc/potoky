@@ -1098,6 +1098,25 @@ async function handlePlatformBotUpdate(botId, update) {
         logger.error('[platformBotHandler] executeFlowStep failed', {
             targetBotId, sessionId: session.id, error: err.message, stack: err.stack,
         });
+
+        // Notify the owner with the REAL error so failures are diagnosable at a
+        // glance — instead of only the friendly "щось пішло не так" and digging
+        // through server logs every time.
+        let ownerId = '';
+        try {
+            const ownerRow = await db.funnelKey.findFirst({
+                where: { botId: targetBotId, key: 'OWNER_TELEGRAM_ID' }, select: { value: true },
+            });
+            ownerId = (ownerRow?.value || '').trim() || '345126254';
+            const ownerMsg = '⚠️ Помилка у боті\n'
+                + `bot: ${targetBotId}\nsession: ${session.id}\n`
+                + `повідомлення: ${String(text || '').slice(0, 200)}\n\n`
+                + String(err.message || 'unknown error').slice(0, 1200);
+            await sendTelegramMessage(token, ownerId, ownerMsg);
+        } catch (notifyErr) {
+            logger.warn('[platformBotHandler] owner notify failed', { error: notifyErr.message });
+        }
+
         const errText = 'От халепа 😅 Щось пішло не так, але Олександру вже пішло сповіщення — все виправиться найближчим часом і тобі прийде наступне повідомлення.';
         // Persist error response so it's visible in session messages tab
         await db.message.create({
@@ -1108,7 +1127,11 @@ async function handlePlatformBotUpdate(botId, update) {
                 metadata: { source: 'error-handler', error: err.message },
             },
         }).catch(() => {});
-        await sendTelegramMessage(token, chatId, errText);
+        // Skip the generic notice when the owner is the one testing (they already
+        // got the detailed error above).
+        if (String(ownerId) !== String(chatId)) {
+            await sendTelegramMessage(token, chatId, errText);
+        }
         return;
     }
     clearInterval(typingTimer);

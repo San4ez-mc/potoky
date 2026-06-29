@@ -260,6 +260,32 @@ function sanitizeJsonLiteralNewlines(text) {
     return out;
 }
 
+// Remove unpaired UTF-16 surrogates (e.g. an emoji sliced by .slice(0,N)).
+// A lone surrogate makes the request body invalid JSON ("no low surrogate").
+function stripLoneSurrogates(str) {
+    if (typeof str !== 'string') return str;
+    return str
+        .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '')
+        .replace(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '');
+}
+
+// Bottleneck checkpoint: make a JSON request body resilient to the two classes
+// of corruption that recur in node-built bodies — sliced emojis (lone
+// surrogates) and raw newlines/tabs inside string values (lesson 15.11).
+// Returns a body that is valid JSON when possible; logs once if it cannot be.
+function ensureValidJsonBody(payload, ctx) {
+    if (typeof payload !== 'string' || !payload) return payload;
+    const out = stripLoneSurrogates(payload);
+    try { JSON.parse(out); return out; } catch (_) { /* try to repair */ }
+    const repaired = sanitizeJsonLiteralNewlines(out);
+    try { JSON.parse(repaired); return repaired; } catch (e) {
+        logger.warn('[httpRequest] body still invalid JSON after repair', {
+            nodeId: ctx && ctx.nodeId, url: ctx && ctx.url, error: e.message,
+        });
+        return repaired; // best-effort; the receiving server will report the real issue
+    }
+}
+
 function extractJsonSegment(text) {
     if (!text || typeof text !== 'string') return null;
 
@@ -1437,6 +1463,14 @@ ${sourceContent || '(немає даних)'}
                     } else if (data.body) {
                         bodyPayload = typeof data.body === 'string' ? renderTemplate(data.body, scope) : JSON.stringify(data.body);
                     }
+                }
+
+                // Bottleneck checkpoint: repair node-built JSON bodies (sliced
+                // emojis + raw newlines in strings) so a single fragile node can't
+                // 400 the whole flow. No-op for non-JSON / already-valid bodies.
+                const _ct = String(customHeaders['Content-Type'] || customHeaders['content-type'] || 'application/json');
+                if (bodyPayload && /json/i.test(_ct)) {
+                    bodyPayload = ensureValidJsonBody(bodyPayload, { nodeId: node.id, url });
                 }
 
                 const doRequest = (reqUrl, reqMethod, payload, redirectsLeft = 5) => new Promise((resolve, reject) => {

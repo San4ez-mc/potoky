@@ -37,6 +37,23 @@ async function tgRequest(token, method, payload) {
     try { return await res.json(); } catch { return {}; }
 }
 
+// -------------------------------------------------------------------------
+// Markdown code fences -> Telegram HTML <pre> (gives posts a copy button).
+// Only fenced content is HTML-escaped; text outside fences is untouched, so
+// bots that never emit triple-backticks are unaffected.
+// -------------------------------------------------------------------------
+function escapeHtmlForPre(str) {
+    return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+var __FENCE = String.fromCharCode(96, 96, 96);
+var __FENCE_RE = new RegExp(__FENCE + "[a-zA-Z0-9_-]*\\r?\\n?([\\s\\S]*?)" + __FENCE, "g");
+function convertCodeFencesToHtml(text) {
+    if (!text || text.indexOf(__FENCE) === -1) return text;
+    return text.replace(__FENCE_RE, function (_m, code) {
+        return "<pre>" + escapeHtmlForPre(code.replace(/\r?\n$/, "")) + "</pre>";
+    });
+}
+
 /**
  * Mark all active sessions for a user+bot as unsubscribed when we get 403.
  */
@@ -56,24 +73,56 @@ async function markUnsubscribed(botId, telegramChatId) {
     }
 }
 
-async function sendTelegramMessage(token, chatId, text, extra = {}) {
-    const MAX_LEN = 4000;
-    const parts = [];
-    let remaining = String(text || '');
-    while (remaining.length > MAX_LEN) {
-        parts.push(remaining.slice(0, MAX_LEN));
-        remaining = remaining.slice(MAX_LEN);
+// Split raw text into chunks under maxLen WITHOUT ever cutting inside a code
+// fence. We only allow a break when we are outside a ``` block, so converting
+// each chunk to HTML afterwards can never produce an unbalanced <pre> tag
+// (which Telegram rejects with 400 "can't parse entities").
+function splitForTelegram(text, maxLen) {
+    const raw = String(text || '');
+    if (raw.length <= maxLen) return [raw];
+    const lines = raw.split('\n');
+    const chunks = [];
+    let cur = '';
+    let inFence = false;
+    for (const line of lines) {
+        const isFenceLine = line.trimStart().indexOf(__FENCE) === 0;
+        const candidate = cur ? cur + '\n' + line : line;
+        // Flush only when outside a fence — keeps every ```...``` pair intact.
+        if (candidate.length > maxLen && cur && !inFence) {
+            chunks.push(cur);
+            cur = line;
+        } else {
+            cur = candidate;
+        }
+        if (isFenceLine) inFence = !inFence;
     }
-    if (remaining.length > 0) parts.push(remaining);
+    if (cur) chunks.push(cur);
+    return chunks;
+}
 
-    for (let i = 0; i < parts.length; i++) {
-        const isLast = i === parts.length - 1;
-        await tgRequest(token, 'sendMessage', {
+async function sendTelegramMessage(token, chatId, text, extra = {}) {
+    // 3500 leaves headroom for HTML-escape expansion under Telegram's 4096 cap.
+    const chunks = splitForTelegram(text, 3500);
+
+    for (let i = 0; i < chunks.length; i++) {
+        const isLast = i === chunks.length - 1;
+        const tail = isLast ? extra : {};
+        const html = convertCodeFencesToHtml(chunks[i]);
+        const res = await tgRequest(token, 'sendMessage', {
             chat_id: chatId,
-            text: parts[i],
+            text: html,
             parse_mode: 'HTML',
-            ...(isLast ? extra : {}),
+            ...tail,
         });
+        // Fallback: if HTML parsing failed (e.g. stray tag), resend as plain
+        // text so the content still reaches the user instead of vanishing.
+        if (res && res.ok === false) {
+            await tgRequest(token, 'sendMessage', {
+                chat_id: chatId,
+                text: chunks[i],
+                ...tail,
+            });
+        }
     }
 }
 
@@ -680,6 +729,13 @@ function _isAlreadyProcessed(updateId) {
     return false;
 }
 
+// Debounce rapid consecutive text messages so a split intent ("так" then
+// "4 пости в день") fires the dispatcher once with the combined text instead
+// of twice. Scoped to the content bot only — course funnels must stay instant.
+const DEBOUNCE_MS = 3000;
+const DEBOUNCE_BOT_IDS = new Set(['22f2bce5-ac62-4297-8ea0-66e258e8b505']);
+const _debounceBuffer = new Map(); // key `${botId}:${chatId}` -> { text, message, timer }
+
 async function handlePlatformBotUpdate(botId, update) {
     // ── Deduplicate by update_id ──────────────────────────────────────────────
     if (update.update_id && _isAlreadyProcessed(update.update_id)) {
@@ -711,6 +767,28 @@ async function handlePlatformBotUpdate(botId, update) {
 
     const isStart = (message.text || '').startsWith('/start');
     const startPayload = isStart ? text.slice('/start'.length).trim() : '';
+
+    // ── Debounce rapid text messages (content bot only) ───────────────────────
+    // Pure text only — media/voice keep the normal path. The timer re-invokes
+    // this handler with _debounced=true so the combined message runs once.
+    const isPlainText = !!message.text && !message.voice && !message.video
+        && !message.photo && !message.document && !message.audio && !message.animation;
+    if (DEBOUNCE_BOT_IDS.has(botId) && !update._debounced && !isStart && isPlainText) {
+        const key = `${botId}:${chatId}`;
+        const prev = _debounceBuffer.get(key);
+        if (prev?.timer) clearTimeout(prev.timer);
+        const combinedText = prev ? `${prev.text}\n${text}` : text;
+        const baseMessage = prev?.message || message;
+        const timer = setTimeout(() => {
+            _debounceBuffer.delete(key);
+            handlePlatformBotUpdate(botId, {
+                message: { ...baseMessage, text: combinedText },
+                _debounced: true,
+            }).catch(err => logger.error('[platformBotHandler] debounced run failed', { error: err.message }));
+        }, DEBOUNCE_MS);
+        _debounceBuffer.set(key, { text: combinedText, message: baseMessage, timer });
+        return;
+    }
 
     // ── Phase 1: token (use webhook bot — same connector for all bots in project) ──
     const token = await getBotToken(botId);
@@ -1199,7 +1277,7 @@ async function deliverSessionMessages(botId, sessionId, telegramChatId, sinceTim
             } else {
                 // sendTelegramMessage splits long messages — only last part gets keyboard
                 // For message_id tracking we call tgRequest directly for single-part messages
-                const text = String(msg.content || '');
+                const text = convertCodeFencesToHtml(String(msg.content || ''));
                 if (text.length <= 4000) {
                     tgResult = await tgRequest(token, 'sendMessage', {
                         chat_id: telegramChatId,
@@ -1208,7 +1286,9 @@ async function deliverSessionMessages(botId, sessionId, telegramChatId, sinceTim
                         ...(keyboard ? { reply_markup: keyboard } : {}),
                     });
                 } else {
-                    await sendTelegramMessage(token, telegramChatId, text,
+                    // Pass RAW content (not pre-converted) so sendTelegramMessage
+                    // splits on real ``` boundaries before converting to <pre>.
+                    await sendTelegramMessage(token, telegramChatId, String(msg.content || ''),
                         keyboard ? { reply_markup: keyboard } : {});
                 }
             }

@@ -332,7 +332,44 @@ async function callGemini({ apiKey, systemPrompt, messages, options = {} }) {
  * @param {object} [params.options] - override model, max_tokens etc.
  * @returns {Promise<string>} - text response
  */
+
+/**
+ * Remove unpaired UTF-16 surrogates. A string sliced mid-emoji (e.g. .slice(0,500)
+ * inside a node) leaves a lone surrogate, which Anthropic rejects with
+ * "The request body is not valid JSON: no low surrogate in string" → 400.
+ * Stripping them at this single chokepoint protects every funnel/node.
+ */
+function stripLoneSurrogates(str) {
+    if (typeof str !== 'string') return str;
+    return str
+        .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '')   // high surrogate w/o following low
+        .replace(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, ''); // low surrogate w/o preceding high
+}
+
+function sanitizeMessages(messages) {
+    if (!Array.isArray(messages)) return messages;
+    return messages.map((m) => {
+        if (!m) return m;
+        if (typeof m.content === 'string') {
+            return { ...m, content: stripLoneSurrogates(m.content) };
+        }
+        if (Array.isArray(m.content)) {
+            return {
+                ...m,
+                content: m.content.map((p) =>
+                    p && typeof p.text === 'string' ? { ...p, text: stripLoneSurrogates(p.text) } : p
+                ),
+            };
+        }
+        return m;
+    });
+}
+
 async function callClaude({ sessionId, systemPrompt, messages, options = {} }) {
+    // Defend against lone surrogates (sliced emojis) breaking the JSON request body.
+    systemPrompt = stripLoneSurrogates(systemPrompt);
+    messages = sanitizeMessages(messages);
+
     const resolvedFunnelKey = options.apiKey ? '' : await resolveFunnelClaudeKey(sessionId);
     const effectiveApiKey = normalizeApiKey(options.apiKey) || resolvedFunnelKey;
 

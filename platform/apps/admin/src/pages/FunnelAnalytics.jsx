@@ -45,7 +45,7 @@ export function FunnelAnalytics() {
         setLoading(true);
         setError('');
         api.getFunnelAnalytics(botId, period)
-            .then(r => setData(r.data))
+            .then(r => setData(r?.data ?? r))
             .catch(e => setError(e.message || 'Помилка завантаження'))
             .finally(() => setLoading(false));
     }, [botId, period]);

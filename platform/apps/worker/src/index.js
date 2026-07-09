@@ -154,11 +154,17 @@ async function checkInactiveSessions() {
                     followUpText = await getFollowUpFromNlm(km.NOTEBOOKLM_URL, followUpCount + 1, recentMsgs);
                 }
                 if (!followUpText) {
-                    const staticKey = await db.funnelKey.findUnique({
-                        where: { botId_key: { botId: session.botId, key: 'FOLLOW_UP_MESSAGE' } },
-                        select: { value: true },
+                    const n = followUpCount + 1; // 1-based follow-up number
+                    // Per-follow-up static keys (FOLLOW_UP_MESSAGE_1, _2, ...) let each
+                    // reminder differ. Legacy single FOLLOW_UP_MESSAGE applies ONLY to #1,
+                    // so a later follow-up is never an identical copy of the first.
+                    const keyRows = await db.funnelKey.findMany({
+                        where: { botId: session.botId, key: { in: [`FOLLOW_UP_MESSAGE_${n}`, 'FOLLOW_UP_MESSAGE'] } },
+                        select: { key: true, value: true },
                     });
-                    followUpText = staticKey?.value
+                    const km2 = Object.fromEntries(keyRows.map(k => [k.key, k.value]));
+                    followUpText = km2[`FOLLOW_UP_MESSAGE_${n}`]
+                        || (n === 1 ? km2['FOLLOW_UP_MESSAGE'] : null)
                         || (followUpCount === 0
                             ? `Привіт! 👋 Ми ще на зв'язку — якщо є питання, просто напиши. Буду радий допомогти! 😊`
                             : `Гей, востаннє нагадаю — без тиску. Якщо надумаєш — просто напиши. Удачі! 👋`);

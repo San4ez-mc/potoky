@@ -454,6 +454,36 @@ async function resolveTargetBot(botId, startPayload, userId) {
     });
     const projectId = originBot?.projectId;
 
+    // ── Rule 0: lead-magnet tracked deep link (lm<12 hex>) ─────────────────
+    // Records the click for per-post attribution, then routes to the lead
+    // magnet's funnel by slug. Purely additive — unknown codes fall through to
+    // the webhook bot; never touches the existing slug/lesson/plain-start paths.
+    if (startPayload && /^lm[0-9a-f]{12}$/.test(startPayload)) {
+        try {
+            const rows = await db.$queryRaw`SELECT funnel_slug FROM tracked_links WHERE code = ${startPayload} LIMIT 1`;
+            const link = Array.isArray(rows) ? rows[0] : null;
+            if (link) {
+                await db.$executeRaw`UPDATE tracked_links SET clicks = clicks + 1, last_click_at = now(), first_click_at = COALESCE(first_click_at, now()) WHERE code = ${startPayload}`;
+                await db.$executeRaw`INSERT INTO link_clicks (code, telegram_user_id) VALUES (${startPayload}, ${userId ? String(userId) : null})`;
+                const slug = link.funnel_slug;
+                if (slug) {
+                    const funnelBot = (projectId && await db.bot.findFirst({ where: { slug, projectId, isActive: true }, select: { id: true } }))
+                        || await db.bot.findFirst({ where: { slug, isActive: true }, select: { id: true } });
+                    if (funnelBot) {
+                        logger.info('[platformBotHandler] Routed by lead-magnet link', { code: startPayload, slug, targetBotId: funnelBot.id });
+                        return { targetBotId: funnelBot.id, lessonSlug: null };
+                    }
+                    logger.warn('[platformBotHandler] Lead-magnet funnel slug not found', { code: startPayload, slug });
+                }
+            } else {
+                logger.warn('[platformBotHandler] Unknown lead-magnet code', { code: startPayload });
+            }
+        } catch (e) {
+            logger.warn('[platformBotHandler] Lead-magnet routing failed', { code: startPayload, err: e.message });
+        }
+        return { targetBotId: botId, lessonSlug: null };
+    }
+
     // ── Rule 1: slug routing ───────────────────────────────────────────────
     if (startPayload && !/^lesson_\d+_\d+$/.test(startPayload)) {
         if (projectId) {
@@ -1063,13 +1093,13 @@ async function handlePlatformBotUpdate(botId, update) {
         const recentMsgs = await db.message.findMany({
             where: { sessionId: session.id },
             orderBy: { createdAt: 'desc' },
-            take: 12,
+            take: 7,
             select: { role: true, content: true },
         });
         let hist = recentMsgs.reverse().map((m) => ({ role: m.role, content: m.content }));
         // The current user message was already persisted (persistUserMessage above) — drop it.
         if (hist.length && hist[hist.length - 1].role === 'user' && hist[hist.length - 1].content === text) hist.pop();
-        hist = hist.slice(-10);
+        hist = hist.slice(-5); // keep last 5 messages of context (per Oleksandr)
         // tgChatId / tgBotToken let content funnels deliver generated media back to this chat.
         const inj = { history: hist, tgChatId: String(chatId), tgBotToken: token || null };
         await db.session.update({

@@ -684,6 +684,32 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null }) {
         }
     }
 
+    // Resolve external API keys from their SAVED CONNECTORS at runtime, so that
+    // replacing a key inside a connector propagates to every funnel automatically
+    // (no copied values to keep in sync). CONNECTOR_ID always wins over any
+    // stale direct *_API_KEY funnel key.
+    const __resolveConnectorKey = async (connectorIdKey, targetKey) => {
+        const cid = (funnelEnv[connectorIdKey] || '').trim();
+        if (!cid) return;
+        const c = await db.savedConnector.findUnique({
+            where: { id: cid },
+            select: { config: true },
+        }).catch(() => null);
+        const k = c?.config?.api_key || c?.config?.apiKey || c?.config?.key || c?.config?.token;
+        if (k) funnelEnv[targetKey] = k;
+    };
+    await __resolveConnectorKey('HEYGEN_CONNECTOR_ID', 'HEYGEN_API_KEY');
+    await __resolveConnectorKey('FAL_CONNECTOR_ID', 'FAL_AI_KEY');
+    await __resolveConnectorKey('OPENAI_CONNECTOR_ID', 'OPENAI_API_KEY');
+    await __resolveConnectorKey('GEMINI_CONNECTOR_ID', 'GEMINI_API_KEY');
+    // Google Vertex connector carries TWO fields (SA JSON + project id) under exact names.
+    const __vcid = (funnelEnv.GOOGLE_VERTEX_CONNECTOR_ID || '').trim();
+    if (__vcid) {
+        const __vc = await db.savedConnector.findUnique({ where: { id: __vcid }, select: { config: true } }).catch(() => null);
+        if (__vc?.config?.GOOGLE_SA_KEY) funnelEnv.GOOGLE_SA_KEY = __vc.config.GOOGLE_SA_KEY;
+        if (__vc?.config?.GOOGLE_PROJECT_ID) funnelEnv.GOOGLE_PROJECT_ID = __vc.config.GOOGLE_PROJECT_ID;
+    }
+
     if (!runtime.currentNodeId) {
         runtime.currentNodeId = findStartNode(flow.nodes)?.id || null;
     }

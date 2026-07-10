@@ -471,7 +471,7 @@ async function resolveTargetBot(botId, startPayload, userId) {
                         || await db.bot.findFirst({ where: { slug, isActive: true }, select: { id: true } });
                     if (funnelBot) {
                         logger.info('[platformBotHandler] Routed by lead-magnet link', { code: startPayload, slug, targetBotId: funnelBot.id });
-                        return { targetBotId: funnelBot.id, lessonSlug: null };
+                        return { targetBotId: funnelBot.id, lessonSlug: null, linkSource: startPayload };
                     }
                     logger.warn('[platformBotHandler] Lead-magnet funnel slug not found', { code: startPayload, slug });
                 }
@@ -893,11 +893,13 @@ async function handlePlatformBotUpdate(botId, update) {
     // ── Phase 3: resolve target bot ────────────────────────────────────────────
     let targetBotId = botId;
     let lessonSlug = null;
+    let entryLinkSource = null;
 
     if (isStart) {
         const resolved = await resolveTargetBot(botId, startPayload, user.id);
         targetBotId = resolved.targetBotId;
         lessonSlug = resolved.lessonSlug;
+        entryLinkSource = resolved.linkSource || null;
     }
 
     // ── Phase 3.5: archived bot guard ─────────────────────────────────────────
@@ -954,6 +956,8 @@ async function handlePlatformBotUpdate(botId, update) {
         const extraCtx = {};
         if (lessonSlug) extraCtx.lessonSlug = lessonSlug;
         if (linkSuffix) extraCtx._linkSource = `l${linkSuffix[1]}`;
+        // Lead-magnet tracked deep link (lm<code>) wins — attributes this session to the exact post.
+        if (entryLinkSource) extraCtx._linkSource = entryLinkSource;
         if (Object.keys(extraCtx).length > 0) {
             const updatedCtx = { ...(session.context || {}), ...extraCtx };
             session = await db.session.update({

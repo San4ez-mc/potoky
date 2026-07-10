@@ -441,45 +441,112 @@ router.get('/:botId/analytics',
         const timeFrom = new Date(Date.now() - ms);
         const testFilter = includeTest === 'true' ? {} : { isTest: false };
 
-        // Sessions in period
+        // ── Flow definition → node labels + order (BFS from start) ────────────
+        const flow = await db.flowDefinition.findUnique({ where: { botId } });
+        const nodes = Array.isArray(flow?.nodes) ? flow.nodes : [];
+        const edges = Array.isArray(flow?.edges) ? flow.edges : [];
+        const nodeMeta = {};
+        for (const n of nodes) nodeMeta[n.id] = { label: n.data?.label || n.id, type: n.type || 'node' };
+        const adj = {};
+        for (const e of edges) { (adj[e.source] ||= []).push(e.target); }
+        const startNode = nodes.find(n => n.type === 'start') || nodes[0];
+        const order = [];
+        const seen = new Set();
+        if (startNode) {
+            const queue = [startNode.id];
+            while (queue.length) {
+                const id = queue.shift();
+                if (seen.has(id)) continue;
+                seen.add(id); order.push(id);
+                for (const t of (adj[id] || [])) if (!seen.has(t)) queue.push(t);
+            }
+        }
+        for (const n of nodes) if (!seen.has(n.id)) { seen.add(n.id); order.push(n.id); }
+
+        // ── Sessions in period ────────────────────────────────────────────────
         const sessions = await db.session.findMany({
             where: { botId, startedAt: { gte: timeFrom }, ...testFilter },
-            select: { id: true, context: true, startedAt: true, isActive: true },
+            select: { id: true, context: true, state: true, isActive: true },
         });
 
-        // Group by _linkSource
-        const linkCounts = {};
-        const nodeCounts = {};
-        let totalSessions = 0;
-        let activeSessions = 0;
+        const linkCounts = {};   // _linkSource -> session count
+        const nodeReached = {};  // nodeId -> sessions that visited it
+        const stuckCounts = {};  // current node -> non-completed sessions sitting there
+        let totalSessions = 0, activeSessions = 0, completedSessions = 0, unsubscribedSessions = 0;
 
         for (const s of sessions) {
             totalSessions++;
             if (s.isActive) activeSessions++;
+            if (s.state === 'completed') completedSessions++;
+            else if (s.state === 'unsubscribed') unsubscribedSessions++;
 
             const ctx = (s.context && typeof s.context === 'object') ? s.context : {};
             const linkSource = ctx._linkSource || 'direct';
             linkCounts[linkSource] = (linkCounts[linkSource] || 0) + 1;
 
-            const visited = ctx.flowRuntime?.nodesVisited;
-            if (Array.isArray(visited)) {
-                for (const nodeId of visited) {
-                    nodeCounts[nodeId] = (nodeCounts[nodeId] || 0) + 1;
-                }
+            const rt = ctx.flowRuntime || {};
+            const visited = Array.isArray(rt.nodesVisited) ? new Set(rt.nodesVisited) : new Set();
+            for (const nodeId of visited) nodeReached[nodeId] = (nodeReached[nodeId] || 0) + 1;
+
+            if (s.state !== 'completed' && rt.currentNodeId) {
+                stuckCounts[rt.currentNodeId] = (stuckCounts[rt.currentNodeId] || 0) + 1;
             }
         }
 
-        // Build link stats sorted by count
+        // Funnel flow in path order, with drop-off between consecutive reached nodes
+        const funnelFlow = order
+            .filter(id => nodeMeta[id])
+            .map(id => ({ nodeId: id, label: nodeMeta[id].label, type: nodeMeta[id].type, reached: nodeReached[id] || 0 }));
+        for (let i = 0; i < funnelFlow.length; i++) {
+            let nextReached = 0;
+            for (let j = i + 1; j < funnelFlow.length; j++) { if (funnelFlow[j].reached > 0) { nextReached = funnelFlow[j].reached; break; } }
+            funnelFlow[i].dropAfter = Math.max(0, funnelFlow[i].reached - nextReached);
+            funnelFlow[i].dropPct = funnelFlow[i].reached > 0 ? Math.round((funnelFlow[i].dropAfter / funnelFlow[i].reached) * 100) : 0;
+        }
+
+        // Where non-completed sessions are sitting right now
+        const stuckAt = Object.entries(stuckCounts)
+            .map(([nodeId, count]) => ({ nodeId, label: nodeMeta[nodeId]?.label || nodeId, type: nodeMeta[nodeId]?.type || 'node', count }))
+            .sort((a, b) => b.count - a.count);
+
         const linkStats = Object.entries(linkCounts)
             .map(([source, count]) => ({ source, count }))
             .sort((a, b) => b.count - a.count);
+        // Legacy unordered node stats — kept for backward compat
+        const nodeStats = funnelFlow.filter(n => n.reached > 0).map(n => ({ nodeId: n.nodeId, count: n.reached })).sort((a, b) => b.count - a.count);
 
-        // Build node stats sorted by count
-        const nodeStats = Object.entries(nodeCounts)
-            .map(([nodeId, count]) => ({ nodeId, count }))
-            .sort((a, b) => b.count - a.count);
+        // ── Post-level attribution from tracked deep links (this funnel's slug) ─
+        let postSources = [];
+        try {
+            const rows = await db.$queryRaw`
+                SELECT code, post_item_id, platform, lead_magnet_id, clicks, last_click_at
+                FROM tracked_links WHERE funnel_slug = ${bot.slug} ORDER BY clicks DESC, created_at DESC LIMIT 100`;
+            postSources = rows.map(r => ({
+                code: r.code,
+                postItemId: r.post_item_id,
+                platform: r.platform,
+                leadMagnetId: r.lead_magnet_id,
+                clicks: Number(r.clicks) || 0,
+                sessions: linkCounts[r.code] || 0,
+                lastClickAt: r.last_click_at,
+            }));
+        } catch { /* tracked_links table may not exist yet */ }
+        const trackedClicks = postSources.reduce((a, p) => a + p.clicks, 0);
 
-        res.json({ ok: true, data: { period, totalSessions, activeSessions, linkStats, nodeStats } });
+        res.json({ ok: true, data: {
+            period,
+            summary: {
+                totalSessions, activeSessions, completedSessions, unsubscribedSessions,
+                otherSessions: Math.max(0, totalSessions - completedSessions - unsubscribedSessions),
+                conversionRate: totalSessions > 0 ? Math.round((completedSessions / totalSessions) * 100) : 0,
+                trackedClicks,
+            },
+            postSources,
+            linkStats,
+            funnelFlow,
+            stuckAt,
+            nodeStats,
+        }});
     })
 );
 

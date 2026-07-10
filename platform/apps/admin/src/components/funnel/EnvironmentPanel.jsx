@@ -187,6 +187,19 @@ export function EnvironmentPanel({ embedded = false }) {
                             <div className="text-[11px] text-yellow-400">Заповни TELEGRAM_BOT_USERNAME (обери Telegram-конектор вище), щоб створювати посилання.</div>
                         )}
 
+                        {botUsername && bot?.slug && (
+                            <div className="bg-gray-950 border border-gray-800 rounded-lg p-2 space-y-1">
+                                <div className="flex items-center gap-1.5">
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-900/40 text-emerald-300 shrink-0">Основне</span>
+                                    <span className="text-[11px] font-medium text-gray-300">Основне посилання воронки</span>
+                                </div>
+                                <a href={`https://t.me/${botUsername}?start=${bot.slug}`} target="_blank" rel="noopener noreferrer" className="block text-[11px] text-brand-light hover:text-white break-all font-mono">{`https://t.me/${botUsername}?start=${bot.slug}`}</a>
+                                <button type="button" onClick={() => copyToClipboard(`https://t.me/${botUsername}?start=${bot.slug}`, 'base')} className={`text-[11px] px-2 py-1 rounded transition-colors ${copiedId === 'base' ? 'bg-emerald-900/40 text-emerald-400' : 'bg-gray-800 hover:bg-gray-700 text-gray-300'}`}>
+                                    {copiedId === 'base' ? '✓ Скопійовано' : 'Копіювати'}
+                                </button>
+                            </div>
+                        )}
+
                         {channelLinks.map(link => (
                             <ChannelLinkCard key={link.id} link={link} copiedId={copiedId} onCopy={copyToClipboard} onDelete={deleteLink} />
                         ))}

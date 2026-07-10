@@ -95,6 +95,10 @@ export function FunnelAnalytics() {
     // Networks present in the data, for the filter bar
     const availableNets = Array.from(new Set([...(data?.channels || []).map(c => c.platform), ...(data?.postSources || []).map(p => p.platform)].filter(Boolean)));
     const filteredClicks = channels.reduce((a, c) => a + c.totalClicks, 0);
+    // Implicit base link of the funnel (t.me/<bot>?start=<slug>) — always exists.
+    const directSessions = (data?.linkStats || []).find(l => l.source === 'direct')?.count || 0;
+    const baseLink = (botUsername && bot?.slug) ? { url: `https://t.me/${botUsername}?start=${bot.slug}`, sessions: directSessions } : null;
+    const showBase = baseLink && selectedNets.length === 0;
 
     function linkLabel(source) {
         if (source === 'direct') return 'Пряме / /start без параметра';
@@ -162,13 +166,29 @@ export function FunnelAnalytics() {
                                     {netLabel(n)}
                                 </button>
                             ))}
-                            {availableNets.length === 0 && <span className="text-xs text-gray-600 py-1">Ще немає посилань — створи перше.</span>}
+                            {availableNets.length === 0 && <span className="text-xs text-gray-600 py-1">Мережевих посилань ще немає — нижче основне, а «+ Нове посилання» додасть під мережу.</span>}
                         </div>
 
                         {creating && <NewLinkForm networks={NETWORKS} onCreate={createChannelLink} onCancel={() => setCreating(false)} />}
 
-                        {channels.length > 0 && (
+                        {(showBase || channels.length > 0) && (
                             <div className="space-y-2">
+                                {showBase && (
+                                    <div className="bg-gray-950 border border-gray-800 rounded-lg p-2.5 space-y-1">
+                                        <div className="flex items-center justify-between gap-2">
+                                            <div className="flex items-center gap-1.5 min-w-0">
+                                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-900/40 text-emerald-300 shrink-0">Основне</span>
+                                                <span className="text-xs font-medium text-gray-200 truncate">Основне посилання воронки</span>
+                                            </div>
+                                            <span className="text-xs font-mono font-semibold text-white shrink-0" title="прямих входів (без параметра/за slug)">👆 {baseLink.sessions}</span>
+                                        </div>
+                                        <div className="text-[10px] text-gray-600">Базовий deep-link. Для трекінгу по конкретних мережах створюй окремі посилання нижче.</div>
+                                        <div className="flex items-center gap-2">
+                                            <a href={baseLink.url} target="_blank" rel="noreferrer" className="text-[11px] text-brand-light hover:text-white break-all font-mono truncate">{baseLink.url}</a>
+                                            <button onClick={() => navigator.clipboard?.writeText(baseLink.url)} className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 shrink-0">копі</button>
+                                        </div>
+                                    </div>
+                                )}
                                 {channels.map(c => (
                                     <div key={c.id} className="bg-gray-950 border border-gray-800 rounded-lg p-2.5 space-y-1">
                                         <div className="flex items-center justify-between gap-2">
@@ -191,7 +211,7 @@ export function FunnelAnalytics() {
                                         )}
                                     </div>
                                 ))}
-                                <div className="text-[11px] text-gray-500 text-right">Разом за фільтром: <b className="text-white">{filteredClicks}</b> переходів</div>
+                                {channels.length > 0 && <div className="text-[11px] text-gray-500 text-right">Разом за фільтром: <b className="text-white">{filteredClicks}</b> переходів</div>}
                             </div>
                         )}
                     </div>

@@ -124,7 +124,7 @@ export function FunnelAnalytics() {
                     <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-3">
                         <div>
                             <div className="text-sm font-semibold text-white">Проходження воронки</div>
-                            <div className="text-xs text-gray-500">Скільки сесій дійшло до кожного кроку і де найбільший відтік</div>
+                            <div className="text-xs text-gray-500">Скільки сесій дійшло до кожного кроку. «Далі не пройшли» = зупинились на цьому кроці й не рушили далі (перестали відповідати / ще в процесі) — це НЕ відписка (відписки — окрема картка «Відписались»).</div>
                         </div>
                         {flow.length === 0 ? (
                             <div className="text-xs text-gray-600 py-4 text-center">Немає даних про проходження за цей період</div>
@@ -148,7 +148,7 @@ export function FunnelAnalytics() {
                                                 <div className="flex items-center gap-3 pl-8">
                                                     <div className="w-48 shrink-0" />
                                                     <div className={`text-[11px] ${bigDrop ? 'text-red-400 font-medium' : 'text-gray-600'}`}>
-                                                        ↓ пішло {n.dropAfter} ({n.dropPct}%) {bigDrop ? '— найбільший відтік' : ''}
+                                                        ↓ далі не пройшли: {n.dropAfter} ({n.dropPct}%) {bigDrop ? '— найбільший відтік' : ''}
                                                     </div>
                                                 </div>
                                             )}

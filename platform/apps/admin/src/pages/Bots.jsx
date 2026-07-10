@@ -598,11 +598,11 @@ export function Bots() {
                                                 </>
                                             ) : (
                                                 <>
-                                                    <button onClick={() => setEditInfoBot(bot)} title={bot.description || 'Переглянути / редагувати опис'} className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs rounded-lg transition-colors">ℹ Інфо</button>
-                                                    <button onClick={() => navigate(`/funnel/${bot.id}`)} className="px-3 py-1.5 bg-brand/20 hover:bg-brand/30 text-brand-light text-xs rounded-lg transition-colors">Редагувати</button>
-                                                    <button onClick={() => navigate(`/bots/${bot.id}/sessions`)} className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs rounded-lg transition-colors">Сесії</button>
-                                                    <button onClick={() => navigate(`/funnel/${bot.id}/analytics`)} className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs rounded-lg transition-colors" title="Аналітика">📊</button>
-                                                    <button onClick={() => setArchiveConfirm(bot.id)} className="px-3 py-1.5 bg-gray-800 hover:bg-orange-900/30 text-gray-500 hover:text-orange-400 text-xs rounded-lg transition-colors" title="Архівувати">📦</button>
+                                                    <button onClick={() => setEditInfoBot(bot)} title={bot.description || 'Інфо / опис'} className="w-8 h-8 flex items-center justify-center bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-colors">ℹ️</button>
+                                                    <button onClick={() => navigate(`/funnel/${bot.id}`)} title="Редагувати" className="w-8 h-8 flex items-center justify-center bg-brand/20 hover:bg-brand/30 text-brand-light text-sm rounded-lg transition-colors">✏️</button>
+                                                    <button onClick={() => navigate(`/bots/${bot.id}/sessions`)} title="Сесії" className="w-8 h-8 flex items-center justify-center bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-colors">💬</button>
+                                                    <button onClick={() => navigate(`/funnel/${bot.id}/analytics`)} title="Аналітика" className="w-8 h-8 flex items-center justify-center bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-colors">📊</button>
+                                                    <button onClick={() => setArchiveConfirm(bot.id)} title="Архівувати" className="w-8 h-8 flex items-center justify-center bg-gray-800 hover:bg-orange-900/30 text-gray-500 hover:text-orange-400 text-sm rounded-lg transition-colors">📦</button>
                                                 </>
                                             )}
                                         </div>

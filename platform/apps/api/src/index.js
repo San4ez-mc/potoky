@@ -30,6 +30,7 @@ const mcpFlowsEditRouter = require('./routes/mcp-flows-edit');
 const mcpDebugRouter = require('./routes/mcp-debug');
 const broadcastsRouter = require('./routes/broadcasts');
 const trackedLinksRouter = require('./routes/tracked-links');
+const channelLinksRouter = require('./routes/channel-links');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -169,6 +170,8 @@ app.use('/api/admin', adminRouter);
 app.use('/api/broadcasts', authMiddleware, broadcastsRouter);
 // Token-authed (server-to-server from content2) — not session auth
 app.use('/api/tracked-links', trackedLinksRouter);
+// Channel links CRUD is used by the admin UI → session auth
+app.use('/api/channel-links', authMiddleware, channelLinksRouter);
 
 // MCP endpoints: split into flows read-only, flows-edit write, and debug
 app.use(mcpRequestLogger);

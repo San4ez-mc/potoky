@@ -515,23 +515,45 @@ router.get('/:botId/analytics',
         // Legacy unordered node stats — kept for backward compat
         const nodeStats = funnelFlow.filter(n => n.reached > 0).map(n => ({ nodeId: n.nodeId, count: n.reached })).sort((a, b) => b.count - a.count);
 
-        // ── Post-level attribution from tracked deep links (this funnel's slug) ─
-        let postSources = [];
+        // ── Tracked deep links for this funnel: channels (per-network) + per-post ─
+        let channels = [];   // channel links (post_item_id IS NULL), one per network
+        let postSources = []; // per-post links (post_item_id set), nested under a channel
         try {
             const rows = await db.$queryRaw`
-                SELECT code, post_item_id, platform, lead_magnet_id, clicks, last_click_at
-                FROM tracked_links WHERE funnel_slug = ${bot.slug} ORDER BY clicks DESC, created_at DESC LIMIT 100`;
-            postSources = rows.map(r => ({
-                code: r.code,
-                postItemId: r.post_item_id,
-                platform: r.platform,
-                leadMagnetId: r.lead_magnet_id,
-                clicks: Number(r.clicks) || 0,
-                sessions: linkCounts[r.code] || 0,
-                lastClickAt: r.last_click_at,
-            }));
+                SELECT id, code, post_item_id, parent_id, platform, name, description, bot_username, lead_magnet_id, clicks, last_click_at, created_at
+                FROM tracked_links WHERE bot_id = ${botId} OR funnel_slug = ${bot.slug} ORDER BY created_at ASC LIMIT 1000`;
+            const chById = {};
+            for (const r of rows) {
+                if (!r.post_item_id) {
+                    const ch = {
+                        id: r.id, code: r.code, platform: r.platform, name: r.name, description: r.description,
+                        url: r.bot_username ? `https://t.me/${r.bot_username}?start=${r.code}` : null,
+                        directClicks: Number(r.clicks) || 0, postClicks: 0, postLinks: 0,
+                        totalClicks: Number(r.clicks) || 0,
+                    };
+                    chById[r.id] = ch;
+                    channels.push(ch);
+                }
+            }
+            for (const r of rows) {
+                if (r.post_item_id) {
+                    const c = Number(r.clicks) || 0;
+                    postSources.push({
+                        code: r.code, postItemId: r.post_item_id, parentId: r.parent_id, platform: r.platform,
+                        leadMagnetId: r.lead_magnet_id, clicks: c, sessions: linkCounts[r.code] || 0, lastClickAt: r.last_click_at,
+                    });
+                    if (r.parent_id && chById[r.parent_id]) {
+                        chById[r.parent_id].postClicks += c;
+                        chById[r.parent_id].postLinks += 1;
+                        chById[r.parent_id].totalClicks += c;
+                    }
+                }
+            }
         } catch { /* tracked_links table may not exist yet */ }
-        const trackedClicks = postSources.reduce((a, p) => a + p.clicks, 0);
+        channels.sort((a, b) => b.totalClicks - a.totalClicks);
+        postSources.sort((a, b) => b.clicks - a.clicks);
+        const trackedClicks = channels.reduce((a, c) => a + c.totalClicks, 0)
+            + postSources.filter(p => !p.parentId || !channels.some(c => c.id === p.parentId)).reduce((a, p) => a + p.clicks, 0);
 
         res.json({ ok: true, data: {
             period,
@@ -541,6 +563,7 @@ router.get('/:botId/analytics',
                 conversionRate: totalSessions > 0 ? Math.round((completedSessions / totalSessions) * 100) : 0,
                 trackedClicks,
             },
+            channels,
             postSources,
             linkStats,
             funnelFlow,

@@ -24,6 +24,7 @@ const logger = require('@platform/logger');
 
 const router = express.Router();
 const TOKEN = process.env.CONTENT_IMPORT_TOKEN || 'fnk_wh_2026_x9mK4pLqR7vNsT1eYcJdBuAw';
+const { baseNetwork } = require('./channel-links');
 
 function auth(req, res, next) {
   const t = req.headers['x-import-token'] || req.query.token || (req.body && req.body.token);
@@ -31,7 +32,9 @@ function auth(req, res, next) {
   next();
 }
 
-// Mint a unique tracked link for one post + lead magnet.
+// Mint a per-post tracked link. If a channel link exists for this funnel+network,
+// the post link is created UNDER it with code `<channelcode>_<postNumber>` and
+// parent_id set (so clicks roll up per network). Otherwise a standalone `lm<hex>`.
 router.post('/', auth, async (req, res) => {
   try {
     const b = req.body || {};
@@ -40,14 +43,37 @@ router.post('/', auth, async (req, res) => {
     if (!botUsername || !funnelSlug) {
       return res.status(400).json({ ok: false, error: 'botUsername and funnelSlug required' });
     }
-    const code = 'lm' + crypto.randomBytes(6).toString('hex'); // lm + 12 hex → matches /^lm[a-z0-9]+$/
+    const platform = b.platform ? baseNetwork(b.platform) : null;
+
+    // Find a channel link to nest under: explicit id, else by funnel_slug + network.
+    let channel = null;
+    if (b.channelLinkId) {
+      const rows = await db.$queryRaw`SELECT id, code FROM tracked_links WHERE id = ${b.channelLinkId} AND post_item_id IS NULL LIMIT 1`;
+      channel = rows[0] || null;
+    }
+    if (!channel && platform) {
+      const rows = await db.$queryRaw`SELECT id, code FROM tracked_links WHERE funnel_slug = ${funnelSlug} AND platform = ${platform} AND post_item_id IS NULL ORDER BY created_at ASC LIMIT 1`;
+      channel = rows[0] || null;
+    }
+
+    const postNum = b.postNumber != null && String(b.postNumber).match(/^\d+$/) ? String(b.postNumber) : null;
+    let code;
+    if (channel) {
+      code = `${channel.code}_${postNum || crypto.randomBytes(3).toString('hex')}`;
+      // Avoid collision if the same post is minted twice under the same channel
+      const clash = await db.$queryRaw`SELECT 1 FROM tracked_links WHERE code = ${code} LIMIT 1`;
+      if (clash.length) code = `${channel.code}_${postNum || ''}${crypto.randomBytes(2).toString('hex')}`;
+    } else {
+      code = 'lm' + crypto.randomBytes(6).toString('hex');
+    }
+
     const id = crypto.randomUUID();
     await db.$executeRaw`
-      INSERT INTO tracked_links (id, code, project_id, lead_magnet_id, funnel_slug, bot_username, post_item_id, post_group_id, platform, base_param)
-      VALUES (${id}, ${code}, ${b.projectId || null}, ${b.leadMagnetId || null}, ${funnelSlug}, ${botUsername},
-              ${b.postItemId || null}, ${b.postGroupId || null}, ${b.platform || null}, ${b.baseParam || funnelSlug})`;
+      INSERT INTO tracked_links (id, code, project_id, lead_magnet_id, funnel_slug, bot_username, bot_id, post_item_id, post_group_id, platform, base_param, parent_id)
+      VALUES (${id}, ${code}, ${b.projectId || null}, ${b.leadMagnetId || null}, ${funnelSlug}, ${botUsername}, ${b.botId || null},
+              ${b.postItemId || null}, ${b.postGroupId || null}, ${platform}, ${b.baseParam || funnelSlug}, ${channel ? channel.id : null})`;
     const url = `https://t.me/${botUsername}?start=${code}`;
-    return res.json({ ok: true, code, url });
+    return res.json({ ok: true, code, url, channelLinkId: channel ? channel.id : null });
   } catch (e) {
     logger.error('[tracked-links] mint failed', { err: e.message });
     return res.status(500).json({ ok: false, error: e.message });

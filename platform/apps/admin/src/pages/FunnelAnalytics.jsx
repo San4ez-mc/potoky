@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../api/client.js';
+import { NETWORKS, netLabel } from '../components/funnel/EnvironmentPanel.jsx';
 
 const PERIOD_OPTIONS = [
     { value: '24h', label: '24 години' },
@@ -48,13 +49,16 @@ export function FunnelAnalytics() {
     const [bot, setBot] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
-    const [linkMeta, setLinkMeta] = useState({});
+    const [botUsername, setBotUsername] = useState('');
+    const [selectedNets, setSelectedNets] = useState([]); // [] = all networks
+    const [creating, setCreating] = useState(false);
+    const [reloadTick, setReloadTick] = useState(0);
 
     useEffect(() => {
         api.getBot(botId).then(setBot).catch(() => {});
         api.getFunnelKeys(botId).then(keys => {
-            const metaKey = keys.find(k => k.key === 'FUNNEL_LINK_META');
-            if (metaKey?.value) { try { setLinkMeta(JSON.parse(metaKey.value)); } catch { /* ignore */ } }
+            const u = keys.find(k => k.key === 'TELEGRAM_BOT_USERNAME')?.value || '';
+            setBotUsername(String(u).replace(/^@/, ''));
         }).catch(() => {});
     }, [botId]);
 
@@ -65,18 +69,38 @@ export function FunnelAnalytics() {
             .then(r => setData(r?.data ?? r))
             .catch(e => setError(e.message || 'Помилка завантаження'))
             .finally(() => setLoading(false));
-    }, [botId, period]);
+    }, [botId, period, reloadTick]);
+
+    const toggleNet = (id) => setSelectedNets(prev => prev.includes(id) ? prev.filter(n => n !== id) : [...prev, id]);
+    const netMatch = (p) => selectedNets.length === 0 || selectedNets.includes(p || 'other');
+
+    async function createChannelLink({ platform, name, description }) {
+        setCreating(false);
+        await api.createChannelLink({ botId, funnelSlug: bot?.slug || botId, botUsername, platform, name, description });
+        setReloadTick(t => t + 1);
+    }
+    async function deleteChannelLink(id) {
+        if (!window.confirm('Видалити це посилання?')) return;
+        await api.deleteChannelLink(id);
+        setReloadTick(t => t + 1);
+    }
 
     const s = data?.summary;
     const flow = (data?.funnelFlow || []).filter(n => n.reached > 0);
     const entryCount = flow[0]?.reached || 0;
     const maxReached = flow[0]?.reached || 1;
 
+    const channels = (data?.channels || []).filter(c => netMatch(c.platform));
+    const postSources = (data?.postSources || []).filter(p => netMatch(p.platform));
+    // Networks present in the data, for the filter bar
+    const availableNets = Array.from(new Set([...(data?.channels || []).map(c => c.platform), ...(data?.postSources || []).map(p => p.platform)].filter(Boolean)));
+    const filteredClicks = channels.reduce((a, c) => a + c.totalClicks, 0);
+
     function linkLabel(source) {
         if (source === 'direct') return 'Пряме / /start без параметра';
         if (/^lm[0-9a-f]+$/.test(source)) return `Пост-посилання ${source}`;
-        const meta = linkMeta[`telegram-${source.slice(1) - 1}`] || linkMeta[`instagram-${source.slice(1) - 1}`] || {};
-        return meta.name || source;
+        if (/^k[0-9a-f]{8}(_\w+)?$/.test(source)) return `Deep-link ${source}`;
+        return source;
     }
 
     return (
@@ -118,6 +142,58 @@ export function FunnelAnalytics() {
                         <Card label="Завершили" value={s.completedSessions} sub={`конверсія ${s.conversionRate}%`} color="text-brand-light" />
                         <Card label="Відписались" value={s.unsubscribedSessions} color={s.unsubscribedSessions > 0 ? 'text-red-400' : 'text-white'} />
                         <Card label="Кліків з постів" value={s.trackedClicks} sub="deep-links" />
+                    </div>
+
+                    {/* Deep links per network — filter + management */}
+                    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-3">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <div>
+                                <div className="text-sm font-semibold text-white">Посилання по мережах</div>
+                                <div className="text-xs text-gray-500">Deep-links воронки. Фільтруй, щоб бачити переходи з конкретної соцмережі.</div>
+                            </div>
+                            <button onClick={() => setCreating(v => !v)} disabled={!botUsername} title={!botUsername ? 'Немає TELEGRAM_BOT_USERNAME' : ''} className="px-3 py-1.5 rounded-lg text-xs bg-brand hover:bg-brand/90 text-white transition-colors disabled:opacity-40">+ Нове посилання</button>
+                        </div>
+
+                        {/* Network filter chips */}
+                        <div className="flex flex-wrap gap-1.5">
+                            <button onClick={() => setSelectedNets([])} className={`px-2.5 py-1 rounded-full text-xs transition-colors ${selectedNets.length === 0 ? 'bg-brand text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}>Всі</button>
+                            {availableNets.map(n => (
+                                <button key={n} onClick={() => toggleNet(n)} className={`px-2.5 py-1 rounded-full text-xs transition-colors ${selectedNets.includes(n) ? 'bg-brand text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}>
+                                    {netLabel(n)}
+                                </button>
+                            ))}
+                            {availableNets.length === 0 && <span className="text-xs text-gray-600 py-1">Ще немає посилань — створи перше.</span>}
+                        </div>
+
+                        {creating && <NewLinkForm networks={NETWORKS} onCreate={createChannelLink} onCancel={() => setCreating(false)} />}
+
+                        {channels.length > 0 && (
+                            <div className="space-y-2">
+                                {channels.map(c => (
+                                    <div key={c.id} className="bg-gray-950 border border-gray-800 rounded-lg p-2.5 space-y-1">
+                                        <div className="flex items-center justify-between gap-2">
+                                            <div className="flex items-center gap-1.5 min-w-0">
+                                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-brand/20 text-brand-light shrink-0">{netLabel(c.platform)}</span>
+                                                <span className="text-xs font-medium text-gray-200 truncate">{c.name || 'Без назви'}</span>
+                                            </div>
+                                            <div className="flex items-center gap-2 shrink-0">
+                                                <span className="text-xs font-mono font-semibold text-white" title="всього переходів (канал + пости)">👆 {c.totalClicks}</span>
+                                                <button onClick={() => deleteChannelLink(c.id)} className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 hover:bg-red-900/50 text-gray-500 hover:text-red-400 transition-colors" title="Видалити">✕</button>
+                                            </div>
+                                        </div>
+                                        {c.description && <div className="text-[10px] text-gray-500">{c.description}</div>}
+                                        <div className="text-[10px] text-gray-600">прямих: {c.directClicks} · з постів: {c.postClicks} ({c.postLinks} лінків)</div>
+                                        {c.url && (
+                                            <div className="flex items-center gap-2">
+                                                <a href={c.url} target="_blank" rel="noreferrer" className="text-[11px] text-brand-light hover:text-white break-all font-mono truncate">{c.url}</a>
+                                                <button onClick={() => navigator.clipboard?.writeText(c.url)} className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 shrink-0">копі</button>
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                                <div className="text-[11px] text-gray-500 text-right">Разом за фільтром: <b className="text-white">{filteredClicks}</b> переходів</div>
+                            </div>
+                        )}
                     </div>
 
                     {/* Funnel flow — drop-off */}
@@ -181,11 +257,11 @@ export function FunnelAnalytics() {
                         <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-3">
                             <div>
                                 <div className="text-sm font-semibold text-white">Звідки приходять — пости</div>
-                                <div className="text-xs text-gray-500">Переходи по deep-links лід-магнітів (per пост)</div>
+                                <div className="text-xs text-gray-500">Переходи per пост (код = посилання_номерпоста)</div>
                             </div>
-                            {(!data.postSources || data.postSources.length === 0) ? (
+                            {postSources.length === 0 ? (
                                 <div className="text-xs text-gray-600 py-4 text-center">Ще немає переходів з постів</div>
-                            ) : data.postSources.slice(0, 12).map(p => (
+                            ) : postSources.slice(0, 15).map(p => (
                                 <div key={p.code} className="flex items-center gap-2">
                                     <span className="text-[10px] px-1.5 py-0.5 bg-gray-800 text-gray-400 rounded shrink-0">
                                         {PLATFORM_LABEL[p.platform] || p.platform || '—'}
@@ -219,6 +295,33 @@ export function FunnelAnalytics() {
                     </div>
                 </>
             )}
+        </div>
+    );
+}
+
+function NewLinkForm({ networks, onCreate, onCancel }) {
+    const [platform, setPlatform] = useState(networks?.[0]?.id || 'threads');
+    const [name, setName] = useState('');
+    const [description, setDescription] = useState('');
+    const [saving, setSaving] = useState(false);
+
+    const submit = async () => {
+        setSaving(true);
+        try { await onCreate({ platform, name: name.trim(), description: description.trim() }); }
+        finally { setSaving(false); }
+    };
+
+    return (
+        <div className="bg-gray-950 border border-gray-800 rounded-lg p-3 grid grid-cols-1 md:grid-cols-4 gap-2 items-start">
+            <select value={platform} onChange={e => setPlatform(e.target.value)} className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:outline-none focus:border-brand">
+                {(networks || []).map(n => <option key={n.id} value={n.id}>{n.label}</option>)}
+            </select>
+            <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Назва (напр. Threads — біо)" className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-brand" />
+            <input type="text" value={description} onChange={e => setDescription(e.target.value)} placeholder="Опис (необов'язково)" className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-brand" />
+            <div className="flex gap-1.5">
+                <button onClick={submit} disabled={saving} className="flex-1 text-xs py-1.5 rounded bg-brand hover:bg-brand/90 text-white transition-colors disabled:opacity-50">{saving ? '...' : 'Створити'}</button>
+                <button onClick={onCancel} className="text-xs px-2 py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 transition-colors">✕</button>
+            </div>
         </div>
     );
 }

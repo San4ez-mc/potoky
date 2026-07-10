@@ -454,32 +454,35 @@ async function resolveTargetBot(botId, startPayload, userId) {
     });
     const projectId = originBot?.projectId;
 
-    // ── Rule 0: lead-magnet tracked deep link (lm<12 hex>) ─────────────────
-    // Records the click for per-post attribution, then routes to the lead
-    // magnet's funnel by slug. Purely additive — unknown codes fall through to
-    // the webhook bot; never touches the existing slug/lesson/plain-start paths.
-    if (startPayload && /^lm[0-9a-f]{12}$/.test(startPayload)) {
+    // ── Rule 0: tracked deep links ─────────────────────────────────────────
+    // Handles: lm<12hex> (legacy per-post lead-magnet link), k<8hex> (per-network
+    // channel link), k<8hex>_<n> (per-post link nested under a channel). Records the
+    // click (and rolls it up to the parent channel), then routes to the funnel by
+    // slug. Purely additive — unknown codes fall through to the webhook bot; never
+    // touches the existing slug/lesson/plain-start paths.
+    if (startPayload && /^(lm[0-9a-f]{12}|k[0-9a-f]{8}(_[0-9a-z]+)?)$/.test(startPayload)) {
         try {
-            const rows = await db.$queryRaw`SELECT funnel_slug FROM tracked_links WHERE code = ${startPayload} LIMIT 1`;
+            const rows = await db.$queryRaw`SELECT funnel_slug, parent_id FROM tracked_links WHERE code = ${startPayload} LIMIT 1`;
             const link = Array.isArray(rows) ? rows[0] : null;
             if (link) {
                 await db.$executeRaw`UPDATE tracked_links SET clicks = clicks + 1, last_click_at = now(), first_click_at = COALESCE(first_click_at, now()) WHERE code = ${startPayload}`;
                 await db.$executeRaw`INSERT INTO link_clicks (code, telegram_user_id) VALUES (${startPayload}, ${userId ? String(userId) : null})`;
+                // Parent-channel rollup is computed at read time (sum of children), so no parent bump here.
                 const slug = link.funnel_slug;
                 if (slug) {
                     const funnelBot = (projectId && await db.bot.findFirst({ where: { slug, projectId, isActive: true }, select: { id: true } }))
                         || await db.bot.findFirst({ where: { slug, isActive: true }, select: { id: true } });
                     if (funnelBot) {
-                        logger.info('[platformBotHandler] Routed by lead-magnet link', { code: startPayload, slug, targetBotId: funnelBot.id });
+                        logger.info('[platformBotHandler] Routed by tracked link', { code: startPayload, slug, targetBotId: funnelBot.id });
                         return { targetBotId: funnelBot.id, lessonSlug: null, linkSource: startPayload };
                     }
-                    logger.warn('[platformBotHandler] Lead-magnet funnel slug not found', { code: startPayload, slug });
+                    logger.warn('[platformBotHandler] Tracked-link funnel slug not found', { code: startPayload, slug });
                 }
             } else {
-                logger.warn('[platformBotHandler] Unknown lead-magnet code', { code: startPayload });
+                logger.warn('[platformBotHandler] Unknown tracked-link code', { code: startPayload });
             }
         } catch (e) {
-            logger.warn('[platformBotHandler] Lead-magnet routing failed', { code: startPayload, err: e.message });
+            logger.warn('[platformBotHandler] Tracked-link routing failed', { code: startPayload, err: e.message });
         }
         return { targetBotId: botId, lessonSlug: null };
     }

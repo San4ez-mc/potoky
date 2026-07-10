@@ -79,6 +79,11 @@ export const api = {
     getNodeStats: (botId, nodeId, period = '30d') => req('GET', `/funnels/${botId}/nodes/${nodeId}/stats?period=${period}`),
     getFunnelAnalytics: (botId, period = '30d') => req('GET', `/funnels/${botId}/analytics?period=${period}`),
 
+    // Channel deep links (persistent per-network links) — reqWithMeta so we keep { channels }
+    getChannelLinks: (botId) => reqWithMeta('GET', `/channel-links?botId=${botId}`),
+    createChannelLink: (body) => reqWithMeta('POST', '/channel-links', body),
+    deleteChannelLink: (id) => reqWithMeta('DELETE', `/channel-links/${id}`),
+
     // Connectors (type definitions)
     getConnectors: () => req('GET', '/connectors'),
 

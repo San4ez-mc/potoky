@@ -443,6 +443,9 @@ export function SessionDetail() {
             setSession(sess);
             setMessages(m.data || m);
             setApiCalls(a.data || a);
+            // Для сесій без чату з людиною (напр. cron/webhook-воронки) — одразу відкрити вкладку API-викликів, а не порожній чат
+            const _msgs = m.data || m;
+            if (Array.isArray(_msgs) && _msgs.length === 0) { setTab('api'); }
             // Load funnel after we know the botId
             if (sess?.botId || sess?.bot?.id) {
                 api.getFunnel(sess.botId || sess.bot.id)

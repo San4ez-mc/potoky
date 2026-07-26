@@ -20,7 +20,7 @@ router.get('/eligible-bots', asyncHandler(async (req, res) => {
             sessions: {
                 some: {
                     isTest: false,
-                    user: { NOT: { telegramId: null } },
+                    user: { username: { not: 'webhook_system' } },
                 },
             },
         },
@@ -28,7 +28,7 @@ router.get('/eligible-bots', asyncHandler(async (req, res) => {
             id: true,
             name: true,
             slug: true,
-            _count: { select: { sessions: { where: { isTest: false, user: { NOT: { telegramId: null } } } } } },
+            _count: { select: { sessions: { where: { isTest: false, user: { username: { not: 'webhook_system' } } } } } },
         },
         orderBy: { name: 'asc' },
     });
@@ -47,7 +47,7 @@ router.get('/subscribers', asyncHandler(async (req, res) => {
         where: {
             botId: { in: botIds },
             isTest: false,
-            user: { NOT: { telegramId: null } },
+            user: { username: { not: 'webhook_system' } },
         },
         orderBy: { lastActive: 'desc' },
         select: {

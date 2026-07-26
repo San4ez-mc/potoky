@@ -403,12 +403,16 @@ export function Bots() {
                 {/* Bot label filter */}
                 <div className="min-w-[160px] max-w-xs">
                     <label className="text-xs text-gray-500 block mb-1">Фільтр за ботом</label>
-                    <input
+                    <select
                         value={botLabelFilter}
                         onChange={(e) => setBotLabelFilter(e.target.value)}
-                        placeholder="Напр. Ден..."
-                        className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-brand"
-                    />
+                        className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+                    >
+                        <option value="">Усі боти</option>
+                        {[...new Set(rows.map(r => r.botLabel).filter(Boolean))].sort().map(lbl => (
+                            <option key={lbl} value={lbl}>{lbl}</option>
+                        ))}
+                    </select>
                 </div>
 
                 {/* System bots checkbox */}
@@ -451,7 +455,7 @@ export function Bots() {
                     return (
                         <div
                             key={bot.id}
-                            className={`bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-3 ${bot.isActive === false ? 'opacity-50' : ''}`}
+                            className={`bg-gray-900 border border-gray-800 rounded-xl p-2.5 space-y-1.5 ${bot.isActive === false ? 'opacity-50' : ''}`}
                         >
                             {/* Name row */}
                             <div className="flex items-start justify-between gap-2">

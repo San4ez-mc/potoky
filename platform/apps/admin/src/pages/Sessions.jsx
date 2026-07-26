@@ -35,7 +35,8 @@ export function Sessions() {
     const [errorsModal, setErrorsModal] = useState(null);
     const [errorsOnly, setErrorsOnly] = useState(false);
     const [sessionType, setSessionType] = useState('all');
-    const [source, setSource] = useState('all');
+    // #12: за замовчуванням показуємо лише справжні сесії (bot), webhook — це тести
+    const [source, setSource] = useState('bot');
     const [readMap, setReadMap] = useState(() => getReadMap());
 
     const backTo = useMemo(() => {

@@ -96,8 +96,16 @@ router.patch('/errors/:id/resolve',
 // GET /api/admin/sessions/unread-count — active bot sessions with last message from user
 router.get('/sessions/unread-count',
     asyncHandler(async (req, res) => {
+        // Лише свіжі (останні 7 днів) сесії справжніх користувачів (telegramId != null;
+        // webhook/тести без telegramId не рахуємо). Інакше старі «активні» сесії з останнім
+        // повідомленням юзера копляться назавжди і лічильник завжди показує те саме число.
+        const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
         const activeBotSessions = await db.session.findMany({
-            where: { isActive: true, isTest: false, user: { NOT: { username: 'webhook_system' } } },
+            where: {
+                isActive: true, isTest: false,
+                lastActive: { gte: since },
+                user: { telegramId: { not: null }, NOT: { username: 'webhook_system' } },
+            },
             include: { messages: { orderBy: { createdAt: 'desc' }, take: 1 } },
         });
         const count = activeBotSessions.filter(s => s.messages[0]?.role === 'user').length;

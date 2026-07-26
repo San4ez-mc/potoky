@@ -377,3 +377,17 @@ model UserData {
   @@index([botId])
   @@map("user_data")
 }
+
+// Ф0.1 — ідемпотентність вхідних Telegram-апдейтів (ретраї webhook = той самий update_id).
+// Перед запуском воронки перевіряємо/фіксуємо update_id; дублікат ігнорується. TTL ~48 год
+// (чистить cron у worker). Закриває подвійні відповіді (docs А1).
+model ProcessedMessage {
+  id        String   @id @default(uuid())
+  botId     String
+  updateId  String
+  createdAt DateTime @default(now())
+
+  @@unique([botId, updateId])
+  @@index([createdAt])
+  @@map("processed_messages")
+}

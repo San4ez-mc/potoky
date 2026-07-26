@@ -106,6 +106,20 @@ router.post('/telegram/:botId',
 
         setImmediate(async () => {
             try {
+                // Ф0.1 ідемпотентність: Telegram ретраїть webhook з тим самим update_id.
+                // Фіксуємо його; дубль (P2002) — тихо ігноруємо, щоб не було подвійних відповідей.
+                const updateId = String(update?.update_id ?? update?.message?.message_id ?? '');
+                if (updateId) {
+                    try {
+                        await db.processedMessage.create({ data: { botId, updateId } });
+                    } catch (e) {
+                        if (e.code === 'P2002') {
+                            logger.info('Ф0.1: дубль update ігноровано', { botId, updateId });
+                            return;
+                        }
+                        throw e;
+                    }
+                }
                 const { handlePlatformBotUpdate } = require('../services/platformBotHandler');
                 await handlePlatformBotUpdate(botId, update);
             } catch (error) {

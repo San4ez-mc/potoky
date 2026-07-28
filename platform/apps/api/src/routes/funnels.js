@@ -573,6 +573,77 @@ router.get('/:botId/analytics',
     })
 );
 
+// GET /api/funnels/analytics/compare — зведена таблиця метрик по всіх воронках (порівняння)
+router.get('/analytics/compare', asyncHandler(async (req, res) => {
+    const { period = '30d', projectId = '', includeTest = 'false' } = req.query;
+    const ms = period === '7d' ? 7 * 86400000 : period === '24h' ? 86400000 : period === 'all' ? null : 30 * 86400000;
+    const timeFrom = ms ? new Date(Date.now() - ms) : null;
+    const testFilter = includeTest === 'true' ? {} : { isTest: false };
+
+    const bots = await db.bot.findMany({
+        where: projectId ? { projectId } : {},
+        select: { id: true, name: true, slug: true, isActive: true, project: { select: { id: true, name: true } } },
+        orderBy: { createdAt: 'desc' },
+    });
+
+    // Кліки з трекованих deep-links — одним запитом на всі боти
+    const clicksByBot = {};
+    try {
+        const rows = await db.$queryRaw`SELECT bot_id, COALESCE(SUM(clicks),0)::int AS clicks FROM tracked_links WHERE bot_id IS NOT NULL GROUP BY bot_id`;
+        for (const r of rows) clicksByBot[r.bot_id] = Number(r.clicks) || 0;
+    } catch { /* таблиці може не бути */ }
+
+    const out = [];
+    for (const bot of bots) {
+        const flow = await db.flowDefinition.findUnique({ where: { botId: bot.id } });
+        const nodes = Array.isArray(flow?.nodes) ? flow.nodes : [];
+        const edges = Array.isArray(flow?.edges) ? flow.edges : [];
+
+        // BFS-порядок нод від старту (щоб визначити «перший notifyAdmin» = лід)
+        const adj = {};
+        for (const e of edges) (adj[e.source] ||= []).push(e.target);
+        const startNode = nodes.find(n => n.type === 'start') || nodes[0];
+        const order = []; const seen = new Set();
+        if (startNode) {
+            const q = [startNode.id];
+            while (q.length) { const id = q.shift(); if (seen.has(id)) continue; seen.add(id); order.push(id); for (const t of (adj[id] || [])) if (!seen.has(t)) q.push(t); }
+        }
+        // Цільові ноди = оплата (connector/wait_payment); якщо їх нема (демо-воронки) — 2-й+ notifyAdmin (офер/гарячий лід)
+        const paymentIds = nodes.filter(n => n.type === 'connector' || n.type === 'wait_payment').map(n => n.id);
+        let targetSet;
+        if (paymentIds.length) targetSet = new Set(paymentIds);
+        else {
+            const notifyInOrder = order.filter(id => (nodes.find(n => n.id === id)?.type) === 'notifyAdmin');
+            targetSet = new Set(notifyInOrder.slice(1));
+        }
+
+        const sessions = await db.session.findMany({
+            where: { botId: bot.id, ...(timeFrom ? { startedAt: { gte: timeFrom } } : {}), ...testFilter },
+            select: { context: true, state: true, isActive: true },
+        });
+        let subscribers = 0, active = 0, completed = 0, unsubscribed = 0, reachedTarget = 0;
+        for (const s of sessions) {
+            subscribers++;
+            if (s.isActive) active++;
+            if (s.state === 'completed') completed++;
+            else if (s.state === 'unsubscribed') unsubscribed++;
+            const ctx = (s.context && typeof s.context === 'object') ? s.context : {};
+            const visited = Array.isArray(ctx.flowRuntime?.nodesVisited) ? ctx.flowRuntime.nodesVisited : [];
+            if (targetSet.size && visited.some(v => targetSet.has(v))) reachedTarget++;
+        }
+
+        out.push({
+            botId: bot.id, name: bot.name, slug: bot.slug, isActive: bot.isActive,
+            projectId: bot.project?.id || null, project: bot.project?.name || '—',
+            subscribers, active, completed,
+            conversionRate: subscribers > 0 ? Math.round((completed / subscribers) * 100) : 0,
+            reachedTarget, reachedRate: subscribers > 0 ? Math.round((reachedTarget / subscribers) * 100) : 0,
+            unsubscribed, clicks: clicksByBot[bot.id] || 0,
+        });
+    }
+    res.json({ ok: true, data: out });
+}));
+
 // ── PREREQUISITES (Gap #2: check before start) ─────────────
 
 // POST /api/funnels/:botId/check-prerequisites — check if user can start this funnel

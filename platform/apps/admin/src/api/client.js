@@ -78,6 +78,7 @@ export const api = {
     revealFunnelKey: (botId, key) => req('GET', `/funnels/${botId}/keys/${key}/reveal`),
     getNodeStats: (botId, nodeId, period = '30d') => req('GET', `/funnels/${botId}/nodes/${nodeId}/stats?period=${period}`),
     getFunnelAnalytics: (botId, period = '30d') => req('GET', `/funnels/${botId}/analytics?period=${period}`),
+    getFunnelsCompare: (period = '30d', projectId = '', includeTest = false) => req('GET', `/funnels/analytics/compare?period=${period}${projectId ? `&projectId=${projectId}` : ''}${includeTest ? '&includeTest=true' : ''}`),
 
     // Channel deep links (persistent per-network links) — reqWithMeta so we keep { channels }
     getChannelLinks: (botId) => reqWithMeta('GET', `/channel-links?botId=${botId}`),

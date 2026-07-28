@@ -19,6 +19,7 @@ import { Connectors } from './pages/Connectors.jsx';
 import { ContentStudio } from './pages/ContentStudio.jsx';
 import { Broadcasts } from './pages/Broadcasts.jsx';
 import { FunnelAnalytics } from './pages/FunnelAnalytics.jsx';
+import { FunnelsCompare } from './pages/FunnelsCompare.jsx';
 
 function ProtectedRoute({ children }) {
     const { isAuthenticated, isLoading } = useAuthStore();
@@ -68,6 +69,7 @@ export default function App() {
                 >
                     <Route index element={<Navigate to="/funnels" replace />} />
                     <Route path="funnels" element={<Bots />} />
+                    <Route path="funnels-compare" element={<FunnelsCompare />} />
                     <Route path="projects" element={<Projects />} />
                     <Route path="dashboard" element={<Dashboard />} />
                     <Route path="content" element={<ContentStudio />} />

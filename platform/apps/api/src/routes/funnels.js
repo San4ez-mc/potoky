@@ -555,10 +555,21 @@ router.get('/:botId/analytics',
         const trackedClicks = channels.reduce((a, c) => a + c.totalClicks, 0)
             + postSources.filter(p => !p.parentId || !channels.some(c => c.id === p.parentId)).reduce((a, p) => a + p.clicks, 0);
 
+        // «Є відповідь» — сесії, де підписник написав НЕ-командне повідомлення (не лише /start)
+        let repliedSessions = 0;
+        try {
+            const testCond = includeTest === 'true' ? '' : 'AND s."isTest" = false';
+            const rr = await db.$queryRawUnsafe(
+                `SELECT COUNT(DISTINCT s.id)::int AS c FROM sessions s JOIN messages m ON m."sessionId" = s.id AND m.role = 'user' AND m.content NOT LIKE '/%' WHERE s."botId" = $1 AND s."startedAt" >= $2::timestamptz ${testCond}`,
+                botId, timeFrom.toISOString());
+            repliedSessions = Number(rr[0]?.c || 0);
+        } catch { /* ignore */ }
+
         res.json({ ok: true, data: {
             period,
             summary: {
                 totalSessions, activeSessions, completedSessions, unsubscribedSessions,
+                repliedSessions, repliedRate: totalSessions > 0 ? Math.round((repliedSessions / totalSessions) * 100) : 0,
                 otherSessions: Math.max(0, totalSessions - completedSessions - unsubscribedSessions),
                 conversionRate: totalSessions > 0 ? Math.round((completedSessions / totalSessions) * 100) : 0,
                 trackedClicks,
@@ -592,6 +603,18 @@ router.get('/analytics/compare', asyncHandler(async (req, res) => {
         const rows = await db.$queryRaw`SELECT bot_id, COALESCE(SUM(clicks),0)::int AS clicks FROM tracked_links WHERE bot_id IS NOT NULL GROUP BY bot_id`;
         for (const r of rows) clicksByBot[r.bot_id] = Number(r.clicks) || 0;
     } catch { /* таблиці може не бути */ }
+
+    // «Є відповідь» — сесії, де підписник написав хоч одне НЕ-командне повідомлення (не лише /start)
+    const repliedByBot = {};
+    try {
+        const testCond = includeTest === 'true' ? '' : 'AND s."isTest" = false';
+        const rows = await db.$queryRawUnsafe(
+            `SELECT s."botId" AS bot_id, COUNT(DISTINCT s.id)::int AS replied
+             FROM sessions s JOIN messages m ON m."sessionId" = s.id AND m.role = 'user' AND m.content NOT LIKE '/%'
+             WHERE s."startedAt" >= $1::timestamptz ${testCond} GROUP BY s."botId"`,
+            (timeFrom || new Date(0)).toISOString());
+        for (const r of rows) repliedByBot[r.bot_id] = Number(r.replied) || 0;
+    } catch { /* ignore */ }
 
     const out = [];
     for (const bot of bots) {
@@ -632,10 +655,12 @@ router.get('/analytics/compare', asyncHandler(async (req, res) => {
             if (targetSet.size && visited.some(v => targetSet.has(v))) reachedTarget++;
         }
 
+        const replied = repliedByBot[bot.id] || 0;
         out.push({
             botId: bot.id, name: bot.name, slug: bot.slug, isActive: bot.isActive,
             projectId: bot.project?.id || null, project: bot.project?.name || '—',
-            subscribers, active, completed,
+            subscribers, replied, repliedRate: subscribers > 0 ? Math.round((replied / subscribers) * 100) : 0,
+            active, completed,
             conversionRate: subscribers > 0 ? Math.round((completed / subscribers) * 100) : 0,
             reachedTarget, reachedRate: subscribers > 0 ? Math.round((reachedTarget / subscribers) * 100) : 0,
             unsubscribed, clicks: clicksByBot[bot.id] || 0,

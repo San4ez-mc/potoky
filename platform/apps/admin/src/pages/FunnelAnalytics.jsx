@@ -15,6 +15,7 @@ const NODE_ICON = {
     httpRequest: '🌐', saveFile: '💾', loadFile: '📂',
 };
 const nodeIcon = (t) => NODE_ICON[t] || '•';
+const pctOfTotal = (val, total) => total > 0 ? Math.round((val / total) * 100) : 0;
 
 const PLATFORM_LABEL = {
     threads: 'Threads', instagram_posts: 'Instagram', instagram: 'Instagram',
@@ -140,11 +141,12 @@ export function FunnelAnalytics() {
             ) : data && s && (
                 <>
                     {/* Summary */}
-                    <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                    <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
                         <Card label="Всього сесій" value={s.totalSessions} />
-                        <Card label="Активних зараз" value={s.activeSessions} color="text-emerald-400" />
+                        <Card label="Є відповідь" value={s.repliedSessions ?? 0} sub={`${s.repliedRate ?? 0}% від сесій`} color="text-sky-400" />
+                        <Card label="Активних зараз" value={s.activeSessions} sub={`${pctOfTotal(s.activeSessions, s.totalSessions)}%`} color="text-emerald-400" />
                         <Card label="Завершили" value={s.completedSessions} sub={`конверсія ${s.conversionRate}%`} color="text-brand-light" />
-                        <Card label="Відписались" value={s.unsubscribedSessions} color={s.unsubscribedSessions > 0 ? 'text-red-400' : 'text-white'} />
+                        <Card label="Відписались" value={s.unsubscribedSessions} sub={`${pctOfTotal(s.unsubscribedSessions, s.totalSessions)}%`} color={s.unsubscribedSessions > 0 ? 'text-red-400' : 'text-white'} />
                         <Card label="Кліків з постів" value={s.trackedClicks} sub="deep-links" />
                     </div>
 

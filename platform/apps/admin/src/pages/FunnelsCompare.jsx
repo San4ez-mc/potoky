@@ -11,13 +11,15 @@ const PERIODS = [
 
 // Колонки таблиці: key — поле в даних, label — заголовок, hint — підказка, fmt — форматтер
 const COLS = [
-    { key: 'subscribers', label: '👥 Підписники', hint: 'Сесій стартувало' },
+    { key: 'subscribers', label: '👥 Підписники', hint: 'Сесій стартувало', base: true },
+    { key: 'replied', label: '💬 Є відповідь', hint: 'Написали хоч щось після /start (не відвалились одразу)', pct: 'repliedRate' },
     { key: 'active', label: '🟢 Активні', hint: 'Сесії активні зараз' },
     { key: 'completed', label: '✅ Завершили', hint: 'Дійшли до кінця воронки', pct: 'conversionRate' },
     { key: 'reachedTarget', label: '💳 Оплата/офер', hint: 'Дійшли до оплати або офера демо', pct: 'reachedRate' },
     { key: 'unsubscribed', label: '👋 Відписались', hint: 'Відписались від воронки' },
     { key: 'clicks', label: '👆 Кліки', hint: 'Переходи з трекованих deep-links' },
 ];
+const pctOf = (val, base) => base > 0 ? Math.round((val / base) * 100) : 0;
 
 export function FunnelsCompare() {
     const [period, setPeriod] = useState('30d');
@@ -56,7 +58,7 @@ export function FunnelsCompare() {
     }, [rows, projectFilter, search, sortKey, sortDir]);
 
     const totals = useMemo(() => {
-        const t = { subscribers: 0, active: 0, completed: 0, reachedTarget: 0, unsubscribed: 0, clicks: 0 };
+        const t = { subscribers: 0, replied: 0, active: 0, completed: 0, reachedTarget: 0, unsubscribed: 0, clicks: 0 };
         for (const r of view) for (const k of Object.keys(t)) t[k] += r[k] || 0;
         return t;
     }, [view]);
@@ -124,12 +126,16 @@ export function FunnelsCompare() {
                                         <Link to={`/funnel/${r.botId}/analytics`} className="text-gray-100 hover:text-brand-light font-medium">{r.name}</Link>
                                         <div className="text-[10px] text-gray-600">{r.project} · /{r.slug}{!r.isActive && ' · вимкнена'}</div>
                                     </td>
-                                    {COLS.map(c => (
-                                        <td key={c.key} className="px-3 py-2.5 text-right font-mono text-gray-200 whitespace-nowrap">
-                                            {r[c.key] ?? 0}
-                                            {c.pct && <span className="text-[10px] text-gray-500 ml-1">{r[c.pct]}%</span>}
-                                        </td>
-                                    ))}
+                                    {COLS.map(c => {
+                                        const val = r[c.key] ?? 0;
+                                        const pct = c.base ? null : (c.pct != null ? r[c.pct] : pctOf(val, r.subscribers));
+                                        return (
+                                            <td key={c.key} className="px-3 py-2.5 text-right font-mono text-gray-200 whitespace-nowrap">
+                                                {val}
+                                                {pct != null && <span className="text-[10px] text-gray-500 ml-1">({pct}%)</span>}
+                                            </td>
+                                        );
+                                    })}
                                 </tr>
                             ))}
                             {view.length === 0 && (
@@ -140,9 +146,15 @@ export function FunnelsCompare() {
                             <tfoot>
                                 <tr className="border-t-2 border-gray-700 bg-gray-900 font-semibold text-white">
                                     <td className="px-3 py-2.5 sticky left-0 bg-gray-900">Разом ({view.length})</td>
-                                    {COLS.map(c => (
-                                        <td key={c.key} className="px-3 py-2.5 text-right font-mono whitespace-nowrap">{totals[c.key]}</td>
-                                    ))}
+                                    {COLS.map(c => {
+                                        const pct = c.base ? null : pctOf(totals[c.key], totals.subscribers);
+                                        return (
+                                            <td key={c.key} className="px-3 py-2.5 text-right font-mono whitespace-nowrap">
+                                                {totals[c.key]}
+                                                {pct != null && <span className="text-[10px] text-gray-400 ml-1">({pct}%)</span>}
+                                            </td>
+                                        );
+                                    })}
                                 </tr>
                             </tfoot>
                         )}

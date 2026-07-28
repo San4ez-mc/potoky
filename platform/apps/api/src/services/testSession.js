@@ -1923,6 +1923,41 @@ ${sourceContent || '(немає даних)'}
             continue;
         }
 
+        if (node.type === 'fbEvent') {
+            // Facebook Conversions API (CAPI) — server-side подія (у Telegram нема браузера для пікселя).
+            // Best-effort: НІКОЛИ не блокує воронку; без валідних ключів (тестові плейсхолдери) — тихо пропускає.
+            const eventName = renderTemplate(String(data.eventName || 'Lead'), scope) || 'Lead';
+            const pixelId = String(scope.env?.FB_PIXEL_ID || '').trim();
+            const token = String(scope.env?.FB_CAPI_TOKEN || '').trim();
+            const placeholder = !pixelId || !token || /test|placeholder|replace|xxxx/i.test(pixelId) || /test|placeholder|replace|xxxx/i.test(token);
+            if (!placeholder) {
+                try {
+                    const crypto = require('crypto');
+                    const tgId = String(scope.user?.telegramId || scope.user?.id || '');
+                    const sha = (v) => v ? crypto.createHash('sha256').update(String(v).trim().toLowerCase()).digest('hex') : undefined;
+                    const value = data.value != null && data.value !== '' ? Number(renderTemplate(String(data.value), scope)) : undefined;
+                    const payload = {
+                        data: [{
+                            event_name: eventName,
+                            event_time: Math.floor(Date.now() / 1000),
+                            event_id: `${node.id}_${tgId}_${Date.now()}`,
+                            action_source: 'chat',
+                            user_data: { external_id: sha(tgId) },
+                            ...(value ? { custom_data: { value, currency: data.currency || 'USD' } } : {}),
+                        }],
+                        ...(data.testEventCode ? { test_event_code: String(data.testEventCode) } : {}),
+                    };
+                    await fetch(`https://graph.facebook.com/v21.0/${pixelId}/events?access_token=${encodeURIComponent(token)}`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+                    });
+                } catch (e) {
+                    console.warn('[fbEvent] CAPI best-effort fail:', e.message);
+                }
+            }
+            runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
+            continue;
+        }
+
         if (node.type === 'connector') {
             const connectorType = data.connectorType || '';
             const action = data.action || '';

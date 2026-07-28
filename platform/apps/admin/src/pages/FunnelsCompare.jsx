@@ -71,7 +71,7 @@ export function FunnelsCompare() {
         <div className="p-6 space-y-5">
             <div className="flex items-center gap-3 flex-wrap">
                 <div>
-                    <h1 className="text-lg font-semibold text-white">Порівняння воронок</h1>
+                    <h1 className="text-lg font-semibold text-white">Аналітика воронок</h1>
                     <div className="text-xs text-gray-500">Ефективність усіх воронок в одній таблиці — сортуй по будь-якій колонці</div>
                 </div>
                 <div className="ml-auto flex gap-1 items-center flex-wrap">

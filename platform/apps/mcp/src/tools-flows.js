@@ -23,6 +23,7 @@ const NODE_TYPES = [
     'abtest',
     // ── Admin / Telegram ──────────────────────────────────────────
     'notifyAdmin',          // sends Telegram message to admin;   data: { message, targetKey }
+    'fbEvent',              // Facebook Conversions API server-side event; data: { eventName, value?, currency? }; keys FB_PIXEL_ID + FB_CAPI_TOKEN
     'sendDocument',         // sends file/PDF to user;             data: { fileKey, fileVar, caption }
     'sendPhoto',            // sends image to user;                data: { photoVar, caption }
     // ── Payments ──────────────────────────────────────────────────

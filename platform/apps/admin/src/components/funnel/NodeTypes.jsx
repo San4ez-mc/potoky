@@ -456,6 +456,7 @@ export const NODE_TYPES = {
     generateDocument: GenerateDocumentNode,
     fetchTelegramProfile: FetchTelegramProfileNode,
     notifyAdmin: NotifyAdminNode,
+    fbEvent: NotifyAdminNode, // #305 FB CAPI — рендеримо як action-ноду
     knowledgeBase: KnowledgeBaseNode,
     agent: ClaudeNode, // AI agent (Claude + tools) — render like a Claude node instead of blank white
 };
@@ -479,6 +480,9 @@ export const NODE_PALETTE = [
     { type: 'notifyAdmin', icon: '📣', label: 'Сповістити адміна', color: 'border-amber-700', group: 'Повідомлення',
         description: 'Відправляє повідомлення адміну в Telegram',
         defaultData: { label: 'Сповістити адміна', targetKey: 'ADMIN_TELEGRAM_ID', message: '💰 Нова оплата!', notifyUser: true, userMessage: '✅ Оплату отримано! Дякую, що обрав курс.' } },
+    { type: 'fbEvent', icon: '📊', label: 'FB подія (CAPI)', color: 'border-sky-700', group: 'Повідомлення',
+        description: 'Facebook Conversions API — server-side подія (Lead/Purchase). Потрібні ключі FB_PIXEL_ID + FB_CAPI_TOKEN. Best-effort — не блокує воронку (тестові ключі пропускаються).',
+        defaultData: { label: 'FB: Lead', eventName: 'Lead', value: '', currency: 'USD' } },
     // ── ШІ ──
     { type: 'claude', icon: '🧠', label: 'Claude AI', color: 'border-violet-700', group: 'ШІ',
         description: 'Виклик Claude AI — одиночний запит або діалог з умовою виходу',

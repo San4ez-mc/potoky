@@ -64,4 +64,24 @@ router.post('/search', async (req, res) => {
   }
 });
 
+// #309 Generic Vertex-генерація (для структурного витягу фактів у орг-платформі, 3c/3e).
+router.post('/generate', async (req, res) => {
+  const started = Date.now();
+  try {
+    if (RAG_SECRET && req.headers['x-rag-secret'] !== RAG_SECRET) return res.status(401).json({ error: 'unauthorized' });
+    const { prompt, maxTokens } = req.body || {};
+    if (!prompt) return res.status(400).json({ error: 'prompt обовʼязковий' });
+    let text = '', err = null;
+    try { text = await vertexGeminiGenerate({ prompt, maxTokens: maxTokens || 2048 }); }
+    catch (e) { err = e.message; }
+    db.apiCall.create({ data: {
+      sessionId: null, service: 'rag_generate', method: 'rag.generate',
+      requestData: { promptLen: String(prompt).length }, responseData: { textLen: text.length },
+      statusCode: err ? 500 : 200, durationMs: Date.now() - started, error: err,
+    } }).catch(() => {});
+    if (err) return res.status(502).json({ error: err });
+    res.json({ text });
+  } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
+});
+
 module.exports = router;

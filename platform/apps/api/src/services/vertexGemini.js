@@ -25,7 +25,8 @@ async function vertexGeminiGenerate({ prompt, model = 'gemini-2.5-flash', maxTok
     url, method: 'POST',
     data: {
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: { maxOutputTokens: maxTokens, temperature },
+      // thinkingBudget 0 — вимикаємо «thinking» 2.5-flash, щоб усі токени йшли у відповідь (важливо для довгого JSON)
+      generationConfig: { maxOutputTokens: maxTokens, temperature, thinkingConfig: { thinkingBudget: 0 } },
     },
   });
   const parts = res.data?.candidates?.[0]?.content?.parts || [];

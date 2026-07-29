@@ -16,7 +16,7 @@ async function loadVertexConnector() {
 }
 
 /** Згенерувати відповідь через Vertex Gemini. Кидає помилку — обробляти вище. */
-async function vertexGeminiGenerate({ prompt, model = 'gemini-2.0-flash', maxTokens = 1024, temperature = 0.3 }) {
+async function vertexGeminiGenerate({ prompt, model = 'gemini-2.5-flash', maxTokens = 2048, temperature = 0.3 }) {
   if (!_cache) _cache = await loadVertexConnector();
   const { auth, projectId, location } = _cache;
   const client = await auth.getClient();

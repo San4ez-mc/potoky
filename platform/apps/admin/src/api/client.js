@@ -142,7 +142,7 @@ export const api = {
         const q = new URLSearchParams(params).toString();
         return req('GET', `/admin/api-logs${q ? '?' + q : ''}`);
     },
-    getLogs: (tab = 'all') => req('GET', `/admin/logs?tab=${tab}`),
+    getLogs: (limit = 150) => req('GET', `/admin/api-logs?limit=${limit}`),
     getMcpConfig: () => req('GET', '/admin/mcp-config'),
     runBotRegression: (botId) => req('POST', `/admin/bots/${botId}/run-regression`),
     runWebhookTest: (botId, body) => req('POST', `/admin/bots/${botId}/webhook-test`, body),

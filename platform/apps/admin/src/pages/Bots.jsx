@@ -512,7 +512,7 @@ export function Bots() {
                 <table className="w-full min-w-[1040px]">
                     <thead>
                         <tr className="border-b border-gray-800 bg-gray-950/70">
-                            <th className="text-left px-4 py-3 text-xs text-gray-400 font-medium">
+                            <th className="text-left px-4 py-1.5 text-xs text-gray-400 font-medium">
                                 <button
                                     onClick={toggleNameSort}
                                     className="flex items-center hover:text-gray-200 transition-colors"
@@ -521,13 +521,13 @@ export function Bots() {
                                     <SortArrow active={!!nameSort && !dateSort} dir={nameSort} />
                                 </button>
                             </th>
-                            <th className="text-left px-4 py-2.5 text-xs text-gray-400 font-medium">Проєкт</th>
-                            <th className="text-left px-4 py-2.5 text-xs text-gray-400 font-medium">Канали</th>
-                            <th className="text-left px-4 py-2.5 text-xs text-gray-400 font-medium">Користувачі</th>
-                            <th className="text-left px-4 py-2.5 text-xs text-gray-400 font-medium">Сесії</th>
-                            <th className="text-left px-4 py-2.5 text-xs text-gray-400 font-medium">Активні</th>
-                            <th className="text-left px-4 py-2.5 text-xs text-gray-400 font-medium">Помилки</th>
-                            <th className="text-left px-4 py-3 text-xs text-gray-400 font-medium">
+                            <th className="text-left px-4 py-1.5 text-xs text-gray-400 font-medium">Проєкт</th>
+                            <th className="text-left px-4 py-1.5 text-xs text-gray-400 font-medium">Канали</th>
+                            <th className="text-left px-4 py-1.5 text-xs text-gray-400 font-medium">Користувачі</th>
+                            <th className="text-left px-4 py-1.5 text-xs text-gray-400 font-medium">Сесії</th>
+                            <th className="text-left px-4 py-1.5 text-xs text-gray-400 font-medium">Активні</th>
+                            <th className="text-left px-4 py-1.5 text-xs text-gray-400 font-medium">Помилки</th>
+                            <th className="text-left px-4 py-1.5 text-xs text-gray-400 font-medium">
                                 <button
                                     onClick={toggleDateSort}
                                     className="flex items-center hover:text-gray-200 transition-colors"
@@ -536,7 +536,7 @@ export function Bots() {
                                     <SortArrow active={!!dateSort} dir={dateSort} />
                                 </button>
                             </th>
-                            <th className="px-4 py-3" />
+                            <th className="px-4 py-1.5" />
                         </tr>
                     </thead>
                     <tbody>
@@ -550,7 +550,7 @@ export function Bots() {
                                     key={bot.id}
                                     className={`border-b border-gray-800/60 hover:bg-gray-800/20 transition-colors align-middle ${bot.settings?.isSystem ? 'opacity-60' : ''} ${bot.isActive === false ? 'opacity-40' : ''}`}
                                 >
-                                    <td className="px-4 py-2.5" style={{ maxWidth: '260px' }}>
+                                    <td className="px-4 py-1.5" style={{ maxWidth: '260px' }}>
                                         <div className="flex items-center gap-1.5 min-w-0">
                                             <span className="font-medium text-white text-sm truncate" title={bot.name}>{bot.name}</span>
                                             {bot.settings?.isSystem && (
@@ -564,8 +564,8 @@ export function Bots() {
                                             )}
                                         </div>
                                     </td>
-                                    <td className="px-4 py-2.5 text-xs text-gray-400 whitespace-nowrap">{bot.projectName}</td>
-                                    <td className="px-4 py-3">
+                                    <td className="px-4 py-1.5 text-xs text-gray-400 whitespace-nowrap">{bot.projectName}</td>
+                                    <td className="px-4 py-1.5">
                                         <div className="flex gap-1 flex-wrap">
                                             {(bot.channels || []).map(ch => (
                                                 <span key={ch} title={ch} className="text-base leading-none">{CHANNEL_EMOJI[ch] || '📡'}</span>
@@ -573,17 +573,17 @@ export function Bots() {
                                             {(!bot.channels || bot.channels.length === 0) && <span className="text-gray-600 text-xs">—</span>}
                                         </div>
                                     </td>
-                                    <td className="px-4 py-2.5 text-sm text-gray-300">{bot.metrics?.usersCount ?? 0}</td>
-                                    <td className="px-4 py-2.5 text-sm text-gray-300">{bot.metrics?.totalSessions ?? 0}</td>
-                                    <td className="px-4 py-3 text-sm">
+                                    <td className="px-4 py-1.5 text-sm text-gray-300">{bot.metrics?.usersCount ?? 0}</td>
+                                    <td className="px-4 py-1.5 text-sm text-gray-300">{bot.metrics?.totalSessions ?? 0}</td>
+                                    <td className="px-4 py-1.5 text-sm">
                                         <span className={activeSessions > 0 ? 'text-emerald-400 font-medium' : 'text-gray-500'}>{activeSessions}</span>
                                     </td>
-                                    <td className="px-4 py-3 text-sm">
+                                    <td className="px-4 py-1.5 text-sm">
                                         {errors > 0 ? (
                                             <span className="inline-flex items-center justify-center px-1.5 py-0.5 rounded text-[11px] font-semibold bg-red-900/40 text-red-400 border border-red-800/50">{errors}</span>
                                         ) : <span className="text-gray-600">—</span>}
                                     </td>
-                                    <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
+                                    <td className="px-4 py-1.5 text-xs text-gray-500 whitespace-nowrap">
                                         {updatedAt ? (
                                             <>
                                                 <div>{format(new Date(updatedAt), 'dd.MM.yy HH:mm')}</div>
@@ -591,7 +591,7 @@ export function Bots() {
                                             </>
                                         ) : '—'}
                                     </td>
-                                    <td className="px-4 py-3">
+                                    <td className="px-4 py-1.5">
                                         <div className="flex justify-end gap-2 flex-wrap">
                                             {bot.isActive === false ? (
                                                 <button onClick={() => handleArchive(bot)} className="px-3 py-1.5 bg-emerald-900/30 hover:bg-emerald-900/50 text-emerald-400 text-xs rounded-lg transition-colors border border-emerald-800/40">↩ Відновити</button>
@@ -602,11 +602,11 @@ export function Bots() {
                                                 </>
                                             ) : (
                                                 <>
-                                                    <button onClick={() => setEditInfoBot(bot)} title={bot.description || 'Інфо / опис'} className="w-8 h-8 flex items-center justify-center bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-colors">ℹ️</button>
-                                                    <button onClick={() => navigate(`/funnel/${bot.id}`)} title="Редагувати" className="w-8 h-8 flex items-center justify-center bg-brand/20 hover:bg-brand/30 text-brand-light text-sm rounded-lg transition-colors">✏️</button>
-                                                    <button onClick={() => navigate(`/bots/${bot.id}/sessions`)} title="Сесії" className="w-8 h-8 flex items-center justify-center bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-colors">💬</button>
-                                                    <button onClick={() => navigate(`/funnel/${bot.id}/analytics`)} title="Аналітика" className="w-8 h-8 flex items-center justify-center bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-colors">📊</button>
-                                                    <button onClick={() => setArchiveConfirm(bot.id)} title="Архівувати" className="w-8 h-8 flex items-center justify-center bg-gray-800 hover:bg-orange-900/30 text-gray-500 hover:text-orange-400 text-sm rounded-lg transition-colors">📦</button>
+                                                    <button onClick={() => setEditInfoBot(bot)} title={bot.description || 'Інфо / опис'} className="w-7 h-7 flex items-center justify-center bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-colors">ℹ️</button>
+                                                    <button onClick={() => navigate(`/funnel/${bot.id}`)} title="Редагувати" className="w-7 h-7 flex items-center justify-center bg-brand/20 hover:bg-brand/30 text-brand-light text-sm rounded-lg transition-colors">✏️</button>
+                                                    <button onClick={() => navigate(`/bots/${bot.id}/sessions`)} title="Сесії" className="w-7 h-7 flex items-center justify-center bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-colors">💬</button>
+                                                    <button onClick={() => navigate(`/funnel/${bot.id}/analytics`)} title="Аналітика" className="w-7 h-7 flex items-center justify-center bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-colors">📊</button>
+                                                    <button onClick={() => setArchiveConfirm(bot.id)} title="Архівувати" className="w-7 h-7 flex items-center justify-center bg-gray-800 hover:bg-orange-900/30 text-gray-500 hover:text-orange-400 text-sm rounded-lg transition-colors">📦</button>
                                                 </>
                                             )}
                                         </div>

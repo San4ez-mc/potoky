@@ -21,6 +21,7 @@ const usersRouter = require('./routes/users');
 const adminRouter = require('./routes/admin');
 const webhookRouter = require('./routes/webhook');
 const funnelsRouter = require('./routes/funnels');
+const ragRouter = require('./routes/rag');
 const connectorsRouter = require('./routes/connectors');
 const savedConnectorsRouter = require('./routes/saved-connectors');
 const systemKeysRouter = require('./routes/system-keys');
@@ -170,6 +171,7 @@ app.use('/api/admin', adminRouter);
 app.use('/api/broadcasts', authMiddleware, broadcastsRouter);
 // Token-authed (server-to-server from content2) — not session auth
 app.use('/api/tracked-links', trackedLinksRouter);
+app.use('/api/rag', ragRouter);
 // Channel links CRUD is used by the admin UI → session auth
 app.use('/api/channel-links', authMiddleware, channelLinksRouter);
 

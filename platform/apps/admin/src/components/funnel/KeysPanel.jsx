@@ -545,7 +545,7 @@ function KeyForm({ initial, onSave, onCancel, savedConnectors = [] }) {
 
 // ─── KeysPanel ────────────────────────────────────────────────────────────────
 export function KeysPanel({ embedded = false }) {
-    const { bot, keys, upsertKey, deleteKey, revealKey } = useFunnelStore();
+    const { bot, keys, upsertKey, deleteKey, revealKey, reloadKeys } = useFunnelStore();
     const [editing, setEditing] = useState(null); // null | {} (new) | existing key
     const [isNew, setIsNew] = useState(false);
     const [allSavedConnectors, setAllSavedConnectors] = useState([]);
@@ -553,6 +553,9 @@ export function KeysPanel({ embedded = false }) {
     const [selectedConnectorId, setSelectedConnectorId] = useState('');
     const [selectedOpenAIConnectorId, setSelectedOpenAIConnectorId] = useState('');
     const [selectedGeminiConnectorId, setSelectedGeminiConnectorId] = useState('');
+    const [selectedTelegramConnectorId, setSelectedTelegramConnectorId] = useState('');
+    const [telegramBusy, setTelegramBusy] = useState(false);
+    const [telegramStatus, setTelegramStatus] = useState(null); // { ok, msg }
     const [loadingConnectors, setLoadingConnectors] = useState(false);
     const [saveAsConnectorKey, setSaveAsConnectorKey] = useState(null); // { key, value, isSecret, label }
     const [saveAsSuccess, setSaveAsSuccess] = useState('');
@@ -567,6 +570,10 @@ export function KeysPanel({ embedded = false }) {
     );
     const savedGeminiConnectors = useMemo(
         () => allSavedConnectors.filter((item) => item.type === 'google_gemini'),
+        [allSavedConnectors]
+    );
+    const savedTelegramConnectors = useMemo(
+        () => allSavedConnectors.filter((item) => item.type === 'telegram_bot'),
         [allSavedConnectors]
     );
 
@@ -594,6 +601,8 @@ export function KeysPanel({ embedded = false }) {
         if (openaiCurrent?.value) setSelectedOpenAIConnectorId(String(openaiCurrent.value));
         const geminiCurrent = keys.find((item) => item.key === 'GEMINI_CONNECTOR_ID');
         if (geminiCurrent?.value) setSelectedGeminiConnectorId(String(geminiCurrent.value));
+        const tgCurrent = keys.find((item) => item.key === 'TELEGRAM_CONNECTOR_ID');
+        if (tgCurrent?.value) setSelectedTelegramConnectorId(String(tgCurrent.value));
     }, [keys]);
 
     // Get required keys based on enabled channels
@@ -610,7 +619,11 @@ export function KeysPanel({ embedded = false }) {
 
         const required = [];
         if (channels.includes('telegram')) {
-            required.push('TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_USERNAME');
+            // Токен може приходити зі збереженого конектора (TELEGRAM_CONNECTOR_ID) —
+            // тоді окремий TELEGRAM_BOT_TOKEN не обов'язковий.
+            const hasConnector = keys.some(k => k.key === 'TELEGRAM_CONNECTOR_ID' && k.value);
+            if (!hasConnector) required.push('TELEGRAM_BOT_TOKEN');
+            required.push('TELEGRAM_BOT_USERNAME');
         }
         if (channels.includes('instagram')) {
             required.push('INSTAGRAM_ACCESS_TOKEN', 'INSTAGRAM_APP_SECRET', 'INSTAGRAM_VERIFY_TOKEN', 'INSTAGRAM_BUSINESS_ID', 'INSTAGRAM_USERNAME');
@@ -649,6 +662,26 @@ export function KeysPanel({ embedded = false }) {
     const handleUseSavedGeminiConnector = async () => {
         if (!selectedGeminiConnectorId) return;
         await upsertKey('GEMINI_CONNECTOR_ID', selectedGeminiConnectorId, 'Gemini Connector ID', false);
+    };
+
+    const handleUseSavedTelegramConnector = async () => {
+        if (!selectedTelegramConnectorId || telegramBusy) return;
+        setTelegramBusy(true);
+        setTelegramStatus(null);
+        try {
+            await upsertKey('TELEGRAM_CONNECTOR_ID', selectedTelegramConnectorId, 'Telegram Connector ID', false);
+            const res = await api.refreshTelegramUsername(bot.id);
+            await reloadKeys();
+            if (res?.ok && res.username) {
+                setTelegramStatus({ ok: true, msg: `✅ Бот @${res.username} під'єднано — username заповнено автоматично.` });
+            } else {
+                setTelegramStatus({ ok: false, msg: res?.reason || 'Не вдалось отримати username бота.' });
+            }
+        } catch (e) {
+            setTelegramStatus({ ok: false, msg: e.message || 'Помилка' });
+        } finally {
+            setTelegramBusy(false);
+        }
     };
 
     const handleUseManualGPTKey = () => {
@@ -752,6 +785,40 @@ export function KeysPanel({ embedded = false }) {
                         </button>
                     </div>
                 </div>
+
+                {savedTelegramConnectors.length > 0 && (
+                    <div className="rounded-lg p-3 border bg-cyan-900/10 border-cyan-900/40 space-y-2">
+                        <div className="text-xs text-cyan-300 font-medium">Telegram-бот для цієї воронки</div>
+                        <div className="text-xs text-gray-400">
+                            Обери збережений Telegram-конектор — токен підставиться через <code className="text-cyan-200">TELEGRAM_CONNECTOR_ID</code>, а <code className="text-cyan-200">TELEGRAM_BOT_USERNAME</code> заповниться автоматично.
+                        </div>
+                        <div className="flex gap-2">
+                            <select
+                                value={selectedTelegramConnectorId}
+                                onChange={(e) => setSelectedTelegramConnectorId(e.target.value)}
+                                className="flex-1 bg-gray-900 border border-gray-700 rounded px-2.5 py-1.5 text-xs text-white"
+                                disabled={loadingConnectors || telegramBusy || savedTelegramConnectors.length === 0}
+                            >
+                                <option value="">{loadingConnectors ? 'Завантаження...' : 'Оберіть Telegram-конектор'}</option>
+                                {savedTelegramConnectors.map((item) => (
+                                    <option key={item.id} value={item.id}>{item.name}</option>
+                                ))}
+                            </select>
+                            <button
+                                onClick={handleUseSavedTelegramConnector}
+                                disabled={!selectedTelegramConnectorId || telegramBusy}
+                                className="text-xs px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 disabled:opacity-50"
+                            >
+                                {telegramBusy ? '…' : 'Використати'}
+                            </button>
+                        </div>
+                        {telegramStatus && (
+                            <div className={`text-[11px] rounded px-2 py-1 border ${telegramStatus.ok ? 'text-green-300 bg-green-900/20 border-green-800' : 'text-red-300 bg-red-900/20 border-red-800'}`}>
+                                {telegramStatus.msg}
+                            </div>
+                        )}
+                    </div>
+                )}
 
                 {missingRequiredKeys.length > 0 && (
                     <div className="rounded-lg p-3 border bg-red-900/10 border-red-900/40">

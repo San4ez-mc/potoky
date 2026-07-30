@@ -9,7 +9,7 @@ const { asyncHandler } = require('../middleware/asyncHandler');
 const { authMiddleware } = require('../middleware/auth');
 const { validateParams } = require('../middleware/validateParams');
 const { NotFoundError } = require('@platform/errors');
-const { syncChannelsForBot } = require('../services/channelSync');
+const { syncChannelsForBot, resolveTelegramUsername } = require('../services/channelSync');
 
 const UPLOADS_DIR = process.env.BOT_FILES_DIR
     || path.join(__dirname, '..', '..', '..', '..', 'uploads', 'bot-files');
@@ -256,6 +256,15 @@ router.post('/:botId/sync-channels',
     asyncHandler(async (req, res) => {
         const result = await syncChannelsForBot(req.params.botId);
         res.json({ ok: true, data: result });
+    })
+);
+
+// POST /api/funnels/:botId/refresh-telegram-username — підтягнути @username бота з токена/конектора (getMe, без setWebhook)
+router.post('/:botId/refresh-telegram-username',
+    validateParams({ params: z.object({ botId: z.string().uuid() }) }),
+    asyncHandler(async (req, res) => {
+        const result = await resolveTelegramUsername(req.params.botId);
+        res.json(result);
     })
 );
 

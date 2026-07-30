@@ -55,7 +55,7 @@ async function resolveTelegramToken(keyMap) {
 
 // Підтягує username бота через getMe, записує у funnelKey TELEGRAM_BOT_USERNAME
 // (якщо ще не заданий) і дозаписує в config збереженого конектора.
-async function ensureBotUsername(botId, token, connectorId, keyMap) {
+async function ensureBotUsername(botId, token, connectorId, keyMap, { force = false } = {}) {
     try {
         const existing = keyMap.TELEGRAM_BOT_USERNAME;
         const meRes = await fetch(`https://api.telegram.org/bot${token}/getMe`);
@@ -63,8 +63,8 @@ async function ensureBotUsername(botId, token, connectorId, keyMap) {
         const username = meJson?.ok ? meJson.result?.username : null;
         if (!username) return null;
 
-        // funnelKey
-        if (!existing) {
+        // funnelKey (force → перезаписуємо навіть якщо вже щось є, напр. після зміни конектора)
+        if (force || !existing) {
             await db.funnelKey.upsert({
                 where: { botId_key: { botId, key: 'TELEGRAM_BOT_USERNAME' } },
                 update: { value: username },
@@ -212,4 +212,21 @@ async function syncChannelsForBot(botId) {
     return result;
 }
 
-module.exports = { syncChannelsForBot };
+// Тільки підтягує @username бота з токена (getMe) і пише у funnelKey TELEGRAM_BOT_USERNAME.
+// БЕЗ setWebhook — безпечно для ботів, які ділять кілька воронок (напр. контент-бот),
+// щоб не перехопити чужий вебхук. Викликається з панелі ключів при виборі Telegram-конектора.
+async function resolveTelegramUsername(botId, { force = true } = {}) {
+    const keys = await db.funnelKey.findMany({ where: { botId } });
+    const keyMap = toKeyMap(keys);
+    const { token, connectorId } = await resolveTelegramToken(keyMap);
+    if (!token) {
+        return { ok: false, reason: 'Немає валідного Telegram-токена: перевір обраний конектор або ключ TELEGRAM_BOT_TOKEN.' };
+    }
+    const username = await ensureBotUsername(botId, token, connectorId, keyMap, { force });
+    if (!username) {
+        return { ok: false, reason: 'Telegram getMe не повернув username — перевір, що токен бота дійсний.' };
+    }
+    return { ok: true, username };
+}
+
+module.exports = { syncChannelsForBot, resolveTelegramUsername };

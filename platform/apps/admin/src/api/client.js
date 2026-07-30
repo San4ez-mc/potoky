@@ -75,6 +75,13 @@ export const api = {
     upsertFunnelKey: (botId, key, value, label, isSecret) =>
         req('PUT', `/funnels/${botId}/keys`, { key, value, label, isSecret }),
     deleteFunnelKey: (botId, key) => req('DELETE', `/funnels/${botId}/keys/${key}`),
+    // Повертає { ok, username } або { ok:false, reason } без кидання помилки
+    refreshTelegramUsername: async (botId) => {
+        const res = await fetch(`${BASE}/funnels/${botId}/refresh-telegram-username`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+        });
+        return parseResponse(res);
+    },
     revealFunnelKey: (botId, key) => req('GET', `/funnels/${botId}/keys/${key}/reveal`),
     getNodeStats: (botId, nodeId, period = '30d') => req('GET', `/funnels/${botId}/nodes/${nodeId}/stats?period=${period}`),
     getFunnelAnalytics: (botId, period = '30d') => req('GET', `/funnels/${botId}/analytics?period=${period}`),

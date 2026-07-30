@@ -124,6 +124,12 @@ export const useFunnelStore = create((set, get) => ({
                 : [...state.keys, result],
         }));
     },
+    reloadKeys: async () => {
+        const { bot } = get();
+        if (!bot) return;
+        const keys = await api.getFunnelKeys(bot.id);
+        set({ keys: Array.isArray(keys) ? keys : (keys?.data || []) });
+    },
     deleteKey: async (key) => {
         const { bot } = get();
         await api.deleteFunnelKey(bot.id, key);

@@ -353,6 +353,29 @@ setTimeout(() => {
     setInterval(sendHomeworkReminders, HOMEWORK_REMINDER_INTERVAL_MS);
 }, 3 * 60 * 1000);
 
+// ── Ф0.1: TTL-очистка processed_messages (ідемпотентність вхідних) ──
+// Кожен Telegram-update пишеться в processed_messages для відсіву дублів.
+// За ТЗ (Ф0.1) TTL = 48 год — старіші записи більше не потрібні (Telegram не
+// ретраїть так довго). Раз на 6 год чистимо, щоб таблиця не росла безкінечно.
+const PROCESSED_MSG_TTL_MS = 48 * 60 * 60 * 1000;
+const PROCESSED_MSG_CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+async function cleanupProcessedMessages() {
+    try {
+        const cutoff = new Date(Date.now() - PROCESSED_MSG_TTL_MS);
+        const { count } = await db.processedMessage.deleteMany({ where: { createdAt: { lt: cutoff } } });
+        if (count > 0) logger.info('Ф0.1: очищено старі processed_messages', { deleted: count, olderThan: cutoff.toISOString() });
+    } catch (err) {
+        logger.error('Ф0.1 processed_messages cleanup error', { error: err.message });
+    }
+}
+
+// Старт після 4-хв прогріву, далі кожні 6 год
+setTimeout(() => {
+    cleanupProcessedMessages();
+    setInterval(cleanupProcessedMessages, PROCESSED_MSG_CLEANUP_INTERVAL_MS);
+}, 4 * 60 * 1000);
+
 // ── Broadcast queue ──────────────────────────────────────────
 const broadcastQueue = new Bull('broadcasts', REDIS_URL);
 

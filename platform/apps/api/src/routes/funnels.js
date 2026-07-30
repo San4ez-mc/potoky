@@ -259,11 +259,22 @@ router.post('/:botId/sync-channels',
     })
 );
 
-// POST /api/funnels/:botId/refresh-telegram-username — підтягнути @username бота з токена/конектора (getMe, без setWebhook)
+// POST /api/funnels/:botId/refresh-telegram-username — підтягнути @username бота (getMe, БЕЗ setWebhook).
+// Опційно body.connectorId → спершу проставляє TELEGRAM_CONNECTOR_ID напряму (не через /keys),
+// щоб не тригерити syncChannelsForBot і не перехопити вебхук у ботів, що ділять кілька воронок.
 router.post('/:botId/refresh-telegram-username',
     validateParams({ params: z.object({ botId: z.string().uuid() }) }),
     asyncHandler(async (req, res) => {
-        const result = await resolveTelegramUsername(req.params.botId);
+        const botId = req.params.botId;
+        const connectorId = typeof req.body?.connectorId === 'string' ? req.body.connectorId.trim() : '';
+        if (connectorId) {
+            await db.funnelKey.upsert({
+                where: { botId_key: { botId, key: 'TELEGRAM_CONNECTOR_ID' } },
+                update: { value: connectorId },
+                create: { botId, key: 'TELEGRAM_CONNECTOR_ID', value: connectorId, label: 'Telegram Connector ID', isSecret: false },
+            });
+        }
+        const result = await resolveTelegramUsername(botId);
         res.json(result);
     })
 );

@@ -669,8 +669,8 @@ export function KeysPanel({ embedded = false }) {
         setTelegramBusy(true);
         setTelegramStatus(null);
         try {
-            await upsertKey('TELEGRAM_CONNECTOR_ID', selectedTelegramConnectorId, 'Telegram Connector ID', false);
-            const res = await api.refreshTelegramUsername(bot.id);
+            // Один ендпойнт: проставляє TELEGRAM_CONNECTOR_ID напряму (без setWebhook) + getMe.
+            const res = await api.refreshTelegramUsername(bot.id, selectedTelegramConnectorId);
             await reloadKeys();
             if (res?.ok && res.username) {
                 setTelegramStatus({ ok: true, msg: `✅ Бот @${res.username} під'єднано — username заповнено автоматично.` });

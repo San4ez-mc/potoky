@@ -75,10 +75,12 @@ export const api = {
     upsertFunnelKey: (botId, key, value, label, isSecret) =>
         req('PUT', `/funnels/${botId}/keys`, { key, value, label, isSecret }),
     deleteFunnelKey: (botId, key) => req('DELETE', `/funnels/${botId}/keys/${key}`),
-    // Повертає { ok, username } або { ok:false, reason } без кидання помилки
-    refreshTelegramUsername: async (botId) => {
+    // Проставляє TELEGRAM_CONNECTOR_ID (без setWebhook) і підтягує @username бота.
+    // Повертає { ok, username } або { ok:false, reason } без кидання помилки.
+    refreshTelegramUsername: async (botId, connectorId) => {
         const res = await fetch(`${BASE}/funnels/${botId}/refresh-telegram-username`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+            body: JSON.stringify(connectorId ? { connectorId } : {}),
         });
         return parseResponse(res);
     },

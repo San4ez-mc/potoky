@@ -287,6 +287,37 @@ async function transcribeAudio(fileUrl, apiKey, language = 'uk') {
     }
 }
 
+// Витягнути текст із документа (PDF / DOCX / TXT|MD|CSV) для читання ботом.
+// Обрізаємо до бюджету, щоб не роздути токени Claude-ноди (урок §15.7).
+const MAX_DOC_CHARS = 12000;
+async function extractDocumentText(fileUrl, mimeType, fileName) {
+    try {
+        const mt = String(mimeType || '').toLowerCase();
+        const name = String(fileName || '').toLowerCase();
+        const res = await fetch(fileUrl);
+        if (!res.ok) return null;
+        const buf = Buffer.from(await res.arrayBuffer());
+        let text = '';
+        if (mt.includes('pdf') || name.endsWith('.pdf')) {
+            const pdfParse = require('pdf-parse');
+            text = (await pdfParse(buf))?.text || '';
+        } else if (mt.includes('wordprocessingml') || name.endsWith('.docx')) {
+            const mammoth = require('mammoth');
+            text = (await mammoth.extractRawText({ buffer: buf }))?.value || '';
+        } else if (mt.startsWith('text/') || /\.(txt|md|csv)$/.test(name)) {
+            text = buf.toString('utf-8');
+        } else {
+            return null; // непідтримуваний тип
+        }
+        text = text.replace(/\n{3,}/g, '\n\n').trim();
+        if (!text) return null;
+        return text.length > MAX_DOC_CHARS ? text.slice(0, MAX_DOC_CHARS) + '\n…[обрізано]' : text;
+    } catch (err) {
+        logger.warn('[platformBotHandler] extractDocumentText failed', { error: err.message });
+        return null;
+    }
+}
+
 /**
  * Fetch and store Telegram profile photo for a user (fire-and-forget, non-blocking).
  */
@@ -872,6 +903,21 @@ async function _handlePlatformBotUpdateInner(botId, update) {
             }
         } else {
             logger.warn('[platformBotHandler] Voice received but no OpenAI key for transcription', { botId });
+        }
+    }
+
+    // ── Phase 1.55: документ (PDF/DOCX/TXT) → текст у повідомлення ──
+    // Дозволяє «закинути» брендбук/презентацію/анкету — бот прочитає й використає.
+    if (incomingMedia && incomingMedia.type === 'document' && incomingMedia.fileUrl) {
+        const docText = await extractDocumentText(incomingMedia.fileUrl, incomingMedia.mimeType, incomingMedia.fileName);
+        if (docText) {
+            const header = `[Документ «${incomingMedia.fileName || 'файл'}»]`;
+            text = text ? `${text}\n${header}\n${docText}` : `${header}\n${docText}`;
+            logger.info('[platformBotHandler] Document extracted', { botId, fileName: incomingMedia.fileName, chars: docText.length });
+        } else {
+            // Непідтримуваний/нечитабельний файл — не мовчимо, підказуємо формат.
+            await sendTelegramMessage(token, chatId, '📎 Не зміг прочитати цей файл. Підтримую PDF, DOCX, TXT. Спробуй інший формат або встав текст повідомленням.').catch(() => {});
+            return;
         }
     }
 

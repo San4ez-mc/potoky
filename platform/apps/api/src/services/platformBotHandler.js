@@ -766,10 +766,37 @@ function _isAlreadyProcessed(updateId) {
 // "4 пости в день") fires the dispatcher once with the combined text instead
 // of twice. Scoped to the content bot only — course funnels must stay instant.
 const DEBOUNCE_MS = 3000;
-const DEBOUNCE_BOT_IDS = new Set(['22f2bce5-ac62-4297-8ea0-66e258e8b505']);
+// Боти, де користувачі часто шлють кілька повідомлень підряд / вставляють довгий
+// текст, який Telegram б'є на кілька апдейтів. Тут їх треба склеїти в один вхід.
+// 18a5d4e4 = вебхук-вхід контент-бота (@fineko_content_bot: онбординг + контент-менеджер).
+const DEBOUNCE_BOT_IDS = new Set([
+    '22f2bce5-ac62-4297-8ea0-66e258e8b505',
+    '18a5d4e4-2fbd-4bb3-a064-3be793ef400b',
+]);
 const _debounceBuffer = new Map(); // key `${botId}:${chatId}` -> { text, message, timer }
+// Серіалізація обробки per-чат: не запускати паралельні прогони flow однієї сесії
+// (інакше серія повідомлень → гонка → дублі відповідей). key `${botId}:${chatId}`.
+const _chatLocks = new Map();
 
+// Обгортка: серіалізує обробку повідомлень одного чату (per botId:chatId), щоб
+// кілька повідомлень підряд не запускали паралельні прогони flow однієї сесії.
 async function handlePlatformBotUpdate(botId, update) {
+    const chatId = update.message?.chat?.id
+        ?? update.edited_message?.chat?.id
+        ?? update.callback_query?.message?.chat?.id;
+    if (chatId == null) return _handlePlatformBotUpdateInner(botId, update);
+    const key = `${botId}:${chatId}`;
+    const prev = _chatLocks.get(key) || Promise.resolve();
+    const runProm = prev.then(
+        () => _handlePlatformBotUpdateInner(botId, update),
+        () => _handlePlatformBotUpdateInner(botId, update),
+    );
+    _chatLocks.set(key, runProm);
+    runProm.finally(() => { if (_chatLocks.get(key) === runProm) _chatLocks.delete(key); }).catch(() => {});
+    return runProm;
+}
+
+async function _handlePlatformBotUpdateInner(botId, update) {
     // ── Deduplicate by update_id ──────────────────────────────────────────────
     if (update.update_id && _isAlreadyProcessed(update.update_id)) {
         logger.debug('[platformBotHandler] Duplicate update_id skipped', { updateId: update.update_id, botId });

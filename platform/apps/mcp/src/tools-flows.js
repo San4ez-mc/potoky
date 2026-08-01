@@ -18,6 +18,7 @@ const NODE_TYPES = [
     'saveFile',
     'wait',
     'loadFile',
+    'readFile',             // очікує документ/текст від юзера → витягує текст; data: { outputVar, maxChars }. Мета у context.readFileMeta {wasFile, ok, fileName}
     'httpRequest',
     'tag',
     'abtest',

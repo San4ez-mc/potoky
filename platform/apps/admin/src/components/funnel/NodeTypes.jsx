@@ -313,6 +313,14 @@ export const LoadFileNode = memo(({ id, selected, data }) => (
     </BaseNode>
 ));
 
+// ─── Read File Node — очікує документ/текст від юзера, витягує текст ───────────────
+export const ReadFileNode = memo(({ id, selected, data }) => (
+    <BaseNode id={id} selected={selected} color="bg-teal-700" icon="📄" label={data.label || 'Читати документ'} description={data.description}>
+        <div className="text-teal-300 text-[11px]">чекає файл/текст → {data.outputVar || 'context.docText'}</div>
+        {data.maxChars && <div className="text-teal-400 text-[11px]">макс {data.maxChars} симв.</div>}
+    </BaseNode>
+));
+
 // ─── Tag Node (new) ─────────────────────────────────────────────────────────────
 export const TagNode = memo(({ id, selected, data }) => (
     <BaseNode id={id} selected={selected} color="bg-red-700" icon="🏷️" label={data.label || 'Тег'} description={data.description}>
@@ -445,6 +453,7 @@ export const NODE_TYPES = {
     connector: ConnectorNode,
     saveFile: SaveFileNode,
     loadFile: LoadFileNode,
+    readFile: ReadFileNode,
     wait: WaitNode,
     wait_payment: WaitPaymentNode,
     httpRequest: HttpRequestNode,
@@ -507,6 +516,9 @@ export const NODE_PALETTE = [
     { type: 'loadFile', icon: '📂', label: 'Завантажити файл', color: 'border-indigo-700', group: 'Дані',
         description: 'Завантажує раніше збережений файл у контекст сесії',
         defaultData: { label: 'Завантажити файл', fileType: '', onMissing: 'ask', outputVar: 'context.file' } },
+    { type: 'readFile', icon: '📄', label: 'Читати документ', color: 'border-teal-700', group: 'Дані',
+        description: 'Очікує від користувача документ (PDF/DOCX/TXT) або текст і кладе витягнутий текст у outputVar. Мета у context.readFileMeta {wasFile, ok, fileName} — для гілкування.',
+        defaultData: { label: 'Читати документ', outputVar: 'context.docText', maxChars: 12000 } },
     { type: 'tag', icon: '🏷️', label: 'Тег', color: 'border-red-700', group: 'Дані',
         description: 'Додає або видаляє тег на профілі користувача',
         defaultData: { label: 'Тег', tag: '', action: 'add' } },

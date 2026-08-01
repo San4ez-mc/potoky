@@ -8,6 +8,7 @@ const { enableTestChat, disableTestChat, consumeTestMessages, sendMessage } = re
 const crypto = require('crypto');
 const https = require('https');
 const vm = require('vm');
+const { extractDocumentText } = require('./docExtract');
 
 const { handleTelegramUpdate } = require('../../../../projects/finance-course/src/telegramHandler');
 
@@ -649,7 +650,7 @@ async function getSystemKeyValue(keyName) {
     return connector.config[def.field] || null;
 }
 
-async function executeFlowStep({ sessionId, incomingUserMessage = null }) {
+async function executeFlowStep({ sessionId, incomingUserMessage = null, incomingFile = null }) {
     const session = await db.session.findUnique({
         where: { id: sessionId },
         include: { user: true, bot: true },
@@ -714,9 +715,11 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null }) {
         runtime.currentNodeId = findStartNode(flow.nodes)?.id || null;
     }
 
-    if (incomingUserMessage) {
-        runtime.lastUserMessage = incomingUserMessage;
+    if (incomingUserMessage || incomingFile) {
+        runtime.lastUserMessage = incomingUserMessage || '';
         runtime.waitingForUser = false;
+        // Вхідний файл кладемо у контекст (як lastUserMessage) — його спожиє нода readFile.
+        if (incomingFile) ctx.lastFile = incomingFile;
     }
 
     let lastAssistant = null;
@@ -786,6 +789,38 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null }) {
                 ...(msgAttachment ? { attachment: msgAttachment } : {}),
             });
             lastAssistant = text;
+            runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
+            continue;
+        }
+
+        // readFile — очікує ввід (документ або текст) і кладе витягнутий текст у context.
+        // Що робити далі (зберегти/у вектор/віддати ШІ) — вирішують наступні ноди воронки.
+        if (node.type === 'readFile') {
+            const outKey = String(data.outputVar || 'context.docText').replace(/^context\./, '');
+            if (!ctx.lastFile && !runtime.lastUserMessage) {
+                runtime.waitingForUser = true;
+                break;
+            }
+            let docText = '', wasFile = false, ok = false, fileName = '';
+            if (ctx.lastFile && ctx.lastFile.fileUrl) {
+                wasFile = true;
+                fileName = ctx.lastFile.fileName || '';
+                try {
+                    docText = (await extractDocumentText(ctx.lastFile.fileUrl, ctx.lastFile.mimeType, ctx.lastFile.fileName, data.maxChars)) || '';
+                } catch (e) {
+                    logger.warn('[flow readFile] extract failed', { sessionId, error: e.message });
+                }
+                ok = !!docText;
+            } else if (runtime.lastUserMessage) {
+                docText = runtime.lastUserMessage; // вставлений текст замість файлу
+                ok = true;
+            }
+            ctx[outKey] = docText;
+            // Мета для condition-ноди: був файл? прочитався? назва файлу.
+            ctx.readFileMeta = { wasFile, ok, fileName };
+            ctx.lastFile = null;
+            runtime.lastUserMessage = '';
+            runtime.waitingForUser = false;
             runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
             continue;
         }

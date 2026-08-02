@@ -976,11 +976,21 @@ async function _handlePlatformBotUpdateInner(botId, update) {
     let sinceTime;
 
     if (isStart) {
-        // Deactivate all previous active sessions for this specific bot
-        await db.session.updateMany({
-            where: { userId: user.id, botId: targetBotId, state: { not: 'completed' } },
-            data: { state: 'completed' },
-        });
+        // Закрити попередні активні сесії користувача в ТОМУ Ж ПРОЄКТІ (не лише того самого
+        // бота) — щоб воронки одного бота (напр. онбординг і контент-менеджер) не конкурували
+        // за «останню активну сесію» і плоскі повідомлення не летіли не туди. Одна активна сесія.
+        const _tgtBot = await db.bot.findUnique({ where: { id: targetBotId }, select: { projectId: true } }).catch(() => null);
+        if (_tgtBot?.projectId) {
+            await db.session.updateMany({
+                where: { userId: user.id, isActive: true, bot: { projectId: _tgtBot.projectId } },
+                data: { state: 'completed', isActive: false },
+            });
+        } else {
+            await db.session.updateMany({
+                where: { userId: user.id, botId: targetBotId, state: { not: 'completed' } },
+                data: { state: 'completed', isActive: false },
+            });
+        }
 
         session = await createNewSession(user.id, targetBotId);
 

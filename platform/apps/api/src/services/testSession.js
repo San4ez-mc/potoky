@@ -840,7 +840,10 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
             // it builds the user message from context variables and never needs live input.
             const inFinalizationStage = isUserConfirmExit && runtime.userConfirmationReceived;
             const selfContained = mode === 'single' && !!data.messagesTemplate;
-            if (!runtime.lastUserMessage && !inFinalizationStage && !resumeAfterTool && !selfContained) {
+            // speakFirst: нода-діалог сама починає розмову (пропонує/питає), не чекаючи вводу.
+            // Тільки на ПЕРШОМУ вході (нема lastUserMessage); далі — звичайний діалог.
+            const speakFirstNow = data.speakFirst === true && mode === 'dialog' && !runtime.lastUserMessage;
+            if (!runtime.lastUserMessage && !inFinalizationStage && !resumeAfterTool && !selfContained && !speakFirstNow) {
                 runtime.waitingForUser = true;
                 break;
             }
@@ -862,7 +865,8 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                 // In finalization stage lastUserMessage is already cleared — provide explicit instruction
                 const userContent = runtime.lastUserMessage
                     || (inFinalizationStage ? 'Підтверджено. Згенеруй фінальний документ.'
-                        : (resumeAfterTool ? 'Використай результат з бази знань вище і продовж виконання мого попереднього запиту.' : ''));
+                        : (resumeAfterTool ? 'Використай результат з бази знань вище і продовж виконання мого попереднього запиту.'
+                            : (speakFirstNow ? 'Почни діалог сам: за завданням із системного промпту одразу ЗАПРОПОНУЙ перший варіант (стисло, на основі відомого) і попроси підтвердити/скоригувати. НЕ віддавай JSON на цьому кроці — спершу пропозиція.' : '')));
                 // Consume the resume flag so we don't loop forever
                 if (resumeAfterTool) delete ctx.__resumeAfterTool;
 

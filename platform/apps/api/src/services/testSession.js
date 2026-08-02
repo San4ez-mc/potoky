@@ -2215,11 +2215,21 @@ ${_baseUrl}/legal/terms — Правила використання`;
                 } catch (e) { logger.warn('[agent node] doc extract failed', { error: e.message }); }
                 ctx.lastFile = null;
             }
+            // Історія діалогу між ходами (як у claude-ноді). Зберігаємо ТІЛЬКИ чисті
+            // текстові ходи (user/assistant) — без проміжних tool_use/tool_result, бо
+            // truncateHistory може розірвати пару tool_use↔tool_result і Claude API впаде.
+            if (!runtime.dialogHistory) runtime.dialogHistory = {};
+            const priorHistory = (data.dialogMode && Array.isArray(runtime.dialogHistory[node.id]))
+                ? runtime.dialogHistory[node.id] : [];
             let messages;
-            try {
-                messages = parseClaudeMessages(data.messagesTemplate, agentScope, agentUserInput);
-            } catch (e) {
-                messages = [{ role: 'user', content: agentUserInput }];
+            if (priorHistory.length > 0) {
+                messages = [...priorHistory, { role: 'user', content: agentUserInput }];
+            } else {
+                try {
+                    messages = parseClaudeMessages(data.messagesTemplate, agentScope, agentUserInput);
+                } catch (e) {
+                    messages = [{ role: 'user', content: agentUserInput }];
+                }
             }
 
             // Build Claude tools from node.data.tools
@@ -2333,6 +2343,16 @@ ${_baseUrl}/legal/terms — Правила використання`;
                 setByPath(ctx, outputPath, agentResponse);
             }
             runtime.lastUserMessage = '';
+            // Дописати чистий хід у історію (документи обрізаємо — не тягнемо 40K щоразу).
+            if (data.dialogMode) {
+                const histUser = agentUserInput.length > 4000
+                    ? agentUserInput.slice(0, 4000) + '…[обрізано]' : agentUserInput;
+                runtime.dialogHistory[node.id] = truncateHistory([
+                    ...priorHistory,
+                    { role: 'user', content: histUser || 'Продовжуємо.' },
+                    { role: 'assistant', content: agentResponse || 'Ок.' },
+                ]);
+            }
             // dialogMode: якщо агент НЕ викликав finishTool — чекаємо наступне повідомлення
             // юзера (лишаємось на цій ноді). Інакше — йдемо далі.
             if (data.dialogMode && !agentDone) {

@@ -2203,12 +2203,23 @@ ${_baseUrl}/legal/terms — Правила використання`;
             const maxIterations = parseInt(data.maxIterations, 10) || 10;
             const outputPath = data.outputVar ? String(data.outputVar).replace(/^context\./, '') : null;
 
-            // Build initial messages from template
+            // Build initial messages from template. У dialogMode без вводу — стартовий тригер,
+            // щоб агент сам привітався/продовжив (як speakFirst).
+            let agentUserInput = runtime.lastUserMessage
+                || (data.dialogMode ? (data.startTrigger || 'Почни/продовж діалог: за потреби виклич get_profile, зрозумій поточний стан і став наступне питання або підсумуй.') : '');
+            // Вхідний документ → додати його текст у ввід (агент сам витягне дані й збереже через інструменти).
+            if (ctx.lastFile && ctx.lastFile.fileUrl) {
+                try {
+                    const _dtxt = await extractDocumentText(ctx.lastFile.fileUrl, ctx.lastFile.mimeType, ctx.lastFile.fileName);
+                    if (_dtxt) agentUserInput = (agentUserInput ? agentUserInput + '\n\n' : '') + `[Користувач надіслав документ «${ctx.lastFile.fileName || 'файл'}». Текст документа:]\n${_dtxt}`;
+                } catch (e) { logger.warn('[agent node] doc extract failed', { error: e.message }); }
+                ctx.lastFile = null;
+            }
             let messages;
             try {
-                messages = parseClaudeMessages(data.messagesTemplate, agentScope, runtime.lastUserMessage || '');
+                messages = parseClaudeMessages(data.messagesTemplate, agentScope, agentUserInput);
             } catch (e) {
-                messages = [{ role: 'user', content: runtime.lastUserMessage || '' }];
+                messages = [{ role: 'user', content: agentUserInput }];
             }
 
             // Build Claude tools from node.data.tools
@@ -2234,6 +2245,7 @@ ${_baseUrl}/legal/terms — Правила використання`;
             const agentMaxTokens = parseInt(data.maxTokens, 10) || 4096;
 
             let agentResponse = '';
+            let agentDone = false;
             for (let iter = 0; iter < maxIterations; iter++) {
                 let response;
                 try {
@@ -2266,6 +2278,12 @@ ${_baseUrl}/legal/terms — Правила використання`;
                 const toolResults = [];
 
                 for (const toolCall of toolBlocks) {
+                    // finishTool — сигнал завершення діалогу (dialogMode): не HTTP, а прапорець.
+                    if (data.finishTool && toolCall.name === data.finishTool) {
+                        agentDone = true;
+                        toolResults.push({ type: 'tool_result', tool_use_id: toolCall.id, content: 'Готово, завершую.' });
+                        continue;
+                    }
                     const toolDef = rawTools.find((t) => t.name === toolCall.name);
                     let toolResult = '';
                     if (toolDef && toolDef.url) {
@@ -2315,6 +2333,12 @@ ${_baseUrl}/legal/terms — Правила використання`;
                 setByPath(ctx, outputPath, agentResponse);
             }
             runtime.lastUserMessage = '';
+            // dialogMode: якщо агент НЕ викликав finishTool — чекаємо наступне повідомлення
+            // юзера (лишаємось на цій ноді). Інакше — йдемо далі.
+            if (data.dialogMode && !agentDone) {
+                runtime.waitingForUser = true;
+                break;
+            }
             runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
             continue;
         }

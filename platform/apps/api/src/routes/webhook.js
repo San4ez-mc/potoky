@@ -105,6 +105,9 @@ router.post('/telegram/:botId',
         res.json({ ok: true });
 
         setImmediate(async () => {
+            // A1: тримаємо claim окремо, щоб при падінні обробки зняти позначку «оброблено»
+            // і дати Telegram-ретраю ще один шанс (інакше повідомлення губиться назавжди).
+            let claimedUpdateId = '';
             try {
                 // Ф0.1 ідемпотентність: Telegram ретраїть webhook з тим самим update_id.
                 // Фіксуємо його; дубль (P2002) — тихо ігноруємо, щоб не було подвійних відповідей.
@@ -112,6 +115,7 @@ router.post('/telegram/:botId',
                 if (updateId) {
                     try {
                         await db.processedMessage.create({ data: { botId, updateId } });
+                        claimedUpdateId = updateId;
                     } catch (e) {
                         if (e.code === 'P2002') {
                             logger.info('Ф0.1: дубль update ігноровано', { botId, updateId });
@@ -128,6 +132,11 @@ router.post('/telegram/:botId',
                     error: error.message,
                     stack: error.stack,
                 });
+                // A1-fix: обробка впала — знімаємо claim, щоб ретрай Telegram зміг повторити
+                // (без цього дедуп ловив би ретрай і повідомлення втрачалося б назавжди).
+                if (claimedUpdateId) {
+                    await db.processedMessage.deleteMany({ where: { botId, updateId: claimedUpdateId } }).catch(() => {});
+                }
             }
         });
     })

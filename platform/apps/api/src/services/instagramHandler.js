@@ -151,7 +151,14 @@ async function handleInstagramEvent(botId, body) {
 
     let processed = 0;
     for (const entry of body.entry || []) {
-        const events = entry.messaging || entry.standby || [];
+        let events = entry.messaging || entry.standby || [];
+        // Частина IG-подій приходить у форматі changes[] (field: "messages") замість messaging[].
+        // Мапимо value → messaging-подібний обʼєкт (там ті самі sender/recipient/message).
+        if ((!events || !events.length) && Array.isArray(entry.changes)) {
+            events = entry.changes
+                .filter((c) => c && c.value && (c.field === 'messages' || c.field === 'message'))
+                .map((c) => c.value);
+        }
         for (const m of events) {
             try {
                 // Echo — це наше ж вихідне повідомлення, повернене Meta. Пропускаємо.
@@ -225,6 +232,10 @@ async function handleInstagramEvent(botId, body) {
                 logger.error('[instagramHandler] Failed to process messaging event', { botId, error: err.message, stack: err.stack });
             }
         }
+    }
+    if (processed === 0) {
+        // Діагностика: показуємо сиру структуру, щоб точно знати формат події від Meta.
+        logger.warn('[instagramHandler] 0 подій опрацьовано — RAW payload', { botId, raw: JSON.stringify(body).slice(0, 1800) });
     }
     return { ok: true, processed };
 }

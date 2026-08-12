@@ -135,6 +135,12 @@ function MessageContent({ content, metadata }) {
     const fileUrl = metadata?.fileUrl || metadata?.url || metadata?.sheetsUrl;
     const fileType = metadata?.fileType;
     const messageParts = splitMermaidBlocks(content);
+    // Медіа-вкладення (фото/відео) — вхідні від клієнта або вихідні sendPhoto.
+    const att = metadata?.attachment;
+    const attType = att?.type;
+    const attUrl = att?.url;
+    const isImg = attUrl && (attType === 'photo' || attType === 'image');
+    const isVid = attUrl && (attType === 'video' || attType === 'animation');
 
     const renderTextPart = (text, prefix) => {
         const parts = parseMessageContent(text);
@@ -173,6 +179,16 @@ function MessageContent({ content, metadata }) {
                 if (part.type === 'mermaid') return <MermaidBlock key={`mermaid-${i}`} code={part.value} />;
                 return <React.Fragment key={`text-${i}`}>{renderTextPart(part.value, `part-${i}`)}</React.Fragment>;
             })}
+            {isImg && (
+                <a href={attUrl} target="_blank" rel="noopener noreferrer" className="block mt-1.5">
+                    <img src={attUrl} alt={att.caption || 'фото'} loading="lazy"
+                        className="rounded-lg max-w-full max-h-80 object-contain border border-gray-700" />
+                </a>
+            )}
+            {isVid && (
+                <video src={attUrl} controls preload="metadata"
+                    className="mt-1.5 rounded-lg max-w-full max-h-80 border border-gray-700" />
+            )}
             {fileUrl && (
                 <div className="mt-1.5">
                     {fileUrl.includes('docs.google.com') ? (

@@ -168,6 +168,18 @@ async function handleIncomingMessage(botId, body) {
     const ref = msg.referral || body.referral || body.conversation?.referral || msg.metadata?.referral || body?.data?.referral || null;
     const adId = ref?.ad_id || ref?.adId || msg.metadata?.ad_id || null;
 
+    // Вхідне медіа (фото/відео/файл) від клієнта.
+    const attachments = Array.isArray(msg.attachments) ? msg.attachments : (Array.isArray(msg.media) ? msg.media : []);
+    let attachment = null;
+    if (attachments.length) {
+        const a = attachments[0] || {};
+        const url = a.url || a.payload?.url || a.src || a.mediaUrl || a.link || null;
+        const rawType = String(a.type || a.mimeType || a.contentType || '').toLowerCase();
+        const type = /video|animation|gif/.test(rawType) ? 'video' : /image|photo/.test(rawType) ? 'photo' : (a.type || 'file');
+        if (url) attachment = { type, url, caption: text || '' };
+    }
+    const mediaLabel = attachment ? (attachment.type === 'video' ? '[відео]' : attachment.type === 'photo' ? '[фото]' : '[вкладення]') : '[порожнє повідомлення]';
+
     const patch = { conversationId, psid: String(contactId), senderName: contactName || undefined };
     if (adId) { patch.entryAdId = String(adId); patch.lastReferral = ref; }
     const user = await findOrCreateZernioUser(contactId, botId, contactName);
@@ -175,8 +187,8 @@ async function handleIncomingMessage(botId, body) {
 
     await db.message.create({
         data: {
-            sessionId: session.id, role: 'user', content: text || '[порожнє повідомлення]',
-            metadata: { source: 'zernio', zernioMessageId: zMsgId, platformMessageId, messageId: zMsgId, ...(adId ? { adId } : {}) },
+            sessionId: session.id, role: 'user', content: text || mediaLabel,
+            metadata: { source: 'zernio', zernioMessageId: zMsgId, platformMessageId, messageId: zMsgId, ...(adId ? { adId } : {}), ...(attachment ? { attachment } : {}) },
         },
     });
 

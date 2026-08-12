@@ -128,11 +128,22 @@ async function sendZernioMessage(botId, conversationId, text) {
 }
 
 // ── Диспетчер ────────────────────────────────────────────────────────────────
+// Серіалізуємо обробку подій ОДНІЄЇ розмови (per conversation), щоб паралельні
+// reaction/read/delivered не перетирали metadata одного повідомлення (read-modify-write гонка).
+const _convLocks = new Map();
+function withConvLock(key, fn) {
+    const prev = _convLocks.get(key) || Promise.resolve();
+    const next = prev.then(fn, fn);
+    _convLocks.set(key, next.then(() => {}, () => {}));
+    return next;
+}
 async function handleZernioEvent(botId, body) {
     const event = body?.event;
     if (!event) return { ok: true, skipped: 'no-event' };
-    if (event === 'message.received') return handleIncomingMessage(botId, body);
-    return handleSideEvent(botId, event, body);
+    const convId = body?.conversation?.id || body?.conversation?.conversationId || body?.data?.conversationId || 'nc';
+    return withConvLock(`${botId}:${convId}`, () =>
+        (event === 'message.received' ? handleIncomingMessage(botId, body) : handleSideEvent(botId, event, body))
+    );
 }
 
 async function dedup(botId, id) {

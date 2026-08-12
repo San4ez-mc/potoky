@@ -241,6 +241,15 @@ function EventRow({ msg }) {
     );
 }
 
+// ─── Delivery status ticks (messenger-style) ────────────────────────────────
+function StatusTicks({ status }) {
+    if (status === 'failed') return <span title="Не доставлено" className="text-red-400">⚠</span>;
+    if (status === 'read') return <span title="Прочитано" className="text-sky-300">✓✓</span>;
+    if (status === 'delivered') return <span title="Доставлено">✓✓</span>;
+    if (status === 'sent') return <span title="Надіслано">✓</span>;
+    return null;
+}
+
 // ─── Chat bubble ────────────────────────────────────────────────────────────
 // Layout: user messages LEFT, bot/admin messages RIGHT (CRM style)
 
@@ -252,6 +261,9 @@ function ChatBubble({ msg, highlighted, refProp, onDelete, onEdit, user, userPho
     const hasTgId = Boolean(msg.metadata?.telegramMessageId);
     const isAdminManual = msg.metadata?.source === 'admin_manual';
     const hasDoc = Boolean(msg.metadata?.hasDoc);
+    const status = msg.metadata?.status;
+    const reactions = Array.isArray(msg.metadata?.reactions) ? msg.metadata.reactions : [];
+    const isDeleted = Boolean(msg.metadata?.deleted);
 
     const [editing, setEditing] = useState(false);
     const [editDraft, setEditDraft] = useState(msg.content);
@@ -279,7 +291,7 @@ function ChatBubble({ msg, highlighted, refProp, onDelete, onEdit, user, userPho
                 </div>
             )}
 
-            <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-sm transition-colors ${highlighted ? 'ring-1 ring-brand/50' : ''} ${
+            <div className={`relative max-w-[75%] rounded-2xl px-4 py-2.5 text-sm transition-colors ${highlighted ? 'ring-1 ring-brand/50' : ''} ${
                 isUser
                     ? 'bg-gray-700 text-gray-100 rounded-tl-sm'
                     : isSystem
@@ -309,15 +321,24 @@ function ChatBubble({ msg, highlighted, refProp, onDelete, onEdit, user, userPho
                 ) : (
                     <>
                         {hasDoc && <div className="text-[11px] opacity-70 mb-1">📎 {msg.metadata.docName || 'документ'}</div>}
-                        <MessageContent content={msg.content} metadata={msg.metadata} />
+                        {isDeleted
+                            ? <span className="italic opacity-60">🗑 Повідомлення видалено</span>
+                            : <MessageContent content={msg.content} metadata={msg.metadata} />}
                         {msg.metadata?.edited && <span className="text-[10px] opacity-50 ml-1">(ред.)</span>}
                     </>
                 )}
 
                 <div className={`text-[10px] mt-1.5 flex items-center gap-1 justify-end ${isUser ? 'text-gray-400' : 'text-white/50'}`}>
                     <span>{format(new Date(msg.createdAt), 'HH:mm:ss')}</span>
-                    {hasTgId && <span title="Telegram message_id збережено">✓</span>}
+                    {!isUser && (status ? <StatusTicks status={status} /> : (hasTgId && <span title="Telegram message_id збережено">✓</span>))}
                 </div>
+
+                {/* Реакції — маленька плашка на краю бульбашки (як у месенджерах) */}
+                {reactions.length > 0 && (
+                    <div className={`absolute -bottom-2.5 ${isUser ? 'left-3' : 'right-3'} bg-gray-900 border border-gray-700 rounded-full px-1.5 py-0.5 text-xs leading-none shadow`}>
+                        {reactions.join(' ')}
+                    </div>
+                )}
             </div>
 
             {/* Edit + Delete buttons — right of bot messages */}
@@ -339,11 +360,15 @@ function ChatBubble({ msg, highlighted, refProp, onDelete, onEdit, user, userPho
 
 // ─── Flow trace panel (right side) ─────────────────────────────────────────
 
-function FlowTracePanel({ messages, nodeMap, highlightedId, onHover }) {
+function FlowTracePanel({ messages, nodeMap, highlightedId, onHover, onClose }) {
     return (
-        <div className="w-56 shrink-0 border-l border-gray-800 bg-gray-950 flex flex-col">
-            <div className="px-3 py-2 border-b border-gray-800">
+        <div className="w-56 max-w-[70vw] shrink-0 border-l border-gray-800 bg-gray-950 flex flex-col absolute md:static right-0 top-0 bottom-0 z-20 md:z-auto shadow-xl md:shadow-none">
+            <div className="px-3 py-2 border-b border-gray-800 flex items-center justify-between">
                 <div className="text-[10px] uppercase tracking-wider text-gray-500 font-medium">Слід воронки</div>
+                {onClose && (
+                    <button onClick={onClose} title="Сховати панель"
+                        className="w-5 h-5 flex items-center justify-center rounded text-gray-500 hover:text-white hover:bg-gray-800 text-xs">✕</button>
+                )}
             </div>
             <div className="flex-1 overflow-y-auto py-1">
                 {messages.filter((m) => m.role !== 'event').map((msg) => {
@@ -445,6 +470,8 @@ export function SessionDetail() {
     const [docFile, setDocFile] = useState(null);
     const [adminEngaged, setAdminEngaged] = useState(false);
     const [funnelPaused, setFunnelPaused] = useState(false);
+    // Права панель «слід воронки»: на мобільному ховаємо за замовчуванням (займала пів екрана).
+    const [showTrace, setShowTrace] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 768);
 
     // Refs for scrolling to highlighted message
     const msgRefs = useRef({});
@@ -645,6 +672,14 @@ export function SessionDetail() {
                         className="w-7 h-7 flex items-center justify-center rounded text-base text-gray-500 hover:text-amber-400 hover:bg-gray-800 disabled:opacity-40 transition-colors"
                     >{restarting ? '⏳' : '🔄'}</button>
 
+                    {tab === 'chat' && (
+                        <button
+                            onClick={() => setShowTrace(v => !v)}
+                            title={showTrace ? 'Сховати слід воронки' : 'Показати слід воронки'}
+                            className={`w-7 h-7 flex items-center justify-center rounded text-base transition-colors ${showTrace ? 'bg-brand/20 text-brand-light' : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800'}`}
+                        >🧭</button>
+                    )}
+
                     <div className="w-px h-4 bg-gray-700 mx-1" />
 
                     {/* Tabs */}
@@ -663,7 +698,7 @@ export function SessionDetail() {
 
             {/* Content */}
             {tab === 'chat' && (
-                <div className="flex flex-1 overflow-hidden">
+                <div className="flex flex-1 overflow-hidden relative">
                     {/* Left: chat messages */}
                     <div className="flex-1 overflow-y-auto p-4">
                         <div className="max-w-2xl mx-auto space-y-3">
@@ -689,13 +724,16 @@ export function SessionDetail() {
                         </div>
                     </div>
 
-                    {/* Right: flow trace */}
-                    <FlowTracePanel
-                        messages={messages}
-                        nodeMap={nodeMap}
-                        highlightedId={highlightedMsgId}
-                        onHover={setHighlightedMsgId}
-                    />
+                    {/* Right: flow trace (сховувана, оверлей на мобільному) */}
+                    {showTrace && (
+                        <FlowTracePanel
+                            messages={messages}
+                            nodeMap={nodeMap}
+                            highlightedId={highlightedMsgId}
+                            onHover={setHighlightedMsgId}
+                            onClose={() => setShowTrace(false)}
+                        />
+                    )}
                 </div>
             )}
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { ReactFlowProvider } from '@xyflow/react';
 import { useFunnelStore } from '../stores/funnelStore.js';
 import { FunnelCanvas } from '../components/funnel/FunnelCanvas.jsx';
@@ -102,6 +102,14 @@ function TopBar({
             <div className="flex-1" />
 
             {/* Actions */}
+            <Link
+                to={`/bots/${bot?.id}/sessions`}
+                title="Сесії цієї воронки"
+                className="text-sm px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors"
+            >
+                💬 Сесії
+            </Link>
+
             <button
                 onClick={() => importRef.current?.click()}
                 className="text-sm px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors"

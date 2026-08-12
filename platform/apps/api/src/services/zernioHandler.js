@@ -1,22 +1,13 @@
 'use strict';
 
 /**
- * zernioHandler.js
+ * zernioHandler.js — транспорт IG-воронки через Zernio (Meta Tech Provider), без App Review.
+ * Реальна структура вебхука Zernio ПЛОСКА (top-level): { id, event, message?, conversation?,
+ * account?, reaction?, comment?, editHistory?, statusAt?, error?, timestamp }.
+ * (Ранній клієнтський приклад із data.* — спрощений; тут підтримуємо і його як фолбек.)
  *
- * Транспорт для IG-воронки через Zernio (Meta Tech Provider) — працює БЕЗ App Review.
- * Ізольований від Meta-direct (instagramHandler) і Telegram.
- *
- * Вхід:  POST /webhook/zernio/:botId  → handleZernioEvent(botId, body)
- *   Формат Zernio: { event:'message.received', data:{ messageId, conversationId, platform,
- *     direction:'incoming', text, sender:{id:PSID, name}, referral?:{ad_id,source,type}, timestamp } }
- *   referral (ad_id) приходить ЛИШЕ в 1-му повідомленні діалогу → зберігаємо у context.entryAdId.
- *
- * Вихід: sendZernioMessage(botId, conversationId, text)
- *   POST {ZERNIO_SEND_URL з підставленим conversationId}, Bearer ZERNIO_API_TOKEN,
- *   body { accountId: ZERNIO_ACCOUNT_ID, message: text }.
- *
- * Ідентифікація: PSID (`psid_...`) — рядок, не число. Зберігаємо у User.metadata.psid і шукаємо
- * JSON-фільтром; для required-унікального User.telegramId кладемо синтетичний BigInt із хешу PSID.
+ * Статуси (delivered/read/failed) і реакції кріпляться до КОНКРЕТНОГО повідомлення
+ * (по zernioMessageId / platformMessageId) — як у месенджерах.
  */
 
 const crypto = require('crypto');
@@ -31,21 +22,29 @@ async function getZernioKeys(botId) {
     });
     return Object.fromEntries(keys.map((k) => [k.key, (k.value || '').trim()]));
 }
-
 function isReal(v) { return typeof v === 'string' && v.length > 3 && v !== 'REPLACE_ME'; }
-
-// Синтетичний унікальний telegramId із PSID (User.telegramId — required+unique BigInt).
 function synthIdFromPsid(psid) {
     const hex = crypto.createHash('sha256').update('zernio:' + String(psid)).digest('hex').slice(0, 15);
-    return BigInt('0x' + hex); // ~ до 1.15e18, поміщається в PG BigInt
+    return BigInt('0x' + hex);
+}
+
+// Спільні поля з плоского payload (з фолбеками на різні можливі назви).
+function extractCommon(body) {
+    const conv = body.conversation || {};
+    const contact = conv.contact || conv.participant || {};
+    const msg = body.message || body.data || {};
+    const conversationId = conv.id || conv.conversationId || body?.data?.conversationId || null;
+    const contactId = contact.id || contact.platformId || contact.psid
+        || msg.from?.id || msg.sender?.id || body?.data?.sender?.id || null;
+    const contactName = contact.name || contact.displayName || contact.username
+        || msg.from?.name || msg.sender?.name || body?.data?.sender?.name || null;
+    return { conv, contact, msg, conversationId, contactId, contactName };
 }
 
 async function findOrCreateZernioUser(psid, botId, name) {
     const existing = await db.user.findFirst({ where: { metadata: { path: ['psid'], equals: String(psid) } } });
     if (existing) {
-        if (name && existing.firstName !== name) {
-            await db.user.update({ where: { id: existing.id }, data: { firstName: name } }).catch(() => {});
-        }
+        if (name && existing.firstName !== name) await db.user.update({ where: { id: existing.id }, data: { firstName: name } }).catch(() => {});
         return existing;
     }
     const bot = await db.bot.findUnique({ where: { id: botId }, select: { projectId: true } });
@@ -54,18 +53,13 @@ async function findOrCreateZernioUser(psid, botId, name) {
         try {
             return await db.user.create({
                 data: {
-                    telegramId: tid,
-                    firstName: name || 'Instagram',
+                    telegramId: tid, firstName: name || 'Instagram',
                     username: 'ig_' + String(psid).replace(/[^0-9a-zA-Z]/g, '').slice(-6),
-                    languageCode: 'uk',
-                    projectId: bot?.projectId,
+                    languageCode: 'uk', projectId: bot?.projectId,
                     metadata: { source: 'zernio', channel: 'zernio', psid: String(psid) },
                 },
             });
-        } catch (e) {
-            if (e.code === 'P2002') { tid = tid + 1n; continue; } // колізія telegramId — зсув
-            throw e;
-        }
+        } catch (e) { if (e.code === 'P2002') { tid = tid + 1n; continue; } throw e; }
     }
     throw new Error('Не вдалося створити zernio-користувача (колізії telegramId).');
 }
@@ -87,26 +81,38 @@ async function findOrCreateZernioSession(userId, botId, patch = {}) {
         data: {
             userId, botId, state: startNode?.id || 'start',
             context: {
-                channel: 'zernio', ...patch,
-                currentNode: startNode?.id || null,
+                channel: 'zernio', ...patch, currentNode: startNode?.id || null,
                 flowRuntime: { currentNodeId: startNode?.id || null, waitingForUser: false, nodesVisited: [], lastUserMessage: '', dialogHistory: {} },
             },
         },
     });
 }
+async function findSessionByConversation(botId, conversationId) {
+    if (!conversationId) return null;
+    return db.session.findFirst({ where: { botId, context: { path: ['conversationId'], equals: String(conversationId) } }, orderBy: { startedAt: 'desc' } });
+}
 
-// ---------------------------------------------------------------------------
-// Вихідне повідомлення через Zernio
-// ---------------------------------------------------------------------------
+// Знайти наше збережене повідомлення за id повідомлення Zernio (для статусів/реакцій/редагувань).
+async function findMessageByZid(sessionId, zernioMessageId, platformMessageId) {
+    if (zernioMessageId) {
+        const m = await db.message.findFirst({ where: { sessionId, metadata: { path: ['zernioMessageId'], equals: String(zernioMessageId) } } });
+        if (m) return m;
+    }
+    if (platformMessageId) {
+        const m = await db.message.findFirst({ where: { sessionId, metadata: { path: ['platformMessageId'], equals: String(platformMessageId) } } });
+        if (m) return m;
+    }
+    return null;
+}
+
+// ── Вихід ──────────────────────────────────────────────────────────────────
 async function sendZernioMessage(botId, conversationId, text) {
     const km = await getZernioKeys(botId);
     if (!isReal(km.ZERNIO_API_TOKEN)) throw new Error('ZERNIO_API_TOKEN ще не налаштований у ключах воронки.');
     if (!isReal(km.ZERNIO_ACCOUNT_ID)) throw new Error('ZERNIO_ACCOUNT_ID ще не налаштований у ключах воронки.');
     if (!conversationId) throw new Error('Немає conversationId у сесії — неможливо надіслати відповідь через Zernio.');
-
     const tmpl = km.ZERNIO_SEND_URL || 'https://zernio.com/api/v1/inbox/conversations/{conversationId}/messages';
     const url = tmpl.replace('{conversationId}', encodeURIComponent(conversationId));
-
     const res = await fetch(url, {
         method: 'POST',
         headers: { Authorization: `Bearer ${km.ZERNIO_API_TOKEN}`, 'Content-Type': 'application/json' },
@@ -118,153 +124,164 @@ async function sendZernioMessage(botId, conversationId, text) {
         logger.warn('[zernioHandler] Send error', { botId, status: res.status, error: msg });
         throw new Error(`Zernio Send API: ${msg}`);
     }
-    return data.id || data.messageId || null;
+    return data.id || data.messageId || data.message?.id || null;
 }
 
-// ---------------------------------------------------------------------------
-// Головний вхідний обробник
-// ---------------------------------------------------------------------------
-// Читабельні лейбли для подій-статусів (реакція/коментар — динамічні нижче).
-const EVENT_CONTENT = {
-    'message.sent': '📤 Повідомлення надіслано',
-    'message.edited': '✏️ Повідомлення відредаговано',
-    'message.deleted': '🗑 Повідомлення видалено',
-    'message.delivered': '✓ Доставлено',
-    'message.read': '✓✓ Прочитано',
-    'message.failed': '⚠️ Не доставлено',
-    'conversation.started': '🟢 Розмову розпочато',
-    'call.received': '📞 Вхідний дзвінок',
-};
-
-async function findSessionByConversation(botId, conversationId) {
-    if (!conversationId) return null;
-    return db.session.findFirst({
-        where: { botId, context: { path: ['conversationId'], equals: String(conversationId) } },
-        orderBy: { startedAt: 'desc' },
-    });
-}
-
-// Диспетчер вебхука Zernio: message.received веде діалог; решта подій пишеться у стрічку сесії.
+// ── Диспетчер ────────────────────────────────────────────────────────────────
 async function handleZernioEvent(botId, body) {
     const event = body?.event;
     if (!event) return { ok: true, skipped: 'no-event' };
-    if (event === 'message.received') return handleIncomingMessage(botId, body.data || {});
-    return handleSideEvent(botId, event, body.data || {});
+    if (event === 'message.received') return handleIncomingMessage(botId, body);
+    return handleSideEvent(botId, event, body);
 }
 
-// Побічні події (лайки, прочитано, доставлено, дзвінки, коментарі…) → рядок-подія в сесії.
-async function handleSideEvent(botId, event, d) {
-    const psid = d.sender?.id || d.from?.id || d.commenter?.id || d.user?.id || null;
-    const conversationId = d.conversationId || null;
-    const name = d.sender?.name || d.from?.name || d.commenter?.name || null;
-
-    const evId = d.id || d.messageId || d.reactionId || d.commentId || `${event}_${conversationId || psid}_${d.timestamp || Date.now()}`;
-    try {
-        await db.processedMessage.create({ data: { botId, updateId: `zn_${evId}` } });
-    } catch (e) {
-        if (e.code === 'P2002') return { ok: true, processed: 0 };
-        throw e;
-    }
-
-    let session = null;
-    if (psid) {
-        const user = await findOrCreateZernioUser(psid, botId, name);
-        session = await findOrCreateZernioSession(user.id, botId, { conversationId, psid: String(psid), senderName: name || undefined });
-    } else {
-        session = await findSessionByConversation(botId, conversationId);
-    }
-    if (!session) {
-        logger.warn('[zernioHandler] event without resolvable session', { botId, event });
-        return { ok: true, processed: 0 };
-    }
-
-    let content;
-    if (event === 'reaction.received') {
-        const emo = d.reaction?.emoji || d.emoji || '❤️';
-        content = `${emo} Реакція`;
-    } else if (event === 'comment.received') {
-        const t = d.text || d.comment?.text || '';
-        content = `💬 Коментар${t ? ': ' + t : ''}`;
-    } else {
-        content = EVENT_CONTENT[event] || `ℹ️ ${event}`;
-    }
-
-    await db.message.create({
-        data: {
-            sessionId: session.id,
-            role: 'event',
-            content,
-            metadata: { source: 'zernio', eventType: event, raw: { messageId: d.messageId || null, conversationId, emoji: d.reaction?.emoji || d.emoji || null, text: d.text || null } },
-        },
-    });
-    logger.info('[zernioHandler] side event stored', { botId, event, sessionId: session.id });
-    return { ok: true, processed: 1 };
+async function dedup(botId, id) {
+    if (!id) return true;
+    try { await db.processedMessage.create({ data: { botId, updateId: `zn_${id}` } }); return true; }
+    catch (e) { if (e.code === 'P2002') return false; throw e; }
 }
 
-async function handleIncomingMessage(botId, d) {
-    if (d.direction && d.direction !== 'incoming') return { ok: true, skipped: 'not-incoming' };
-
-    const psid = d.sender?.id;
-    const conversationId = d.conversationId;
-    if (!psid || !conversationId) {
-        logger.warn('[zernioHandler] Missing psid/conversationId', { botId });
+async function handleIncomingMessage(botId, body) {
+    const { msg, conversationId, contactId, contactName } = extractCommon(body);
+    if (msg.direction && msg.direction === 'outgoing') return { ok: true, skipped: 'outgoing' };
+    if (!contactId || !conversationId) {
+        logger.warn('[zernioHandler] message.received без contactId/conversationId — RAW', { botId, raw: JSON.stringify(body).slice(0, 1200) });
         return { ok: true, skipped: 'no-ids' };
     }
-    const text = typeof d.text === 'string' ? d.text : '';
-    const name = d.sender?.name || null;
-    const adId = d.referral?.ad_id || null; // лише в 1-му повідомленні діалогу
-    const messageId = d.messageId || `${conversationId}_${d.timestamp || Date.now()}`;
+    const eventId = body.id || msg.id || `${conversationId}_${body.timestamp || Date.now()}`;
+    if (!(await dedup(botId, eventId))) return { ok: true, processed: 0 };
 
-    // Ідемпотентність
-    try {
-        await db.processedMessage.create({ data: { botId, updateId: `zn_${messageId}` } });
-    } catch (e) {
-        if (e.code === 'P2002') { logger.info('[zernioHandler] Duplicate messageId', { botId, messageId }); return { ok: true, processed: 0 }; }
-        throw e;
-    }
+    const text = msg.text || body?.data?.text || '';
+    const zMsgId = msg.id || null;
+    const platformMessageId = msg.platformMessageId || null;
+    const ref = msg.referral || body.referral || body.conversation?.referral || msg.metadata?.referral || body?.data?.referral || null;
+    const adId = ref?.ad_id || ref?.adId || msg.metadata?.ad_id || null;
 
-    const user = await findOrCreateZernioUser(psid, botId, name);
-    const patch = { conversationId, psid: String(psid), senderName: name || undefined };
-    if (adId) { patch.entryAdId = String(adId); patch.lastReferral = d.referral; }
+    const patch = { conversationId, psid: String(contactId), senderName: contactName || undefined };
+    if (adId) { patch.entryAdId = String(adId); patch.lastReferral = ref; }
+    const user = await findOrCreateZernioUser(contactId, botId, contactName);
     const session = await findOrCreateZernioSession(user.id, botId, patch);
 
     await db.message.create({
-        data: { sessionId: session.id, role: 'user', content: text || '[порожнє повідомлення]',
-            metadata: { source: 'zernio', messageId, conversationId, ...(adId ? { adId } : {}) } },
+        data: {
+            sessionId: session.id, role: 'user', content: text || '[порожнє повідомлення]',
+            metadata: { source: 'zernio', zernioMessageId: zMsgId, platformMessageId, messageId: zMsgId, ...(adId ? { adId } : {}) },
+        },
     });
 
-    // Проганяємо флоу і доставляємо відповіді через Zernio.
     const ctxNow = session.context || {};
     if (!ctxNow.adminEngaged && !ctxNow.funnelPaused) {
         const sinceTime = new Date();
-        try {
-            await executeFlowStep({ sessionId: session.id, incomingUserMessage: text });
-        } catch (e) {
-            logger.error('[zernioHandler] flow step failed', { botId, sessionId: session.id, error: e.message });
-        }
-        const outMsgs = await db.message.findMany({
-            where: { sessionId: session.id, role: 'assistant', createdAt: { gt: sinceTime } },
-            orderBy: { createdAt: 'asc' },
-        });
+        try { await executeFlowStep({ sessionId: session.id, incomingUserMessage: text }); }
+        catch (e) { logger.error('[zernioHandler] flow step failed', { botId, sessionId: session.id, error: e.message }); }
+        const outMsgs = await db.message.findMany({ where: { sessionId: session.id, role: 'assistant', createdAt: { gt: sinceTime } }, orderBy: { createdAt: 'asc' } });
         for (const om of outMsgs) {
-            const meta = om.metadata || {};
-            if (meta.hidden) continue;
-            // Zernio (за ТЗ) приймає лише текстовий message. Фото — шлемо підпис/URL текстом.
-            const att = meta.attachment;
+            const m = om.metadata || {};
+            if (m.hidden) continue;
+            const att = m.attachment;
             let out = om.content;
-            if (att && (att.type === 'photo' || att.type === 'image')) {
-                out = (att.caption || om.content || '') + (att.url && String(att.url).startsWith('http') ? `\n${att.url}` : '');
-            }
+            if (att && (att.type === 'photo' || att.type === 'image')) out = (att.caption || om.content || '') + (att.url && String(att.url).startsWith('http') ? `\n${att.url}` : '');
             if (!out) continue;
             try {
-                await sendZernioMessage(botId, conversationId, out);
-            } catch (e) {
-                logger.warn('[zernioHandler] доставка чекає (токен/акаунт Zernio)', { error: e.message });
-            }
+                const zid = await sendZernioMessage(botId, conversationId, out);
+                if (zid) await db.message.update({ where: { id: om.id }, data: { metadata: { ...m, zernioMessageId: zid, status: 'sent' } } }).catch(() => {});
+            } catch (e) { logger.warn('[zernioHandler] доставка чекає (токен/акаунт Zernio)', { error: e.message }); }
         }
     }
-
     logger.info('[zernioHandler] Inbound stored', { botId, sessionId: session.id, hasAd: !!adId });
+    return { ok: true, processed: 1 };
+}
+
+const EVENT_CONTENT = {
+    'conversation.started': '🟢 Розмову розпочато',
+    'call.received': '📞 Вхідний дзвінок',
+    'review.new': '⭐ Новий відгук',
+    'review.updated': '⭐ Відгук оновлено',
+};
+
+async function handleSideEvent(botId, event, body) {
+    const { msg, conversationId, contactId, contactName } = extractCommon(body);
+    const eventId = body.id || `${event}_${conversationId || contactId}_${body.timestamp || Date.now()}`;
+    if (!(await dedup(botId, eventId))) return { ok: true, processed: 0 };
+
+    // Резолв сесії
+    let session = null;
+    if (contactId) {
+        const user = await findOrCreateZernioUser(contactId, botId, contactName);
+        session = await findOrCreateZernioSession(user.id, botId, { conversationId, psid: String(contactId), senderName: contactName || undefined });
+    } else {
+        session = await findSessionByConversation(botId, conversationId);
+    }
+    if (!session) { logger.warn('[zernioHandler] event без сесії', { botId, event }); return { ok: true, processed: 0 }; }
+
+    // ── Статуси доставки → позначка на конкретному повідомленні ──
+    if (event === 'message.delivered' || event === 'message.read' || event === 'message.failed') {
+        const target = await findMessageByZid(session.id, msg.id, msg.platformMessageId);
+        const status = event === 'message.read' ? 'read' : event === 'message.failed' ? 'failed' : 'delivered';
+        if (target) {
+            const cur = target.metadata || {};
+            const rank = { sent: 1, delivered: 2, read: 3 };
+            // read не «даунгрейдиться» до delivered
+            const nextStatus = status === 'failed' ? 'failed' : ((rank[status] || 0) >= (rank[cur.status] || 0) ? status : cur.status);
+            await db.message.update({ where: { id: target.id }, data: { metadata: { ...cur, status: nextStatus, ...(event === 'message.failed' && body.error ? { failError: body.error.message || body.error.title } : {}) } } }).catch(() => {});
+            return { ok: true, processed: 1, attachedTo: target.id };
+        }
+        // фолбек — рядок-подія
+        await db.message.create({ data: { sessionId: session.id, role: 'event', content: EVENT_CONTENT[event] || event, metadata: { source: 'zernio', eventType: event } } });
+        return { ok: true, processed: 1 };
+    }
+
+    // ── Реакція → емодзі на повідомленні ──
+    if (event === 'reaction.received') {
+        const r = body.reaction || {};
+        const target = await findMessageByZid(session.id, r.messageId, r.platformMessageId);
+        if (target) {
+            const cur = target.metadata || {};
+            let reactions = Array.isArray(cur.reactions) ? cur.reactions.slice() : [];
+            if (r.action === 'removed') {
+                reactions = r.emoji ? reactions.filter((e) => e !== r.emoji) : []; // на removed emoji часто порожній → чистимо
+            } else if (r.emoji && !reactions.includes(r.emoji)) {
+                reactions.push(r.emoji);
+            }
+            await db.message.update({ where: { id: target.id }, data: { metadata: { ...cur, reactions } } }).catch(() => {});
+            return { ok: true, processed: 1, attachedTo: target.id };
+        }
+        await db.message.create({ data: { sessionId: session.id, role: 'event', content: `${r.emoji || '❤️'} Реакція`, metadata: { source: 'zernio', eventType: event } } });
+        return { ok: true, processed: 1 };
+    }
+
+    // ── Редагування / видалення → оновлюємо саме повідомлення ──
+    if (event === 'message.edited') {
+        const target = await findMessageByZid(session.id, msg.id, msg.platformMessageId);
+        if (target) { await db.message.update({ where: { id: target.id }, data: { content: msg.text || target.content, metadata: { ...(target.metadata || {}), edited: true } } }).catch(() => {}); return { ok: true, processed: 1 }; }
+        await db.message.create({ data: { sessionId: session.id, role: 'event', content: '✏️ Повідомлення відредаговано', metadata: { source: 'zernio', eventType: event } } });
+        return { ok: true, processed: 1 };
+    }
+    if (event === 'message.deleted') {
+        const target = await findMessageByZid(session.id, msg.id, msg.platformMessageId);
+        if (target) { await db.message.update({ where: { id: target.id }, data: { metadata: { ...(target.metadata || {}), deleted: true } } }).catch(() => {}); return { ok: true, processed: 1 }; }
+        await db.message.create({ data: { sessionId: session.id, role: 'event', content: '🗑 Повідомлення видалено', metadata: { source: 'zernio', eventType: event } } });
+        return { ok: true, processed: 1 };
+    }
+
+    // ── message.sent: оператор відповів прямо з інбокса Zernio (не наш API) ──
+    if (event === 'message.sent') {
+        if (msg.id) { const mine = await findMessageByZid(session.id, msg.id, msg.platformMessageId); if (mine) return { ok: true, processed: 0 }; }
+        await db.message.create({ data: { sessionId: session.id, role: 'assistant', content: msg.text || '[повідомлення]', metadata: { source: 'zernio_inbox', zernioMessageId: msg.id || null, platformMessageId: msg.platformMessageId || null, status: 'sent' } } });
+        return { ok: true, processed: 1 };
+    }
+
+    // ── Коментарі / інші події → рядок-подія ──
+    let content;
+    if (event === 'comment.received') {
+        const c = body.comment || {};
+        const t = c.text || '';
+        content = `💬 Коментар${c.ad ? ' (з реклами)' : ''}${t ? ': ' + t : ''}`;
+    } else {
+        content = EVENT_CONTENT[event] || `ℹ️ ${event}`;
+    }
+    await db.message.create({ data: { sessionId: session.id, role: 'event', content, metadata: { source: 'zernio', eventType: event } } });
+    logger.info('[zernioHandler] side event stored', { botId, event, sessionId: session.id });
     return { ok: true, processed: 1 };
 }
 

@@ -136,7 +136,7 @@ export function Users() {
                                         </span>
                                     </td>
                                     <td className="px-4 py-3 text-xs text-gray-500">
-                                        {user.createdAt ? format(new Date(user.createdAt), 'dd.MM.yyyy') : ''}
+                                        {user.createdAt ? format(new Date(user.createdAt), 'dd.MM.yyyy HH:mm') : ''}
                                     </td>
                                     <td className="px-4 py-3">
                                         <div className="flex items-center gap-1.5 justify-end">

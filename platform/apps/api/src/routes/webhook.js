@@ -192,6 +192,26 @@ router.post('/instagram/:botId',
     })
 );
 
+// POST /webhook/zernio/:botId — incoming Instagram messages via Zernio (Meta Tech Provider)
+router.post('/zernio/:botId',
+    asyncHandler(async (req, res) => {
+        // ACK швидко (Zernio вимагає 200 ≤ 20с, інакше ретрай).
+        res.status(200).json({ ok: true });
+
+        const botId = req.params.botId;
+        const body = req.body;
+        setImmediate(async () => {
+            try {
+                const { handleZernioEvent } = require('../services/zernioHandler');
+                const result = await handleZernioEvent(botId, body);
+                logger.info('Zernio webhook processed', { botId, event: body?.event, ...result });
+            } catch (error) {
+                logger.error('Zernio webhook handler failed', { botId, error: error.message, stack: error.stack });
+            }
+        });
+    })
+);
+
 // ---------------------------------------------------------------------------
 // deliverResultToTelegram — sends generated content to a Telegram chat.
 // Called after a webhook-triggered flow completes if context.deliverTo is set.

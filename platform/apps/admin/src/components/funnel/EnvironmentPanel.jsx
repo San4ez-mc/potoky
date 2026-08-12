@@ -49,6 +49,13 @@ function parseSelectedChannels(rawValue) {
 function buildWebhookInfo(bot, channels = []) {
     const base = window.location.origin.replace(':5173', '').replace(':5174', '');
     const webhookBase = base.includes('localhost') ? 'https://flows.fineko.space' : base;
+    // Zernio-воронка → callback URL для кабінету Zernio.
+    if (channels.includes('zernio')) {
+        return {
+            startUrl: `${webhookBase}/webhook/zernio/${bot.id}`,
+            note: 'Callback URL для кабінету Zernio (Inbox → Webhooks). Приймає формат Zernio message.received.',
+        };
+    }
     // Instagram-воронка → показуємо саме Instagram callback URL (для Meta App → Webhooks),
     // а не загальний telegram-endpoint. Інші воронки лишаються як були.
     if (channels.includes('instagram')) {
@@ -148,7 +155,7 @@ export function EnvironmentPanel({ embedded = false }) {
         }
     };
 
-    const webhookInfo = useMemo(() => (bot && (selectedChannels.includes('webhook') || selectedChannels.includes('instagram')) ? buildWebhookInfo(bot, selectedChannels) : null), [bot, selectedChannels]);
+    const webhookInfo = useMemo(() => (bot && (selectedChannels.includes('webhook') || selectedChannels.includes('instagram') || selectedChannels.includes('zernio')) ? buildWebhookInfo(bot, selectedChannels) : null), [bot, selectedChannels]);
 
     return (
         <div className={embedded ? 'h-full flex flex-col overflow-hidden' : 'w-72 shrink-0 bg-gray-950 border-l border-gray-800 flex flex-col overflow-hidden'}>

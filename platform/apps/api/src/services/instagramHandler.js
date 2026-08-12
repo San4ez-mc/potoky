@@ -196,30 +196,43 @@ async function handleInstagramEvent(botId, body) {
                     },
                 });
 
-                // ── Авто-вітання ОДИН раз на користувача. Відповідь генерує НОДА воронки
-                //    (редагована на канвасі) → клієнт одразу бачить, що ми прийняли звернення.
-                //    Далі діалог веде оператор вручну (або майбутня логіка воронки).
-                const alreadyWelcomed = user.metadata && user.metadata.welcomed === true;
+                // ── Проганяємо воронку на КОЖНЕ повідомлення і доставляємо відповіді в Direct.
+                //    Флоу сам паузиться на claude/wait-нодах, тож спаму вітань немає.
+                //    Оператор може перехопити: adminEngaged / funnelPaused ставлять флоу на паузу.
                 const ctxNow = session.context || {};
-                if (!alreadyWelcomed && !ctxNow.adminEngaged && !ctxNow.funnelPaused) {
+                if (!ctxNow.adminEngaged && !ctxNow.funnelPaused) {
                     const sinceTime = new Date();
                     try {
                         await executeFlowStep({ sessionId: session.id, incomingUserMessage: text });
                     } catch (e) {
-                        logger.error('[instagramHandler] welcome flow step failed', { botId, sessionId: session.id, error: e.message });
+                        logger.error('[instagramHandler] flow step failed', { botId, sessionId: session.id, error: e.message });
                     }
-                    await db.user.update({ where: { id: user.id }, data: { metadata: { ...(user.metadata || {}), welcomed: true } } }).catch(() => {});
                     const outMsgs = await db.message.findMany({
                         where: { sessionId: session.id, role: 'assistant', createdAt: { gt: sinceTime } },
                         orderBy: { createdAt: 'asc' },
                     });
                     for (const om of outMsgs) {
-                        if (om.metadata && om.metadata.hidden) continue;
+                        const meta = om.metadata || {};
+                        if (meta.hidden) continue;
+                        const att = meta.attachment;
+                        const kb = Array.isArray(meta.keyboard) ? meta.keyboard : null;
+                        // Telegram inline-кнопки → Instagram quick_replies.
+                        const quickReplies = kb
+                            ? kb.reduce((acc, row) => acc.concat(Array.isArray(row) ? row : [row]), [])
+                                .filter((b) => b && b.text)
+                                .map((b) => ({ title: b.text, payload: b.callback_data || b.text }))
+                            : null;
                         try {
-                            const dmid = await sendInstagramMessage(botId, senderId, om.content);
-                            if (dmid) await db.message.update({ where: { id: om.id }, data: { metadata: { ...(om.metadata || {}), instagramMessageId: dmid } } }).catch(() => {});
+                            if (att && (att.type === 'photo' || att.type === 'image') && att.url && String(att.url).startsWith('http')) {
+                                await sendInstagramMessage(botId, senderId, '', { imageUrl: att.url });
+                                const cap = att.caption || om.content;
+                                if (cap) await sendInstagramMessage(botId, senderId, cap, quickReplies ? { quickReplies } : {});
+                            } else if (om.content) {
+                                const dmid = await sendInstagramMessage(botId, senderId, om.content, quickReplies ? { quickReplies } : {});
+                                if (dmid) await db.message.update({ where: { id: om.id }, data: { metadata: { ...meta, instagramMessageId: dmid } } }).catch(() => {});
+                            }
                         } catch (e) {
-                            logger.warn('[instagramHandler] авто-вітання: доставка чекає (ймовірно ще нема INSTAGRAM_ACCESS_TOKEN)', { error: e.message });
+                            logger.warn('[instagramHandler] доставка відповіді чекає (токен/доступ)', { error: e.message });
                         }
                     }
                 }
@@ -243,7 +256,7 @@ async function handleInstagramEvent(botId, body) {
 // ---------------------------------------------------------------------------
 // Вихідне повідомлення (ручна відповідь оператора)
 // ---------------------------------------------------------------------------
-async function sendInstagramMessage(botId, igsid, text) {
+async function sendInstagramMessage(botId, igsid, text, opts = {}) {
     const km = await getIgKeys(botId);
     const token = km.INSTAGRAM_ACCESS_TOKEN;
     if (!isRealToken(token)) {
@@ -255,9 +268,23 @@ async function sendInstagramMessage(botId, igsid, text) {
     const base = km.INSTAGRAM_SEND_API_BASE || `https://graph.facebook.com/${version}/me/messages`;
     const url = `${base}${base.includes('?') ? '&' : '?'}access_token=${encodeURIComponent(token)}`;
 
+    // message: або зображення (attachment), або текст (+опційно quick_replies).
+    const message = {};
+    if (opts.imageUrl) {
+        message.attachment = { type: 'image', payload: { url: String(opts.imageUrl), is_reusable: true } };
+    } else {
+        message.text = String(text || '');
+        if (Array.isArray(opts.quickReplies) && opts.quickReplies.length) {
+            message.quick_replies = opts.quickReplies.slice(0, 13).map((q) => ({
+                content_type: 'text',
+                title: String(q.title || '').slice(0, 20),
+                payload: String(q.payload || q.title || '').slice(0, 1000),
+            }));
+        }
+    }
     const payload = {
         recipient: { id: String(igsid) },
-        message: { text: String(text || '') },
+        message,
         messaging_type: 'RESPONSE',
     };
 

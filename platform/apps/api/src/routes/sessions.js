@@ -252,6 +252,35 @@ router.post('/:id/send',
             return res.status(400).json({ ok: false, error: { message: 'Надішліть текст, фото або документ' } });
         }
 
+        // ── Instagram-сесія: відповідь через Meta Send API (не Telegram) ──────────
+        // Ізольована гілка — Telegram-логіка нижче лишається без змін.
+        if (session.context?.channel === 'instagram') {
+            if (!text) {
+                return res.status(422).json({ ok: false, error: { message: 'Для Instagram поки підтримується лише текстова відповідь.' } });
+            }
+            const igsid = session.context?.igsid || String(session.user?.telegramId || '');
+            let igMsgId = null;
+            try {
+                const { sendInstagramMessage } = require('../services/instagramHandler');
+                igMsgId = await sendInstagramMessage(session.botId, igsid, text);
+            } catch (igErr) {
+                return res.status(422).json({ ok: false, error: { message: igErr.message } });
+            }
+            await db.message.create({
+                data: {
+                    sessionId: session.id,
+                    role: 'assistant',
+                    content: text,
+                    metadata: { source: 'admin_manual', channel: 'instagram', ...(igMsgId ? { instagramMessageId: igMsgId } : {}) },
+                },
+            });
+            const ctxUpdate = { ...(session.context || {}) };
+            if (!ctxUpdate.adminEngaged) ctxUpdate.adminEngaged = true;
+            if (!ctxUpdate.funnelPaused) ctxUpdate.funnelPaused = true;
+            await db.session.update({ where: { id: session.id }, data: { context: ctxUpdate } });
+            return res.json({ ok: true });
+        }
+
         const decodeBase64 = (b64, label) => {
             const normalized = b64.includes(',') ? b64.split(',')[1] : b64;
             const buf = Buffer.from(normalized, 'base64');

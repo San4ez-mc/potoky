@@ -576,6 +576,21 @@ export function KeysPanel({ embedded = false }) {
         () => allSavedConnectors.filter((item) => item.type === 'telegram_bot'),
         [allSavedConnectors]
     );
+    // Канали, явно оголошені воронкою (FUNNEL_CHANNELS). Порожньо = не оголошено.
+    const enabledChannels = useMemo(() => {
+        const raw = keys.find((k) => k.key === 'FUNNEL_CHANNELS')?.value;
+        if (!raw) return [];
+        try {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) return parsed.filter(Boolean).map((v) => String(v).trim());
+        } catch { /* CSV нижче */ }
+        return String(raw).split(',').map((v) => v.trim()).filter(Boolean);
+    }, [keys]);
+    // Telegram-картку показуємо, ЯКЩО воронка не оголосила канали (стара поведінка —
+    // нічого не ламаємо) АБО серед оголошених є telegram. Instagram-only воронка
+    // (FUNNEL_CHANNELS=instagram) картку ховає — Telegram їй не потрібен.
+    const showTelegramCard = savedTelegramConnectors.length > 0
+        && (enabledChannels.length === 0 || enabledChannels.includes('telegram'));
 
     useEffect(() => {
         setLoadingConnectors(true);
@@ -786,7 +801,7 @@ export function KeysPanel({ embedded = false }) {
                     </div>
                 </div>
 
-                {savedTelegramConnectors.length > 0 && (
+                {showTelegramCard && (
                     <div className="rounded-lg p-3 border bg-cyan-900/10 border-cyan-900/40 space-y-2">
                         <div className="text-xs text-cyan-300 font-medium">Telegram-бот для цієї воронки</div>
                         <div className="text-xs text-gray-400">

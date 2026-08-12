@@ -170,16 +170,22 @@ router.post('/instagram/:botId',
         // ACK quickly to avoid retries from Meta.
         res.status(200).json({ ok: true });
 
+        const botId = req.params.botId;
+        const body = req.body;
+
+        // TODO(security): коли клієнт віддасть INSTAGRAM_APP_SECRET — додати перевірку
+        // підпису X-Hub-Signature-256 над сирим тілом (потрібен rawBody-мідлвар лише
+        // для цього маршруту, щоб не чіпати глобальний body-parser інших воронок).
         setImmediate(async () => {
             try {
-                logger.info('Instagram webhook event received', {
-                    botId: req.params.botId,
-                    object: req.body?.object,
-                });
+                const { handleInstagramEvent } = require('../services/instagramHandler');
+                const result = await handleInstagramEvent(botId, body);
+                logger.info('Instagram webhook event processed', { botId, object: body?.object, ...result });
             } catch (error) {
                 logger.error('Instagram webhook handler failed', {
-                    botId: req.params.botId,
+                    botId,
                     error: error.message,
+                    stack: error.stack,
                 });
             }
         });

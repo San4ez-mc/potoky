@@ -168,6 +168,7 @@ app.use('/api/connectors', authMiddleware, connectorsRouter);
 app.use('/api/saved-connectors', authMiddleware, savedConnectorsRouter);
 app.use('/api/system-keys', authMiddleware, systemKeysRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api/auth', require('./routes/authSso')); // публічний: вхід через SSO
 app.use('/api/broadcasts', authMiddleware, broadcastsRouter);
 // Token-authed (server-to-server from content2) — not session auth
 app.use('/api/tracked-links', trackedLinksRouter);

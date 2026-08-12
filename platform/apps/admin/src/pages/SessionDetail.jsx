@@ -224,6 +224,23 @@ function UserAvatar({ user, photoApiUrl }) {
     );
 }
 
+// ─── Event row ──────────────────────────────────────────────────────────────
+// Небалакучі події Zernio (реакції, прочитано, доставлено, дзвінки, коментарі…)
+// показуємо як центрований статус-рядок, а не як бульбашку діалогу.
+function EventRow({ msg }) {
+    const failed = msg.metadata?.eventType === 'message.failed';
+    return (
+        <div className="flex justify-center my-1">
+            <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border text-[11px] ${
+                failed ? 'bg-red-900/20 border-red-900/50 text-red-300' : 'bg-gray-800/60 border-gray-700/60 text-gray-400'
+            }`}>
+                <span className="whitespace-pre-wrap break-words max-w-[70vw]">{msg.content}</span>
+                <span className="text-gray-600">{format(new Date(msg.createdAt), 'HH:mm')}</span>
+            </div>
+        </div>
+    );
+}
+
 // ─── Chat bubble ────────────────────────────────────────────────────────────
 // Layout: user messages LEFT, bot/admin messages RIGHT (CRM style)
 
@@ -329,7 +346,7 @@ function FlowTracePanel({ messages, nodeMap, highlightedId, onHover }) {
                 <div className="text-[10px] uppercase tracking-wider text-gray-500 font-medium">Слід воронки</div>
             </div>
             <div className="flex-1 overflow-y-auto py-1">
-                {messages.map((msg) => {
+                {messages.filter((m) => m.role !== 'event').map((msg) => {
                     const isUser = msg.role === 'user';
                     const nodeId = msg.metadata?.nodeId;
                     const nodeType = msg.metadata?.nodeType;
@@ -651,16 +668,20 @@ export function SessionDetail() {
                     <div className="flex-1 overflow-y-auto p-4">
                         <div className="max-w-2xl mx-auto space-y-3">
                             {messages.map(m => (
-                                <ChatBubble
-                                    key={m.id}
-                                    msg={m}
-                                    highlighted={highlightedMsgId === m.id}
-                                    refProp={el => { if (el) msgRefs.current[m.id] = el; else delete msgRefs.current[m.id]; }}
-                                    onDelete={handleDeleteMessage}
-                                    onEdit={handleEditMessage}
-                                    user={session.user}
-                                    userPhotoApiUrl={`/api/sessions/${session.id}/user-photo`}
-                                />
+                                m.role === 'event' ? (
+                                    <EventRow key={m.id} msg={m} />
+                                ) : (
+                                    <ChatBubble
+                                        key={m.id}
+                                        msg={m}
+                                        highlighted={highlightedMsgId === m.id}
+                                        refProp={el => { if (el) msgRefs.current[m.id] = el; else delete msgRefs.current[m.id]; }}
+                                        onDelete={handleDeleteMessage}
+                                        onEdit={handleEditMessage}
+                                        user={session.user}
+                                        userPhotoApiUrl={`/api/sessions/${session.id}/user-photo`}
+                                    />
+                                )
                             ))}
                             {messages.length === 0 && (
                                 <div className="text-center text-gray-500 py-8">Немає повідомлень</div>

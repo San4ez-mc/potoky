@@ -124,12 +124,84 @@ async function sendZernioMessage(botId, conversationId, text) {
 // ---------------------------------------------------------------------------
 // Головний вхідний обробник
 // ---------------------------------------------------------------------------
+// Читабельні лейбли для подій-статусів (реакція/коментар — динамічні нижче).
+const EVENT_CONTENT = {
+    'message.sent': '📤 Повідомлення надіслано',
+    'message.edited': '✏️ Повідомлення відредаговано',
+    'message.deleted': '🗑 Повідомлення видалено',
+    'message.delivered': '✓ Доставлено',
+    'message.read': '✓✓ Прочитано',
+    'message.failed': '⚠️ Не доставлено',
+    'conversation.started': '🟢 Розмову розпочато',
+    'call.received': '📞 Вхідний дзвінок',
+};
+
+async function findSessionByConversation(botId, conversationId) {
+    if (!conversationId) return null;
+    return db.session.findFirst({
+        where: { botId, context: { path: ['conversationId'], equals: String(conversationId) } },
+        orderBy: { startedAt: 'desc' },
+    });
+}
+
+// Диспетчер вебхука Zernio: message.received веде діалог; решта подій пишеться у стрічку сесії.
 async function handleZernioEvent(botId, body) {
-    if (!body || body.event !== 'message.received') {
-        logger.info('[zernioHandler] Ignoring event', { botId, event: body?.event });
-        return { ok: true, skipped: body?.event || 'no-event' };
+    const event = body?.event;
+    if (!event) return { ok: true, skipped: 'no-event' };
+    if (event === 'message.received') return handleIncomingMessage(botId, body.data || {});
+    return handleSideEvent(botId, event, body.data || {});
+}
+
+// Побічні події (лайки, прочитано, доставлено, дзвінки, коментарі…) → рядок-подія в сесії.
+async function handleSideEvent(botId, event, d) {
+    const psid = d.sender?.id || d.from?.id || d.commenter?.id || d.user?.id || null;
+    const conversationId = d.conversationId || null;
+    const name = d.sender?.name || d.from?.name || d.commenter?.name || null;
+
+    const evId = d.id || d.messageId || d.reactionId || d.commentId || `${event}_${conversationId || psid}_${d.timestamp || Date.now()}`;
+    try {
+        await db.processedMessage.create({ data: { botId, updateId: `zn_${evId}` } });
+    } catch (e) {
+        if (e.code === 'P2002') return { ok: true, processed: 0 };
+        throw e;
     }
-    const d = body.data || {};
+
+    let session = null;
+    if (psid) {
+        const user = await findOrCreateZernioUser(psid, botId, name);
+        session = await findOrCreateZernioSession(user.id, botId, { conversationId, psid: String(psid), senderName: name || undefined });
+    } else {
+        session = await findSessionByConversation(botId, conversationId);
+    }
+    if (!session) {
+        logger.warn('[zernioHandler] event without resolvable session', { botId, event });
+        return { ok: true, processed: 0 };
+    }
+
+    let content;
+    if (event === 'reaction.received') {
+        const emo = d.reaction?.emoji || d.emoji || '❤️';
+        content = `${emo} Реакція`;
+    } else if (event === 'comment.received') {
+        const t = d.text || d.comment?.text || '';
+        content = `💬 Коментар${t ? ': ' + t : ''}`;
+    } else {
+        content = EVENT_CONTENT[event] || `ℹ️ ${event}`;
+    }
+
+    await db.message.create({
+        data: {
+            sessionId: session.id,
+            role: 'event',
+            content,
+            metadata: { source: 'zernio', eventType: event, raw: { messageId: d.messageId || null, conversationId, emoji: d.reaction?.emoji || d.emoji || null, text: d.text || null } },
+        },
+    });
+    logger.info('[zernioHandler] side event stored', { botId, event, sessionId: session.id });
+    return { ok: true, processed: 1 };
+}
+
+async function handleIncomingMessage(botId, d) {
     if (d.direction && d.direction !== 'incoming') return { ok: true, skipped: 'not-incoming' };
 
     const psid = d.sender?.id;

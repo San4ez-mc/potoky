@@ -51,10 +51,12 @@ const KEYS = [
     'App Secret Meta-додатку — перевірка підпису X-Hub-Signature. Заповнити при підключенні.', true],
   ['INSTAGRAM_APP_ID', 'REPLACE_ME',
     'App ID Meta-додатку — реєстрація вебхука (channelSync). Заповнити при підключенні.', false],
-  ['IG_BUSINESS_ID', 'REPLACE_ME',
-    'ID Instagram Business акаунта (для звірки відправника подій). Заповнити при підключенні.', false],
-  ['FUNNEL_CHANNELS', 'instagram',
-    'Активні канали воронки (channelSync). Тут лише instagram — Telegram цій воронці не потрібен.', false],
+  ['INSTAGRAM_BUSINESS_ID', 'REPLACE_ME',
+    'ID Instagram Business акаунта (covercar_ua). Заповнити при підключенні.', false],
+  ['INSTAGRAM_USERNAME', 'REPLACE_ME',
+    'Username Instagram-акаунту без @ (для ig.me-посилань).', false],
+  ['FUNNEL_CHANNELS', '["instagram","webhook"]',
+    'Активні канали воронки (channelSync). Instagram + generic webhook. Telegram цій воронці не потрібен.', false],
 ];
 
 async function main() {

@@ -31,7 +31,7 @@ async function getIgKeys(botId) {
     const keys = await db.funnelKey.findMany({
         where: {
             botId,
-            key: { in: ['INSTAGRAM_ACCESS_TOKEN', 'INSTAGRAM_SEND_API_BASE', 'INSTAGRAM_GRAPH_VERSION', 'IG_BUSINESS_ID'] },
+            key: { in: ['INSTAGRAM_ACCESS_TOKEN', 'INSTAGRAM_SEND_API_BASE', 'INSTAGRAM_GRAPH_VERSION', 'INSTAGRAM_BUSINESS_ID'] },
         },
         select: { key: true, value: true },
     });

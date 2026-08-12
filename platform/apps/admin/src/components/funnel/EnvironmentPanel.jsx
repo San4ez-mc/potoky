@@ -46,9 +46,17 @@ function parseSelectedChannels(rawValue) {
     return String(rawValue).split(',').map(v => v.trim()).filter(Boolean);
 }
 
-function buildWebhookInfo(bot) {
+function buildWebhookInfo(bot, channels = []) {
     const base = window.location.origin.replace(':5173', '').replace(':5174', '');
     const webhookBase = base.includes('localhost') ? 'https://flows.fineko.space' : base;
+    // Instagram-воронка → показуємо саме Instagram callback URL (для Meta App → Webhooks),
+    // а не загальний telegram-endpoint. Інші воронки лишаються як були.
+    if (channels.includes('instagram')) {
+        return {
+            startUrl: `${webhookBase}/webhook/instagram/${bot.id}`,
+            note: 'Callback URL для Meta → App → Webhooks (Instagram). Verify Token = значення ключа INSTAGRAM_VERIFY_TOKEN.',
+        };
+    }
     return { startUrl: `${webhookBase}/webhook/telegram/${bot.id}`, note: 'Або запуск через POST-запит на цей URL з тілом у форматі Telegram update.' };
 }
 
@@ -140,7 +148,7 @@ export function EnvironmentPanel({ embedded = false }) {
         }
     };
 
-    const webhookInfo = useMemo(() => (bot && selectedChannels.includes('webhook') ? buildWebhookInfo(bot) : null), [bot, selectedChannels]);
+    const webhookInfo = useMemo(() => (bot && (selectedChannels.includes('webhook') || selectedChannels.includes('instagram')) ? buildWebhookInfo(bot, selectedChannels) : null), [bot, selectedChannels]);
 
     return (
         <div className={embedded ? 'h-full flex flex-col overflow-hidden' : 'w-72 shrink-0 bg-gray-950 border-l border-gray-800 flex flex-col overflow-hidden'}>

@@ -393,7 +393,7 @@ export function Bots() {
                         onChange={(e) => setChannelFilter(e.target.value)}
                         className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
                     >
-                        <option value="all">Всі боти</option>
+                        <option value="all">Всі канали</option>
                         <option value="telegram">✈️ Telegram</option>
                         <option value="instagram">📸 Instagram</option>
                         <option value="webhook">🔗 Webhook</option>

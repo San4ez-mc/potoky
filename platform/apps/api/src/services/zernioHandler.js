@@ -168,17 +168,19 @@ async function handleIncomingMessage(botId, body) {
     const ref = msg.referral || body.referral || body.conversation?.referral || msg.metadata?.referral || body?.data?.referral || null;
     const adId = ref?.ad_id || ref?.adId || msg.metadata?.ad_id || null;
 
-    // Вхідне медіа (фото/відео/файл) від клієнта.
-    const attachments = Array.isArray(msg.attachments) ? msg.attachments : (Array.isArray(msg.media) ? msg.media : []);
-    let attachment = null;
-    if (attachments.length) {
-        const a = attachments[0] || {};
+    // Вхідні медіа (може бути кілька — «альбом» до 10 фото). Зберігаємо ВСІ.
+    const rawAtts = Array.isArray(msg.attachments) ? msg.attachments : (Array.isArray(msg.media) ? msg.media : []);
+    const mappedAtts = rawAtts.map((a) => {
         const url = a.url || a.payload?.url || a.src || a.mediaUrl || a.link || null;
         const rawType = String(a.type || a.mimeType || a.contentType || '').toLowerCase();
         const type = /video|animation|gif/.test(rawType) ? 'video' : /image|photo/.test(rawType) ? 'photo' : (a.type || 'file');
-        if (url) attachment = { type, url, caption: text || '' };
-    }
-    const mediaLabel = attachment ? (attachment.type === 'video' ? '[відео]' : attachment.type === 'photo' ? '[фото]' : '[вкладення]') : '[порожнє повідомлення]';
+        return url ? { type, url } : null;
+    }).filter(Boolean);
+    const attachment = mappedAtts[0] || null;
+    const imgCount = mappedAtts.filter((a) => a.type === 'photo').length;
+    const mediaLabel = !attachment ? '[порожнє повідомлення]'
+        : mappedAtts.length > 1 ? `[${mappedAtts.length} медіа]`
+        : attachment.type === 'video' ? '[відео]' : attachment.type === 'photo' ? '[фото]' : '[вкладення]';
 
     const patch = { conversationId, psid: String(contactId), senderName: contactName || undefined };
     if (adId) { patch.entryAdId = String(adId); patch.lastReferral = ref; }
@@ -188,7 +190,11 @@ async function handleIncomingMessage(botId, body) {
     await db.message.create({
         data: {
             sessionId: session.id, role: 'user', content: text || mediaLabel,
-            metadata: { source: 'zernio', zernioMessageId: zMsgId, platformMessageId, messageId: zMsgId, ...(adId ? { adId } : {}), ...(attachment ? { attachment } : {}) },
+            metadata: {
+                source: 'zernio', zernioMessageId: zMsgId, platformMessageId, messageId: zMsgId,
+                ...(adId ? { adId } : {}),
+                ...(attachment ? { attachment, attachments: mappedAtts } : {}),
+            },
         },
     });
 

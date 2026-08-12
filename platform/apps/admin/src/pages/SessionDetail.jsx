@@ -135,12 +135,13 @@ function MessageContent({ content, metadata }) {
     const fileUrl = metadata?.fileUrl || metadata?.url || metadata?.sheetsUrl;
     const fileType = metadata?.fileType;
     const messageParts = splitMermaidBlocks(content);
-    // Медіа-вкладення (фото/відео) — вхідні від клієнта або вихідні sendPhoto.
+    // Медіа-вкладення — одне або «альбом» (кілька фото). Вхідні від клієнта / вихідні sendPhoto.
     const att = metadata?.attachment;
-    const attType = att?.type;
-    const attUrl = att?.url;
-    const isImg = attUrl && (attType === 'photo' || attType === 'image');
-    const isVid = attUrl && (attType === 'video' || attType === 'animation');
+    const atts = (Array.isArray(metadata?.attachments) && metadata.attachments.length)
+        ? metadata.attachments
+        : (att ? [att] : []);
+    const imgs = atts.filter((a) => a?.url && (a.type === 'photo' || a.type === 'image'));
+    const vids = atts.filter((a) => a?.url && (a.type === 'video' || a.type === 'animation'));
 
     const renderTextPart = (text, prefix) => {
         const parts = parseMessageContent(text);
@@ -179,16 +180,27 @@ function MessageContent({ content, metadata }) {
                 if (part.type === 'mermaid') return <MermaidBlock key={`mermaid-${i}`} code={part.value} />;
                 return <React.Fragment key={`text-${i}`}>{renderTextPart(part.value, `part-${i}`)}</React.Fragment>;
             })}
-            {isImg && (
-                <a href={attUrl} target="_blank" rel="noopener noreferrer" className="block mt-1.5">
-                    <img src={attUrl} alt={att.caption || 'фото'} loading="lazy"
+            {imgs.length > 1 && (
+                // «Альбом» — компактна сітка (як у Instagram/Telegram). Клік → оригінал.
+                <div className="mt-1.5 grid grid-cols-3 gap-1 max-w-[300px]">
+                    {imgs.map((a, i) => (
+                        <a key={i} href={a.url} target="_blank" rel="noopener noreferrer" className="block">
+                            <img src={a.url} alt="" loading="lazy"
+                                className="w-full aspect-square object-cover rounded border border-gray-700 hover:opacity-90 transition-opacity" />
+                        </a>
+                    ))}
+                </div>
+            )}
+            {imgs.length === 1 && (
+                <a href={imgs[0].url} target="_blank" rel="noopener noreferrer" className="block mt-1.5">
+                    <img src={imgs[0].url} alt="" loading="lazy"
                         className="rounded-lg max-w-full max-h-80 object-contain border border-gray-700" />
                 </a>
             )}
-            {isVid && (
-                <video src={attUrl} controls preload="metadata"
+            {vids.map((a, i) => (
+                <video key={i} src={a.url} controls preload="metadata"
                     className="mt-1.5 rounded-lg max-w-full max-h-80 border border-gray-700" />
-            )}
+            ))}
             {fileUrl && (
                 <div className="mt-1.5">
                     {fileUrl.includes('docs.google.com') ? (

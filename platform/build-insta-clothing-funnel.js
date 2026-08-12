@@ -16,7 +16,9 @@ const prisma = new PrismaClient();
 const PROJECT_SLUG = 'oleksii-clothing';
 const BOT_SLUG = 'insta-ads-clothing';
 
-// Порожня воронка: одна start-нода, без ребер. Канвас рендериться, логіка — окремим кроком.
+// Стартовий флоу: Instagram → нода-вітання (авто-підтвердження, що ми прийняли звернення).
+// Текст живе в НОДІ n_welcome — редагується на канвасі. Далі діалог веде оператор вручну
+// (або майбутня логіка воронки). Instagram показує текст як є — без HTML-тегів.
 const nodes = [
   {
     id: 'start_1',
@@ -24,8 +26,19 @@ const nodes = [
     position: { x: 80, y: 80 },
     data: { label: 'Старт (Instagram)', trigger: 'instagram' },
   },
+  {
+    id: 'n_welcome',
+    type: 'message',
+    position: { x: 80, y: 260 },
+    data: {
+      label: 'Вітання / прийняли звернення',
+      text: 'Дякуємо, що написали! 🙌\nОтримали ваше повідомлення. Підкажіть, будь ласка, яка модель вас цікавить — і ми одразу надішлемо фото, ціну та наявність 📸',
+    },
+  },
 ];
-const edges = [];
+const edges = [
+  { id: 'e_start_welcome', source: 'start_1', target: 'n_welcome' },
+];
 
 // Funnel-ключі. INSTAGRAM_VERIFY_TOKEN — вже робочий (verify challenge від Meta).
 // Решта — плейсхолдери, які клієнт віддасть при підключенні Meta-додатку.

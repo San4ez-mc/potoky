@@ -20,6 +20,7 @@
 
 const { db } = require('@platform/db');
 const logger = require('@platform/logger');
+const { executeFlowStep } = require('./testSession');
 
 const GRAPH_VERSION_DEFAULT = 'v21.0';
 
@@ -65,26 +66,23 @@ async function findOrCreateIgUser(igsid, botId, profile = {}) {
 }
 
 async function findOrCreateIgSession(userId, botId, igsid, extraCtx = {}) {
+    // Instagram-діалог — це один безперервний тред на користувача. Тому переваикористовуємо
+    // ОСТАННЮ сесію (незалежно від completed) і реактивуємо, а не плодимо нові.
     const existing = await db.session.findFirst({
-        where: { userId, botId, state: { not: 'completed' } },
+        where: { userId, botId },
         orderBy: { startedAt: 'desc' },
     });
     if (existing) {
-        // Дотягуємо канал/IGSID + свіжий реферал (реклама) в контекст, якщо зʼявився.
         const ctx = existing.context || {};
         const patch = {};
         if (ctx.channel !== 'instagram') patch.channel = 'instagram';
         if (ctx.igsid !== String(igsid)) patch.igsid = String(igsid);
         for (const [k, v] of Object.entries(extraCtx)) if (v != null) patch[k] = v;
-        if (Object.keys(patch).length) {
-            const updated = await db.session.update({
-                where: { id: existing.id },
-                data: { context: { ...ctx, ...patch }, lastActive: new Date() },
-            });
-            return updated;
-        }
-        await db.session.update({ where: { id: existing.id }, data: { lastActive: new Date() } });
-        return existing;
+        const data = { lastActive: new Date() };
+        if (Object.keys(patch).length) data.context = { ...ctx, ...patch };
+        // Реактивуємо, якщо флоу welcome завершив сесію (message-нода завершує флоу).
+        if (!existing.isActive) { data.isActive = true; data.completedAt = null; if (existing.state === 'completed') data.state = 'inbox'; }
+        return db.session.update({ where: { id: existing.id }, data });
     }
 
     const flowDef = await db.flowDefinition.findUnique({ where: { botId } });
@@ -190,6 +188,34 @@ async function handleInstagramEvent(botId, body) {
                         metadata: { source: 'instagram', mid, ...(referral ? { referral } : {}) },
                     },
                 });
+
+                // ── Авто-вітання ОДИН раз на користувача. Відповідь генерує НОДА воронки
+                //    (редагована на канвасі) → клієнт одразу бачить, що ми прийняли звернення.
+                //    Далі діалог веде оператор вручну (або майбутня логіка воронки).
+                const alreadyWelcomed = user.metadata && user.metadata.welcomed === true;
+                const ctxNow = session.context || {};
+                if (!alreadyWelcomed && !ctxNow.adminEngaged && !ctxNow.funnelPaused) {
+                    const sinceTime = new Date();
+                    try {
+                        await executeFlowStep({ sessionId: session.id, incomingUserMessage: text });
+                    } catch (e) {
+                        logger.error('[instagramHandler] welcome flow step failed', { botId, sessionId: session.id, error: e.message });
+                    }
+                    await db.user.update({ where: { id: user.id }, data: { metadata: { ...(user.metadata || {}), welcomed: true } } }).catch(() => {});
+                    const outMsgs = await db.message.findMany({
+                        where: { sessionId: session.id, role: 'assistant', createdAt: { gt: sinceTime } },
+                        orderBy: { createdAt: 'asc' },
+                    });
+                    for (const om of outMsgs) {
+                        if (om.metadata && om.metadata.hidden) continue;
+                        try {
+                            const dmid = await sendInstagramMessage(botId, senderId, om.content);
+                            if (dmid) await db.message.update({ where: { id: om.id }, data: { metadata: { ...(om.metadata || {}), instagramMessageId: dmid } } }).catch(() => {});
+                        } catch (e) {
+                            logger.warn('[instagramHandler] авто-вітання: доставка чекає (ймовірно ще нема INSTAGRAM_ACCESS_TOKEN)', { error: e.message });
+                        }
+                    }
+                }
 
                 processed++;
                 logger.info('[instagramHandler] Inbound IG message stored', {

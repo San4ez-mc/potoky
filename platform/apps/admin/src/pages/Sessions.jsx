@@ -215,7 +215,7 @@ export function Sessions() {
                     </div>
                     {/* Source radio */}
                     <div className="flex items-center rounded-lg border border-gray-700 overflow-hidden text-xs">
-                        {[['all', 'Всі'], ['bot', 'TG'], ['webhook', 'API']].map(([val, label]) => (
+                        {[['all', 'Всі'], ['bot', 'TG'], ['instagram', 'IG'], ['webhook', 'API']].map(([val, label]) => (
                             <button key={val} onClick={() => { setPage(0); setSource(val); }}
                                 className={`px-3 py-1.5 transition-colors ${source === val ? 'bg-brand/20 text-brand-light' : 'text-gray-300 hover:bg-gray-800'}`}>
                                 {label}

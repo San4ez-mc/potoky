@@ -121,7 +121,7 @@ router.get('/sessions',
             isActive: z.enum(['true', 'false']).optional(),
             hasErrors: z.enum(['true', 'false']).optional(),
             isTest: z.enum(['true', 'false']).optional(),
-            source: z.enum(['bot', 'webhook']).optional(),
+            source: z.enum(['bot', 'webhook', 'instagram']).optional(),
             page: z.coerce.number().int().min(0).default(0),
             limit: z.coerce.number().int().min(1).max(100).default(50),
         }),
@@ -136,7 +136,13 @@ router.get('/sessions',
             where.errors = hasErrors === 'true' ? { some: {} } : { none: {} };
         }
         if (source === 'webhook') where.user = { username: 'webhook_system' };
-        if (source === 'bot') where.user = { NOT: { username: 'webhook_system' } };
+        // Instagram-сесії позначені context.channel = 'instagram'.
+        else if (source === 'instagram') where.context = { path: ['channel'], equals: 'instagram' };
+        // TG = все, крім webhook_system і крім Instagram-каналу.
+        else if (source === 'bot') {
+            where.user = { NOT: { username: 'webhook_system' } };
+            where.NOT = { context: { path: ['channel'], equals: 'instagram' } };
+        }
 
         const [sessions, total] = await Promise.all([
             db.session.findMany({

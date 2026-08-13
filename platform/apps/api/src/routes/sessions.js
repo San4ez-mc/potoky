@@ -16,6 +16,10 @@ const {
 
 const router = Router();
 
+const { guardSessionParam } = require('../middleware/rbac');
+router.param('id', guardSessionParam);
+router.param('sessionId', guardSessionParam);
+
 async function deleteSessionCascade(sessionId) {
     return db.$transaction(async (tx) => {
         const exists = await tx.session.findUnique({

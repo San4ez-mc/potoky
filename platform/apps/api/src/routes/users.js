@@ -10,6 +10,9 @@ const { NotFoundError } = require('@platform/errors');
 
 const router = Router();
 
+const { guardUserParam, projectScopeWhere } = require('../middleware/rbac');
+router.param('id', guardUserParam);
+
 const paginationSchema = z.object({
     page: z.coerce.number().int().min(0).default(0),
     limit: z.coerce.number().int().min(1).max(100).default(50),
@@ -32,6 +35,8 @@ router.get('/',
         const { page, limit, search, realOnly } = req.query;
 
         const where = {
+            // RBAC: 'user' бачить лише підписників дозволених проєктів.
+            ...projectScopeWhere(req),
             // Hide test-runner accounts: real only = must have at least 1 non-test session
             ...(realOnly ? {
                 sessions: { some: { isTest: false } },

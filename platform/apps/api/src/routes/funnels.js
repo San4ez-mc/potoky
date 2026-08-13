@@ -15,6 +15,9 @@ const UPLOADS_DIR = process.env.BOT_FILES_DIR
     || path.join(__dirname, '..', '..', '..', '..', 'uploads', 'bot-files');
 
 const router = Router();
+
+const { guardBotParam, allowedProjectIds } = require('../middleware/rbac');
+router.param('botId', guardBotParam);
 router.use(authMiddleware);
 
 // GET /api/funnels/:botId — get flow definition + keys
@@ -611,8 +614,16 @@ router.get('/analytics/compare', asyncHandler(async (req, res) => {
     const timeFrom = ms ? new Date(Date.now() - ms) : null;
     const testFilter = includeTest === 'true' ? {} : { isTest: false };
 
+    // RBAC: 'user' — лише дозволені проєкти (і не може вийти за них через ?projectId).
+    const _allowed = allowedProjectIds(req);
+    let _projWhere = {};
+    if (projectId) {
+        _projWhere = (_allowed && !_allowed.includes(String(projectId))) ? { projectId: '__none__' } : { projectId: String(projectId) };
+    } else if (_allowed) {
+        _projWhere = { projectId: { in: _allowed } };
+    }
     const bots = await db.bot.findMany({
-        where: projectId ? { projectId } : {},
+        where: _projWhere,
         select: { id: true, name: true, slug: true, isActive: true, project: { select: { id: true, name: true } } },
         orderBy: { createdAt: 'desc' },
     });

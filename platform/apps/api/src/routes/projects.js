@@ -235,9 +235,10 @@ router.delete('/:id/bots/:botId',
 );
 
 // GET /api/projects/bots/all — get all active bots (for moving between projects)
-router.get('/bots/all', asyncHandler(async (_req, res) => {
+router.get('/bots/all', asyncHandler(async (req, res) => {
+    const allowed = allowedProjectIds(req);
     const bots = await db.bot.findMany({
-        where: { isActive: true },
+        where: { isActive: true, ...(allowed ? { projectId: { in: allowed } } : {}) },
         orderBy: [{ projectId: 'asc' }, { name: 'asc' }],
         select: { id: true, name: true, slug: true, projectId: true },
     });

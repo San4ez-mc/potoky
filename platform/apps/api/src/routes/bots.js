@@ -9,6 +9,9 @@ const { NotFoundError } = require('@platform/errors');
 
 const router = Router();
 
+const { guardBotParam } = require('../middleware/rbac');
+router.param('id', guardBotParam);
+
 const paginationSchema = z.object({
     page: z.coerce.number().int().min(0).default(0),
     limit: z.coerce.number().int().min(1).max(100).default(50),

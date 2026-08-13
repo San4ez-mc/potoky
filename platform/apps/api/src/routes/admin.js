@@ -8,6 +8,7 @@ const { validateParams } = require('../middleware/validateParams');
 const { authMiddleware, loginHandler, logoutHandler } = require('../middleware/auth');
 const { runBotRegression, runProjectRegressions } = require('../services/regressionRunner');
 const { startTestSession } = require('../services/testSession');
+const { requireSuperadmin, allowedProjectIds } = require('../middleware/rbac');
 
 const router = Router();
 
@@ -20,8 +21,8 @@ router.post('/logout', asyncHandler(logoutHandler));
 // ── Protected admin routes ───────────────────────────────────
 router.use(authMiddleware);
 
-// GET /api/admin/analytics — platform-wide stats
-router.get('/analytics', asyncHandler(async (req, res) => {
+// GET /api/admin/analytics — platform-wide stats (лише суперадмін)
+router.get('/analytics', requireSuperadmin, asyncHandler(async (req, res) => {
     const [totalUsers, totalSessions, totalApiCalls, unresolvedErrors] = await Promise.all([
         db.user.count(),
         db.session.count(),
@@ -47,8 +48,9 @@ router.get('/analytics', asyncHandler(async (req, res) => {
     });
 }));
 
-// GET /api/admin/errors — all errors with filters
+// GET /api/admin/errors — all errors (лише суперадмін)
 router.get('/errors',
+    requireSuperadmin,
     validateParams({
         query: z.object({
             resolved: z.enum(['true', 'false']).optional(),
@@ -105,6 +107,7 @@ router.get('/sessions/unread-count',
                 isActive: true, isTest: false,
                 lastActive: { gte: since },
                 user: { telegramId: { not: null }, NOT: { username: 'webhook_system' } },
+                ...(allowedProjectIds(req) ? { bot: { projectId: { in: allowedProjectIds(req) } } } : {}),
             },
             include: { messages: { orderBy: { createdAt: 'desc' }, take: 1 } },
         });
@@ -143,6 +146,9 @@ router.get('/sessions',
             where.user = { NOT: { username: 'webhook_system' } };
             where.NOT = { context: { path: ['channel'], equals: 'instagram' } };
         }
+        // RBAC: 'user' — лише сесії ботів дозволених проєктів.
+        const _allowedS = allowedProjectIds(req);
+        if (_allowedS) where.bot = { ...(where.bot || {}), projectId: { in: _allowedS } };
 
         const [sessions, total] = await Promise.all([
             db.session.findMany({
@@ -172,8 +178,9 @@ router.get('/sessions',
     })
 );
 
-// GET /api/admin/api-logs — stream of recent API calls
+// GET /api/admin/api-logs — stream of recent API calls (лише суперадмін)
 router.get('/api-logs',
+    requireSuperadmin,
     validateParams({
         query: z.object({
             service: z.string().optional(),

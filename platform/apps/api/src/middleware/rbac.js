@@ -35,4 +35,46 @@ function isProjectAllowed(req, projectId) {
     return !!projectId && a.includes(String(projectId));
 }
 
-module.exports = { roleOf, isSuperadmin, allowedProjectIds, requireSuperadmin, isProjectAllowed };
+const { db } = require('@platform/db');
+
+function notFound(res) {
+    return res.status(404).json({ ok: false, error: { code: 'NOT_FOUND', message: 'Не знайдено' } });
+}
+
+// ── router.param гарди: перевіряють проєкт обʼєкта за його param у URL ──
+async function guardBotParam(req, res, next, botId) {
+    if (isSuperadmin(req)) return next();
+    const bot = await db.bot.findUnique({ where: { id: botId }, select: { projectId: true } }).catch(() => null);
+    if (!bot || !isProjectAllowed(req, bot.projectId)) return notFound(res);
+    next();
+}
+async function guardSessionParam(req, res, next, sid) {
+    if (isSuperadmin(req)) return next();
+    const s = await db.session.findUnique({ where: { id: sid }, select: { bot: { select: { projectId: true } } } }).catch(() => null);
+    if (!s || !isProjectAllowed(req, s.bot && s.bot.projectId)) return notFound(res);
+    next();
+}
+async function guardUserParam(req, res, next, uid) {
+    if (isSuperadmin(req)) return next();
+    const u = await db.user.findUnique({ where: { id: uid }, select: { projectId: true } }).catch(() => null);
+    if (!u || !isProjectAllowed(req, u.projectId)) return notFound(res);
+    next();
+}
+
+// ── where-фрагменти для скоупу списків (суперадмін → {} = без обмежень) ──
+function projectScopeWhere(req, field = 'projectId') {
+    const a = allowedProjectIds(req);
+    if (a === null) return {};
+    return { [field]: { in: a } };
+}
+function botProjectScopeWhere(req) { // для сесій: bot.projectId
+    const a = allowedProjectIds(req);
+    if (a === null) return {};
+    return { bot: { projectId: { in: a } } };
+}
+
+module.exports = {
+    roleOf, isSuperadmin, allowedProjectIds, requireSuperadmin, isProjectAllowed,
+    guardBotParam, guardSessionParam, guardUserParam,
+    projectScopeWhere, botProjectScopeWhere,
+};

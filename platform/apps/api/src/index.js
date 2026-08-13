@@ -12,6 +12,7 @@ const { db } = require('@platform/db');
 const { sessionStore, redisConnectPromise } = require('./lib/sessionStore');
 const { asyncHandler } = require('./middleware/asyncHandler');
 const { authMiddleware } = require('./middleware/auth');
+const { requireSuperadmin } = require('./middleware/rbac');
 const { errorHandler } = require('./middleware/errorHandler');
 
 const projectsRouter = require('./routes/projects');
@@ -164,12 +165,12 @@ app.use('/api/bots', authMiddleware, botsRouter);
 app.use('/api/sessions', authMiddleware, sessionsRouter);
 app.use('/api/users', authMiddleware, usersRouter);
 app.use('/api/funnels', authMiddleware, funnelsRouter);
-app.use('/api/connectors', authMiddleware, connectorsRouter);
-app.use('/api/saved-connectors', authMiddleware, savedConnectorsRouter);
-app.use('/api/system-keys', authMiddleware, systemKeysRouter);
+app.use('/api/connectors', authMiddleware, requireSuperadmin, connectorsRouter);
+app.use('/api/saved-connectors', authMiddleware, requireSuperadmin, savedConnectorsRouter);
+app.use('/api/system-keys', authMiddleware, requireSuperadmin, systemKeysRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/auth', require('./routes/authSso')); // публічний: вхід через SSO
-app.use('/api/broadcasts', authMiddleware, broadcastsRouter);
+app.use('/api/broadcasts', authMiddleware, requireSuperadmin, broadcastsRouter);
 // Token-authed (server-to-server from content2) — not session auth
 app.use('/api/tracked-links', trackedLinksRouter);
 app.use('/api/rag', ragRouter);

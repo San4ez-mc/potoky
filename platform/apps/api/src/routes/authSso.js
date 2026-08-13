@@ -56,24 +56,61 @@ router.get('/sso/callback', async (req, res) => {
         }
 
         const email = String(data.user.email || '').toLowerCase();
-        const allow = allowedEmails();
-        // Фаза 1: пускаємо лише дозволені email (щоб випадкові SSO-акаунти не отримали доступ).
-        if (allow.length && !allow.includes(email)) {
-            logger.warn('[authSso] email not allowed for flows', { email });
+
+        // Тягнемо доступи (роль + проєкти) з SSO для продукту flows.
+        let role = 'none';
+        let allowedProjectIds = [];
+        try {
+            const pr = await fetch(`${SSO_BASE}/oauth/permissions`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ client_id: CLIENT_ID, client_secret: CLIENT_SECRET, userId: data.user.id, product: 'flows' }),
+            });
+            const pd = await pr.json().catch(() => ({}));
+            if (pr.ok) { role = pd.role || 'none'; allowedProjectIds = Array.isArray(pd.projectIds) ? pd.projectIds : []; }
+        } catch (e) { logger.warn('[authSso] permissions fetch failed', { error: e.message }); }
+
+        // Bootstrap суперадміна за email (щоб власник ніколи не втратив доступ).
+        if (allowedEmails().includes(email)) role = 'superadmin';
+
+        if (role !== 'superadmin' && role !== 'user') {
+            logger.warn('[authSso] no flows access', { email, role });
             return res.redirect('/login?sso=denied');
         }
 
         await new Promise((resolve, reject) => req.session.regenerate((e) => (e ? reject(e) : resolve())));
         req.session.isAdmin = true;
+        req.session.role = role;
+        req.session.allowedProjectIds = role === 'superadmin' ? null : allowedProjectIds; // null = усі
         req.session.ssoUser = { id: data.user.id, email, name: data.user.name || null };
         req.session.cookie.maxAge = 30 * 24 * 60 * 60 * 1000;
         await new Promise((resolve, reject) => req.session.save((e) => (e ? reject(e) : resolve())));
 
-        logger.info('[authSso] SSO login ok', { email });
+        logger.info('[authSso] SSO login ok', { email, role });
         res.redirect('/');
     } catch (e) {
         logger.error('[authSso] callback error', { error: e.message });
         res.redirect('/login?sso=error');
+    }
+});
+
+// GET /api/auth/me — фронт дізнається роль + дозволені проєкти поточного користувача.
+router.get('/me', (req, res) => {
+    if (!req.session || !req.session.isAdmin) return res.status(401).json({ authenticated: false });
+    // Пароль-резерв (без ролі) = суперадмін (власник).
+    const role = req.session.role || 'superadmin';
+    const allowedProjectIds = role === 'superadmin' ? null : (req.session.allowedProjectIds || []);
+    res.json({ authenticated: true, role, allowedProjectIds, user: req.session.ssoUser || { email: 'admin' } });
+});
+
+// GET /api/auth/sso/projects — SSO («Компанії») читає список проєктів flows (shared secret = client secret).
+router.get('/sso/projects', async (req, res) => {
+    if ((req.header('x-sso-secret') || '') !== CLIENT_SECRET) return res.status(401).json({ error: 'unauthorized' });
+    try {
+        const { db } = require('@platform/db');
+        const projects = await db.project.findMany({ select: { id: true, name: true, slug: true }, orderBy: { name: 'asc' } });
+        res.json({ projects });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
     }
 });
 

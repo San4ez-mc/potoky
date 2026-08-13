@@ -137,6 +137,7 @@ export const api = {
 
     // Admin
     getAnalytics: () => req('GET', '/admin/analytics'),
+    getMe: () => req('GET', '/auth/me'),
     getUnreadSessionsCount: () => req('GET', '/admin/sessions/unread-count'),
     getAllSessions: (params = {}) => {
         const q = new URLSearchParams(params).toString();

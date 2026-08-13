@@ -7,20 +7,22 @@ import clsx from 'clsx';
 const NAV = [
     { to: '/funnels', icon: '🗺', label: 'Воронки' },
     { to: '/funnels-compare', icon: '📈', label: 'Аналітика' },
-    { to: '/projects', icon: '📁', label: 'Проєкти' },
+    { to: '/projects', icon: '📁', label: 'Проєкти', superadminOnly: true },
     { to: '/sessions', icon: '💬', label: 'Сесії', unreadKey: true },
-    { to: '/broadcasts', icon: '📣', label: 'Розсилки' },
-    { to: '/dashboard', icon: '📊', label: 'Дашборд' },
-    { to: '/connectors', icon: '🔌', label: 'Конектори' },
+    { to: '/broadcasts', icon: '📣', label: 'Розсилки', superadminOnly: true },
+    { to: '/dashboard', icon: '📊', label: 'Дашборд', superadminOnly: true },
+    { to: '/connectors', icon: '🔌', label: 'Конектори', superadminOnly: true },
     { to: '/subscribers', icon: '👥', label: 'Підписники' },
-    { to: '/logs', icon: '📡', label: 'Логи' },
-    { to: '/settings', icon: '⚙️', label: 'Налаштування' },
+    { to: '/logs', icon: '📡', label: 'Логи', superadminOnly: true },
+    { to: '/settings', icon: '⚙️', label: 'Налаштування', superadminOnly: true },
 ];
 
 const STORAGE_KEY = 'sidebarCollapsed';
 
 export function Sidebar({ mobileOpen, onMobileClose }) {
     const logout = useAuthStore(s => s.logout);
+    const role = useAuthStore(s => s.role);
+    const navItems = NAV.filter(n => role === 'superadmin' || !n.superadminOnly);
     const navigate = useNavigate();
     const [collapsed, setCollapsed] = useState(() => {
         try { return localStorage.getItem(STORAGE_KEY) === '1'; } catch { return false; }
@@ -90,7 +92,7 @@ export function Sidebar({ mobileOpen, onMobileClose }) {
 
             {/* Nav */}
             <nav className="flex-1 px-2 py-4 space-y-1 overflow-y-auto">
-                {NAV.map(({ to, icon, label, unreadKey }) => {
+                {navItems.map(({ to, icon, label, unreadKey }) => {
                     const badge = unreadKey && unreadCount > 0 ? unreadCount : 0;
                     return (
                         <NavLink

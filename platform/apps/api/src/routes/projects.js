@@ -6,13 +6,21 @@ const { db } = require('@platform/db');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const { validateParams } = require('../middleware/validateParams');
 const { NotFoundError } = require('@platform/errors');
+const { allowedProjectIds, isProjectAllowed } = require('../middleware/rbac');
 
 const router = Router();
 
-// GET /api/projects
+// Гард обʼєктного доступу: 404 (не 403 — щоб не розкривати існування) на чужий проєкт.
+function guardProject(req, res, next) {
+    if (!isProjectAllowed(req, req.params.id)) throw new NotFoundError('Project', req.params.id);
+    next();
+}
+
+// GET /api/projects — для 'user' лише дозволені проєкти.
 router.get('/', asyncHandler(async (req, res) => {
+    const allowed = allowedProjectIds(req);
     const projects = await db.project.findMany({
-        where: { isActive: true },
+        where: { isActive: true, ...(allowed ? { id: { in: allowed } } : {}) },
         orderBy: { createdAt: 'asc' },
     });
     res.json({ ok: true, data: projects });
@@ -21,6 +29,7 @@ router.get('/', asyncHandler(async (req, res) => {
 // GET /api/projects/:id
 router.get('/:id',
     validateParams({ params: z.object({ id: z.string().uuid() }) }),
+    guardProject,
     asyncHandler(async (req, res) => {
         const project = await db.project.findUnique({ where: { id: req.params.id } });
         if (!project) throw new NotFoundError('Project', req.params.id);
@@ -31,6 +40,7 @@ router.get('/:id',
 // GET /api/projects/:id/bots
 router.get('/:id/bots',
     validateParams({ params: z.object({ id: z.string().uuid() }) }),
+    guardProject,
     asyncHandler(async (req, res) => {
         const bots = await db.bot.findMany({
             where: { projectId: req.params.id, isActive: true },
@@ -123,6 +133,7 @@ router.post('/:id/bots',
             isSystem: z.boolean().optional(), // marks a system/default bot (hidden in UI, non-deletable)
         }),
     }),
+    guardProject,
     asyncHandler(async (req, res) => {
         const { id: projectId } = req.params;
         const { name, slug, description, trigger, isSystem } = req.body;
@@ -159,6 +170,7 @@ router.post('/:id/bots',
 // GET /api/projects/:id/stats
 router.get('/:id/stats',
     validateParams({ params: z.object({ id: z.string().uuid() }) }),
+    guardProject,
     asyncHandler(async (req, res) => {
         const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 

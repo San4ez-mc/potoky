@@ -127,6 +127,23 @@ async function sendZernioMessage(botId, conversationId, text) {
     return data.id || data.messageId || data.message?.id || null;
 }
 
+// Фото через Meta-direct: Zernio-send текстовий, тож зображення шлемо напряму в Meta
+// (psid із Zernio-вебхука = реальний Meta IGSID). imageUrl — публічний http-URL.
+async function sendMetaPhoto(botId, igsid, imageUrl) {
+    if (!igsid) throw new Error('немає IGSID отримувача');
+    const km = await db.funnelKey.findFirst({ where: { botId, key: 'INSTAGRAM_ACCESS_TOKEN' }, select: { value: true } });
+    const token = (km?.value || '').trim();
+    if (!token || token === 'REPLACE_ME') throw new Error('немає INSTAGRAM_ACCESS_TOKEN для Meta-фото');
+    const url = `https://graph.instagram.com/v21.0/me/messages?access_token=${encodeURIComponent(token)}`;
+    const r = await fetch(url, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ recipient: { id: String(igsid) }, message: { attachment: { type: 'image', payload: { url: String(imageUrl) } } } }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.error) throw new Error(d?.error?.message || `HTTP ${r.status}`);
+    return d.message_id || null;
+}
+
 // ── Диспетчер ────────────────────────────────────────────────────────────────
 // Серіалізуємо обробку подій ОДНІЄЇ розмови (per conversation), щоб паралельні
 // reaction/read/delivered не перетирали metadata одного повідомлення (read-modify-write гонка).
@@ -208,13 +225,22 @@ async function handleIncomingMessage(botId, body) {
             const m = om.metadata || {};
             if (m.hidden) continue;
             const att = m.attachment;
-            let out = om.content;
-            if (att && (att.type === 'photo' || att.type === 'image')) out = (att.caption || om.content || '') + (att.url && String(att.url).startsWith('http') ? `\n${att.url}` : '');
-            if (!out) continue;
+            const imgUrl = att && (att.type === 'photo' || att.type === 'image') && att.url && String(att.url).startsWith('http') ? att.url : null;
             try {
-                const zid = await sendZernioMessage(botId, conversationId, out);
-                if (zid) await db.message.update({ where: { id: om.id }, data: { metadata: { ...m, zernioMessageId: zid, status: 'sent' } } }).catch(() => {});
-            } catch (e) { logger.warn('[zernioHandler] доставка чекає (токен/акаунт Zernio)', { error: e.message }); }
+                if (imgUrl) {
+                    // Фото → Meta-direct (реальне зображення); підпис → текстом через Zernio.
+                    await sendMetaPhoto(botId, contactId, imgUrl);
+                    const cap = att.caption || om.content;
+                    if (cap) await sendZernioMessage(botId, conversationId, cap);
+                } else if (om.content) {
+                    const zid = await sendZernioMessage(botId, conversationId, om.content);
+                    if (zid) await db.message.update({ where: { id: om.id }, data: { metadata: { ...m, zernioMessageId: zid, status: 'sent' } } }).catch(() => {});
+                }
+            } catch (e) {
+                // Фолбек: Meta-фото не пройшло → підпис+URL текстом через Zernio.
+                if (imgUrl) { await sendZernioMessage(botId, conversationId, (att.caption || om.content || '') + '\n' + imgUrl).catch(() => {}); }
+                logger.warn('[zernioHandler] доставка: ' + e.message);
+            }
         }
     }
     logger.info('[zernioHandler] Inbound stored', { botId, sessionId: session.id, hasAd: !!adId });

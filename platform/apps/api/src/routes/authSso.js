@@ -95,11 +95,11 @@ router.get('/sso/callback', async (req, res) => {
 
 // GET /api/auth/me — фронт дізнається роль + дозволені проєкти поточного користувача.
 router.get('/me', (req, res) => {
-    if (!req.session || !req.session.isAdmin) return res.status(401).json({ authenticated: false });
+    if (!req.session || !req.session.isAdmin) return res.status(401).json({ ok: false, authenticated: false });
     // Пароль-резерв (без ролі) = суперадмін (власник).
     const role = req.session.role || 'superadmin';
     const allowedProjectIds = role === 'superadmin' ? null : (req.session.allowedProjectIds || []);
-    res.json({ authenticated: true, role, allowedProjectIds, user: req.session.ssoUser || { email: 'admin' } });
+    res.json({ ok: true, authenticated: true, role, allowedProjectIds, user: req.session.ssoUser || { email: 'admin' } });
 });
 
 // GET /api/auth/sso/projects — SSO («Компанії») читає список проєктів flows (shared secret = client secret).

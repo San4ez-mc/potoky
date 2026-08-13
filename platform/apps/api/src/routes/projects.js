@@ -15,6 +15,8 @@ function guardProject(req, res, next) {
     if (!isProjectAllowed(req, req.params.id)) throw new NotFoundError('Project', req.params.id);
     next();
 }
+// Покриваємо ВСІ роути з :id (включно з global-keys, delete тощо), не лише перелічені.
+router.param('id', guardProject);
 
 // GET /api/projects — для 'user' лише дозволені проєкти.
 router.get('/', asyncHandler(async (req, res) => {

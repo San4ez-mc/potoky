@@ -2077,6 +2077,19 @@ ${sourceContent || '(немає даних)'}
             const action = data.action || '';
             const outputVar = data.outputVar ? String(data.outputVar).replace(/^context\./, '') : '';
 
+            // Тест-режим: платіжні конектори не б'ють реальні API (нема левих замовлень/лінків).
+            // monoStatement лишаємо як інжектнув харнес; ibanoplata віддає фейковий URL.
+            if (ctx.testMode && (connectorType === 'ibanoplata' || connectorType === 'monobank')) {
+                if (connectorType === 'ibanoplata' && action === 'create_invoice') {
+                    if (!ctx.orderRef) ctx.orderRef = 'TEST' + Date.now().toString(36).toUpperCase();
+                    ctx.ibanInvoiceUid = 'test-uid';
+                    ctx.ibanPayUrl = 'https://test.local/pay/' + ctx.orderRef;
+                    if (outputVar) setByPath(ctx, outputVar, ctx.ibanPayUrl);
+                }
+                runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
+                continue;
+            }
+
             try {
                 // Load connector config from DB
                 const savedConnector = await db.savedConnector.findFirst({

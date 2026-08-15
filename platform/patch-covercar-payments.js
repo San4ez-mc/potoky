@@ -151,6 +151,12 @@ function setEdge(edges, source, target, sourceHandle) {
     setEdge(edges, 'n_pay_notfound_msg', 'n_crm_order');
     // n_crm_order → n_create → n_confirm лишаються як були
 
+    // ── testMode-гард у KeyCRM-ноді: тестові прогони не створюють реальних замовлень ──
+    const crm = nodes.find((n) => n.id === 'n_crm_order');
+    if (crm && crm.data && crm.data.code && crm.data.code.indexOf('context.testMode') < 0) {
+        crm.data.code = "if(context.testMode) return { crmOrderId:('TEST-'+Date.now()), orderSku:'', supplier:'' };\n" + crm.data.code;
+    }
+
     // ── Ф5 прибрати осиротілі ноди реквізитів ──
     ['n_iban', 'n_edrpou', 'n_company', 'n_pay_instr'].forEach((id) => removeNode(nodes, edges, id));
 

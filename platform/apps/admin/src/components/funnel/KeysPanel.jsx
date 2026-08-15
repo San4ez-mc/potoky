@@ -665,7 +665,20 @@ export function KeysPanel({ embedded = false }) {
 
     const requiredKeys = getRequiredKeys();
     const existingKeyNames = new Set(visibleKeys.map((k) => k.key));
-    const missingRequiredKeys = requiredKeys.filter((key) => !existingKeyNames.has(key));
+    // *_CONNECTOR_ID закриває відповідний *_API_KEY (движок резолвить ключ у рантаймі),
+    // тож не вимагаємо сирий ключ, якщо є конектор.
+    const KEY_ALIASES = {
+        GEMINI_API_KEY: ['GEMINI_CONNECTOR_ID'],
+        OPENAI_API_KEY: ['OPENAI_CONNECTOR_ID', 'GPT_CONNECTOR_ID'],
+        CLAUDE_API_KEY: ['CLAUDE_CONNECTOR_ID'],
+        FAL_AI_KEY: ['FAL_CONNECTOR_ID'],
+        HEYGEN_API_KEY: ['HEYGEN_CONNECTOR_ID'],
+        GOOGLE_SA_KEY: ['GOOGLE_VERTEX_CONNECTOR_ID'],
+        TELEGRAM_BOT_TOKEN: ['TELEGRAM_CONNECTOR_ID'],
+    };
+    const keyHasValue = (name) => keys.some((k) => k.key === name && k.value && String(k.value).trim() !== '');
+    const isSatisfied = (key) => keyHasValue(key) || (KEY_ALIASES[key] || []).some((a) => keyHasValue(a));
+    const missingRequiredKeys = requiredKeys.filter((key) => !isSatisfied(key));
 
     const handleSave = async (form) => {
         await upsertKey(form.key, form.value, form.label, form.isSecret);

@@ -807,7 +807,9 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
         }
 
         if (node.type === 'message') {
-            const text = renderTemplate(data.text || data.label || '', scope) || '...';
+            let _mtpl = data.text || data.label || '';
+            if (Array.isArray(data.variants) && data.variants.length) { _mtpl = data.variants[Math.floor(Math.random() * data.variants.length)] || _mtpl; }
+            const text = renderTemplate(_mtpl, scope) || '...';
             // Render inline keyboard buttons (if any)
             const rawButtons = Array.isArray(data.buttons) ? data.buttons : [];
             const renderedButtons = rawButtons
@@ -1934,6 +1936,19 @@ ${sourceContent || '(немає даних)'}
                 console.warn('[fetchTelegramProfile] Error (non-fatal):', tgError.message);
             }
 
+            runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
+            continue;
+        }
+
+        if (node.type === 'notifyTg') {
+            try {
+                const _chat = funnelEnv[data.targetKey || 'ADMIN_TELEGRAM_ID'] || '';
+                const _tok = funnelEnv.TELEGRAM_BOT_TOKEN || '';
+                const _msg = renderTemplate(data.message || '', scope);
+                if (_chat && _tok && /^\d+:[A-Za-z0-9_-]{20,}$/.test(_tok) && _msg) {
+                    await fetch('https://api.telegram.org/bot' + _tok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(_chat), text: _msg, parse_mode: 'HTML', disable_web_page_preview: true }) }).catch(function(e){ console.error('[notifyTg] ' + e.message); });
+                }
+            } catch (e) { console.error('[notifyTg] ' + e.message); }
             runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
             continue;
         }

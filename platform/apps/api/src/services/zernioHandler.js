@@ -23,6 +23,21 @@ async function getZernioKeys(botId) {
     return Object.fromEntries(keys.map((k) => [k.key, (k.value || '').trim()]));
 }
 function isReal(v) { return typeof v === 'string' && v.length > 3 && v !== 'REPLACE_ME'; }
+// Власні ідентифікатори (бізнес-акаунт, Zernio-акаунт) — щоб не плодити сесії на самих себе.
+async function getSelfIds(botId) {
+    const rows = await db.funnelKey.findMany({ where: { botId, key: { in: ['INSTAGRAM_BUSINESS_ID', 'ZERNIO_ACCOUNT_ID', 'INSTAGRAM_BUSINESS_ACCOUNT_ID'] } }, select: { value: true } });
+    return new Set(rows.map((r) => (r.value || '').trim()).filter(Boolean));
+}
+async function sendTelegramAlert(botId, text) {
+    const rows = await db.funnelKey.findMany({ where: { botId, key: { in: ['TELEGRAM_BOT_TOKEN', 'ADMIN_TELEGRAM_ID'] } }, select: { key: true, value: true } });
+    const m = Object.fromEntries(rows.map((r) => [r.key, (r.value || '').trim()]));
+    if (!m.TELEGRAM_BOT_TOKEN || m.TELEGRAM_BOT_TOKEN === 'REPLACE_ME' || !m.ADMIN_TELEGRAM_ID || m.ADMIN_TELEGRAM_ID === 'REPLACE_ME') return false;
+    try {
+        const r = await fetch('https://api.telegram.org/bot' + m.TELEGRAM_BOT_TOKEN + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: m.ADMIN_TELEGRAM_ID, text }) });
+        const d = await r.json().catch(() => ({}));
+        return !!d.ok;
+    } catch (e) { logger.warn('[zernioHandler] TG alert: ' + e.message); return false; }
+}
 function synthIdFromPsid(psid) {
     const hex = crypto.createHash('sha256').update('zernio:' + String(psid)).digest('hex').slice(0, 15);
     return BigInt('0x' + hex);
@@ -38,7 +53,8 @@ function extractCommon(body) {
         || msg.from?.id || msg.sender?.id || body?.data?.sender?.id || null;
     const contactName = contact.name || contact.displayName || contact.username
         || msg.from?.name || msg.sender?.name || body?.data?.sender?.name || null;
-    return { conv, contact, msg, conversationId, contactId, contactName };
+    const contactUsername = conv.participantUsername || conv.participantUserName || contact.username || contact.handle || (msg.from && msg.from.username) || null;
+    return { conv, contact, msg, conversationId, contactId, contactName, contactUsername };
 }
 
 async function findOrCreateZernioUser(psid, botId, name) {
@@ -134,14 +150,25 @@ async function sendMetaPhoto(botId, igsid, imageUrl) {
     const km = await db.funnelKey.findFirst({ where: { botId, key: 'INSTAGRAM_ACCESS_TOKEN' }, select: { value: true } });
     const token = (km?.value || '').trim();
     if (!token || token === 'REPLACE_ME') throw new Error('немає INSTAGRAM_ACCESS_TOKEN для Meta-фото');
-    const url = `https://graph.instagram.com/v21.0/me/messages?access_token=${encodeURIComponent(token)}`;
-    const r = await fetch(url, {
+    // Завантажуємо байти й вантажимо у Meta → attachment_id (URL-метод у Meta нестабільний — «Upload failed»).
+    const ir = await fetch(String(imageUrl));
+    if (!ir.ok) throw new Error('не завантажилось зображення: HTTP ' + ir.status);
+    const buf = Buffer.from(await ir.arrayBuffer());
+    const ct = ir.headers.get('content-type') || 'image/jpeg';
+    const fd = new FormData();
+    fd.append('access_token', token);
+    fd.append('message', JSON.stringify({ attachment: { type: 'image', payload: { is_reusable: true } } }));
+    fd.append('filedata', new Blob([buf], { type: ct }), 'photo.jpg');
+    const ur = await fetch('https://graph.instagram.com/v21.0/me/message_attachments', { method: 'POST', body: fd });
+    const ud = await ur.json().catch(() => ({}));
+    if (!ur.ok || !ud.attachment_id) throw new Error(ud?.error?.message || ('upload HTTP ' + ur.status));
+    const sr = await fetch(`https://graph.instagram.com/v21.0/me/messages?access_token=${encodeURIComponent(token)}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ recipient: { id: String(igsid) }, message: { attachment: { type: 'image', payload: { url: String(imageUrl) } } } }),
+        body: JSON.stringify({ recipient: { id: String(igsid) }, message: { attachment: { type: 'image', payload: { attachment_id: ud.attachment_id } } } }),
     });
-    const d = await r.json().catch(() => ({}));
-    if (!r.ok || d.error) throw new Error(d?.error?.message || `HTTP ${r.status}`);
-    return d.message_id || null;
+    const sd = await sr.json().catch(() => ({}));
+    if (!sr.ok || sd.error) throw new Error(sd?.error?.message || `HTTP ${sr.status}`);
+    return sd.message_id || null;
 }
 
 // ── Диспетчер ────────────────────────────────────────────────────────────────
@@ -170,7 +197,7 @@ async function dedup(botId, id) {
 }
 
 async function handleIncomingMessage(botId, body) {
-    const { msg, conversationId, contactId, contactName } = extractCommon(body);
+    const { msg, conversationId, contactId, contactName, contactUsername } = extractCommon(body);
     if (msg.direction && msg.direction === 'outgoing') return { ok: true, skipped: 'outgoing' };
     if (!contactId || !conversationId) {
         logger.warn('[zernioHandler] message.received без contactId/conversationId — RAW', { botId, raw: JSON.stringify(body).slice(0, 1200) });
@@ -182,8 +209,11 @@ async function handleIncomingMessage(botId, body) {
     const text = msg.text || body?.data?.text || '';
     const zMsgId = msg.id || null;
     const platformMessageId = msg.platformMessageId || null;
-    const ref = msg.referral || body.referral || body.conversation?.referral || msg.metadata?.referral || body?.data?.referral || null;
+    const ref = body.metadata?.referral || msg.referral || body.referral || body.conversation?.referral || msg.metadata?.referral || body?.data?.referral || null;
+    const storyReply = body.metadata?.storyReply || msg.metadata?.storyReply || null;
     const adId = ref?.ad_id || ref?.adId || msg.metadata?.ad_id || null;
+    const postId = ref?.ads_context_data?.post_id || ref?.ads_context_data?.postId || null;
+    const storyId = storyReply?.storyId || storyReply?.story_id || null;
 
     // Вхідні медіа (може бути кілька — «альбом» до 10 фото). Зберігаємо ВСІ.
     const rawAtts = Array.isArray(msg.attachments) ? msg.attachments : (Array.isArray(msg.media) ? msg.media : []);
@@ -199,18 +229,36 @@ async function handleIncomingMessage(botId, body) {
         : mappedAtts.length > 1 ? `[${mappedAtts.length} медіа]`
         : attachment.type === 'video' ? '[відео]' : attachment.type === 'photo' ? '[фото]' : '[вкладення]';
 
-    const patch = { conversationId, psid: String(contactId), senderName: contactName || undefined };
+    // Переслані пости/рілси: caption + media_id для визначення товару по артикулу.
+    let sharedPost = null;
+    for (const a of rawAtts) {
+        const ot = String(a.originalType || a.type || '').toLowerCase();
+        if (ot.includes('ig_post') || ot.includes('ig_reel') || ot === 'share') {
+            const pl = a.payload || {};
+            sharedPost = { kind: ot.includes('reel') ? 'reel' : 'post', mediaId: pl.ig_post_media_id || pl.reel_video_id || pl.media_id || null, caption: pl.title || pl.caption || null, url: a.url || pl.url || null };
+            break;
+        }
+    }
+    const patch = { conversationId, psid: String(contactId), senderName: contactName || undefined, igUsername: contactUsername || undefined };
     if (adId) { patch.entryAdId = String(adId); patch.lastReferral = ref; }
+    else if (ref) { patch.lastReferral = ref; }
+    if (sharedPost) patch.sharedPost = sharedPost;
+    if (postId) patch.postId = String(postId);
+    if (storyId) patch.storyId = String(storyId);
+    if (ref && ref.ads_context_data && ref.ads_context_data.ad_title) patch.adTitle = ref.ads_context_data.ad_title;
     const user = await findOrCreateZernioUser(contactId, botId, contactName);
+    patch.lastUserTs = Date.now();
+    if (user && user.metadata && user.metadata.crmClientId) patch.crmClientId = user.metadata.crmClientId;
     const session = await findOrCreateZernioSession(user.id, botId, patch);
 
     await db.message.create({
         data: {
-            sessionId: session.id, role: 'user', content: text || mediaLabel,
+            sessionId: session.id, role: 'user', content: text || (sharedPost && sharedPost.caption ? ('[переслав ' + sharedPost.kind + '] ' + sharedPost.caption.slice(0, 80)) : mediaLabel),
             metadata: {
                 source: 'zernio', zernioMessageId: zMsgId, platformMessageId, messageId: zMsgId,
                 ...(adId ? { adId } : {}),
                 ...(attachment ? { attachment, attachments: mappedAtts } : {}),
+                ...(sharedPost ? { sharedPost } : {}),
             },
         },
     });
@@ -229,8 +277,11 @@ async function handleIncomingMessage(botId, body) {
             const imgUrl = att && (att.type === 'photo' || att.type === 'image') && att.url && String(att.url).startsWith('http') ? att.url : null;
             try {
                 if (imgUrl) {
-                    // Фото → Meta-direct (реальне зображення); підпис → текстом через Zernio.
-                    await sendMetaPhoto(botId, contactId, imgUrl);
+                    // Усі фото товару з CRM (галерея) поспіль; підпис → текстом.
+                    const _fresh = await db.session.findUnique({ where: { id: session.id }, select: { context: true } }).catch(() => null);
+                    const _gal = (((_fresh && _fresh.context && _fresh.context.product && _fresh.context.product.imageUrls) || [])).filter((u) => u && String(u).startsWith('http'));
+                    const _list = _gal.length ? _gal : [imgUrl];
+                    for (const _g of _list) { try { await sendMetaPhoto(botId, contactId, _g); } catch (e) { logger.warn('[zernioHandler] фото: ' + e.message); } }
                     const cap = att.caption || om.content;
                     if (cap) await sendZernioMessage(botId, conversationId, cap);
                 } else if (om.content) {
@@ -244,6 +295,20 @@ async function handleIncomingMessage(botId, body) {
             }
         }
     }
+    try {
+        const _fr = await db.session.findUnique({ where: { id: session.id }, select: { context: true } });
+        const _c = (_fr && _fr.context) || {};
+        const _prod = _c.product || {};
+        const _hadSignal = adId || (sharedPost && sharedPost.caption);
+        if (_prod._via === 'default' && _hadSignal && !_c.unmatchedNotified) {
+            const _reason = adId ? ('ad_id ne zmapleno: ' + adId) : 'post/artykul ne znaydeno v CRM';
+            const _postPart = (sharedPost && sharedPost.caption) ? (' | Post: ' + String(sharedPost.caption).slice(0, 70)) : '';
+            const _msg = 'UVAGA: bot ne vyznachyv tovar, obrobit vruchnu. Klient: ' + (contactName || 'klient') + ' | Prychyna: ' + _reason + _postPart + ' | Povidomlennia: ' + (text || '') + ' | Default: ' + (_prod.name || '');
+            await sendTelegramAlert(botId, _msg);
+            await db.session.update({ where: { id: session.id }, data: { context: { ..._c, unmatchedNotified: true } } }).catch(() => {});
+        }
+    } catch (e) { logger.warn('[zernioHandler] unmatched notify: ' + e.message); }
+    try { const _fs = await db.session.findUnique({ where: { id: session.id }, select: { context: true } }); const _cc = _fs && _fs.context && _fs.context.crmClientId; if (_cc && (!user.metadata || user.metadata.crmClientId !== _cc)) await db.user.update({ where: { id: user.id }, data: { metadata: { ...(user.metadata || {}), crmClientId: _cc } } }).catch(function(){}); } catch (e) {}
     logger.info('[zernioHandler] Inbound stored', { botId, sessionId: session.id, hasAd: !!adId });
     return { ok: true, processed: 1 };
 }
@@ -262,9 +327,11 @@ async function handleSideEvent(botId, event, body) {
 
     // Резолв сесії
     let session = null;
-    if (contactId) {
-        const user = await findOrCreateZernioUser(contactId, botId, contactName);
-        session = await findOrCreateZernioSession(user.id, botId, { conversationId, psid: String(contactId), senderName: contactName || undefined });
+    const selfIds = await getSelfIds(botId);
+    const realContactId = (contactId && !selfIds.has(String(contactId))) ? contactId : null;
+    if (realContactId) {
+        const user = await findOrCreateZernioUser(realContactId, botId, contactName);
+        session = await findOrCreateZernioSession(user.id, botId, { conversationId, psid: String(realContactId), senderName: contactName || undefined });
     } else {
         session = await findSessionByConversation(botId, conversationId);
     }
@@ -323,6 +390,13 @@ async function handleSideEvent(botId, event, body) {
     // ── message.sent: оператор відповів прямо з інбокса Zernio (не наш API) ──
     if (event === 'message.sent') {
         if (msg.id) { const mine = await findMessageByZid(session.id, msg.id, msg.platformMessageId); if (mine) return { ok: true, processed: 0 }; }
+        // Echo нашого ж вихідного (flow вже зберіг це повідомлення) — не дублювати, лише дотегнути id.
+        const _sentText = msg.text || '';
+        if (_sentText) {
+            const _recent = await db.message.findMany({ where: { sessionId: session.id, role: 'assistant', content: _sentText, createdAt: { gte: new Date(Date.now() - 180000) } }, orderBy: { createdAt: 'desc' }, take: 3 });
+            const _ourEcho = _recent.find((r) => ((r.metadata || {}).source) !== 'zernio_inbox');
+            if (_ourEcho) { const _c = _ourEcho.metadata || {}; if (!_c.zernioMessageId && msg.id) await db.message.update({ where: { id: _ourEcho.id }, data: { metadata: { ..._c, zernioMessageId: msg.id, status: 'sent' } } }).catch(() => {}); return { ok: true, processed: 0 }; }
+        }
         await db.message.create({ data: { sessionId: session.id, role: 'assistant', content: msg.text || '[повідомлення]', metadata: { source: 'zernio_inbox', zernioMessageId: msg.id || null, platformMessageId: msg.platformMessageId || null, status: 'sent' } } });
         return { ok: true, processed: 1 };
     }
@@ -342,3 +416,4 @@ async function handleSideEvent(botId, event, body) {
 }
 
 module.exports = { handleZernioEvent, sendZernioMessage };
+

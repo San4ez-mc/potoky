@@ -465,6 +465,7 @@ export const NODE_TYPES = {
     generateDocument: GenerateDocumentNode,
     fetchTelegramProfile: FetchTelegramProfileNode,
     notifyAdmin: NotifyAdminNode,
+    notifyTg: NotifyAdminNode, // сповіщення в Telegram-групу — рендеримо як action-ноду (не білий квадрат)
     fbEvent: NotifyAdminNode, // #305 FB CAPI — рендеримо як action-ноду
     knowledgeBase: KnowledgeBaseNode,
     agent: ClaudeNode, // AI agent (Claude + tools) — render like a Claude node instead of blank white
@@ -489,6 +490,9 @@ export const NODE_PALETTE = [
     { type: 'notifyAdmin', icon: '📣', label: 'Сповістити адміна', color: 'border-amber-700', group: 'Повідомлення',
         description: 'Відправляє повідомлення адміну в Telegram',
         defaultData: { label: 'Сповістити адміна', targetKey: 'ADMIN_TELEGRAM_ID', message: '💰 Нова оплата!', notifyUser: true, userMessage: '✅ Оплату отримано! Дякую, що обрав курс.' } },
+    { type: 'notifyTg', icon: '📨', label: 'Сповіщення в групу', color: 'border-amber-700', group: 'Повідомлення',
+        description: 'Відправляє повідомлення у Telegram-групу/чат (targetKey — ім\'я ключа з chat_id, TELEGRAM_BOT_TOKEN — токен бота).',
+        defaultData: { label: 'Сповіщення в групу', targetKey: 'ADMIN_TELEGRAM_ID', message: 'Нова подія' } },
     { type: 'fbEvent', icon: '📊', label: 'FB подія (CAPI)', color: 'border-sky-700', group: 'Повідомлення',
         description: 'Facebook Conversions API — server-side подія (Lead/Purchase). Потрібні ключі FB_PIXEL_ID + FB_CAPI_TOKEN. Best-effort — не блокує воронку (тестові ключі пропускаються).',
         defaultData: { label: 'FB: Lead', eventName: 'Lead', value: '', currency: 'USD' } },

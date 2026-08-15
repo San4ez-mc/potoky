@@ -106,7 +106,7 @@ const TOOLS = [
             '• claude — { systemPrompt, model, mode, outputVar, connectorId, exitCondition } — mode: "single"|"dialog"; exitCondition: "json_output"|"first_response"|"user_confirms"|"keyword:WORD"\n' +
             '• condition — { conditions: [{ id, label, expression }] } — expression is a JS boolean expression on context\n' +
             '• js — { code } — JS code with access to context/user/session; must return context object\n' +
-            '• connector — { connectorType, action, amount, currency, orderReference, description, outputVar } — for WayForPay: action="create_invoice"\n' +
+            '• connector — { connectorType, action, amount, currency, orderReference, description, outputVar } — WayForPay: action="create_invoice"; ibanoplata: action="create_invoice"(amount,paymentPurpose,outputVar→ctx.ibanPayUrl,ctx.orderRef,ctx.ibanInvoiceUid)|"delete_invoice"(invoiceUid); monobank: action="get_statement"(windowHours,outputVar→ctx.monoStatement=[{amountUah,comment,time,id}])\n' +
             '• saveFile — { fileType, contentVar } — saves context var as user file; fileType: "cashflow_articles"|"business_process"|etc.\n' +
             '• loadFile — { fileType, outputVar, onMissing } — onMissing: "ask"|"skip"|"block"\n' +
             '• httpRequest — { url, method, bodyTemplate, outputVar, responsePath } — method: "GET"|"POST"|"PUT"|"DELETE"\n' +

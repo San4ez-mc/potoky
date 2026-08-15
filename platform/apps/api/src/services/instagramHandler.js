@@ -202,8 +202,16 @@ async function handleInstagramEvent(botId, body) {
                 const ctxNow = session.context || {};
                 if (!ctxNow.adminEngaged && !ctxNow.funnelPaused) {
                     const sinceTime = new Date();
+                    // Вхідне зображення (скрін/квитанція оплати) → context.lastReceiptImageUrl.
+                    let inImageUrl = null;
+                    const _atts = m.message && Array.isArray(m.message.attachments) ? m.message.attachments : [];
+                    for (const a of _atts) {
+                        const u = a && a.payload && a.payload.url;
+                        const t = String((a && a.type) || '').toLowerCase();
+                        if (u && String(u).startsWith('http') && (t === 'image' || t === 'photo')) { inImageUrl = u; break; }
+                    }
                     try {
-                        await executeFlowStep({ sessionId: session.id, incomingUserMessage: text });
+                        await executeFlowStep({ sessionId: session.id, incomingUserMessage: text, incomingImageUrl: inImageUrl });
                     } catch (e) {
                         logger.error('[instagramHandler] flow step failed', { botId, sessionId: session.id, error: e.message });
                     }

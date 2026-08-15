@@ -14,6 +14,12 @@ const { handleTelegramUpdate } = require('../../../../projects/finance-course/sr
 
 const MAX_SAFE_TELEGRAM_ID = 9007199254740991;
 
+// monobank personal API дозволяє 1 запит виписки / 60 c на токен. Кешуємо останню
+// відповідь у памʼяті процесу і віддаємо кеш, якщо з моменту виклику минуло < 60 c.
+// Ключ — токен. { at: ms, items: [...] }
+const MONO_STATEMENT_CACHE = new Map();
+const MONO_MIN_INTERVAL_MS = 60 * 1000;
+
 const FILE_SEED_DEFAULTS = {
     articles: JSON.stringify({
         cashflow: { inflows: ['Основний дохід', 'Додатковий дохід'], outflows: ['Зарплата', 'Оренда', 'Реклама'] },
@@ -240,6 +246,27 @@ function truncateHistory(messages, maxItems = 24) {
     if (!Array.isArray(messages)) return [];
     if (messages.length <= maxItems) return messages;
     return messages.slice(messages.length - maxItems);
+}
+
+// Build a role-alternating message list from a raw session window. Anthropic requires
+// the first message to be from the user and roles to alternate, so we drop leading
+// assistant turns and merge consecutive same-role turns into one. Used to seed a
+// dialog Claude node with recent cross-node context (e.g. a terse "Так" after a
+// follow-up reminder) so the model doesn't misread the reply in isolation.
+function normalizeAlternating(messages) {
+    const out = [];
+    for (const m of (messages || [])) {
+        if (!m || !m.content) continue;
+        const role = m.role === 'assistant' ? 'assistant' : 'user';
+        if (out.length === 0 && role !== 'user') continue; // must start with user
+        const last = out[out.length - 1];
+        if (last && last.role === role) {
+            last.content = `${last.content}\n${m.content}`;
+        } else {
+            out.push({ role, content: m.content });
+        }
+    }
+    return out;
 }
 
 // Replaces literal newlines/carriage-returns inside JSON string values with their
@@ -650,7 +677,7 @@ async function getSystemKeyValue(keyName) {
     return connector.config[def.field] || null;
 }
 
-async function executeFlowStep({ sessionId, incomingUserMessage = null, incomingFile = null }) {
+async function executeFlowStep({ sessionId, incomingUserMessage = null, incomingFile = null, incomingImageUrl = null }) {
     const session = await db.session.findUnique({
         where: { id: sessionId },
         include: { user: true, bot: true },
@@ -711,6 +738,23 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
         if (__vc?.config?.GOOGLE_PROJECT_ID) funnelEnv.GOOGLE_PROJECT_ID = __vc.config.GOOGLE_PROJECT_ID;
     }
 
+    // Recent cross-node conversation window — lets a dialog Claude node interpret a
+    // terse reply (e.g. "Так" after a follow-up reminder) with its prior context
+    // instead of reading it in isolation. Node-scoped dialogHistory still wins when
+    // present; this only seeds nodes whose own history is empty. See normalizeAlternating.
+    let conversationWindow = [];
+    try {
+        const recentRows = await db.message.findMany({
+            where: { sessionId: session.id },
+            orderBy: { createdAt: 'desc' },
+            take: 16,
+            select: { role: true, content: true, metadata: true },
+        });
+        conversationWindow = recentRows.reverse()
+            .filter((m) => (m.role === 'user' || m.role === 'assistant') && m.content && !(m.metadata && m.metadata.hidden))
+            .map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content).slice(0, 1200) }));
+    } catch (_e) { conversationWindow = []; }
+
     if (!runtime.currentNodeId) {
         runtime.currentNodeId = findStartNode(flow.nodes)?.id || null;
     }
@@ -720,6 +764,11 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
         runtime.waitingForUser = false;
         // Вхідний файл кладемо у контекст (як lastUserMessage) — його спожиє нода readFile.
         if (incomingFile) ctx.lastFile = incomingFile;
+    }
+    // Вхідне зображення (скрін/фото квитанції) → у контекст для нод звірки оплати.
+    if (incomingImageUrl) {
+        ctx.lastReceiptImageUrl = incomingImageUrl;
+        ctx.lastUserImageUrl = incomingImageUrl;
     }
 
     let lastAssistant = null;
@@ -740,6 +789,8 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
             session: { id: session.id, state: session.state },
             input: runtime.lastUserMessage || '',
             env: funnelEnv,
+            // JSON array of {role,content} — usable as messagesTemplate:'{{conversationHistory}}'
+            conversationHistory: safeJsonStringify(conversationWindow),
             now: {
                 iso: _nowDate.toISOString(),
                 date: _nowDate.toISOString().slice(0, 10),       // YYYY-MM-DD
@@ -875,7 +926,16 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                 } else if (data.messagesTemplate) {
                     messages = parseClaudeMessages(data.messagesTemplate, claudeScope, userContent);
                 } else {
-                    messages = [{ role: 'user', content: userContent }];
+                    // No node-scoped history yet — seed with the recent session window so a
+                    // terse reply keeps its context (fixes the "Так" after reminder misread).
+                    const seeded = normalizeAlternating(conversationWindow);
+                    const lastItem = seeded[seeded.length - 1];
+                    if (lastItem && lastItem.role === 'user' && String(userContent).startsWith(lastItem.content)) {
+                        messages = seeded;
+                    } else {
+                        messages = normalizeAlternating([...conversationWindow, { role: 'user', content: userContent }]);
+                    }
+                    if (messages.length === 0) messages = [{ role: 'user', content: userContent || 'Продовжуємо' }];
                 }
             } else {
                 messages = parseClaudeMessages(data.messagesTemplate, claudeScope, runtime.lastUserMessage || '');
@@ -2169,6 +2229,108 @@ ${_baseUrl}/legal/terms — Правила використання`;
                             await sendMessage(String(adminId), notifyText, { parse_mode: 'Markdown' }, session.id).catch(() => {});
                         }
                     } catch (_notifyErr) { /* silent fail */ }
+                }
+
+                // ── ibanoplata: створення IBAN-посилання на оплату (orderRef у призначенні) ──
+                if (connectorType === 'ibanoplata' && action === 'create_invoice') {
+                    const apiKey = (config.api_key || config.apiKey || '').trim();
+                    const orgName = renderTemplate(data.organizationName || config.organization_name || '', scope);
+                    const idCode = renderTemplate(data.identificationCode || config.identification_code || '', scope);
+                    const iban = renderTemplate(data.iban || config.iban || '', scope);
+                    const amountNum = parseFloat(String(renderTemplate(data.amount || '{{context.payAmount}}', scope)).replace(',', '.')) || 0;
+                    // orderRef — короткий унікальний ідентифікатор замовлення, який летить у
+                    // призначення платежу → потім шукаємо його у виписці Mono.
+                    let orderRef = (ctx.orderRef || '').toString().trim();
+                    if (!orderRef) {
+                        orderRef = 'GOV' + (Number(session.user && session.user.telegramId || 0).toString(36).slice(-4) + Date.now().toString(36).slice(-4)).toUpperCase();
+                        ctx.orderRef = orderRef;
+                    }
+                    const paymentPurpose = renderTemplate(data.paymentPurpose || `Оплата за товар ${orderRef}`, scope);
+                    const clientNotes = renderTemplate(data.clientNotes || `Замовлення ${orderRef}`, scope);
+                    const expirationHours = parseInt(data.expirationHours || config.expiration_hours || 24, 10) || 24;
+                    const reqBody = {
+                        organizationName: orgName, identificationCode: idCode, iban,
+                        amount: Math.round(amountNum * 100) / 100,
+                        paymentPurpose, notes: orderRef, clientNotes, expirationHours,
+                    };
+                    const ibStart = Date.now();
+                    let ibJson = {}; let ibStatus = null;
+                    try {
+                        const r = await fetch('https://api.ibanoplata.com/v2/iban-invoice', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-Api-Key': apiKey },
+                            body: JSON.stringify(reqBody),
+                        });
+                        ibStatus = r.status;
+                        ibJson = await r.json().catch(() => ({}));
+                    } catch (e) { ibJson = { errorMessage: e.message }; }
+                    const payUrl = ibJson.ibanInvoiceUrl || '';
+                    if (payUrl) {
+                        ctx.ibanPayUrl = payUrl;
+                        ctx.ibanInvoiceUid = ibJson.ibanInvoiceUid || '';
+                        if (outputVar) setByPath(ctx, outputVar, payUrl);
+                    }
+                    db.apiCall.create({ data: {
+                        sessionId: session.id, service: 'ibanoplata', method: 'create_invoice',
+                        requestData: { amount: reqBody.amount, paymentPurpose, orderRef },
+                        responseData: { ibanInvoiceUid: ibJson.ibanInvoiceUid || null, ibanInvoiceUrl: payUrl || null, error: ibJson.errorMessage || null },
+                        statusCode: ibStatus, durationMs: Date.now() - ibStart,
+                    } }).catch(() => {});
+                }
+
+                // ── monobank ФОП: отримання виписки (кредити) для звірки оплат ──
+                if (connectorType === 'monobank' && action === 'get_statement') {
+                    const token = (config.token || config.api_key || '').trim();
+                    const account = (renderTemplate(data.accountId || config.account_id || '0', scope) || '0').trim() || '0';
+                    const windowHours = parseInt(data.windowHours || 48, 10) || 48;
+                    const cacheKey = `${token}:${account}`;
+                    const cached = MONO_STATEMENT_CACHE.get(cacheKey);
+                    let items = null; let monoStatus = null;
+                    const monoStart = Date.now();
+                    if (cached && (Date.now() - cached.at) < MONO_MIN_INTERVAL_MS) {
+                        items = cached.items; monoStatus = 304; // кеш — щоб не порушити ліміт 1/60c
+                    } else {
+                        const from = Math.floor((Date.now() - windowHours * 3600 * 1000) / 1000);
+                        try {
+                            const r = await fetch(`https://api.monobank.ua/personal/statement/${encodeURIComponent(account)}/${from}`, { headers: { 'X-Token': token } });
+                            monoStatus = r.status;
+                            const j = await r.json().catch(() => null);
+                            if (Array.isArray(j)) { items = j; MONO_STATEMENT_CACHE.set(cacheKey, { at: Date.now(), items: j }); }
+                            else if (cached) { items = cached.items; } // 429/помилка — беремо останнє добре
+                            else { items = []; }
+                        } catch (e) { items = cached ? cached.items : []; }
+                    }
+                    const credits = (items || []).filter((t) => t && Number(t.amount) > 0).map((t) => ({
+                        id: t.id, amountUah: Math.round(Number(t.amount)) / 100, time: t.time,
+                        comment: t.comment || '', description: t.description || '',
+                    }));
+                    ctx.monoStatement = credits;
+                    if (outputVar) setByPath(ctx, outputVar, credits);
+                    db.apiCall.create({ data: {
+                        sessionId: session.id, service: 'monobank', method: 'get_statement',
+                        requestData: { account, windowHours },
+                        responseData: { count: credits.length, fromCache: monoStatus === 304 },
+                        statusCode: monoStatus, durationMs: Date.now() - monoStart,
+                    } }).catch(() => {});
+                }
+
+                // ── ibanoplata: видалення посилання (після оплати або протягом cron) ──
+                if (connectorType === 'ibanoplata' && action === 'delete_invoice') {
+                    const apiKey = (config.api_key || config.apiKey || '').trim();
+                    const uid = (renderTemplate(data.invoiceUid || '{{context.ibanInvoiceUid}}', scope) || '').trim();
+                    if (uid) {
+                        const dStart = Date.now(); let dStatus = null;
+                        try {
+                            const r = await fetch(`https://api.ibanoplata.com/v2/iban-invoice/${encodeURIComponent(uid)}`, {
+                                method: 'DELETE', headers: { Accept: 'application/json', 'X-Api-Key': apiKey },
+                            });
+                            dStatus = r.status;
+                        } catch (_e) { /* best-effort */ }
+                        db.apiCall.create({ data: {
+                            sessionId: session.id, service: 'ibanoplata', method: 'delete_invoice',
+                            requestData: { uid }, responseData: {}, statusCode: dStatus, durationMs: Date.now() - dStart,
+                        } }).catch(() => {});
+                    }
                 }
             } catch (connectorError) {
                 console.error(`[connector:${connectorType}] Error:`, connectorError.message);

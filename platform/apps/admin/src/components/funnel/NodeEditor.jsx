@@ -611,6 +611,91 @@ function ConnectorNodeEditor({ data, update, connectors }) {
                     </Field>
                 </>
             )}
+
+            {/* IbanOplata-specific action fields */}
+            {data.connectorType === 'ibanoplata' && (
+                <>
+                    <Field label="Дія">
+                        <select
+                            value={data.action || 'create_invoice'}
+                            onChange={e => update({ action: e.target.value })}
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+                        >
+                            <option value="create_invoice">create_invoice — Створити посилання</option>
+                            <option value="delete_invoice">delete_invoice — Видалити посилання</option>
+                        </select>
+                    </Field>
+                    {data.action !== 'delete_invoice' && (
+                        <>
+                            <Field label="Сума (amount)">
+                                <input
+                                    value={data.amount || ''}
+                                    onChange={e => update({ amount: e.target.value })}
+                                    placeholder="{{context.payAmount}}"
+                                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-brand"
+                                />
+                            </Field>
+                            <Field label="Призначення платежу (paymentPurpose)">
+                                <input
+                                    value={data.paymentPurpose || ''}
+                                    onChange={e => update({ paymentPurpose: e.target.value })}
+                                    placeholder="Оплата за товар {{context.orderRef}}"
+                                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-brand"
+                                />
+                            </Field>
+                            <Field label="Output var (куди зберегти URL оплати)">
+                                <input
+                                    value={data.outputVar || ''}
+                                    onChange={e => update({ outputVar: e.target.value })}
+                                    placeholder="context.ibanPayUrl"
+                                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-brand"
+                                />
+                            </Field>
+                        </>
+                    )}
+                    {data.action === 'delete_invoice' && (
+                        <Field label="Invoice UID (що видалити)">
+                            <input
+                                value={data.invoiceUid || ''}
+                                onChange={e => update({ invoiceUid: e.target.value })}
+                                placeholder="{{context.ibanInvoiceUid}}"
+                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-brand"
+                            />
+                        </Field>
+                    )}
+                </>
+            )}
+
+            {/* Monobank-specific action fields */}
+            {data.connectorType === 'monobank' && (
+                <>
+                    <Field label="Дія">
+                        <select
+                            value={data.action || 'get_statement'}
+                            onChange={e => update({ action: e.target.value })}
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+                        >
+                            <option value="get_statement">get_statement — Виписка (кредити)</option>
+                        </select>
+                    </Field>
+                    <Field label="Вікно, годин (windowHours)">
+                        <input
+                            value={data.windowHours || ''}
+                            onChange={e => update({ windowHours: e.target.value })}
+                            placeholder="48"
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-brand"
+                        />
+                    </Field>
+                    <Field label="Output var (куди зберегти виписку)">
+                        <input
+                            value={data.outputVar || ''}
+                            onChange={e => update({ outputVar: e.target.value })}
+                            placeholder="context.monoStatement"
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-brand"
+                        />
+                    </Field>
+                </>
+            )}
         </div>
     );
 }

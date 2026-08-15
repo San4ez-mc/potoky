@@ -1173,6 +1173,10 @@ async function _handlePlatformBotUpdateInner(botId, update) {
             incomingFile: (!isStart && incomingMedia && incomingMedia.type === 'document' && incomingMedia.fileUrl)
                 ? { fileId: incomingMedia.fileId, fileUrl: incomingMedia.fileUrl, fileName: incomingMedia.fileName, mimeType: incomingMedia.mimeType }
                 : null,
+            // Вхідне фото (скрін/квитанція оплати) → context.lastReceiptImageUrl для нод звірки.
+            incomingImageUrl: (!isStart && incomingMedia && incomingMedia.type === 'photo' && incomingMedia.fileUrl)
+                ? incomingMedia.fileUrl
+                : null,
         });
     } catch (err) {
         clearInterval(typingTimer);

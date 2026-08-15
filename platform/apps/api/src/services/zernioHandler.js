@@ -218,7 +218,8 @@ async function handleIncomingMessage(botId, body) {
     const ctxNow = session.context || {};
     if (!ctxNow.adminEngaged && !ctxNow.funnelPaused) {
         const sinceTime = new Date();
-        try { await executeFlowStep({ sessionId: session.id, incomingUserMessage: text }); }
+        const inImageUrl = (attachment && attachment.type === 'photo' && attachment.url && String(attachment.url).startsWith('http')) ? attachment.url : null;
+        try { await executeFlowStep({ sessionId: session.id, incomingUserMessage: text, incomingImageUrl: inImageUrl }); }
         catch (e) { logger.error('[zernioHandler] flow step failed', { botId, sessionId: session.id, error: e.message }); }
         const outMsgs = await db.message.findMany({ where: { sessionId: session.id, role: 'assistant', createdAt: { gt: sinceTime } }, orderBy: { createdAt: 'asc' } });
         for (const om of outMsgs) {

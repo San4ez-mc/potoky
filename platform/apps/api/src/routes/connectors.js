@@ -86,6 +86,35 @@ const BUILTIN_CONNECTORS = [
             ],
         },
     },
+    {
+        type: 'ibanoplata',
+        name: 'IbanOplata',
+        description: 'IbanOplata API — генерація IBAN-посилань на оплату (orderRef у призначенні). Ліміт ~20 активних посилань — видаляються після оплати/24 год.',
+        icon: '💳',
+        color: '#16A34A',
+        schema: {
+            fields: [
+                { key: 'api_key', label: 'API Key (X-Api-Key)', secret: true },
+                { key: 'organization_name', label: 'Юр. назва / ФОП', secret: false },
+                { key: 'identification_code', label: 'ЄДРПОУ / РНОКПП', secret: false },
+                { key: 'iban', label: 'IBAN одержувача', secret: false },
+                { key: 'expiration_hours', label: 'Термін дії посилання, год (дефолт 24)', secret: false },
+            ],
+        },
+    },
+    {
+        type: 'monobank',
+        name: 'Monobank ФОП',
+        description: 'Monobank personal API — виписка ФОП для звірки оплат (пошук orderRef у призначенні). Ліміт 1 запит виписки / 60 c.',
+        icon: '🐈‍⬛',
+        color: '#000000',
+        schema: {
+            fields: [
+                { key: 'token', label: 'X-Token (api.monobank.ua)', secret: true },
+                { key: 'account_id', label: 'ID рахунку (дефолт 0)', secret: false },
+            ],
+        },
+    },
 ];
 
 // GET /api/connectors — list all active connectors

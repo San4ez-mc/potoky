@@ -545,7 +545,7 @@ function KeyForm({ initial, onSave, onCancel, savedConnectors = [] }) {
 
 // ─── KeysPanel ────────────────────────────────────────────────────────────────
 export function KeysPanel({ embedded = false }) {
-    const { bot, keys, upsertKey, deleteKey, revealKey, reloadKeys } = useFunnelStore();
+    const { bot, keys, nodes, upsertKey, deleteKey, revealKey, reloadKeys } = useFunnelStore();
     const [editing, setEditing] = useState(null); // null | {} (new) | existing key
     const [isNew, setIsNew] = useState(false);
     const [allSavedConnectors, setAllSavedConnectors] = useState([]);
@@ -620,31 +620,47 @@ export function KeysPanel({ embedded = false }) {
         if (tgCurrent?.value) setSelectedTelegramConnectorId(String(tgCurrent.value));
     }, [keys]);
 
-    // Get required keys based on enabled channels
+    // Список потрібних ключів визначається з РЕАЛЬНИХ нод воронки + активних каналів,
+    // а не статичним списком. Кредитними (обов'язковими) вважаємо токени/ключі/секрети
+    // та *_CONNECTOR_ID; конфіги з дефолтами (мапи, сітки) не флагуємо.
     const getRequiredKeys = () => {
+        const req = new Set();
+        const hasTgConnector = keys.some(k => k.key === 'TELEGRAM_CONNECTOR_ID' && k.value);
+
+        // 1) Активні канали
         const channelsKey = keys.find(k => k.key === 'FUNNEL_CHANNELS');
         let channels = [];
         if (channelsKey?.value) {
-            try {
-                channels = JSON.parse(channelsKey.value);
-            } catch {
-                channels = channelsKey.value.split(',').map(v => v.trim());
+            try { channels = JSON.parse(channelsKey.value); }
+            catch { channels = channelsKey.value.split(',').map(v => v.trim()); }
+        }
+        if (channels.includes('telegram') && !hasTgConnector) req.add('TELEGRAM_BOT_TOKEN');
+        if (channels.includes('zernio')) { req.add('ZERNIO_API_TOKEN'); req.add('ZERNIO_ACCOUNT_ID'); }
+        if (channels.includes('instagram')) { req.add('INSTAGRAM_ACCESS_TOKEN'); req.add('INSTAGRAM_BUSINESS_ID'); }
+
+        // 2) Скан реальних нод
+        const CRED_RE = /(_TOKEN|_KEY|_SECRET|_PASSWORD|_CONNECTOR_ID)$/;
+        const envRe = /\{\{\s*env\.([A-Z0-9_]+)\s*\}\}/g;
+        const codeRe = /keys\.([A-Z0-9_]+)/g;
+        const nodeList = Array.isArray(nodes) ? nodes : [];
+        for (const n of nodeList) {
+            const d = (n && n.data) || {};
+            const blob = JSON.stringify(d || {});
+            let m;
+            // {{env.KEY}} у будь-якому текстовому полі — лише кредитні
+            while ((m = envRe.exec(blob))) { if (CRED_RE.test(m[1])) req.add(m[1]); }
+            // keys.KEY у js-нодах — лише кредитні
+            if (n.type === 'js' && d.code) { let cm; while ((cm = codeRe.exec(String(d.code)))) { if (CRED_RE.test(cm[1])) req.add(cm[1]); } }
+            // per-node-type
+            if (n.type === 'notifyAdmin' || n.type === 'notifyTg') { if (!hasTgConnector) req.add('TELEGRAM_BOT_TOKEN'); }
+            if ((n.type === 'claude' || n.type === 'agent') && !d.connectorId) req.add('CLAUDE_CONNECTOR_ID');
+            if (n.type === 'connector') {
+                if (d.connectorType === 'ibanoplata') { req.add('IBANOPLATA_API_KEY'); req.add('FOP_IBAN'); req.add('FOP_CODE'); req.add('FOP_NAME'); }
+                if (d.connectorType === 'monobank') { req.add('MONO_TOKEN'); }
+                if (d.connectorType === 'wayforpay') { req.add('WAYFORPAY_CONNECTOR_ID'); }
             }
         }
-
-        const required = [];
-        if (channels.includes('telegram')) {
-            // Токен може приходити зі збереженого конектора (TELEGRAM_CONNECTOR_ID) —
-            // тоді окремий TELEGRAM_BOT_TOKEN не обов'язковий.
-            const hasConnector = keys.some(k => k.key === 'TELEGRAM_CONNECTOR_ID' && k.value);
-            if (!hasConnector) required.push('TELEGRAM_BOT_TOKEN');
-            required.push('TELEGRAM_BOT_USERNAME');
-        }
-        if (channels.includes('instagram')) {
-            required.push('INSTAGRAM_ACCESS_TOKEN', 'INSTAGRAM_APP_SECRET', 'INSTAGRAM_VERIFY_TOKEN', 'INSTAGRAM_BUSINESS_ID', 'INSTAGRAM_USERNAME');
-        }
-
-        return required;
+        return Array.from(req);
     };
 
     const requiredKeys = getRequiredKeys();

@@ -164,15 +164,28 @@ function setEdge(edges, source, target, sourceHandle) {
     const fs = require('fs');
     fs.writeFileSync(`_backup_flow_${BOT_ID}_${Date.now()}.json`, JSON.stringify({ nodes: fd.nodes, edges: fd.edges }, null, 2));
     await db.flowDefinition.update({ where: { botId: BOT_ID }, data: { nodes, edges } });
-    const upKey = async (key, value) => {
+    const upKey = async (key, value, label, opts = {}) => {
         const ex = await db.funnelKey.findFirst({ where: { botId: BOT_ID, key } });
-        if (ex) await db.funnelKey.update({ where: { id: ex.id }, data: { value } });
-        else await db.funnelKey.create({ data: { botId: BOT_ID, key, value } });
+        if (ex) {
+            // не затираємо вже заповнене значення (напр. токен, який ввів користувач)
+            const data = {};
+            if (!opts.keepValue || !ex.value) data.value = value;
+            if (label != null) data.label = label;
+            if (Object.keys(data).length) await db.funnelKey.update({ where: { id: ex.id }, data });
+        } else {
+            await db.funnelKey.create({ data: { botId: BOT_ID, key, value, label: label || null, isSecret: !!opts.isSecret } });
+        }
     };
-    await upKey('FOP_IBAN', FOP_IBAN);
-    await upKey('FOP_CODE', FOP_CODE);
-    await upKey('FOP_NAME', FOP_NAME);
-    await upKey('GEMINI_CONNECTOR_ID', GEMINI_CONNECTOR_ID);
-    console.log('✅ Записано + бекап збережено + ключі оновлено.');
+    await upKey('FOP_IBAN', FOP_IBAN, 'IBAN одержувача (ibanoplata/реквізити)');
+    await upKey('FOP_CODE', FOP_CODE, 'ЄДРПОУ/ІПН одержувача');
+    await upKey('FOP_NAME', FOP_NAME, 'Юр. назва / ФОП одержувача');
+    await upKey('GEMINI_CONNECTOR_ID', GEMINI_CONNECTOR_ID, 'Gemini конектор (ШІ-візія для скрінів)');
+    // Токени конекторів — заповнить користувач у ключах воронки (порожні плейсхолдери, не затираємо якщо вже є)
+    await upKey('IBANOPLATA_API_KEY', '', 'IbanOplata API Key (X-Api-Key) — заповнити', { isSecret: true, keepValue: true });
+    await upKey('MONO_TOKEN', '', 'Monobank ФОП X-Token — заповнити', { isSecret: true, keepValue: true });
+    await upKey('MONO_ACCOUNT_ID', '0', 'ID рахунку Mono (дефолт 0)', { keepValue: true });
+    // Прибрати instagram з каналів — бот працює через Zernio (прибирає хибну вимогу IG App-ключів)
+    await upKey('FUNNEL_CHANNELS', '["zernio"]', 'Канали запуску воронки');
+    console.log('✅ Записано + бекап збережено + ключі оновлено (канали: zernio).');
     process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -2083,7 +2083,11 @@ ${sourceContent || '(немає даних)'}
                     where: { type: connectorType, isActive: true },
                 });
 
-                if (!savedConnector) {
+                // Ключі можуть бути у САМІЙ воронці (funnelEnv), а не лише у збереженому
+                // конекторі — тоді savedConnector не обовʼязковий (перевага для one-funnel
+                // ключів). Це стосується ibanoplata/monobank; wayforpay лишається на конекторі.
+                const KEY_BASED = connectorType === 'ibanoplata' || connectorType === 'monobank';
+                if (!savedConnector && !KEY_BASED) {
                     console.warn(`[connector] Connector type "${connectorType}" not found or inactive`);
                     await logFlowError({
                         sessionId: session.id,
@@ -2096,7 +2100,7 @@ ${sourceContent || '(немає даних)'}
                     continue;
                 }
 
-                const config = savedConnector.config || {};
+                const config = (savedConnector && savedConnector.config) || {};
 
                 if (connectorType === 'wayforpay' && action === 'create_invoice') {
                     const merchantAccount = config.merchant_account || '';
@@ -2248,10 +2252,11 @@ ${_baseUrl}/legal/terms — Правила використання`;
 
                 // ── ibanoplata: створення IBAN-посилання на оплату (orderRef у призначенні) ──
                 if (connectorType === 'ibanoplata' && action === 'create_invoice') {
-                    const apiKey = (config.api_key || config.apiKey || '').trim();
-                    const orgName = renderTemplate(data.organizationName || config.organization_name || '', scope);
-                    const idCode = renderTemplate(data.identificationCode || config.identification_code || '', scope);
-                    const iban = renderTemplate(data.iban || config.iban || '', scope);
+                    // Ключі: перевага funnelEnv (ключі воронки) → потім збережений конектор.
+                    const apiKey = (funnelEnv.IBANOPLATA_API_KEY || config.api_key || config.apiKey || '').trim();
+                    const orgName = renderTemplate(data.organizationName || funnelEnv.FOP_NAME || config.organization_name || '', scope);
+                    const idCode = renderTemplate(data.identificationCode || funnelEnv.FOP_CODE || config.identification_code || '', scope);
+                    const iban = renderTemplate(data.iban || funnelEnv.FOP_IBAN || config.iban || '', scope);
                     const amountNum = parseFloat(String(renderTemplate(data.amount || '{{context.payAmount}}', scope)).replace(',', '.')) || 0;
                     // orderRef — короткий унікальний ідентифікатор замовлення, який летить у
                     // призначення платежу → потім шукаємо його у виписці Mono.
@@ -2262,7 +2267,7 @@ ${_baseUrl}/legal/terms — Правила використання`;
                     }
                     const paymentPurpose = renderTemplate(data.paymentPurpose || `Оплата за товар ${orderRef}`, scope);
                     const clientNotes = renderTemplate(data.clientNotes || `Замовлення ${orderRef}`, scope);
-                    const expirationHours = parseInt(data.expirationHours || config.expiration_hours || 24, 10) || 24;
+                    const expirationHours = parseInt(data.expirationHours || funnelEnv.IBANOPLATA_EXPIRATION_HOURS || config.expiration_hours || 24, 10) || 24;
                     const reqBody = {
                         organizationName: orgName, identificationCode: idCode, iban,
                         amount: Math.round(amountNum * 100) / 100,
@@ -2295,8 +2300,8 @@ ${_baseUrl}/legal/terms — Правила використання`;
 
                 // ── monobank ФОП: отримання виписки (кредити) для звірки оплат ──
                 if (connectorType === 'monobank' && action === 'get_statement') {
-                    const token = (config.token || config.api_key || '').trim();
-                    const account = (renderTemplate(data.accountId || config.account_id || '0', scope) || '0').trim() || '0';
+                    const token = (funnelEnv.MONO_TOKEN || config.token || config.api_key || '').trim();
+                    const account = (renderTemplate(data.accountId || funnelEnv.MONO_ACCOUNT_ID || config.account_id || '0', scope) || '0').trim() || '0';
                     const windowHours = parseInt(data.windowHours || 48, 10) || 48;
                     const cacheKey = `${token}:${account}`;
                     const cached = MONO_STATEMENT_CACHE.get(cacheKey);
@@ -2331,7 +2336,7 @@ ${_baseUrl}/legal/terms — Правила використання`;
 
                 // ── ibanoplata: видалення посилання (після оплати або протягом cron) ──
                 if (connectorType === 'ibanoplata' && action === 'delete_invoice') {
-                    const apiKey = (config.api_key || config.apiKey || '').trim();
+                    const apiKey = (funnelEnv.IBANOPLATA_API_KEY || config.api_key || config.apiKey || '').trim();
                     const uid = (renderTemplate(data.invoiceUid || '{{context.ibanInvoiceUid}}', scope) || '').trim();
                     if (uid) {
                         const dStart = Date.now(); let dStatus = null;

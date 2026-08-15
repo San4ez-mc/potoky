@@ -114,7 +114,7 @@ function setEdge(edges, source, target, sourceHandle) {
 
     // ── Ф2 повідомлення з посиланням + реквізитами (замість заглушки, зводить осиротілі ноди) ──
     upsertNode(nodes, 'n_requisites', { type: 'message', data: {
-        label: '11. Оплата: посилання + реквізити', buttons: [[{ text: '💳 Оплатити онлайн', url: '{{context.ibanPayUrl}}' }]],
+        label: '11. Оплата: посилання + реквізити', variants: [], buttons: [[{ text: '💳 Оплатити онлайн', url: '{{context.ibanPayUrl}}' }]],
         text: 'Готово! 🎉 Оплатити можна двома способами:\n\n1️⃣ Кнопкою нижче — посилання на оплату за IBAN 👇\n\n2️⃣ Або вручну за реквізитами:\n' + FOP_NAME + '\nIBAN: ' + FOP_IBAN + '\nЄДРПОУ/ІПН: ' + FOP_CODE + '\n📌 У коментарі до платежу вкажіть: {{context.orderRef}}\n\nСума до оплати: {{context.payAmount}} грн ({{context.payLabel}}).\nПісля оплати надішліть, будь ласка, чек/скріншот або посилання на квитанцію 🙏',
     } });
 

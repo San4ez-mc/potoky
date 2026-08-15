@@ -1941,6 +1941,7 @@ ${sourceContent || '(немає даних)'}
         }
 
         if (node.type === 'notifyTg') {
+            if (ctx.testMode) { runtime.currentNodeId = pickNextNodeId(flow.edges, node.id); continue; }
             try {
                 const _chat = funnelEnv[data.targetKey || 'ADMIN_TELEGRAM_ID'] || '';
                 const _tok = funnelEnv.TELEGRAM_BOT_TOKEN || '';
@@ -1954,6 +1955,7 @@ ${sourceContent || '(немає даних)'}
         }
 
         if (node.type === 'notifyAdmin') {
+            if (ctx.testMode) { runtime.currentNodeId = pickNextNodeId(flow.edges, node.id); continue; }
             try {
                 const adminTelegramIdValue = await getSystemKeyValue('ADMIN_TELEGRAM_ID');
 

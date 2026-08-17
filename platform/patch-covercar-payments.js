@@ -235,6 +235,26 @@ function setEdge(edges, source, target, sourceHandle) {
     setEdge(edges, 'n_supplier_order', 'n_supplier_notify');
     setEdge(edges, 'n_supplier_notify', 'n_confirm');
     setEdge(edges, 'n_supplier_cond', 'n_confirm', 'false');
+    // Другий допродаж: n_confirm → чекаємо відповідь → фінал → нагадування (як було)
+    setEdge(edges, 'n_confirm', 'n_upsell2_wait');
+    setEdge(edges, 'n_upsell2_wait', 'n_final');
+    setEdge(edges, 'n_final', 'n_followup_wait');
+
+    // ── Оплата: додати текст про комісію пошти (побажання клієнта) ──
+    upsertNode(nodes, 'n_pay', { data: { variants: [], text:
+        'Клас, оформлюємо! 🎉 Оберіть спосіб оплати:\n\n1️⃣ Часткова передплата 200 грн, решта — накладним платежем (комісія пошти: 20 грн + 2% від суми).\n2️⃣ Повна передплата — оплата всієї суми зараз.\n\nНапишіть 1 або 2 👇' } });
+
+    // ── Другий допродаж після оформлення (кроки 15-17 клієнта) ──
+    upsertNode(nodes, 'n_confirm', { data: { variants: [], text:
+        'Дякуємо за замовлення! 🎉 Номер накладної надішлемо в цей чат 📩\nПоки посилку не відправили — можете додати товар за спеціальною ціною. Акційні ціни діють лише зараз 🔥 Щось сподобалось — напишіть 😊' } });
+    upsertNode(nodes, 'n_upsell2_wait', { type: 'claude', position: { x: 320, y: 4900 }, data: {
+        label: '15. Другий допродаж — відповідь', mode: 'dialog', connectorId: '2ec53ba5-144e-463b-9758-c217c4a69b0e',
+        temperature: 0.3, exitCondition: 'first_response', outputVar: 'context.upsell2',
+        systemPrompt: 'Клієнт щойно оформив замовлення. Ти запропонував додати ще товар за акційною ціною.\nЯкщо клієнт цікавиться конкретним товаром — коротко допоможи (з наявних даних), інакше — тепло подякуй за замовлення.\nВідповідай ОДНИМ коротким дружнім реченням українською. Не став зайвих питань.',
+    } });
+    upsertNode(nodes, 'n_final', { type: 'message', position: { x: 320, y: 5000 }, data: {
+        label: '16. Замовлення прийняте', variants: [], text: 'Добре, замовлення прийняте ✔️ Дякуємо, що обрали нас! 🙌',
+    } });
 
     // ── testMode-гард у KeyCRM-ноді: тестові прогони не створюють реальних замовлень ──
     const crm = nodes.find((n) => n.id === 'n_crm_order');

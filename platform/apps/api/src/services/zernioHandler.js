@@ -264,6 +264,15 @@ async function handleIncomingMessage(botId, body) {
     });
 
     const ctxNow = session.context || {};
+    // Авто-передача людині: явне прохання / повернення / скарга / конфлікт / оплата.
+    // Не спрацьовує якщо замовлення вже прийняте (є crmOrderId) або оператор вже в діалозі.
+    const HANDOFF_RE = /менеджер|оператор|з людин|живою людин|поверн|обмін|обмен|\bбрак\b|скарг|жалоб|конфлікт|обман|шахра|не прийшл|не дійшл|не дошл/i;
+    if (text && HANDOFF_RE.test(text) && !ctxNow.adminEngaged && !ctxNow.crmOrderId) {
+        await db.session.update({ where: { id: session.id }, data: { context: { ...ctxNow, adminEngaged: true, handoffReason: text.slice(0, 120) } } }).catch(() => {});
+        await sendTelegramAlert(botId, '🙋 Потрібна людина у чаті (авто): "' + String(text).slice(0, 180) + '"\nКлієнт: ' + (contactName || contactId) + '\nСесія: ' + session.id);
+        logger.info('[zernioHandler] handoff triggered', { botId, sessionId: session.id });
+        return { ok: true, handoff: true };
+    }
     if (!ctxNow.adminEngaged && !ctxNow.funnelPaused) {
         const sinceTime = new Date();
         const inImageUrl = (attachment && attachment.type === 'photo' && attachment.url && String(attachment.url).startsWith('http')) ? attachment.url : null;

@@ -125,6 +125,51 @@ var od2=(o.json&&o.json.data)||{};
 return { supplierOrderResult:summary+'\\n✅ ID: '+(od2.id||'?')+(od2.ttn?(' | ТТН: '+od2.ttn):''), supplierOrderId:od2.id||null, supplierTtn:od2.ttn||'' };
 `.trim();
 
+// ── js-код ноди замовлення в easydrop (Django: login cookie-jar + CSRF + form-POST) ──
+const EASYDROP_ORDER_CODE = `
+if(context.testMode) return { supplierOrderResult:'(testMode: easydrop пропущено)' };
+var base=(keys.EASYDROP_BASE||'https://easydrop.one').replace(/\\/+$/,'');
+var login=(keys.EASYDROP_LOGIN||'').trim(), pass=(keys.EASYDROP_PASS||'').trim();
+var dryRun=String(keys.EASYDROP_DRY_RUN||'1')!=='0';
+if(!login||!pass) return { supplierOrderResult:'❌ EASYDROP_LOGIN/PASS не заповнено' };
+var cookies={};
+function setCk(res){ try{ var sc=res.headers.getSetCookie?res.headers.getSetCookie():[]; for(var i=0;i<sc.length;i++){ var p=sc[i].split(';')[0]; var idx=p.indexOf('='); if(idx>0) cookies[p.slice(0,idx)]=p.slice(idx+1); } }catch(e){} }
+function ck(){ return Object.keys(cookies).map(function(k){return k+'='+cookies[k];}).join('; '); }
+function tok(html){ var m=String(html||'').match(/name="csrfmiddlewaretoken" value="([^"]+)"/); return m?m[1]:(cookies['csrftoken']||''); }
+async function get(p){ return fetch(base+p,{headers:{'Cookie':ck(),'X-Requested-With':'XMLHttpRequest','Referer':base+'/offline-supplier-order'}}); }
+// 1) логін
+var r1=await fetch(base+'/login'); setCk(r1); var t1=tok(await r1.text());
+var r2=await fetch(base+'/login',{method:'POST',redirect:'manual',headers:{'Content-Type':'application/x-www-form-urlencoded','Cookie':ck(),'Referer':base+'/login','Origin':base},body:'csrfmiddlewaretoken='+encodeURIComponent(t1)+'&username='+encodeURIComponent(login)+'&password='+encodeURIComponent(pass)}); setCk(r2);
+var loc=r2.headers.get('location')||''; var hash=(loc.match(/hash=(\\d+)/)||[])[1];
+if(hash){ cookies['manager_hash']=hash; cookies['uid']='u-'+hash; }
+if(!cookies['sessionid']) return { supplierOrderResult:'❌ easydrop: логін не вдався' };
+// 2) постачальник
+var prod=context.product||{}, od=context.orderData||{};
+var map={}; try{ map=JSON.parse(keys.BREWDROP_ARTICLE_MAP||'{}'); }catch(e){}
+var mm=map[String(prod.id)]||{}; var article=(mm.article||prod.supplierArticle||'').trim();
+var supId=(keys.EASYDROP_SUPPLIER_ID||'').trim();
+if(!supId && keys.EASYDROP_SUPPLIER_NAME){ var rs=await get('/autocomplete/offline-supplier/?q='+encodeURIComponent(keys.EASYDROP_SUPPLIER_NAME)); var sj=await rs.json().catch(function(){return[];}); if(sj[0])supId=String(sj[0].value); }
+if(!supId) return { supplierOrderResult:'❌ easydrop: не задано EASYDROP_SUPPLIER_ID або NAME' };
+// 3) товар за артикулом (ярус: 1шт = не «2 шт»)
+var ri=await get('/autocomplete/offline-supplier-item/?q='+encodeURIComponent(article||prod.name||'')+'&pk='+encodeURIComponent(supId));
+var items=await ri.json().catch(function(){return[];});
+var pick=items.find(function(it){ return !/2\\s*шт/i.test(it.text||''); })||items[0];
+if(!pick) return { supplierOrderResult:'❌ easydrop: товар «'+(article||prod.name)+'» не знайдено у постачальника '+supId };
+// 4) csrf форми
+var r3=await fetch(base+'/offline-supplier-order',{headers:{'Cookie':ck()}}); setCk(r3); var otok=tok(await r3.text());
+// 5) форма
+var parts=String(od.fullName||'').split(/\\s+/); var last=parts[0]||'', first=parts[1]||'';
+var payType=((context.paymentInfo&&context.paymentInfo.method)==='full')?'2':'1';
+var prepay=payType==='1'?'200':'0';
+var send_data=(od.city||'')+', НП '+(od.branch||'');
+var form='date='+new Date().toISOString().slice(0,10)+'&send_data='+encodeURIComponent(send_data)+'&offline_supplier_select='+encodeURIComponent(supId)+'&payment_type='+payType+'&person_first_name='+encodeURIComponent(first)+'&person_last_name='+encodeURIComponent(last)+'&person_phone='+encodeURIComponent(od.phone||'')+'&ttn=&comment='+encodeURIComponent('Замовлення '+(context.orderRef||''))+'&partial_prepayment='+prepay+'&sell='+(Number(prod.price)||0)+'&cost=0&item_select='+encodeURIComponent(pick.value)+'&is_permanent_client=on&csrfmiddlewaretoken='+encodeURIComponent(otok);
+var summary='🧾 easydrop '+(dryRun?'(DRY-RUN)':'СТВОРЕНО')+':\\nПостачальник:'+supId+' | Товар: '+String(pick.text||'').slice(0,60)+'\\nОтримувач: '+last+' '+first+' '+(od.phone||'')+'\\nНП: '+send_data+' | оплата:'+(payType==='1'?'часткова 200':'повна');
+if(dryRun) return { supplierOrderResult:summary+'\\n⚠️ DRY-RUN: НЕ відправлено (EASYDROP_DRY_RUN=1).', supplierOrderPayload:form };
+var r4=await fetch(base+'/offline-supplier-order',{method:'POST',redirect:'manual',headers:{'Content-Type':'application/x-www-form-urlencoded','Cookie':ck(),'Referer':base+'/offline-supplier-order','Origin':base},body:form});
+var okDone=(r4.status>=300&&r4.status<400&&/accepted/.test(r4.headers.get('location')||''));
+return { supplierOrderResult:summary+(okDone?'\\n✅ Прийнято easydrop':'\\n❌ статус '+r4.status), supplierOrderStatus:okDone?'created':'error' };
+`.trim();
+
 function upsertNode(nodes, id, patch) {
     const i = nodes.findIndex((n) => n.id === id);
     if (i >= 0) { nodes[i] = { ...nodes[i], ...patch, data: { ...(nodes[i].data || {}), ...(patch.data || {}) } }; return false; }
@@ -160,8 +205,13 @@ function setEdge(edges, source, target, sourceHandle) {
         systemPrompt: 'Товар: {{context.product.name}} — {{context.product.price}} грн. Клієнт уже визначився з товаром і кольором. НЕ вигадуй розміри, кількість, категорію чи характеристики, яких немає в даних вище (це НЕ взуття/одяг з розмірами, якщо цього нема в назві). Єдина задача — зрозуміти, чи готовий оформити замовлення.\nВідповідай МАКСИМУМ одним коротким реченням українською, без службових токенів.\nВАЖЛИВО: коротка відповідь на попереднє питання/нагадування («так», «да», «хочу», «оформляй», «+», «ок», «давайте») — це ГОТОВНІСТЬ, НЕ жарт. Дивись історію листування вище.\nЗАВЖДИ додай у json_output рівно один JSON: {"ready":"yes"} — якщо погоджується/підтверджує; {"ready":"no"} — якщо вагається чи відмовляється.\nНе згадуй сайтів, кошиків, посилань — оформлення веде цей чат.',
     } });
     upsertNode(nodes, 'n_size', { data: {
-        systemPrompt: 'Ти — Оля, жива тепла продавчиня-консультантка GOVERLA. Українською, з турботою, доречні емодзі.\nТОВАР: {{context.product.name}} — {{context.product.price}} грн. {{context.product.desc}}. Кольори: {{context.product.colors}}.\nЦІЛЬ кроку: отримати ЗРІСТ (см) і ВАГУ (кг), щоб підібрати розмір.\nПРАВИЛА:\n1. Клієнт може написати як завгодно: «181 71», «зріст 181 вага 71», «мій ріст 181, 71 кг», «71кг 181см», «180/70». САМ визнач де зріст (150–210 см), де вага (40–160 кг).\n2. Якщо чогось бракує — тепло попроси саме це (напр.: «Підкажіть, будь ласка, ще вагу 🙂»). Пиши живо, не сухо.\n3. На питання про матеріал/ціну/доставку/колір — коротко відповідай з даних вище, тоді м’яко повертай до зросту/ваги.\n4. КОЛИ Є І ЗРІСТ, І ВАГА — поверни РІВНО один JSON у json_output: {"height": <см>, "weight": <кг>} і БІЛЬШЕ НІЧОГО (жодного тексту, НЕ називай і НЕ вгадуй розмір — його порахує система далі). Якщо клієнт сам наполіг на конкретному розмірі — додай "clothingSize".\nНе вигадуй товарів/кольорів, яких нема вище.',
+        systemPrompt: 'Ти — Оля, жива тепла продавчиня-консультантка GOVERLA. Українською, з турботою, доречні емодзі.\nТОВАР: {{context.product.name}} — {{context.product.price}} грн. {{context.product.desc}}. Кольори: {{context.product.colors}}.\nЦІЛЬ кроку: отримати ЗРІСТ (см) і ВАГУ (кг), щоб підібрати розмір.\nПРАВИЛА:\n1. Клієнт може написати як завгодно: «181 71», «зріст 181 вага 71», «мій ріст 181, 71 кг», «71кг 181см», «180/70». САМ визнач де зріст (150–210 см), де вага (40–160 кг).\n2. Якщо чогось бракує — тепло попроси саме це (напр.: «Підкажіть, будь ласка, ще вагу 🙂»). Пиши живо, не сухо.\n3. На питання про матеріал/ціну/доставку/колір — коротко відповідай з даних вище, тоді м’яко повертай до зросту/ваги.\n4. КОЛИ Є І ЗРІСТ, І ВАГА — поверни РІВНО один JSON у json_output: {"height": <см>, "weight": <кг>} і БІЛЬШЕ НІЧОГО (жодного тексту, НЕ називай і НЕ вгадуй розмір — його порахує система далі). Якщо клієнт сам наполіг на конкретному розмірі — додай "clothingSize".\n5b. Якщо клієнт ОДРАЗУ назвав готовий розмір (S/M/L/XL/XXL) без зросту/ваги — поверни РІВНО {"clothingSize":"<РОЗМІР>"} і більше нічого.\nНе вигадуй товарів/кольорів, яких нема вище.',
     } });
+    // ack+контент дублі: n_pay_collect і n_collect працюють ТИХО (json-only), видиме — наступна нода
+    upsertNode(nodes, 'n_pay_collect', { data: {
+        systemPrompt: 'Клієнту показали 2 способи оплати (1 — часткова передоплата 200 грн, 2 — повна). Визнач вибір.\n«1»/«часткова»/«післяплата»/«наложка»/«200» → cod. «2»/«повна»/«передоплата»/«зараз»/«повністю» → full.\nПоверни ТІЛЬКИ json_output {"method":"cod"} або {"method":"full"} — БЕЗ видимого тексту (клієнту напише наступний крок). Інших способів не вигадуй.' } });
+    upsertNode(nodes, 'n_collect', { data: {
+        systemPrompt: 'Збери дані доставки Новою Поштою: ПІБ, ТЕЛЕФОН, МІСТО, № ВІДДІЛЕННЯ.\nЯкщо чогось бракує — тепло попроси саме це (коротко, з турботою).\nКоли є ВСІ 4 — поверни ТІЛЬКИ json_output {"fullName":"...","phone":"...","city":"...","branch":"..."} БЕЗ видимого тексту (подяку напише наступний крок). Не згадуй сайтів.' } });
     upsertNode(nodes, 'n_color', { data: {
         systemPrompt: 'Ти — жива продавчиня-консультантка GOVERLA. Товар: {{context.product.name}} ({{context.product.desc}}), ціна {{context.product.price}} грн. Веди діалог САМЕ про цей товар — НЕ вигадуй іншу категорію, розміри чи характеристики, яких немає в даних вище.\nКлієнт обирає КОЛІР. Доступні кольори: {{context.product.colors}}.\nВідповідай одним коротким дружнім реченням українською. Пропонуй лише наявні кольори; якщо просять інший — скажи, які є. На питання про матеріал/ціну/доставку — коротко з даних вище, тоді повертай до вибору кольору.\nКоли клієнт назвав колір із наявних — ЗАВЖДИ додай у json_output рівно один JSON: {"color":"<колір>"}. Жодних службових токенів не пиши.',
     } });
@@ -215,7 +265,13 @@ function setEdge(edges, source, target, sourceHandle) {
     upsertNode(nodes, 'n_supplier_order', { type: 'js', position: { x: 120, y: 4500 }, data: {
         label: '13.6 Замовлення постачальнику (brewdrop)', code: BREWDROP_ORDER_CODE,
     } });
-    upsertNode(nodes, 'n_supplier_notify', { type: 'notifyAdmin', position: { x: 120, y: 4600 }, data: {
+    upsertNode(nodes, 'n_supplier_cond_ed', { type: 'condition', position: { x: 640, y: 4500 }, data: {
+        label: '13.6b Постачальник easydrop/zahid?', condition: "context.supplier && /easydrop|zahid/i.test(String(context.supplier))",
+    } });
+    upsertNode(nodes, 'n_supplier_order_ed', { type: 'js', position: { x: 640, y: 4600 }, data: {
+        label: '13.6c Замовлення постачальнику (easydrop)', code: EASYDROP_ORDER_CODE,
+    } });
+    upsertNode(nodes, 'n_supplier_notify', { type: 'notifyAdmin', position: { x: 120, y: 4650 }, data: {
         label: '13.7 Результат постачальнику → Telegram', targetKey: 'ADMIN_TELEGRAM_ID',
         message: '🏭 Постачальник (замовлення {{context.orderRef}}):\n{{context.supplierOrderResult}}',
     } });
@@ -248,7 +304,11 @@ function setEdge(edges, source, target, sourceHandle) {
     setEdge(edges, 'n_ttn_cond', 'n_ttn_client', 'true');
     setEdge(edges, 'n_ttn_client', 'n_confirm');
     setEdge(edges, 'n_ttn_cond', 'n_confirm', 'false');
-    setEdge(edges, 'n_supplier_cond', 'n_confirm', 'false');
+    // brewdrop? ні → easydrop? ні → одразу підтвердження
+    setEdge(edges, 'n_supplier_cond', 'n_supplier_cond_ed', 'false');
+    setEdge(edges, 'n_supplier_cond_ed', 'n_supplier_order_ed', 'true');
+    setEdge(edges, 'n_supplier_order_ed', 'n_supplier_notify');
+    setEdge(edges, 'n_supplier_cond_ed', 'n_confirm', 'false');
     // Прибрати дубль «Цей товар у наявності» з щасливого шляху (менше повідомлень підряд)
     setEdge(edges, 'n_avail_cond', 'n_upsell_cond', 'true');
     // Другий допродаж: n_confirm → чекаємо відповідь → фінал → нагадування (як було)
@@ -323,6 +383,8 @@ function setEdge(edges, source, target, sourceHandle) {
     // Прибрати instagram з каналів — бот працює через Zernio (прибирає хибну вимогу IG App-ключів)
     await upKey('FUNNEL_CHANNELS', '["zernio"]', 'Канали запуску воронки');
     await upKey('BREWDROP_DRY_RUN', '1', 'brewdrop: 1=тест (не відправляє замовлення), 0=бойовий', { keepValue: true });
+    await upKey('EASYDROP_DRY_RUN', '1', 'easydrop: 1=тест, 0=бойовий', { keepValue: true });
+    await upKey('EASYDROP_SUPPLIER_NAME', '', 'easydrop: назва постачальника лоферів (напр. zahid_drop) — для пошуку id', { keepValue: true });
     console.log('✅ Записано + бекап збережено + ключі оновлено (канали: zernio).');
     process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -474,6 +474,209 @@ function ApiCallItem({ call }) {
     );
 }
 
+// ─── Node execution trace (вкладка «Ноди») ───────────────────────────────────
+const NODE_ICON = {
+    start: '🚀', message: '💬', claude: '🧠', agent: '🤖', js: '⚙️', condition: '🔀',
+    connector: '🔌', wait: '⏳', wait_payment: '💳', httpRequest: '🌐', httpEncode: '🔑',
+    sendPhoto: '📸', sendDocument: '📎', sendFile: '📎', notifyAdmin: '📣', notifyTg: '📨',
+    fbEvent: '📊', saveFile: '💾', loadFile: '📂', readFile: '📄', generateDocument: '📝',
+    knowledgeBase: '📚', fetchTelegramProfile: '👤', tag: '🏷️', abtest: '🔬',
+};
+
+function prettyVal(raw) {
+    if (raw == null) return '';
+    if (typeof raw !== 'string') return JSON.stringify(raw, null, 2);
+    try { return JSON.stringify(JSON.parse(raw), null, 2); } catch { return raw; }
+}
+
+// Значення, згорнуте за замовчуванням якщо довге; іконка ⤢ розгортає повністю.
+function CollapsibleValue({ value }) {
+    const [open, setOpen] = useState(false);
+    const text = prettyVal(value);
+    const long = text.length > 160 || text.includes('\n');
+    if (!long) return <span className="text-xs text-gray-200 font-mono break-all">{text}</span>;
+    return (
+        <div>
+            <button onClick={() => setOpen(o => !o)} className="text-[11px] text-brand-light hover:underline mb-1">
+                {open ? '▲ згорнути' : '⤢ розгорнути'} ({text.length} симв.)
+            </button>
+            <pre className={`text-xs text-gray-300 font-mono bg-gray-900 rounded p-2 overflow-x-auto ${open ? 'max-h-none' : 'max-h-16 overflow-y-hidden'}`}>{text}</pre>
+        </div>
+    );
+}
+
+function KVList({ obj, empty }) {
+    const keys = Object.keys(obj || {});
+    if (!keys.length) return <div className="text-[11px] text-gray-600 italic">{empty}</div>;
+    return (
+        <div className="space-y-1.5">
+            {keys.map(k => (
+                <div key={k} className="grid grid-cols-[minmax(90px,180px)_1fr] gap-2 items-start">
+                    <span className="text-[11px] text-gray-500 font-mono break-all pt-0.5">{k}</span>
+                    <CollapsibleValue value={obj[k]} />
+                </div>
+            ))}
+        </div>
+    );
+}
+
+function NodeTraceCard({ trace, apiCalls, errors, defaultOpen }) {
+    const [open, setOpen] = useState(!!defaultOpen);
+    const icon = NODE_ICON[trace.nodeType] || '📦';
+    const hasErr = errors.length > 0;
+    return (
+        <div className={`border rounded-lg overflow-hidden ${hasErr ? 'border-red-800' : 'border-gray-700'}`}>
+            <button onClick={() => setOpen(o => !o)}
+                className="w-full flex items-center gap-2 px-3 py-2 bg-gray-900 hover:bg-gray-800 text-left transition-colors">
+                <span className="text-[11px] text-gray-600 font-mono w-6 shrink-0">#{trace.seq}</span>
+                <span className="text-base shrink-0">{icon}</span>
+                <span className="text-sm text-gray-200 truncate">{trace.label || trace.nodeId}</span>
+                <span className="text-[10px] text-gray-500 font-mono hidden sm:inline">{trace.nodeType}</span>
+                <span className="ml-auto flex items-center gap-1.5 shrink-0">
+                    {apiCalls.length > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-900/40 text-sky-300">📡 {apiCalls.length}</span>}
+                    {hasErr && <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-900/40 text-red-300">✖ {errors.length}</span>}
+                    {typeof trace.tookMs === 'number' && <span className="text-[10px] text-gray-600">{trace.tookMs}ms</span>}
+                    <span className="text-gray-600">{open ? '▲' : '▼'}</span>
+                </span>
+            </button>
+            {open && (
+                <div className="px-3 pb-3 bg-gray-950 space-y-3 pt-2">
+                    <div>
+                        <div className="text-[11px] text-gray-500 mb-1 font-semibold">⬇ Вхідні (конфіг ноди)</div>
+                        <KVList obj={trace.input} empty="без параметрів" />
+                    </div>
+                    <div>
+                        <div className="text-[11px] text-gray-500 mb-1 font-semibold">⬆ Вихідні (зміни контексту)</div>
+                        <KVList obj={trace.output} empty="контекст не змінювався" />
+                    </div>
+                    {hasErr && (
+                        <div>
+                            <div className="text-[11px] text-red-400 mb-1 font-semibold">✖ Помилки</div>
+                            {errors.map((e, i) => (
+                                <div key={i} className="text-xs text-red-300 bg-red-950/30 rounded p-2 mb-1">
+                                    <div>{e.message}</div>
+                                    {e.stack && <CollapsibleValue value={e.stack} />}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    {apiCalls.length > 0 && (
+                        <div>
+                            <div className="text-[11px] text-gray-500 mb-1 font-semibold">📡 API-запити ({apiCalls.length})</div>
+                            <div className="space-y-1.5">{apiCalls.map(c => <ApiCallItem key={c.id} call={c} />)}</div>
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+}
+
+// Панель «Змінні»: як кожна змінна змінюється, проходячи через ноди.
+function VariablesPanel({ traces, rawContext }) {
+    const [rawOpen, setRawOpen] = useState(false);
+    const timeline = useMemo(() => {
+        const vars = {};
+        for (const t of traces) {
+            for (const k of Object.keys(t.output || {})) {
+                if (!vars[k]) vars[k] = [];
+                vars[k].push({ seq: t.seq, label: t.label || t.nodeType, value: t.output[k] });
+            }
+        }
+        return vars;
+    }, [traces]);
+    const names = Object.keys(timeline).sort();
+    return (
+        <div className="w-80 shrink-0 border-l border-gray-800 overflow-y-auto p-3 bg-gray-900/40">
+            <div className="text-xs font-semibold text-gray-300 mb-2">📊 Змінні ({names.length})</div>
+            {names.length === 0 && <div className="text-[11px] text-gray-600 italic">Змінні ще не зʼявлялись</div>}
+            <div className="space-y-2">
+                {names.map(name => <VarTimeline key={name} name={name} steps={timeline[name]} />)}
+            </div>
+            <div className="mt-4 pt-3 border-t border-gray-800">
+                <button onClick={() => setRawOpen(o => !o)} className="text-[11px] text-gray-500 hover:text-gray-300">
+                    {rawOpen ? '▲' : '▼'} сирий контекст (фінальний)
+                </button>
+                {rawOpen && (
+                    <pre className="mt-2 text-[10px] text-gray-400 font-mono bg-gray-950 rounded p-2 overflow-x-auto max-h-96 overflow-y-auto">{JSON.stringify(rawContext, null, 2)}</pre>
+                )}
+            </div>
+        </div>
+    );
+}
+
+function VarTimeline({ name, steps }) {
+    const [open, setOpen] = useState(false);
+    const last = steps[steps.length - 1];
+    return (
+        <div className="border border-gray-800 rounded">
+            <button onClick={() => setOpen(o => !o)} className="w-full flex items-center gap-1.5 px-2 py-1.5 hover:bg-gray-800 text-left">
+                <span className="text-[11px] text-gray-300 font-mono truncate flex-1">{name}</span>
+                <span className="text-[10px] text-gray-600">{steps.length}×</span>
+                <span className="text-gray-600 text-[10px]">{open ? '▲' : '▼'}</span>
+            </button>
+            {!open && <div className="px-2 pb-1.5 text-[10px] text-gray-500 font-mono truncate">= {String(last.value).slice(0, 60)}</div>}
+            {open && (
+                <div className="px-2 pb-2 space-y-1">
+                    {steps.map((s, i) => (
+                        <div key={i} className="text-[10px]">
+                            <span className="text-gray-600">#{s.seq} {s.label}:</span>
+                            <div className="text-gray-300 font-mono break-all pl-2">{String(s.value).slice(0, 200)}</div>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
+
+function NodeTraceTab({ traces, apiCalls, errors, rawContext }) {
+    const [page, setPage] = useState(0);
+    const PAGE = 10;
+    // Хронологічний порядок трейсів
+    const ordered = useMemo(() => [...(traces || [])], [traces]);
+    // Межі часу кожного трейсу — для рознесення API/помилок по нодах
+    const bucketed = useMemo(() => {
+        const arr = ordered.map((t, i) => ({
+            trace: t,
+            start: Date.parse(t.tsIso) || 0,
+            end: (ordered[i + 1] && Date.parse(ordered[i + 1].tsIso)) || Number.MAX_SAFE_INTEGER,
+        }));
+        const inWin = (createdAt, b) => { const ts = Date.parse(createdAt) || 0; return ts >= b.start - 50 && ts < b.end; };
+        return arr.map(b => ({
+            trace: b.trace,
+            apiCalls: (apiCalls || []).filter(c => inWin(c.createdAt, b)),
+            errors: (errors || []).filter(e => (e.context?.nodeId === b.trace.nodeId) && inWin(e.createdAt, b)),
+        }));
+    }, [ordered, apiCalls, errors]);
+
+    const pages = Math.max(1, Math.ceil(bucketed.length / PAGE));
+    const slice = bucketed.slice(page * PAGE, page * PAGE + PAGE);
+
+    if (!ordered.length) {
+        return <div className="flex-1 flex items-center justify-center text-gray-500">Немає трейсу нод (сесія ще не проходила через воронку після оновлення).</div>;
+    }
+    return (
+        <div className="flex flex-1 overflow-hidden">
+            <div className="flex-1 overflow-y-auto p-4">
+                <div className="max-w-3xl mx-auto space-y-2">
+                    {slice.map(b => (
+                        <NodeTraceCard key={b.trace.seq} trace={b.trace} apiCalls={b.apiCalls} errors={b.errors} defaultOpen={slice.length <= 3} />
+                    ))}
+                    {pages > 1 && (
+                        <div className="flex items-center justify-center gap-2 pt-3">
+                            <button disabled={page === 0} onClick={() => setPage(p => p - 1)} className="text-xs px-2 py-1 rounded bg-gray-800 text-gray-300 disabled:opacity-40">← назад</button>
+                            <span className="text-xs text-gray-500">{page + 1} / {pages}</span>
+                            <button disabled={page >= pages - 1} onClick={() => setPage(p => p + 1)} className="text-xs px-2 py-1 rounded bg-gray-800 text-gray-300 disabled:opacity-40">далі →</button>
+                        </div>
+                    )}
+                </div>
+            </div>
+            <VariablesPanel traces={ordered} rawContext={rawContext} />
+        </div>
+    );
+}
+
 // ─── Main component ─────────────────────────────────────────────────────────
 
 export function SessionDetail() {
@@ -485,6 +688,7 @@ export function SessionDetail() {
     const [session, setSession] = useState(null);
     const [messages, setMessages] = useState([]);
     const [apiCalls, setApiCalls] = useState([]);
+    const [sessErrors, setSessErrors] = useState([]);
     const [funnel, setFunnel] = useState(null);
     const [tab, setTab] = useState('chat');
     const [loading, setLoading] = useState(true);
@@ -510,14 +714,17 @@ export function SessionDetail() {
             api.getSession(id),
             api.getSessionMessages(id),
             api.getSessionApiCalls(id),
-        ]).then(([s, m, a]) => {
+            api.getSessionErrors(id).catch(() => ({ data: {} })),
+        ]).then(([s, m, a, e]) => {
             const sess = s.data || s;
             setSession(sess);
             setMessages(m.data || m);
             setApiCalls(a.data || a);
-            // Для сесій без чату з людиною (напр. cron/webhook-воронки) — одразу відкрити вкладку API-викликів, а не порожній чат
+            const eb = e.data || e || {};
+            setSessErrors(Array.isArray(eb.appErrors) ? eb.appErrors : []);
+            // Для сесій без чату з людиною (напр. cron/webhook-воронки) — одразу вкладка «Ноди»
             const _msgs = m.data || m;
-            if (Array.isArray(_msgs) && _msgs.length === 0) { setTab('api'); }
+            if (Array.isArray(_msgs) && _msgs.length === 0) { setTab('trace'); }
             // Load funnel after we know the botId
             if (sess?.botId || sess?.bot?.id) {
                 api.getFunnel(sess.botId || sess.bot.id)
@@ -712,9 +919,8 @@ export function SessionDetail() {
 
                     {/* Tabs */}
                     {[
-                        { key: 'chat',    label: `💬 ${messages.length}`, title: 'Чат — повідомлення сесії' },
-                        { key: 'api',     label: `📡 ${apiCalls.length}`, title: 'API виклики — HTTP запити воронки' },
-                        { key: 'context', label: '⚙️',                   title: 'Контекст — поточні змінні сесії' },
+                        { key: 'chat',  label: `💬 ${messages.length}`, title: 'Чат — повідомлення сесії' },
+                        { key: 'trace', label: `🔍 ${(session?.context?.flowRuntime?.nodeTraces || []).length}`, title: 'Ноди — детальний трейс виконання воронки' },
                     ].map(t => (
                         <button key={t.key} onClick={() => setTab(t.key)} title={t.title}
                             className={`text-xs px-2.5 py-1 rounded transition-colors ${tab === t.key ? 'bg-brand/20 text-brand-light' : 'text-gray-500 hover:text-white hover:bg-gray-800'}`}>
@@ -765,23 +971,13 @@ export function SessionDetail() {
                 </div>
             )}
 
-            {tab === 'api' && (
-                <div className="flex-1 overflow-y-auto p-4">
-                    <div className="max-w-3xl mx-auto space-y-2">
-                        {apiCalls.map(c => <ApiCallItem key={c.id} call={c} />)}
-                        {apiCalls.length === 0 && <div className="text-center text-gray-500 py-8">Немає API викликів</div>}
-                    </div>
-                </div>
-            )}
-
-            {tab === 'context' && (
-                <div className="flex-1 overflow-y-auto p-4">
-                    <div className="max-w-2xl mx-auto">
-                        <pre className="text-xs text-gray-300 font-mono bg-gray-900 border border-gray-700 rounded-xl p-4 overflow-x-auto">
-                            {JSON.stringify(session.context, null, 2)}
-                        </pre>
-                    </div>
-                </div>
+            {tab === 'trace' && (
+                <NodeTraceTab
+                    traces={session?.context?.flowRuntime?.nodeTraces || []}
+                    apiCalls={apiCalls}
+                    errors={sessErrors}
+                    rawContext={session.context}
+                />
             )}
 
             {/* Message input (only on chat tab) */}

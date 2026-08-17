@@ -774,6 +774,43 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
     let lastAssistant = null;
     let guard = 0;
 
+    // ── Трейс виконання по-нодах (для вкладки «Ноди» у сесії) ──────────────────
+    // Пишемо у runtime.nodeTraces (персиститься з context). Значення обрізаємо,
+    // масив капимо — щоб не роздувати контекст. input = конфіг ноди; output =
+    // діф змінених ключів контексту після ноди. API/помилки корелюємо на фронті.
+    if (!Array.isArray(runtime.nodeTraces)) runtime.nodeTraces = [];
+    const TRACE_MAX = 80;
+    const TRACE_VAL_MAX = 2500;
+    const _snapKey = (v) => {
+        let s;
+        try { s = JSON.stringify(v); } catch (_e) { s = String(v); }
+        if (s == null) return 'null';
+        return s.length > TRACE_VAL_MAX ? s.slice(0, TRACE_VAL_MAX) + '…' : s;
+    };
+    const _snapRoot = (o) => {
+        const s = {};
+        for (const k of Object.keys(o || {})) { if (k === 'flowRuntime') continue; s[k] = _snapKey(o[k]); }
+        return s;
+    };
+    const _snapData = (d) => {
+        const s = {};
+        for (const k of Object.keys(d || {})) s[k] = _snapKey(d[k]);
+        return s;
+    };
+    const _finalizeTrace = (tr) => {
+        if (!tr) return;
+        const before = tr._before || {};
+        const after = _snapRoot(ctx);
+        const diff = {};
+        for (const k of Object.keys(after)) { if (before[k] !== after[k]) diff[k] = after[k]; }
+        tr.output = diff;
+        tr.tookMs = Date.now() - tr._ts;
+        delete tr._before; delete tr._ts;
+        runtime.nodeTraces.push(tr);
+        if (runtime.nodeTraces.length > TRACE_MAX) runtime.nodeTraces = runtime.nodeTraces.slice(-TRACE_MAX);
+    };
+    let pendingTrace = null;
+
     // 100: батч-цикли генерації контенту (7 батчів × 3 ноди) не вміщались у 40
     while (runtime.currentNodeId && guard < 100) {
         guard += 1;
@@ -782,6 +819,14 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
 
         runtime.nodesVisited.push(node.id);
         const data = asObject(node.data);
+        // Закриваємо трейс попередньої ноди (діф контексту = її ефект) і починаємо новий.
+        if (pendingTrace) _finalizeTrace(pendingTrace);
+        pendingTrace = {
+            seq: runtime.nodeTraces.length,
+            nodeId: node.id, nodeType: node.type, label: (data && data.label) || '',
+            input: _snapData(data), tsIso: new Date().toISOString(),
+            _before: _snapRoot(ctx), _ts: Date.now(),
+        };
         const _nowDate = new Date();
         const scope = {
             context: ctx,
@@ -2643,6 +2688,7 @@ ${_baseUrl}/legal/terms — Правила використання`;
 
         runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
     }
+    if (pendingTrace) _finalizeTrace(pendingTrace);
 
     const completed = !runtime.currentNodeId;
     const state = completed ? 'completed' : runtime.currentNodeId;

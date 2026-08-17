@@ -385,6 +385,8 @@ export function Connectors() {
                 </div>
             )}
 
+            <MicroservicesBlock />
+
             {(modalConnector !== undefined) && (
                 <ConnectorModal
                     connector={modalConnector}
@@ -396,6 +398,82 @@ export function Connectors() {
                     }}
                 />
             )}
+        </div>
+    );
+}
+
+// ─── Довідник мікросервісів (інформативно) ────────────────────────────────────
+const MICROSERVICES = [
+    {
+        name: 'browser-agent',
+        address: 'http://127.0.0.1:8091 (внутрішній, лише з сервера)',
+        auth: 'заголовок X-Agent-Secret',
+        purpose: 'Веб-автоматизація: розміщення замовлень у CRM постачальників (browser-use + Playwright, record/replay + ШІ-фолбек) і читання сторінок/соц-метрик (curl-impersonate → markdown, економія токенів).',
+        endpoints: [
+            { m: 'GET', p: '/health', d: 'пінг + чи зайнятий браузер' },
+            { m: 'POST', p: '/replay', d: 'детермінований прогін збереженого сценарію (0 токенів)' },
+            { m: 'POST', p: '/agent', d: 'ШІ веде браузер, СТОП перед submit; повертає скрін + чернетку сценарію' },
+            { m: 'POST', p: '/read', d: 'читання сторінки → markdown/text/json' },
+        ],
+        exReq: `POST /read\nX-Agent-Secret: ***\n{ "url": "https://brewdrop.in.ua/p/123", "mode": "markdown", "render_js": false }`,
+        exRes: `{ "ok": true, "via": "curl_cffi:200", "mode": "markdown", "content": "# Товар...\\nЦіна: 250 грн..." }`,
+    },
+    {
+        name: 'notebooklm-service',
+        address: 'на сервері (pm2, окремий порт)',
+        auth: '—',
+        purpose: 'Генерація NotebookLM-контенту (Python-сервіс) для контент-воронок.',
+        endpoints: [],
+        exReq: '', exRes: '',
+    },
+    {
+        name: 'image-processor / video-processor / remotion-renderer / slide-builder',
+        address: 'на сервері (pm2)',
+        auth: '—',
+        purpose: 'Медіа-конвеєр контент-платформи: обробка зображень (Fal.ai/FLUX), відео (Kling/B-roll), Remotion-рендер, слайди.',
+        endpoints: [],
+        exReq: '', exRes: '',
+    },
+];
+
+function MicroservicesBlock() {
+    return (
+        <div className="mt-10 border-t border-gray-800 pt-6">
+            <h2 className="text-lg font-semibold text-white mb-1">🧩 Мікросервіси</h2>
+            <p className="text-xs text-gray-500 mb-4">Довідник наших сервісів: адреси, що роблять, приклади запитів. Інформативно.</p>
+            <div className="grid gap-3 md:grid-cols-2">
+                {MICROSERVICES.map((s) => (
+                    <div key={s.name} className="border border-gray-700 rounded-xl p-4 bg-gray-900">
+                        <div className="flex items-center gap-2 mb-1">
+                            <span className="text-base">🧩</span>
+                            <span className="text-white font-medium">{s.name}</span>
+                        </div>
+                        <div className="text-[11px] text-gray-400 font-mono mb-1">{s.address}</div>
+                        {s.auth && s.auth !== '—' && <div className="text-[11px] text-gray-500 mb-1">🔑 {s.auth}</div>}
+                        <div className="text-xs text-gray-300 mb-2">{s.purpose}</div>
+                        {s.endpoints.length > 0 && (
+                            <div className="space-y-0.5 mb-2">
+                                {s.endpoints.map((e) => (
+                                    <div key={e.p} className="text-[11px] flex gap-2">
+                                        <span className="font-mono text-emerald-400 w-10 shrink-0">{e.m}</span>
+                                        <span className="font-mono text-sky-300 w-24 shrink-0">{e.p}</span>
+                                        <span className="text-gray-500">{e.d}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                        {s.exReq && (
+                            <details className="mt-1">
+                                <summary className="text-[11px] text-brand-light cursor-pointer">приклад запиту/відповіді</summary>
+                                <div className="text-[10px] text-gray-500 mt-1">Запит:</div>
+                                <pre className="text-[10px] text-gray-300 font-mono bg-gray-950 rounded p-2 overflow-x-auto whitespace-pre-wrap">{s.exReq}</pre>
+                                <div className="text-[10px] text-gray-500 mt-1">Відповідь:</div>
+                                <pre className="text-[10px] text-gray-300 font-mono bg-gray-950 rounded p-2 overflow-x-auto whitespace-pre-wrap">{s.exRes}</pre>
+                            </details>
+                        )}
+                    </div>
+                ))}
+            </div>
         </div>
     );
 }

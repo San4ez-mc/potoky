@@ -35,7 +35,7 @@ var consumed = Array.isArray(context.consumedTxIds)?context.consumedTxIds:[];
 function isC(id){ return consumed.indexOf(id)>=0; }
 function parseAmount(txt){ if(!txt)return null; var m=String(txt).match(/(\\d[\\d\\s]*[.,]?\\d{0,2})\\s*(?:грн|uah|₴)?/i); if(!m)return null; var n=parseFloat(m[1].replace(/\\s/g,'').replace(',','.')); return isFinite(n)?Math.round(n*100)/100:null; }
 function normName(s){ return String(s||'').toLowerCase().replace(/[^0-9a-zа-яіїєґ]+/gi,' ').trim(); }
-function nameOverlap(a,b){ var aa=normName(a).split(' ').filter(function(x){return x.length>2;}); var bb=normName(b); if(!aa.length||!bb)return false; for(var i=0;i<aa.length;i++){ if(bb.indexOf(aa[i])>=0) return true; } return false; }
+function nameOverlap(a,b){ var aa=normName(a).split(' ').filter(function(x){return x.length>2;}); var bb=normName(b).split(' ').filter(function(x){return x.length>1;}); if(!aa.length||!bb.length)return false; for(var i=0;i<aa.length;i++){ if(bb.indexOf(aa[i])>=0) return true; } return false; }
 // 1) унікальний збіг за orderRef у призначенні
 function matchByRef(){ if(!orderRef)return null; for(var i=0;i<stmt.length;i++){ var t=stmt[i]; if(!isC(t.id) && String(t.comment||'').toUpperCase().indexOf(orderRef)>=0) return t; } return null; }
 // 2) за сумою + розрізнення за ПЛАТНИКОМ/ЧАСОМ (щоб однакові суми не плутались)

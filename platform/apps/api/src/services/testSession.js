@@ -2338,8 +2338,16 @@ ${_baseUrl}/legal/terms — Правила використання`;
                     const credits = (items || []).filter((t) => t && Number(t.amount) > 0).map((t) => ({
                         id: t.id, amountUah: Math.round(Number(t.amount)) / 100, time: t.time,
                         comment: t.comment || '', description: t.description || '',
+                        counterName: t.counterName || '', counterIban: t.counterIban || '',
                     }));
                     ctx.monoStatement = credits;
+                    // Глобальний реєстр уже зарахованих транзакцій (антидубль між сесіями).
+                    try {
+                        const reg = await db.funnelKey.findFirst({ where: { botId: session.botId, key: '_CONSUMED_MONO_TX' }, select: { value: true } });
+                        const globalConsumed = reg && reg.value ? (JSON.parse(reg.value) || []) : [];
+                        const sess = Array.isArray(ctx.consumedTxIds) ? ctx.consumedTxIds : [];
+                        ctx.consumedTxIds = Array.from(new Set([...sess, ...globalConsumed]));
+                    } catch (_e) { /* ignore */ }
                     if (outputVar) setByPath(ctx, outputVar, credits);
                     db.apiCall.create({ data: {
                         sessionId: session.id, service: 'monobank', method: 'get_statement',
@@ -2347,6 +2355,23 @@ ${_baseUrl}/legal/terms — Правила використання`;
                         responseData: { count: credits.length, fromCache: monoStatus === 304 },
                         statusCode: monoStatus, durationMs: Date.now() - monoStart,
                     } }).catch(() => {});
+                }
+
+                // ── monobank: позначити транзакцію зарахованою у глобальному реєстрі ──
+                if (connectorType === 'monobank' && action === 'mark_consumed') {
+                    const txId = (renderTemplate(data.txId || '{{context.payTxId}}', scope) || '').trim();
+                    if (txId) {
+                        try {
+                            const reg = await db.funnelKey.findFirst({ where: { botId: session.botId, key: '_CONSUMED_MONO_TX' } });
+                            let arr = reg && reg.value ? (JSON.parse(reg.value) || []) : [];
+                            if (!arr.includes(txId)) {
+                                arr.push(txId);
+                                if (arr.length > 500) arr = arr.slice(-500); // обмежуємо розмір реєстру
+                                if (reg) await db.funnelKey.update({ where: { id: reg.id }, data: { value: JSON.stringify(arr) } });
+                                else await db.funnelKey.create({ data: { botId: session.botId, key: '_CONSUMED_MONO_TX', value: JSON.stringify(arr), isSecret: false } });
+                            }
+                        } catch (_e) { /* best-effort */ }
+                    }
                 }
 
                 // ── ibanoplata: видалення посилання (після оплати або протягом cron) ──

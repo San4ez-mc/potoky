@@ -32,14 +32,19 @@ var orderRef = String(context.orderRef||'').toUpperCase();
 var expected = Number(context.payAmount)||0;
 var stmt = Array.isArray(context.monoStatement)?context.monoStatement:[];
 var consumed = Array.isArray(context.consumedTxIds)?context.consumedTxIds:[];
-function matchMono(amount){
-  if(orderRef){ for(var i=0;i<stmt.length;i++){ var t=stmt[i]; if(consumed.indexOf(t.id)<0 && String(t.comment||'').toUpperCase().indexOf(orderRef)>=0) return t; } }
-  if(amount){ for(var j=0;j<stmt.length;j++){ var u=stmt[j]; if(consumed.indexOf(u.id)<0 && Math.abs(Number(u.amountUah)-amount)<0.01) return u; } }
-  return null;
-}
+function isC(id){ return consumed.indexOf(id)>=0; }
 function parseAmount(txt){ if(!txt)return null; var m=String(txt).match(/(\\d[\\d\\s]*[.,]?\\d{0,2})\\s*(?:грн|uah|₴)?/i); if(!m)return null; var n=parseFloat(m[1].replace(/\\s/g,'').replace(',','.')); return isFinite(n)?Math.round(n*100)/100:null; }
-var found = matchMono(expected);
-var via = found ? 'mono' : '';
+function normName(s){ return String(s||'').toLowerCase().replace(/[^0-9a-zа-яіїєґ]+/gi,' ').trim(); }
+function nameOverlap(a,b){ var aa=normName(a).split(' ').filter(function(x){return x.length>2;}); var bb=normName(b); if(!aa.length||!bb)return false; for(var i=0;i<aa.length;i++){ if(bb.indexOf(aa[i])>=0) return true; } return false; }
+// 1) унікальний збіг за orderRef у призначенні
+function matchByRef(){ if(!orderRef)return null; for(var i=0;i<stmt.length;i++){ var t=stmt[i]; if(!isC(t.id) && String(t.comment||'').toUpperCase().indexOf(orderRef)>=0) return t; } return null; }
+// 2) за сумою + розрізнення за ПЛАТНИКОМ/ЧАСОМ (щоб однакові суми не плутались)
+function matchByAmount(amount, hints){ hints=hints||{}; if(!amount)return null; var cands=[]; for(var i=0;i<stmt.length;i++){ var t=stmt[i]; if(!isC(t.id) && Math.abs(Number(t.amountUah)-amount)<0.01) cands.push(t); } if(!cands.length)return null;
+  if(hints.payerName){ for(var j=0;j<cands.length;j++){ if(nameOverlap(hints.payerName,(cands[j].counterName||'')+' '+(cands[j].description||''))) return cands[j]; } }
+  if(hints.timeSec){ var best=null,bd=1e18; for(var k=0;k<cands.length;k++){ var d=Math.abs(Number(cands[k].time)-Number(hints.timeSec)); if(d<bd){bd=d;best=cands[k];} } if(best&&bd<=5400) return best; }
+  cands.sort(function(a,b){return Number(b.time)-Number(a.time);}); return cands[0]; }
+var found = matchByRef();
+var via = found ? 'mono:ref' : '';
 // Крок 2: лінк-квитанція у тексті (check.monobank.ua / pb.ua/check тощо) — парсимо кодом
 if(!found){
   var link=(String(context.lastUserMessage||input||'').match(/https?:\\/\\/[^\\s]+/)||[])[0];
@@ -48,7 +53,8 @@ if(!found){
     try{ var r=await fetch(link,{redirect:'follow',signal:ac.signal}); var html=(await r.text()).slice(0,300000); var txt=html.replace(/<[^>]+>/g,' ');
       var okRec = txt.replace(/\\s/g,'').indexOf(EXPECTED_IBAN)>=0 || txt.replace(/\\D/g,'').indexOf(EXPECTED_CODE)>=0;
       var amt = parseAmount((txt.match(/(?:Сума|Сумма|Amount)[^\\d]{0,20}(\\d[\\d\\s]*[.,]?\\d{0,2})/i)||[])[1]);
-      if(okRec && amt){ found = matchMono(amt); if(found) via='link'; }
+      var payer=(txt.match(/Платник[^A-Za-zА-Яа-яІЇЄҐіїєґ]{0,15}([A-Za-zА-Яа-яІЇЄҐіїєґ'\\-]{2,}\\s+[A-Za-zА-Яа-яІЇЄҐіїєґ'\\-]{2,}(?:\\s+[A-Za-zА-Яа-яІЇЄҐіїєґ'\\-]{2,})?)/)||[])[1]||'';
+      if(okRec){ found = matchByAmount(amt||expected, { payerName:payer }); if(found) via='mono:link'; }
     }catch(e){}finally{clearTimeout(to);} }
 }
 // Крок 3: скрін — ШІ-візія (лише коли Mono не знайшов). Останній резерв.
@@ -58,11 +64,13 @@ if(!found && context.lastReceiptImageUrl && keys.GEMINI_API_KEY && imgOk(context
   try{
     var ir=await fetch(context.lastReceiptImageUrl,{signal:ac2.signal}); var ab=await ir.arrayBuffer(); if(ab.byteLength>8000000) throw new Error('img too large'); var b64=Buffer.from(ab).toString('base64');
     var mime=(ir.headers.get('content-type')||'image/jpeg').split(';')[0];
-    var gr=await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key='+encodeURIComponent(keys.GEMINI_API_KEY),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:'Це банківська квитанція. Поверни ЛИШЕ JSON {"amount":число,"recipientCode":"код одержувача","iban":"IBAN одержувача","purpose":"призначення"}'},{inline_data:{mime_type:mime,data:b64}}]}]})});
+    var gr=await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key='+encodeURIComponent(keys.GEMINI_API_KEY),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:'Це банківська квитанція про переказ. Поверни ЛИШЕ JSON {"amount":число,"recipientCode":"код одержувача","iban":"IBAN одержувача","payerName":"ПІБ платника","purpose":"призначення"}'},{inline_data:{mime_type:mime,data:b64}}]}]})});
     var gj=await gr.json(); var t=((((gj.candidates||[])[0]||{}).content||{}).parts||[{}])[0].text||''; var mm=t.match(/\\{[\\s\\S]*\\}/);
-    if(mm){ var f=JSON.parse(mm[0]); var okRec2=String(f.iban||'').replace(/\\s/g,'').indexOf(EXPECTED_IBAN)>=0 || String(f.recipientCode||'').replace(/\\D/g,'').indexOf(EXPECTED_CODE)>=0; var amt2=Number(f.amount)||parseAmount(f.amount); if(okRec2 && amt2){ found=matchMono(amt2); if(found) via='ai'; } }
+    if(mm){ var f=JSON.parse(mm[0]); var okRec2=String(f.iban||'').replace(/\\s/g,'').indexOf(EXPECTED_IBAN)>=0 || String(f.recipientCode||'').replace(/\\D/g,'').indexOf(EXPECTED_CODE)>=0; var amt2=Number(f.amount)||parseAmount(f.amount); if(okRec2){ found=matchByAmount(amt2||expected, { payerName:f.payerName }); if(found) via='mono:ai'; } }
   }catch(e){}finally{clearTimeout(to2);}
 }
+// Крок 4: клієнт написав «оплатив» без квитанції → слабкий збіг за сумою (глоб. реєстр не дасть зарахувати двічі)
+if(!found && expected){ found = matchByAmount(expected, {}); if(found) via='mono:amount'; }
 if(found){ consumed.push(found.id); return { payStatus:'confirmed', payVia:via, payTxId:found.id, consumedTxIds:consumed }; }
 return { payStatus:'not_found', payVia:'none' };
 `.trim();
@@ -133,7 +141,10 @@ function setEdge(edges, source, target, sourceHandle) {
     upsertNode(nodes, 'n_pay_status_cond', { type: 'condition', position: { x: 320, y: 3960 }, data: {
         label: '12.9 Оплату знайдено?', condition: "context.payStatus === 'confirmed'",
     } });
-    upsertNode(nodes, 'n_del_invoice', { type: 'connector', position: { x: 120, y: 4080 }, data: {
+    upsertNode(nodes, 'n_mark_consumed', { type: 'connector', position: { x: 120, y: 4030 }, data: {
+        label: '12.94 Зарахувати транзакцію (антидубль)', connectorType: 'monobank', action: 'mark_consumed', txId: '{{context.payTxId}}',
+    } });
+    upsertNode(nodes, 'n_del_invoice', { type: 'connector', position: { x: 120, y: 4130 }, data: {
         label: '12.95 Видалити посилання', connectorType: 'ibanoplata', action: 'delete_invoice', invoiceUid: '{{context.ibanInvoiceUid}}',
     } });
     upsertNode(nodes, 'n_pay_notfound_admin', { type: 'notifyAdmin', position: { x: 640, y: 4080 }, data: {
@@ -151,7 +162,8 @@ function setEdge(edges, source, target, sourceHandle) {
     setEdge(edges, 'n_collect', 'n_mono_fetch');
     setEdge(edges, 'n_mono_fetch', 'n_reconcile');
     setEdge(edges, 'n_reconcile', 'n_pay_status_cond');
-    setEdge(edges, 'n_pay_status_cond', 'n_del_invoice', 'true');
+    setEdge(edges, 'n_pay_status_cond', 'n_mark_consumed', 'true');
+    setEdge(edges, 'n_mark_consumed', 'n_del_invoice');
     setEdge(edges, 'n_del_invoice', 'n_crm_order');
     setEdge(edges, 'n_pay_status_cond', 'n_pay_notfound_admin', 'false');
     setEdge(edges, 'n_pay_notfound_admin', 'n_pay_notfound_msg');

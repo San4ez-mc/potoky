@@ -43,21 +43,25 @@ var via = found ? 'mono' : '';
 // Крок 2: лінк-квитанція у тексті (check.monobank.ua / pb.ua/check тощо) — парсимо кодом
 if(!found){
   var link=(String(context.lastUserMessage||input||'').match(/https?:\\/\\/[^\\s]+/)||[])[0];
-  if(link){ try{ var r=await fetch(link,{redirect:'follow'}); var html=await r.text(); var txt=html.replace(/<[^>]+>/g,' ');
-    var okRec = txt.replace(/\\s/g,'').indexOf(EXPECTED_IBAN)>=0 || txt.replace(/\\D/g,'').indexOf(EXPECTED_CODE)>=0;
-    var amt = parseAmount((txt.match(/(?:Сума|Сумма|Amount)[^\\d]{0,20}(\\d[\\d\\s]*[.,]?\\d{0,2})/i)||[])[1]);
-    if(okRec && amt){ found = matchMono(amt); if(found) via='link'; }
-  }catch(e){} }
+  function linkOk(u){ try{ var h=new URL(u).hostname.toLowerCase(); return ['check.monobank.ua','send.monobank.ua','pay.mono.ua','pb.ua','privatbank.ua','next.privat24.ua','portmone.com.ua','check.gov.ua'].some(function(d){return h===d||h.endsWith('.'+d);}); }catch(e){return false;} }
+  if(link && linkOk(link)){ var ac=new AbortController(); var to=setTimeout(function(){try{ac.abort();}catch(e){}},8000);
+    try{ var r=await fetch(link,{redirect:'follow',signal:ac.signal}); var html=(await r.text()).slice(0,300000); var txt=html.replace(/<[^>]+>/g,' ');
+      var okRec = txt.replace(/\\s/g,'').indexOf(EXPECTED_IBAN)>=0 || txt.replace(/\\D/g,'').indexOf(EXPECTED_CODE)>=0;
+      var amt = parseAmount((txt.match(/(?:Сума|Сумма|Amount)[^\\d]{0,20}(\\d[\\d\\s]*[.,]?\\d{0,2})/i)||[])[1]);
+      if(okRec && amt){ found = matchMono(amt); if(found) via='link'; }
+    }catch(e){}finally{clearTimeout(to);} }
 }
 // Крок 3: скрін — ШІ-візія (лише коли Mono не знайшов). Останній резерв.
-if(!found && context.lastReceiptImageUrl && keys.GEMINI_API_KEY){
+function imgOk(u){ try{ var h=new URL(u).hostname.toLowerCase(); if(h==='api.telegram.org') return true; return ['cdninstagram.com','fbcdn.net','fbsbx.com'].some(function(d){return h===d||h.endsWith('.'+d);}); }catch(e){return false;} }
+if(!found && context.lastReceiptImageUrl && keys.GEMINI_API_KEY && imgOk(context.lastReceiptImageUrl)){
+  var ac2=new AbortController(); var to2=setTimeout(function(){try{ac2.abort();}catch(e){}},10000);
   try{
-    var ir=await fetch(context.lastReceiptImageUrl); var ab=await ir.arrayBuffer(); var b64=Buffer.from(ab).toString('base64');
+    var ir=await fetch(context.lastReceiptImageUrl,{signal:ac2.signal}); var ab=await ir.arrayBuffer(); if(ab.byteLength>8000000) throw new Error('img too large'); var b64=Buffer.from(ab).toString('base64');
     var mime=(ir.headers.get('content-type')||'image/jpeg').split(';')[0];
     var gr=await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key='+encodeURIComponent(keys.GEMINI_API_KEY),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:'Це банківська квитанція. Поверни ЛИШЕ JSON {"amount":число,"recipientCode":"код одержувача","iban":"IBAN одержувача","purpose":"призначення"}'},{inline_data:{mime_type:mime,data:b64}}]}]})});
     var gj=await gr.json(); var t=((((gj.candidates||[])[0]||{}).content||{}).parts||[{}])[0].text||''; var mm=t.match(/\\{[\\s\\S]*\\}/);
     if(mm){ var f=JSON.parse(mm[0]); var okRec2=String(f.iban||'').replace(/\\s/g,'').indexOf(EXPECTED_IBAN)>=0 || String(f.recipientCode||'').replace(/\\D/g,'').indexOf(EXPECTED_CODE)>=0; var amt2=Number(f.amount)||parseAmount(f.amount); if(okRec2 && amt2){ found=matchMono(amt2); if(found) via='ai'; } }
-  }catch(e){}
+  }catch(e){}finally{clearTimeout(to2);}
 }
 if(found){ consumed.push(found.id); return { payStatus:'confirmed', payVia:via, payTxId:found.id, consumedTxIds:consumed }; }
 return { payStatus:'not_found', payVia:'none' };

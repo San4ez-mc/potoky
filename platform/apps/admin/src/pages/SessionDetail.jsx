@@ -458,13 +458,13 @@ function ApiCallItem({ call }) {
                     {call.requestData && (
                         <div>
                             <div className="text-xs text-gray-500 mb-1">Request</div>
-                            <pre className="text-xs text-gray-300 font-mono bg-gray-900 rounded p-2 overflow-x-auto">{JSON.stringify(call.requestData, null, 2)}</pre>
+                            <pre className="text-xs text-gray-300 font-mono bg-gray-900 rounded p-2 whitespace-pre-wrap break-words">{JSON.stringify(call.requestData, null, 2)}</pre>
                         </div>
                     )}
                     {call.responseData && (
                         <div>
                             <div className="text-xs text-gray-500 mb-1">Response</div>
-                            <pre className="text-xs text-gray-300 font-mono bg-gray-900 rounded p-2 overflow-x-auto max-h-48 overflow-y-auto">{JSON.stringify(call.responseData, null, 2)}</pre>
+                            <pre className="text-xs text-gray-300 font-mono bg-gray-900 rounded p-2 whitespace-pre-wrap break-words max-h-80 overflow-y-auto">{JSON.stringify(call.responseData, null, 2)}</pre>
                         </div>
                     )}
                     {call.error && <div className="text-xs text-red-400 bg-red-950/30 rounded p-2">{call.error}</div>}
@@ -496,11 +496,11 @@ function CollapsibleValue({ value }) {
     const long = text.length > 160 || text.includes('\n');
     if (!long) return <span className="text-xs text-gray-200 font-mono break-all">{text}</span>;
     return (
-        <div>
+        <div className="min-w-0">
             <button onClick={() => setOpen(o => !o)} className="text-[11px] text-brand-light hover:underline mb-1">
                 {open ? '▲ згорнути' : '⤢ розгорнути'} ({text.length} симв.)
             </button>
-            <pre className={`text-xs text-gray-300 font-mono bg-gray-900 rounded p-2 overflow-x-auto ${open ? 'max-h-none' : 'max-h-16 overflow-y-hidden'}`}>{text}</pre>
+            <pre className={`text-xs text-gray-300 font-mono bg-gray-900 rounded p-2 whitespace-pre-wrap break-words ${open ? '' : 'max-h-16 overflow-hidden'}`}>{text}</pre>
         </div>
     );
 }

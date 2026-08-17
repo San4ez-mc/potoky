@@ -405,32 +405,76 @@ export function Connectors() {
 // ─── Довідник мікросервісів (інформативно) ────────────────────────────────────
 const MICROSERVICES = [
     {
-        name: 'browser-agent',
-        address: 'http://127.0.0.1:8091 (внутрішній, лише з сервера)',
-        auth: 'заголовок X-Agent-Secret',
-        purpose: 'Веб-автоматизація: розміщення замовлень у CRM постачальників (browser-use + Playwright, record/replay + ШІ-фолбек) і читання сторінок/соц-метрик (curl-impersonate → markdown, економія токенів).',
+        name: 'browser-agent', status: 'деплой у процесі',
+        address: 'http://127.0.0.1:8091 (внутрішній)', auth: 'заголовок X-Agent-Secret',
+        purpose: 'Веб-автоматизація. ДІЇ: розміщення замовлень у CRM постачальників (browser-use + Playwright, record/replay + ШІ-фолбек, dry-run зі скрін-апрувом). ЧИТАННЯ: парсинг сторінок / соц-метрик (curl-impersonate → markdown, економія токенів).',
         endpoints: [
             { m: 'GET', p: '/health', d: 'пінг + чи зайнятий браузер' },
             { m: 'POST', p: '/replay', d: 'детермінований прогін збереженого сценарію (0 токенів)' },
             { m: 'POST', p: '/agent', d: 'ШІ веде браузер, СТОП перед submit; повертає скрін + чернетку сценарію' },
             { m: 'POST', p: '/read', d: 'читання сторінки → markdown/text/json' },
         ],
-        exReq: `POST /read\nX-Agent-Secret: ***\n{ "url": "https://brewdrop.in.ua/p/123", "mode": "markdown", "render_js": false }`,
-        exRes: `{ "ok": true, "via": "curl_cffi:200", "mode": "markdown", "content": "# Товар...\\nЦіна: 250 грн..." }`,
+        exReq: 'POST /read\nX-Agent-Secret: ***\n{ "url": "https://brewdrop.in.ua/p/123", "mode": "markdown", "render_js": false }',
+        exRes: '{ "ok": true, "via": "curl_cffi:200", "mode": "markdown", "content": "# Товар…\\nЦіна: 250 грн…" }',
     },
     {
-        name: 'notebooklm-service',
-        address: 'на сервері (pm2, окремий порт)',
-        auth: '—',
+        name: 'agent-runner', status: 'планується (ТЗ)',
+        address: 'http://127.0.0.1:3015 (внутрішній)', auth: 'внутрішній ключ',
+        purpose: 'Агентна інфраструктура: виконує багатокрокові agentic-задачі (agentic loop через Anthropic Tool Runner) з реєстром дозволених інструментів (allowlist, закриває SSRF). Async-джоби, роутинг моделей (Haiku — оркестрація, Sonnet/Opus — reasoning). User-facing укр. контент НЕ генерує.',
+        endpoints: [
+            { m: 'POST', p: '/v1/jobs', d: 'поставити задачу → { job_id, status:"queued" } (миттєво)' },
+            { m: 'GET', p: '/v1/jobs/:id', d: 'статус + result + tool_calls_history' },
+        ],
+        exReq: 'POST /v1/jobs\n{ "task": "…", "tools": ["query_vector"], "model": "claude-haiku-4-5", "maxIterations": 8, "callback_url": "…" }',
+        exRes: '{ "job_id": "…", "status": "queued" }  →  GET →  { "status":"done", "iterations_used":3, "result":{…} }',
+    },
+    {
+        name: 'image-processor', status: 'online', address: 'http://127.0.0.1:3001 (pm2)', auth: '—',
+        purpose: 'Обробка зображень для контент-воронок: видалення фону (@imgly), композитинг та накладання тексту (sharp + SVG, без Puppeteer).',
+        endpoints: [
+            { m: 'POST', p: '/remove-bg', d: 'видалити фон → PNG з прозорістю' },
+            { m: 'POST', p: '/overlay-text', d: 'накласти заголовок/підпис зі стилем → PNG' },
+        ],
+        exReq: 'POST /remove-bg\n{ "imageUrl": "https://…jpg", "outputFormat": "png" }',
+        exRes: 'Content-Type: image/png (бінарний)  або  { "url": "https://cdn…/result.png" }',
+    },
+    {
+        name: 'slide-builder', status: 'online', address: 'http://127.0.0.1:3002 (pm2)', auth: '—',
+        purpose: 'Рендер HTML-шаблонів у PNG через Puppeteer: брендовані пости/stories, панорама для каруселі (з нарізкою), обкладинки.',
+        endpoints: [
+            { m: 'POST', p: '/render/story', d: 'пост/stories 1080×1350 → PNG' },
+            { m: 'POST', p: '/render/panorama', d: 'широке полотно каруселі → PNG' },
+            { m: 'POST', p: '/slice', d: 'нарізати панораму на N слайдів' },
+            { m: 'POST', p: '/render/cover', d: 'обкладинка (thumbnail + заголовок)' },
+        ],
+        exReq: 'POST /render/story\n{ "title": "Як зекономити 10 год/тиж", "brandHandle": "@biz", "backgroundImageUrl": "…", "silhouetteImageUrl": "…", "brandColor": "#6C63FF", "template": "default" }',
+        exRes: 'Content-Type: image/png — 1080×1350',
+    },
+    {
+        name: 'video-processor', status: 'online', address: 'http://127.0.0.1:3003 (pm2)', auth: '—',
+        purpose: 'Відеообробка через FFmpeg: витяг аудіо, розумний монтаж (вирізання пауз/слів-паразитів), запікання субтитрів, thumbnail, адаптація під платформи.',
+        endpoints: [
+            { m: 'POST', p: '/extract-audio', d: 'аудіодоріжка (mp3/wav) — для Whisper' },
+            { m: 'POST', p: '/smart-cut', d: 'вирізати сегменти й склеїти' },
+            { m: 'POST', p: '/burn-subtitles', d: 'запекти субтитри у відео' },
+            { m: 'POST', p: '/thumbnail', d: 'кадр-обкладинка' },
+            { m: 'POST', p: '/adapt-platform', d: 'формати під IG/TikTok/YouTube' },
+        ],
+        exReq: 'POST /extract-audio\n{ "videoUrl": "https://…mp4", "format": "mp3", "sampleRate": 16000 }',
+        exRes: '{ "audioUrl": "https://cdn…/audio.mp3", "durationSec": 142.5 }',
+    },
+    {
+        name: 'remotion-renderer', status: 'online', address: 'http://127.0.0.1:3004 (pm2)', auth: '—',
+        purpose: 'Рендер анімованих karaoke-субтитрів (підсвічування слова-по-слову) через Remotion (React + Chrome + FFmpeg). Потребує кілька ядер.',
+        endpoints: [
+            { m: 'POST', p: '/render', d: 'відео + transcript(words) + style → mp4 (+callbackUrl)' },
+        ],
+        exReq: 'POST /render\n{ "videoUrl": "…", "transcript": { "words": [{ "word":"Привіт", "start":0.12, "end":0.55 }] }, "style": { "position":"bottom", "wordsPerLine":3 }, "callbackUrl": "…" }',
+        exRes: '{ "ok": true, "videoUrl": "https://cdn…/out.mp4" }  (або POST на callbackUrl)',
+    },
+    {
+        name: 'notebooklm-service', status: 'online', address: 'на сервері (pm2, Python)', auth: '—',
         purpose: 'Генерація NotebookLM-контенту (Python-сервіс) для контент-воронок.',
-        endpoints: [],
-        exReq: '', exRes: '',
-    },
-    {
-        name: 'image-processor / video-processor / remotion-renderer / slide-builder',
-        address: 'на сервері (pm2)',
-        auth: '—',
-        purpose: 'Медіа-конвеєр контент-платформи: обробка зображень (Fal.ai/FLUX), відео (Kling/B-roll), Remotion-рендер, слайди.',
         endpoints: [],
         exReq: '', exRes: '',
     },
@@ -447,6 +491,12 @@ function MicroservicesBlock() {
                         <div className="flex items-center gap-2 mb-1">
                             <span className="text-base">🧩</span>
                             <span className="text-white font-medium">{s.name}</span>
+                            {s.status && (
+                                <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded ${
+                                    s.status === 'online' ? 'bg-emerald-900/40 text-emerald-300'
+                                    : s.status.includes('процес') ? 'bg-amber-900/40 text-amber-300'
+                                    : 'bg-gray-800 text-gray-400'}`}>{s.status}</span>
+                            )}
                         </div>
                         <div className="text-[11px] text-gray-400 font-mono mb-1">{s.address}</div>
                         {s.auth && s.auth !== '—' && <div className="text-[11px] text-gray-500 mb-1">🔑 {s.auth}</div>}

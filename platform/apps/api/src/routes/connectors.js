@@ -115,6 +115,19 @@ const BUILTIN_CONNECTORS = [
             ],
         },
     },
+    {
+        type: 'browser_agent',
+        name: 'Browser Agent',
+        description: 'Мікросервіс веб-автоматизації: replay (детермінований сценарій), agent (ШІ веде браузер), read (парсинг). Для замовлень постачальникам + соц-метрик.',
+        icon: '🕹️',
+        color: '#7C3AED',
+        schema: {
+            fields: [
+                { key: 'base_url', label: 'URL сервісу (дефолт http://127.0.0.1:8091)', secret: false },
+                { key: 'secret', label: 'X-Agent-Secret', secret: true },
+            ],
+        },
+    },
 ];
 
 // GET /api/connectors — list all active connectors

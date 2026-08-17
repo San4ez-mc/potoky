@@ -2081,13 +2081,14 @@ ${sourceContent || '(немає даних)'}
 
             // Тест-режим: платіжні конектори не б'ють реальні API (нема левих замовлень/лінків).
             // monoStatement лишаємо як інжектнув харнес; ibanoplata віддає фейковий URL.
-            if (ctx.testMode && (connectorType === 'ibanoplata' || connectorType === 'monobank')) {
+            if (ctx.testMode && (connectorType === 'ibanoplata' || connectorType === 'monobank' || connectorType === 'browser_agent')) {
                 if (connectorType === 'ibanoplata' && action === 'create_invoice') {
                     if (!ctx.orderRef) ctx.orderRef = 'TEST' + Date.now().toString(36).toUpperCase();
                     ctx.ibanInvoiceUid = 'test-uid';
                     ctx.ibanPayUrl = 'https://test.local/pay/' + ctx.orderRef;
                     if (outputVar) setByPath(ctx, outputVar, ctx.ibanPayUrl);
                 }
+                if (connectorType === 'browser_agent' && outputVar) setByPath(ctx, outputVar, { ok: true, testMode: true });
                 runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
                 continue;
             }
@@ -2101,7 +2102,7 @@ ${sourceContent || '(немає даних)'}
                 // Ключі можуть бути у САМІЙ воронці (funnelEnv), а не лише у збереженому
                 // конекторі — тоді savedConnector не обовʼязковий (перевага для one-funnel
                 // ключів). Це стосується ibanoplata/monobank; wayforpay лишається на конекторі.
-                const KEY_BASED = connectorType === 'ibanoplata' || connectorType === 'monobank';
+                const KEY_BASED = connectorType === 'ibanoplata' || connectorType === 'monobank' || connectorType === 'browser_agent';
                 if (!savedConnector && !KEY_BASED) {
                     console.warn(`[connector] Connector type "${connectorType}" not found or inactive`);
                     await logFlowError({
@@ -2389,6 +2390,47 @@ ${_baseUrl}/legal/terms — Правила використання`;
                         db.apiCall.create({ data: {
                             sessionId: session.id, service: 'ibanoplata', method: 'delete_invoice',
                             requestData: { uid }, responseData: {}, statusCode: dStatus, durationMs: Date.now() - dStart,
+                        } }).catch(() => {});
+                    }
+                }
+
+                // ── browser_agent: веб-автоматизація через мікросервіс (replay/agent/read) ──
+                if (connectorType === 'browser_agent') {
+                    const base = (funnelEnv.BROWSER_AGENT_URL || config.base_url || 'http://127.0.0.1:8091').replace(/\/$/, '');
+                    const secret = (funnelEnv.BROWSER_AGENT_SECRET || config.secret || '').trim();
+                    const headers = { 'Content-Type': 'application/json', 'X-Agent-Secret': secret };
+                    let path = ''; let reqBody = {};
+                    if (action === 'replay') {
+                        let scenario = {};
+                        if (data.scenarioKey && funnelEnv[data.scenarioKey]) { try { scenario = JSON.parse(funnelEnv[data.scenarioKey]); } catch (_e) { scenario = {}; } }
+                        else if (data.scenarioVar) { scenario = getByPath(ctx, String(data.scenarioVar).replace(/^context\./, '')) || {}; }
+                        const payload = data.dataVar ? (getByPath(ctx, String(data.dataVar).replace(/^context\./, '')) || {}) : {};
+                        path = '/replay'; reqBody = { scenario, data: payload, screenshot: data.screenshot !== false };
+                    } else if (action === 'agent') {
+                        const payload = data.dataVar ? (getByPath(ctx, String(data.dataVar).replace(/^context\./, '')) || {}) : {};
+                        path = '/agent'; reqBody = {
+                            task: renderTemplate(data.task || '', scope),
+                            startUrl: renderTemplate(data.startUrl || '', scope) || null,
+                            data: payload, dry_run: data.dryRun !== false,
+                            screenshot: data.screenshot !== false, max_steps: parseInt(data.maxSteps || 40, 10) || 40,
+                        };
+                    } else if (action === 'read') {
+                        path = '/read'; reqBody = { url: renderTemplate(data.url || '', scope), mode: data.mode || 'markdown', render_js: data.renderJs === true };
+                    }
+                    if (path) {
+                        const bStart = Date.now(); let bStatus = null; let bJson = {};
+                        try {
+                            const r = await fetch(base + path, { method: 'POST', headers, body: safeJsonStringify(reqBody) });
+                            bStatus = r.status; bJson = await r.json().catch(() => ({}));
+                        } catch (e) { bJson = { ok: false, error: e.message }; }
+                        if (outputVar) setByPath(ctx, outputVar, bJson);
+                        if (bJson && bJson.screenshot_b64) ctx.browserScreenshot = bJson.screenshot_b64;
+                        if (bJson && bJson.draft_scenario_raw) ctx.browserScenarioDraft = bJson.draft_scenario_raw;
+                        db.apiCall.create({ data: {
+                            sessionId: session.id, service: 'browser_agent', method: action,
+                            requestData: { path, action }, // секрет НЕ логуємо
+                            responseData: { ok: !!(bJson && bJson.ok), error: (bJson && bJson.error) || null, url: (bJson && bJson.url) || null },
+                            statusCode: bStatus, durationMs: Date.now() - bStart,
                         } }).catch(() => {});
                     }
                 }

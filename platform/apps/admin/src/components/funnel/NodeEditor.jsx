@@ -676,6 +676,7 @@ function ConnectorNodeEditor({ data, update, connectors }) {
                             className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
                         >
                             <option value="get_statement">get_statement — Виписка (кредити)</option>
+                            <option value="mark_consumed">mark_consumed — Позначити транзакцію (антидубль)</option>
                         </select>
                     </Field>
                     <Field label="Вікно, годин (windowHours)">
@@ -693,6 +694,81 @@ function ConnectorNodeEditor({ data, update, connectors }) {
                             placeholder="context.monoStatement"
                             className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-brand"
                         />
+                    </Field>
+                </>
+            )}
+
+            {/* Browser Agent (веб-автоматизація) */}
+            {data.connectorType === 'browser_agent' && (
+                <>
+                    <Field label="Дія">
+                        <select
+                            value={data.action || 'replay'}
+                            onChange={e => update({ action: e.target.value })}
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+                        >
+                            <option value="replay">replay — Прогнати збережений сценарій</option>
+                            <option value="agent">agent — ШІ веде браузер (dry-run)</option>
+                            <option value="read">read — Прочитати сторінку (парсинг)</option>
+                        </select>
+                    </Field>
+                    {data.action === 'agent' && (
+                        <>
+                            <Field label="Задача агенту (task)">
+                                <textarea
+                                    value={data.task || ''}
+                                    onChange={e => update({ task: e.target.value })}
+                                    rows={3}
+                                    placeholder="Увійди на сайт, додай товари у кошик, заповни доставку. НЕ підтверджуй замовлення."
+                                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand resize-none"
+                                />
+                            </Field>
+                            <Field label="Стартовий URL (startUrl)">
+                                <input value={data.startUrl || ''} onChange={e => update({ startUrl: e.target.value })} placeholder="{{env.BREWDROP_URL}}"
+                                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-brand" />
+                            </Field>
+                            <label className="flex items-center gap-2 text-sm text-gray-300">
+                                <input type="checkbox" checked={data.dryRun !== false} onChange={e => update({ dryRun: e.target.checked })} />
+                                dry-run (не тиснути фінальний submit)
+                            </label>
+                        </>
+                    )}
+                    {data.action === 'replay' && (
+                        <>
+                            <Field label="Ключ сценарію (scenarioKey) або scenarioVar">
+                                <input value={data.scenarioKey || ''} onChange={e => update({ scenarioKey: e.target.value })} placeholder="BREWDROP_SCENARIO"
+                                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-brand" />
+                            </Field>
+                        </>
+                    )}
+                    {data.action === 'read' && (
+                        <>
+                            <Field label="URL">
+                                <input value={data.url || ''} onChange={e => update({ url: e.target.value })} placeholder="https://..."
+                                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-brand" />
+                            </Field>
+                            <Field label="Режим (mode)">
+                                <select value={data.mode || 'markdown'} onChange={e => update({ mode: e.target.value })}
+                                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand">
+                                    <option value="markdown">markdown</option>
+                                    <option value="text">text</option>
+                                    <option value="json">json</option>
+                                    <option value="html">html</option>
+                                </select>
+                            </Field>
+                            <label className="flex items-center gap-2 text-sm text-gray-300">
+                                <input type="checkbox" checked={data.renderJs === true} onChange={e => update({ renderJs: e.target.checked })} />
+                                render_js (через браузер, для JS-сайтів)
+                            </label>
+                        </>
+                    )}
+                    <Field label="Data var (обʼєкт із контексту: креди+товари+доставка)">
+                        <input value={data.dataVar || ''} onChange={e => update({ dataVar: e.target.value })} placeholder="context.supplierOrder"
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-brand" />
+                    </Field>
+                    <Field label="Output var (результат)">
+                        <input value={data.outputVar || ''} onChange={e => update({ outputVar: e.target.value })} placeholder="context.browserResult"
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-brand" />
                     </Field>
                 </>
             )}

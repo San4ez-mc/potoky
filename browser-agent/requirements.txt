@@ -1,0 +1,19 @@
+# Ядро сервісу
+fastapi==0.115.*
+uvicorn[standard]==0.32.*
+pydantic==2.*
+
+# Браузер (дії + JS-рендер для читання). Chromium уже стоїть на сервері (ms-playwright).
+playwright==1.48.*
+
+# ШІ-агент над браузером (перший прохід + фолбек). Мозок — Claude.
+browser-use==0.1.*
+langchain-anthropic==0.2.*
+
+# Легке читання (код-first, економія токенів): анти-бот HTTP + HTML→markdown
+curl_cffi==0.7.*
+markitdown==0.0.*
+beautifulsoup4==4.12.*
+
+# Опційно (важче) — вмикати за потреби, НЕ ставимо на 1-ядерному боксі за замовч.:
+# crawl4ai

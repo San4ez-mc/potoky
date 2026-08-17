@@ -121,7 +121,8 @@ var summary='🧾 brewdrop '+(dryRun?'(DRY-RUN)':'СТВОРЕНО')+':\\nТов
 if(dryRun) return { supplierOrderResult:summary+'\\n\\n⚠️ DRY-RUN: НЕ відправлено (BREWDROP_DRY_RUN=1).', supplierOrderPayload:JSON.stringify(payload) };
 var o=await bd('/api/orders',{method:'POST',body:JSON.stringify(payload)});
 if(o.status>=400) return { supplierOrderResult:'❌ brewdrop orders: '+JSON.stringify(o.json).slice(0,300), supplierOrderPayload:JSON.stringify(payload) };
-return { supplierOrderResult:summary+'\\n✅ ID: '+((o.json&&o.json.data&&o.json.data.id)||'?'), supplierOrderId:(o.json&&o.json.data&&o.json.data.id)||null };
+var od2=(o.json&&o.json.data)||{};
+return { supplierOrderResult:summary+'\\n✅ ID: '+(od2.id||'?')+(od2.ttn?(' | ТТН: '+od2.ttn):''), supplierOrderId:od2.id||null, supplierTtn:od2.ttn||'' };
 `.trim();
 
 function upsertNode(nodes, id, patch) {
@@ -157,6 +158,9 @@ function setEdge(edges, source, target, sourceHandle) {
     upsertNode(nodes, 'n_order_intent', { data: {
         messagesTemplate: '',
         systemPrompt: 'Товар: {{context.product.name}} — {{context.product.price}} грн. Клієнт уже визначився з товаром і кольором. НЕ вигадуй розміри, кількість, категорію чи характеристики, яких немає в даних вище (це НЕ взуття/одяг з розмірами, якщо цього нема в назві). Єдина задача — зрозуміти, чи готовий оформити замовлення.\nВідповідай МАКСИМУМ одним коротким реченням українською, без службових токенів.\nВАЖЛИВО: коротка відповідь на попереднє питання/нагадування («так», «да», «хочу», «оформляй», «+», «ок», «давайте») — це ГОТОВНІСТЬ, НЕ жарт. Дивись історію листування вище.\nЗАВЖДИ додай у json_output рівно один JSON: {"ready":"yes"} — якщо погоджується/підтверджує; {"ready":"no"} — якщо вагається чи відмовляється.\nНе згадуй сайтів, кошиків, посилань — оформлення веде цей чат.',
+    } });
+    upsertNode(nodes, 'n_size', { data: {
+        systemPrompt: 'Ти — Оля, жива тепла продавчиня-консультантка GOVERLA. Українською, з турботою, доречні емодзі.\nТОВАР: {{context.product.name}} — {{context.product.price}} грн. {{context.product.desc}}. Кольори: {{context.product.colors}}.\nЦІЛЬ кроку: отримати ЗРІСТ (см) і ВАГУ (кг), щоб підібрати розмір.\nПРАВИЛА:\n1. Клієнт може написати як завгодно: «181 71», «зріст 181 вага 71», «мій ріст 181, 71 кг», «71кг 181см», «180/70». САМ визнач де зріст (150–210 см), де вага (40–160 кг).\n2. Якщо чогось бракує — тепло попроси саме це (напр.: «Підкажіть, будь ласка, ще вагу 🙂»). Пиши живо, не сухо.\n3. На питання про матеріал/ціну/доставку/колір — коротко відповідай з даних вище, тоді м’яко повертай до зросту/ваги.\n4. КОЛИ Є І ЗРІСТ, І ВАГА — поверни РІВНО один JSON у json_output: {"height": <см>, "weight": <кг>} і БІЛЬШЕ НІЧОГО (жодного тексту, НЕ називай і НЕ вгадуй розмір — його порахує система далі). Якщо клієнт сам наполіг на конкретному розмірі — додай "clothingSize".\nНе вигадуй товарів/кольорів, яких нема вище.',
     } });
     upsertNode(nodes, 'n_color', { data: {
         systemPrompt: 'Ти — жива продавчиня-консультантка GOVERLA. Товар: {{context.product.name}} ({{context.product.desc}}), ціна {{context.product.price}} грн. Веди діалог САМЕ про цей товар — НЕ вигадуй іншу категорію, розміри чи характеристики, яких немає в даних вище.\nКлієнт обирає КОЛІР. Доступні кольори: {{context.product.colors}}.\nВідповідай одним коротким дружнім реченням українською. Пропонуй лише наявні кольори; якщо просять інший — скажи, які є. На питання про матеріал/ціну/доставку — коротко з даних вище, тоді повертай до вибору кольору.\nКоли клієнт назвав колір із наявних — ЗАВЖДИ додай у json_output рівно один JSON: {"color":"<колір>"}. Жодних службових токенів не пиши.',
@@ -215,6 +219,13 @@ function setEdge(edges, source, target, sourceHandle) {
         label: '13.7 Результат постачальнику → Telegram', targetKey: 'ADMIN_TELEGRAM_ID',
         message: '🏭 Постачальник (замовлення {{context.orderRef}}):\n{{context.supplierOrderResult}}',
     } });
+    // ТТН клієнту (коли постачальник повернув накладну — бойовий режим)
+    upsertNode(nodes, 'n_ttn_cond', { type: 'condition', position: { x: 120, y: 4700 }, data: {
+        label: '13.8 Є ТТН?', condition: 'context.supplierTtn && String(context.supplierTtn).length > 3',
+    } });
+    upsertNode(nodes, 'n_ttn_client', { type: 'message', position: { x: 120, y: 4800 }, data: {
+        label: '13.9 ТТН клієнту', variants: [], text:
+        'Ваша посилка вже їде! 🚚 Номер накладної (ТТН): {{context.supplierTtn}}\nЗа ним зможете відстежити доставку на Новій Пошті 📦 Дякуємо за замовлення 💛' } });
 
     // ── ребра гілки оплати ──
     setEdge(edges, 'n_pay_amount', 'n_iban_invoice');
@@ -233,8 +244,13 @@ function setEdge(edges, source, target, sourceHandle) {
     setEdge(edges, 'n_create', 'n_supplier_cond');
     setEdge(edges, 'n_supplier_cond', 'n_supplier_order', 'true');
     setEdge(edges, 'n_supplier_order', 'n_supplier_notify');
-    setEdge(edges, 'n_supplier_notify', 'n_confirm');
+    setEdge(edges, 'n_supplier_notify', 'n_ttn_cond');
+    setEdge(edges, 'n_ttn_cond', 'n_ttn_client', 'true');
+    setEdge(edges, 'n_ttn_client', 'n_confirm');
+    setEdge(edges, 'n_ttn_cond', 'n_confirm', 'false');
     setEdge(edges, 'n_supplier_cond', 'n_confirm', 'false');
+    // Прибрати дубль «Цей товар у наявності» з щасливого шляху (менше повідомлень підряд)
+    setEdge(edges, 'n_avail_cond', 'n_upsell_cond', 'true');
     // Другий допродаж: n_confirm → чекаємо відповідь → фінал → нагадування (як було)
     setEdge(edges, 'n_confirm', 'n_upsell2_wait');
     setEdge(edges, 'n_upsell2_wait', 'n_final');
@@ -249,12 +265,21 @@ function setEdge(edges, source, target, sourceHandle) {
         'Дякуємо за замовлення! 🎉 Номер накладної надішлемо в цей чат 📩\nПоки посилку не відправили — можете додати товар за спеціальною ціною. Акційні ціни діють лише зараз 🔥 Щось сподобалось — напишіть 😊' } });
     upsertNode(nodes, 'n_upsell2_wait', { type: 'claude', position: { x: 320, y: 4900 }, data: {
         label: '15. Другий допродаж — відповідь', mode: 'dialog', connectorId: '2ec53ba5-144e-463b-9758-c217c4a69b0e',
-        temperature: 0.3, exitCondition: 'first_response', outputVar: 'context.upsell2',
-        systemPrompt: 'Клієнт щойно оформив замовлення. Ти запропонував додати ще товар за акційною ціною.\nЯкщо клієнт цікавиться конкретним товаром — коротко допоможи (з наявних даних), інакше — тепло подякуй за замовлення.\nВідповідай ОДНИМ коротким дружнім реченням українською. Не став зайвих питань.',
+        temperature: 0.3, exitCondition: 'json_output', outputVar: 'context.upsell2',
+        systemPrompt: 'Клієнт щойно оформив замовлення, і ти запропонував додати ще товар за акційною ціною. Це ОДНА відповідь — не веди довгий діалог.\nЯкщо цікавиться товаром — коротко тепло допоможи; якщо відмова — щиро подякуй за замовлення й побажай гарного дня.\nВідповідай ОДНИМ теплим реченням українською. ЗАВЖДИ додай у json_output рівно один JSON: {"done": true}. Жодних службових токенів.',
     } });
     upsertNode(nodes, 'n_final', { type: 'message', position: { x: 320, y: 5000 }, data: {
-        label: '16. Замовлення прийняте', variants: [], text: 'Добре, замовлення прийняте ✔️ Дякуємо, що обрали нас! 🙌',
-    } });
+        label: '16. Замовлення прийняте', variants: [], text: 'Чудово, замовлення прийняте ✔️\nДякуємо, що обрали GOVERLA 🙌 Ми вже беремося за вашу посилку і триматимемо в курсі — номер накладної надішлемо сюди, щойно відправимо 📦\nГарного вам дня та чудового настрою! 🌟' } });
+
+    // ── Тепліші, «дбайливіші» тексти + прибрати дубль «у наявності» ──
+    upsertNode(nodes, 'n_welcome', { data: { variants: [], text:
+        'Вітаємо у GOVERLA! 🙌 Дуже раді, що завітали 💛\nОсь ваш товар: {{context.product.name}} — лише {{context.product.price}} грн 🔥\n{{context.product.desc}}\nДопоможу підібрати ідеальний варіант — це займе хвилинку 😊' } });
+    upsertNode(nodes, 'n_size_reply', { data: { variants: [], text:
+        'Дякую! 🙌 За вашими параметрами ідеально підійде розмір {{context.recommendedSize}} 📏 — сяде якраз, перевірено 👌' } });
+    upsertNode(nodes, 'n_avail_no', { data: { variants: [], text:
+        'Ой, саме цей варіант зараз розібрали 😔 Але не засмучуйтесь — підберемо не гірше! Напишіть, будь ласка, який ще колір розглядаєте, і я одразу перевірю наявність ✨' } });
+    upsertNode(nodes, 'n_confirm', { data: { variants: [], text:
+        'Дякуємо за замовлення — ви супер! 🎉 Ми вже його оформили 💛\nНомер накладної (ТТН) надішлемо прямо сюди, щойно передамо посилку Новій Пошті 📦\nА поки її не відправили — можна додати ще щось за акційною ціною (діє лише зараз 🔥). Якщо щось сподобалось — просто напишіть, залюбки допоможу 😊' } });
 
     // ── testMode-гард у KeyCRM-ноді: тестові прогони не створюють реальних замовлень ──
     const crm = nodes.find((n) => n.id === 'n_crm_order');

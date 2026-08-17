@@ -199,6 +199,93 @@ setTimeout(() => {
     setInterval(checkInactiveSessions, FOLLOW_UP_INTERVAL_MS);
 }, 2 * 60 * 1000);
 
+// ── Розумні нагадування для sales-воронок Zernio ─────────────────────────────
+// прочитав, не відповів → 10 хв; не прочитав → 2 год; текст залежно від етапу;
+// поважати «напишу після HH:MM» (+30хв); не нагадувати якщо оформлено; макс 3.
+const ZERNIO_REMINDER_INTERVAL_MS = 5 * 60 * 1000;
+const REMINDER_STAGE_TEXT = {
+    n_size: 'Підкажіть, будь ласка, ваш зріст і вагу — підберу найкращий розмір 🙂',
+    n_color: 'Підкажіть, будь ласка, чи визначились із кольором? 😊',
+    n_order_intent: 'Підкажіть, чи буде можливість оформити замовлення сьогодні? 🙂',
+    n_order_cond: 'Підкажіть, чи буде можливість оформити замовлення сьогодні? 🙂',
+    n_pay: 'Нагадую про оплату 🙌 Щойно надішлете підтвердження — одразу оформимо відправку.',
+    n_pay_collect: 'Нагадую про оплату 🙌 Оберіть, будь ласка, спосіб — і продовжимо.',
+    n_requisites: 'Нагадую про оплату 🙌 Реквізити вище — після оплати надішліть чек/скрін.',
+    n_collect: 'Чекаю дані для відправки (ПІБ, телефон, місто, № відділення НП) 📦',
+};
+function parseAfterTime(text) {
+    // «після 18:00», «після 18», «о 18:30» → час у мс (сьогодні). +30хв додаємо у виклику.
+    const m = String(text || '').match(/(?:післ[яo]|опісля|о)\s*(\d{1,2})(?:[:.](\d{2}))?/i);
+    if (!m) return null;
+    const h = Number(m[1]); const mm = Number(m[2] || 0);
+    if (h > 23 || mm > 59) return null;
+    const d = new Date(); d.setHours(h, mm, 0, 0);
+    return d.getTime();
+}
+async function sendZernioReminder(botId, conversationId, text) {
+    const rows = await db.funnelKey.findMany({ where: { botId, key: { in: ['ZERNIO_API_TOKEN', 'ZERNIO_SEND_URL', 'ZERNIO_ACCOUNT_ID'] } }, select: { key: true, value: true } });
+    const km = Object.fromEntries(rows.map((k) => [k.key, (k.value || '').trim()]));
+    if (!km.ZERNIO_API_TOKEN || km.ZERNIO_API_TOKEN === 'REPLACE_ME' || !conversationId) return false;
+    const tmpl = km.ZERNIO_SEND_URL || 'https://zernio.com/api/v1/inbox/conversations/{conversationId}/messages';
+    const url = tmpl.replace('{conversationId}', encodeURIComponent(conversationId));
+    try {
+        const res = await fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${km.ZERNIO_API_TOKEN}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ accountId: km.ZERNIO_ACCOUNT_ID || undefined, message: { text } }) });
+        return res.ok;
+    } catch (e) { logger.warn('[zernio-reminder] send failed', { error: e.message }); return false; }
+}
+async function checkZernioReminders() {
+    try {
+        const now = Date.now();
+        const sessions = await db.session.findMany({
+            where: {
+                isActive: true, isTest: false,
+                state: { notIn: ['completed', 'unsubscribed'] },
+                lastActive: { lte: new Date(now - 10 * 60 * 1000), gte: new Date(now - 26 * 60 * 60 * 1000) },
+                context: { path: ['channel'], equals: 'zernio' },
+            },
+            select: { id: true, botId: true, context: true, lastActive: true },
+            take: 200,
+        });
+        for (const s of sessions) {
+            try {
+                const ctx = (typeof s.context === 'object' ? s.context : JSON.parse(s.context || '{}')) || {};
+                const rt = ctx.flowRuntime || {};
+                if (!rt.waitingForUser) continue;
+                if (ctx.adminEngaged || ctx.funnelPaused || ctx.crmOrderId || (ctx.orderData && ctx.orderData.fullName)) continue;
+                const rem = ctx.reminders || { count: 0, lastAt: 0 };
+                if (rem.count >= 3) continue;
+
+                const node = rt.currentNodeId || '';
+                const ageMin = (now - new Date(s.lastActive).getTime()) / 60000;
+
+                // статус останнього нашого повідомлення (read/delivered/sent)
+                const lastAsst = await db.message.findFirst({ where: { sessionId: s.id, role: 'assistant' }, orderBy: { createdAt: 'desc' }, select: { metadata: true } });
+                const status = (lastAsst && lastAsst.metadata && lastAsst.metadata.status) || 'sent';
+                const read = status === 'read';
+
+                // тригер за таймінгом
+                if (read && ageMin < 10) continue;
+                if (!read && ageMin < 120) continue;
+                // не частіше ніж раз на 10 хв
+                if (now - (rem.lastAt || 0) < 10 * 60 * 1000) continue;
+
+                // поважати «напишу після HH:MM» з останніх повідомлень користувача
+                const lastUser = await db.message.findFirst({ where: { sessionId: s.id, role: 'user' }, orderBy: { createdAt: 'desc' }, select: { content: true } });
+                const after = parseAfterTime(lastUser && lastUser.content);
+                if (after && now < after + 30 * 60 * 1000) continue;
+
+                const text = REMINDER_STAGE_TEXT[node] || 'Ми на звʼязку 🙂 Якщо є питання — просто напишіть, допоможу.';
+                const ok = await sendZernioReminder(s.botId, ctx.conversationId, text);
+                if (ok) {
+                    await db.session.update({ where: { id: s.id }, data: { context: { ...ctx, reminders: { count: rem.count + 1, lastAt: now, stage: node } } } }).catch(() => {});
+                    logger.info('[zernio-reminder] sent', { sessionId: s.id, node, status, ageMin: Math.round(ageMin), n: rem.count + 1 });
+                }
+            } catch (e) { logger.warn('[zernio-reminder] session error', { sessionId: s.id, error: e.message }); }
+        }
+    } catch (err) { logger.error('[zernio-reminder] checker error', { error: err.message }); }
+}
+setTimeout(() => { checkZernioReminders(); setInterval(checkZernioReminders, ZERNIO_REMINDER_INTERVAL_MS); }, 3 * 60 * 1000);
+
 // ── Morning homework reminder ─────────────────────────────────
 // Runs every 30 min. Between 09:00-09:30 Kyiv time (UTC+2/+3),
 // sends a reminder to users whose course session is stuck waiting

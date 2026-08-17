@@ -269,6 +269,10 @@ async function handleIncomingMessage(botId, body) {
     const HANDOFF_RE = /менеджер|оператор|з людин|живою людин|поверн|обмін|обмен|\bбрак\b|скарг|жалоб|конфлікт|обман|шахра|не прийшл|не дійшл|не дошл/i;
     if (text && HANDOFF_RE.test(text) && !ctxNow.adminEngaged && !ctxNow.crmOrderId) {
         await db.session.update({ where: { id: session.id }, data: { context: { ...ctxNow, adminEngaged: true, handoffReason: text.slice(0, 120) } } }).catch(() => {});
+        // Бот каже клієнту, що кличе людину, і БІЛЬШЕ не відповідає (adminEngaged ставить флоу на паузу).
+        const handoffMsg = 'Добре, зараз покличу менеджера 🙂 Незабаром вам відповість жива людина — дякую за терпіння 💛';
+        try { await sendZernioMessage(botId, conversationId, handoffMsg); } catch (e) { logger.warn('[zernioHandler] handoff reply failed', { error: e.message }); }
+        await db.message.create({ data: { sessionId: session.id, role: 'assistant', content: handoffMsg, metadata: { source: 'handoff' } } }).catch(() => {});
         await sendTelegramAlert(botId, '🙋 Потрібна людина у чаті (авто): "' + String(text).slice(0, 180) + '"\nКлієнт: ' + (contactName || contactId) + '\nСесія: ' + session.id);
         logger.info('[zernioHandler] handoff triggered', { botId, sessionId: session.id });
         return { ok: true, handoff: true };

@@ -780,7 +780,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
     // діф змінених ключів контексту після ноди. API/помилки корелюємо на фронті.
     if (!Array.isArray(runtime.nodeTraces)) runtime.nodeTraces = [];
     const TRACE_MAX = 80;
-    const TRACE_VAL_MAX = 2500;
+    const TRACE_VAL_MAX = 8000;
     const _snapKey = (v) => {
         let s;
         try { s = JSON.stringify(v); } catch (_e) { s = String(v); }
@@ -824,7 +824,9 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
         pendingTrace = {
             seq: runtime.nodeTraces.length,
             nodeId: node.id, nodeType: node.type, label: (data && data.label) || '',
-            input: _snapData(data), tsIso: new Date().toISOString(),
+            input: _snapData(data),
+            userInput: String(runtime.lastUserMessage || '').slice(0, 1500),
+            tsIso: new Date().toISOString(),
             _before: _snapRoot(ctx), _ts: Date.now(),
         };
         const _nowDate = new Date();

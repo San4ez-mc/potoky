@@ -520,10 +520,23 @@ function KVList({ obj, empty }) {
     );
 }
 
+function collectUrls(...objs) {
+    const set = new Set();
+    const re = /https?:\/\/[^\s"'`)]+/g;
+    for (const o of objs) {
+        let s = '';
+        try { s = typeof o === 'string' ? o : JSON.stringify(o); } catch { s = ''; }
+        let m;
+        while ((m = re.exec(s || ''))) set.add(m[0].replace(/[,.]+$/, ''));
+    }
+    return Array.from(set);
+}
+
 function NodeTraceCard({ trace, apiCalls, errors, defaultOpen }) {
     const [open, setOpen] = useState(!!defaultOpen);
     const icon = NODE_ICON[trace.nodeType] || '📦';
     const hasErr = errors.length > 0;
+    const links = collectUrls(trace.input, trace.output, apiCalls.map(c => [c.requestData, c.responseData]));
     return (
         <div className={`border rounded-lg overflow-hidden ${hasErr ? 'border-red-800' : 'border-gray-700'}`}>
             <button onClick={() => setOpen(o => !o)}
@@ -541,6 +554,12 @@ function NodeTraceCard({ trace, apiCalls, errors, defaultOpen }) {
             </button>
             {open && (
                 <div className="px-3 pb-3 bg-gray-950 space-y-3 pt-2">
+                    {trace.userInput && (
+                        <div>
+                            <div className="text-[11px] text-gray-500 mb-1 font-semibold">👤 Повідомлення користувача (вхід)</div>
+                            <div className="text-xs text-gray-200 bg-gray-900 rounded p-2 whitespace-pre-wrap break-words">{trace.userInput}</div>
+                        </div>
+                    )}
                     <div>
                         <div className="text-[11px] text-gray-500 mb-1 font-semibold">⬇ Вхідні (конфіг ноди)</div>
                         <KVList obj={trace.input} empty="без параметрів" />
@@ -562,8 +581,18 @@ function NodeTraceCard({ trace, apiCalls, errors, defaultOpen }) {
                     )}
                     {apiCalls.length > 0 && (
                         <div>
-                            <div className="text-[11px] text-gray-500 mb-1 font-semibold">📡 API-запити ({apiCalls.length})</div>
+                            <div className="text-[11px] text-gray-500 mb-1 font-semibold">📡 API-запити ({apiCalls.length}) — повний запит і відповідь</div>
                             <div className="space-y-1.5">{apiCalls.map(c => <ApiCallItem key={c.id} call={c} />)}</div>
+                        </div>
+                    )}
+                    {links.length > 0 && (
+                        <div>
+                            <div className="text-[11px] text-gray-500 mb-1 font-semibold">🔗 Посилання ({links.length})</div>
+                            <div className="space-y-0.5">
+                                {links.map((u, i) => (
+                                    <a key={i} href={u} target="_blank" rel="noreferrer" className="block text-[11px] text-sky-400 hover:underline font-mono break-all">{u}</a>
+                                ))}
+                            </div>
                         </div>
                     )}
                 </div>
@@ -630,6 +659,20 @@ function VarTimeline({ name, steps }) {
     );
 }
 
+function AllApiCallsSection({ apiCalls }) {
+    const [open, setOpen] = useState(false);
+    const sorted = useMemo(() => [...(apiCalls || [])].sort((a, b) => (Date.parse(a.createdAt) || 0) - (Date.parse(b.createdAt) || 0)), [apiCalls]);
+    if (!sorted.length) return null;
+    return (
+        <div className="mt-4 pt-3 border-t border-gray-800">
+            <button onClick={() => setOpen(o => !o)} className="text-xs text-gray-400 hover:text-white">
+                {open ? '▲' : '▼'} 📡 Усі API-запити сесії ({sorted.length}) — повний список з даними
+            </button>
+            {open && <div className="space-y-1.5 mt-2">{sorted.map(c => <ApiCallItem key={c.id} call={c} />)}</div>}
+        </div>
+    );
+}
+
 function NodeTraceTab({ traces, apiCalls, errors, rawContext }) {
     const [page, setPage] = useState(0);
     const PAGE = 10;
@@ -670,6 +713,7 @@ function NodeTraceTab({ traces, apiCalls, errors, rawContext }) {
                             <button disabled={page >= pages - 1} onClick={() => setPage(p => p + 1)} className="text-xs px-2 py-1 rounded bg-gray-800 text-gray-300 disabled:opacity-40">далі →</button>
                         </div>
                     )}
+                    <AllApiCallsSection apiCalls={apiCalls} />
                 </div>
             </div>
             <VariablesPanel traces={ordered} rawContext={rawContext} />

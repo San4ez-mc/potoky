@@ -75,6 +75,55 @@ if(found){ consumed.push(found.id); return { payStatus:'confirmed', payVia:via, 
 return { payStatus:'not_found', payVia:'none' };
 `.trim();
 
+// ── js-код ноди розміщення замовлення у brewdrop (REST API, dry-run за замовч.) ──
+const BREWDROP_ORDER_CODE = `
+if(context.testMode) return { supplierOrderResult:'(testMode: brewdrop пропущено)' };
+var base=(keys.BREWDROP_API_BASE||'https://api.brewdrop.in.ua').replace(/\\/+$/,'');
+var tok=(keys.BREWDROP_TOKEN||'').trim();
+var dryRun=String(keys.BREWDROP_DRY_RUN||'1')!=='0';
+if(!tok) return { supplierOrderResult:'❌ BREWDROP_TOKEN не заповнено' };
+var HDR={ 'Authorization':'Bearer '+tok, 'crossdomain':'true', 'Accept':'application/json', 'Content-Type':'application/json', 'Origin':'https://brewdrop.in.ua' };
+async function bd(path,opts){ var r=await fetch(base+path,Object.assign({headers:HDR},opts||{})); var j=null; try{ j=await r.json(); }catch(e){} return {status:r.status,json:j}; }
+function norm(x){ return String(x||'').toLowerCase().trim(); }
+var prod=context.product||{}; var od=context.orderData||{};
+var map={}; try{ map=JSON.parse(keys.BREWDROP_ARTICLE_MAP||'{}'); }catch(e){}
+var m=map[String(prod.id)]||{};
+var article=(m.article||prod.supplierArticle||'').trim();
+var color=(m.color||(context.colorChoice&&context.colorChoice.color)||'').trim();
+var size=(context.recommendedSize||'').trim();
+if(!article) return { supplierOrderResult:'❌ Немає артикулу brewdrop для товару '+(prod.name||prod.id)+' — заповни BREWDROP_ARTICLE_MAP' };
+var s=await bd('/api/guest/products/?search='+encodeURIComponent(article)+'&per_page=20');
+var sd=(s.json&&s.json.data)||[];
+var found=sd.find(function(p){return norm(p.vendor_code)===norm(article);})||sd[0];
+if(!found) return { supplierOrderResult:'❌ brewdrop: артикул '+article+' не знайдено' };
+var d=await bd('/api/guest/products/'+found.product_id);
+var colors=(((d.json&&(d.json.data||d.json))||{}).remains)||[];
+var pcsId=null, chosen=null;
+for(var ci=0;ci<colors.length;ci++){ var c=colors[ci]; var cn=norm(c.color&&c.color.name);
+  if(color && cn!==norm(color) && cn.indexOf(norm(color))<0) continue;
+  var sizes=c.sizes||[];
+  for(var si=0;si<sizes.length;si++){ var sv=sizes[si];
+    if(size && norm(sv.size&&sv.size.name)!==norm(size)) continue;
+    if(Number(sv.remains)>0){ pcsId=sv.product_color_size_id; chosen={color:cn,size:(sv.size&&sv.size.name),remains:sv.remains}; break; } }
+  if(pcsId) break; }
+if(!pcsId) return { supplierOrderResult:'❌ brewdrop: нема в наявності '+article+' / '+color+' / '+size };
+var cart=await bd('/api/carts',{method:'POST',body:JSON.stringify({product_color_size_id:pcsId,qty:1})});
+if(cart.status>=400) return { supplierOrderResult:'❌ кошик brewdrop: '+JSON.stringify(cart.json).slice(0,200) };
+var cy=await bd('/api/cities?search='+encodeURIComponent(od.city||'')+'&per_page=5');
+var cityObj=((cy.json&&cy.json.data)||[])[0]; var brObj=null;
+if(cityObj){ var brs=await bd('/api/branches?city_id='+cityObj.id+'&search='+encodeURIComponent(String(od.branch||''))+'&per_page=25'); var ba=(brs.json&&brs.json.data)||[]; brObj=ba.find(function(b){return String(b.name+' '+b.name_ua).indexOf(String(od.branch||''))>=0;})||ba[0]; }
+var parts=String(od.fullName||'').split(/\\s+/); var last=parts[0]||'',first=parts[1]||'',middle=parts[2]||null;
+var payload={ sender_id:Number(keys.BREWDROP_SENDER_ID)||undefined,
+  client_data:{ first_name:first,last_name:last,middle_name:middle,phone:od.phone||'',delivery_id:1,city_id:cityObj&&cityObj.id,branch_id:brObj&&brObj.id },
+  delivery_data:{ delivery_id:1,delivery_pay_person:1 }, pay_type:1, pay_person:1, discount:{type:'%',value:0},
+  sell_price:Number(context.payAmount)||prod.price||undefined, comment:'Замовлення '+(context.orderRef||'') };
+var summary='🧾 brewdrop '+(dryRun?'(DRY-RUN)':'СТВОРЕНО')+':\\nТовар: '+article+' / '+(chosen&&chosen.color)+' / '+(chosen&&chosen.size)+' (pcsId '+pcsId+', залишок '+(chosen&&chosen.remains)+')\\nОтримувач: '+last+' '+first+' '+(od.phone||'')+'\\nНП: '+((cityObj&&cityObj.name)||od.city)+' / '+((brObj&&brObj.name)||od.branch)+'\\nЦіна продажу: '+payload.sell_price+' | sender_id: '+(payload.sender_id||'—');
+if(dryRun) return { supplierOrderResult:summary+'\\n\\n⚠️ DRY-RUN: НЕ відправлено (BREWDROP_DRY_RUN=1).', supplierOrderPayload:JSON.stringify(payload) };
+var o=await bd('/api/orders',{method:'POST',body:JSON.stringify(payload)});
+if(o.status>=400) return { supplierOrderResult:'❌ brewdrop orders: '+JSON.stringify(o.json).slice(0,300), supplierOrderPayload:JSON.stringify(payload) };
+return { supplierOrderResult:summary+'\\n✅ ID: '+((o.json&&o.json.data&&o.json.data.id)||'?'), supplierOrderId:(o.json&&o.json.data&&o.json.data.id)||null };
+`.trim();
+
 function upsertNode(nodes, id, patch) {
     const i = nodes.findIndex((n) => n.id === id);
     if (i >= 0) { nodes[i] = { ...nodes[i], ...patch, data: { ...(nodes[i].data || {}), ...(patch.data || {}) } }; return false; }
@@ -155,6 +204,18 @@ function setEdge(edges, source, target, sourceHandle) {
         label: '12.97 Клієнту: перевіряємо', text: 'Дякуємо! Перевіряємо оплату вручну — це може зайняти трохи часу. Щойно підтвердимо, одразу напишемо і оформимо відправку 🙏',
     } });
 
+    // ── Постачальник: brewdrop (REST API, dry-run) ──
+    upsertNode(nodes, 'n_supplier_cond', { type: 'condition', position: { x: 320, y: 4380 }, data: {
+        label: '13.5 Постачальник brewdrop?', condition: "context.supplier && String(context.supplier).toLowerCase().indexOf('brewdrop') >= 0",
+    } });
+    upsertNode(nodes, 'n_supplier_order', { type: 'js', position: { x: 120, y: 4500 }, data: {
+        label: '13.6 Замовлення постачальнику (brewdrop)', code: BREWDROP_ORDER_CODE,
+    } });
+    upsertNode(nodes, 'n_supplier_notify', { type: 'notifyAdmin', position: { x: 120, y: 4600 }, data: {
+        label: '13.7 Результат постачальнику → Telegram', targetKey: 'ADMIN_TELEGRAM_ID',
+        message: '🏭 Постачальник (замовлення {{context.orderRef}}):\n{{context.supplierOrderResult}}',
+    } });
+
     // ── ребра гілки оплати ──
     setEdge(edges, 'n_pay_amount', 'n_iban_invoice');
     setEdge(edges, 'n_iban_invoice', 'n_requisites');
@@ -168,7 +229,12 @@ function setEdge(edges, source, target, sourceHandle) {
     setEdge(edges, 'n_pay_status_cond', 'n_pay_notfound_admin', 'false');
     setEdge(edges, 'n_pay_notfound_admin', 'n_pay_notfound_msg');
     setEdge(edges, 'n_pay_notfound_msg', 'n_crm_order');
-    // n_crm_order → n_create → n_confirm лишаються як були
+    // n_crm_order → n_create лишається; далі — гілка постачальника перед підтвердженням клієнту
+    setEdge(edges, 'n_create', 'n_supplier_cond');
+    setEdge(edges, 'n_supplier_cond', 'n_supplier_order', 'true');
+    setEdge(edges, 'n_supplier_order', 'n_supplier_notify');
+    setEdge(edges, 'n_supplier_notify', 'n_confirm');
+    setEdge(edges, 'n_supplier_cond', 'n_confirm', 'false');
 
     // ── testMode-гард у KeyCRM-ноді: тестові прогони не створюють реальних замовлень ──
     const crm = nodes.find((n) => n.id === 'n_crm_order');
@@ -211,6 +277,7 @@ function setEdge(edges, source, target, sourceHandle) {
     await upKey('MONO_ACCOUNT_ID', '0', 'ID рахунку Mono (дефолт 0)', { keepValue: true });
     // Прибрати instagram з каналів — бот працює через Zernio (прибирає хибну вимогу IG App-ключів)
     await upKey('FUNNEL_CHANNELS', '["zernio"]', 'Канали запуску воронки');
+    await upKey('BREWDROP_DRY_RUN', '1', 'brewdrop: 1=тест (не відправляє замовлення), 0=бойовий', { keepValue: true });
     console.log('✅ Записано + бекап збережено + ключі оновлено (канали: zernio).');
     process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -1850,8 +1850,8 @@ ${sourceContent || '(немає даних)'}
                 }
 
                 if (photoUrl) {
-                    // Store as metadata for later telegram send
-                    await persistAssistantMessage(session.id, caption || '📸 Фото', {
+                    // Фото несе attachment; текст-плейсхолдер «📸 Фото» не шлемо (клієнту зайвий).
+                    await persistAssistantMessage(session.id, caption || '', {
                         nodeId: node.id,
                         nodeType: node.type,
                         attachment: { type: 'photo', url: photoUrl, caption },

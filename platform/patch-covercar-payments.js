@@ -281,10 +281,20 @@ function setEdge(edges, source, target, sourceHandle) {
     } });
 
     // ── Ф2 повідомлення з посиланням + реквізитами (замість заглушки, зводить осиротілі ноди) ──
-    upsertNode(nodes, 'n_requisites', { type: 'message', data: {
-        label: '11. Оплата: посилання + реквізити', variants: [], buttons: [[{ text: '💳 Оплатити онлайн', url: '{{context.ibanPayUrl}}' }]],
-        text: 'Готово! 🎉 Оплатити можна двома способами:\n\n1️⃣ Кнопкою нижче — посилання на оплату за IBAN 👇\n\n2️⃣ Або вручну за реквізитами:\n' + FOP_NAME + '\nIBAN: ' + FOP_IBAN + '\nЄДРПОУ/ІПН: ' + FOP_CODE + '\n📌 У коментарі до платежу вкажіть: {{context.orderRef}}\n\nСума до оплати: {{context.payAmount}} грн ({{context.payLabel}}).\nПісля оплати надішліть, будь ласка, чек/скріншот або посилання на квитанцію 🙏',
-    } });
+    // ── Оплата: посилання (найзручніше) + реквізити окремими повідомленнями (легко копіювати) ──
+    upsertNode(nodes, 'n_requisites', { type: 'message', position: { x: 320, y: 3380 }, data: {
+        label: '11. Оплата: посилання (найзручніше)', variants: [], buttons: [],
+        text: 'Готово! 🎉\n\n💳 Найзручніший спосіб — оплата за посиланням: просто відкрийте, оберіть свій банк унизу і оплатіть в 1 клік 👇\n{{context.ibanPayUrl}}' } });
+    upsertNode(nodes, 'n_req_manual', { type: 'message', position: { x: 320, y: 3410 }, data: {
+        label: '11.1 Або вручну', variants: [], text: 'Або вручну за реквізитами — нижче кожне значення окремо, просто натисніть, щоб скопіювати 👇' } });
+    upsertNode(nodes, 'n_req_iban_l', { type: 'message', position: { x: 320, y: 3440 }, data: { label: '11.2 IBAN (підпис)', variants: [], text: '🏦 IBAN:' } });
+    upsertNode(nodes, 'n_req_iban_v', { type: 'message', position: { x: 320, y: 3470 }, data: { label: '11.3 IBAN (значення)', variants: [], text: FOP_IBAN } });
+    upsertNode(nodes, 'n_req_code_l', { type: 'message', position: { x: 320, y: 3500 }, data: { label: '11.4 ЄДРПОУ (підпис)', variants: [], text: '🧾 ЄДРПОУ / ІПН одержувача:' } });
+    upsertNode(nodes, 'n_req_code_v', { type: 'message', position: { x: 320, y: 3530 }, data: { label: '11.5 ЄДРПОУ (значення)', variants: [], text: FOP_CODE } });
+    upsertNode(nodes, 'n_req_ref_l', { type: 'message', position: { x: 320, y: 3560 }, data: { label: '11.6 Коментар (підпис)', variants: [], text: '📌 ОБОВʼЯЗКОВО впишіть цей коментар до платежу (інакше не зможемо знайти вашу оплату). Ось коментар — скопіюйте його 👇' } });
+    upsertNode(nodes, 'n_req_ref_v', { type: 'message', position: { x: 320, y: 3590 }, data: { label: '11.7 Коментар (значення)', variants: [], text: '{{context.orderRef}}' } });
+    upsertNode(nodes, 'n_req_sum', { type: 'message', position: { x: 320, y: 3620 }, data: {
+        label: '11.8 Сума + прохання чека', variants: [], text: '💰 Сума до сплати: {{context.payAmount}} грн ({{context.payLabel}}).\n\nПісля оплати надішліть, будь ласка, чек/скріншот або посилання на квитанцію — і я одразу оформлю відправку 🙂' } });
 
     // ── Ф2 виписка Mono + звірка + гілки ──
     upsertNode(nodes, 'n_mono_fetch', { type: 'connector', position: { x: 320, y: 3760 }, data: {
@@ -336,7 +346,15 @@ function setEdge(edges, source, target, sourceHandle) {
     // ── ребра гілки оплати ──
     setEdge(edges, 'n_pay_amount', 'n_iban_invoice');
     setEdge(edges, 'n_iban_invoice', 'n_requisites');
-    setEdge(edges, 'n_requisites', 'n_collect');
+    setEdge(edges, 'n_requisites', 'n_req_manual');
+    setEdge(edges, 'n_req_manual', 'n_req_iban_l');
+    setEdge(edges, 'n_req_iban_l', 'n_req_iban_v');
+    setEdge(edges, 'n_req_iban_v', 'n_req_code_l');
+    setEdge(edges, 'n_req_code_l', 'n_req_code_v');
+    setEdge(edges, 'n_req_code_v', 'n_req_ref_l');
+    setEdge(edges, 'n_req_ref_l', 'n_req_ref_v');
+    setEdge(edges, 'n_req_ref_v', 'n_req_sum');
+    setEdge(edges, 'n_req_sum', 'n_collect');
     // ── Нова Пошта: перевірка адреси між збором адреси і звіркою оплати ──
     upsertNode(nodes, 'n_np_check', { type: 'js', position: { x: 320, y: 3640 }, data: { label: '12.6 Нова Пошта: перевірка адреси', code: NP_CHECK_CODE } });
     upsertNode(nodes, 'n_np_gate', { type: 'condition', position: { x: 320, y: 3690 }, data: { label: '12.62 Уточнити область?', condition: 'context.np && context.np.ask === true' } });

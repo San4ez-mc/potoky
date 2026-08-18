@@ -216,11 +216,13 @@ try{
       np.summary=mkSummary(); return { np: np };
     }
   }
-  var a=addrs[0]; np.checked=true; np.ask=false; np.city=a.Present; np.ref=a.DeliveryCity||a.Ref; np.warn=''; np.askMsg='';
+  var a=addrs[0]; np.checked=true; np.ask=false; np.city=a.Present; np.cityRef=a.DeliveryCity||''; np.settlementRef=a.Ref||''; np.ref=np.cityRef||np.settlementRef; np.warn=''; np.askMsg='';
   var bnum=(String(od.branch||'').match(/\\d+/)||[])[0];
   var wantP=/поштомат|термінал/i.test(String(od.branch||''));
   if(np.ref){
-    var w=await npCall('Address','getWarehouses',{SettlementRef:np.ref,Limit:'1000'});
+    // getWarehouses: для міста — CityRef (DeliveryCity), для села — SettlementRef. Пробуємо обидва.
+    var w=np.cityRef?await npCall('Address','getWarehouses',{CityRef:np.cityRef,Limit:'1000'}):{};
+    if(!((w.data)||[]).length && np.settlementRef) w=await npCall('Address','getWarehouses',{SettlementRef:np.settlementRef,Limit:'1000'});
     var whs=(w.data)||[]; var hit=null;
     if(bnum){ hit=whs.filter(function(x){return String(x.Number)===String(bnum)&&(!wantP||x.CategoryOfWarehouse==='Postomat');})[0] || whs.filter(function(x){return String(x.Number)===String(bnum);})[0]; }
     if(hit){ np.warehouse=hit.Description; np.warehouseRef=hit.Ref; np.warehouseType=hit.CategoryOfWarehouse; }

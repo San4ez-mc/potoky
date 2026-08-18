@@ -595,16 +595,31 @@ function NodeTraceCard({ trace, apiCalls, errors, defaultOpen }) {
                             <div className="space-y-1.5">{apiCalls.map(c => <ApiCallItem key={c.id} call={c} />)}</div>
                         </div>
                     )}
-                    {links.length > 0 && (
-                        <div>
-                            <div className="text-[11px] text-gray-500 mb-1 font-semibold">🔗 Посилання ({links.length})</div>
-                            <div className="space-y-0.5">
-                                {links.map((u, i) => (
-                                    <a key={i} href={u} target="_blank" rel="noreferrer" className="block text-[11px] text-sky-400 hover:underline font-mono break-all">{u}</a>
-                                ))}
+                    {links.length > 0 && (() => {
+                        const isImg = (u) => /\.(jpe?g|png|webp|gif|bmp|avif)(\?|$)/i.test(u) || /image|thumbnail|file-storage|cdninstagram|fbcdn|lookaside/i.test(u);
+                        const imgLinks = links.filter(isImg);
+                        const other = links.filter((u) => !isImg(u));
+                        return (
+                            <div>
+                                <div className="text-[11px] text-gray-500 mb-1 font-semibold">🔗 Посилання ({links.length})</div>
+                                {imgLinks.length > 0 && (
+                                    <div className="flex flex-wrap gap-1.5 mb-1.5">
+                                        {imgLinks.map((u, i) => (
+                                            <a key={i} href={u} target="_blank" rel="noreferrer" title={u} className="block">
+                                                <img src={u} alt="" loading="lazy"
+                                                    className="w-20 h-20 object-cover rounded border border-gray-700 hover:opacity-90 transition-opacity bg-gray-900" />
+                                            </a>
+                                        ))}
+                                    </div>
+                                )}
+                                <div className="space-y-0.5">
+                                    {other.map((u, i) => (
+                                        <a key={i} href={u} target="_blank" rel="noreferrer" className="block text-[11px] text-sky-400 hover:underline font-mono break-all">{u}</a>
+                                    ))}
+                                </div>
                             </div>
-                        </div>
-                    )}
+                        );
+                    })()}
                 </div>
             )}
         </div>

@@ -170,6 +170,45 @@ var okDone=(r4.status>=300&&r4.status<400&&/accepted/.test(r4.headers.get('locat
 return { supplierOrderResult:summary+(okDone?'\\n✅ Прийнято easydrop':'\\n❌ статус '+r4.status), supplierOrderStatus:okDone?'created':'error' };
 `.trim();
 
+// Нова Пошта: перевірка міста (+ дизамбіг області для «Шевченкове» тощо) і № відділення/поштомата.
+// Без ключа NOVAPOSHTA_API_KEY — тихо пропускає (summary=''), воронка не ламається.
+const NP_CHECK_CODE = `
+var key=(keys.NOVAPOSHTA_API_KEY||'').trim();
+var od=context.orderData||{};
+var np=Object.assign({tries:0,summary:''}, context.np||{});
+if(!key || !od.city){ np.checked=false; np.summary=''; return { np: np }; }
+np.tries=(np.tries||0)+1;
+async function npCall(model,method,props){ var r=await fetch('https://api.novaposhta.ua/v2.0/json/',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({apiKey:key,modelName:model,calledMethod:method,methodProperties:props})}); return await r.json().catch(function(){return{};}); }
+function mkSummary(){ var s='📦 Доставка: '+(np.city||od.city)+(np.warehouse?(', '+np.warehouse):''); if(np.warn) s+='\\n⚠️ '+np.warn+' — напишіть, якщо треба поправити'; return s+'\\n'; }
+try{
+  var s=await npCall('Address','searchSettlements',{CityName:String(od.city),Limit:'20'});
+  var addrs=(s.data&&s.data[0]&&s.data[0].Addresses)||[];
+  if(!addrs.length){ np.checked=true; np.ask=false; np.city=od.city; np.warn='місто «'+od.city+'» не знайдено в Новій Пошті'; np.summary=mkSummary(); return { np: np }; }
+  if(addrs.length>1){
+    var reg=''; var mm=String((od.region||'')+' '+od.city).toLowerCase().match(/([а-яіїєґ']{4,})\\s*обл/i); if(mm) reg=mm[1];
+    var narrow=reg?addrs.filter(function(a){return String(a.Present).toLowerCase().indexOf(reg)>=0;}):addrs;
+    if(narrow.length===1){ addrs=narrow; }
+    else {
+      np.checked=true; np.ask=(np.tries<2); np.city=od.city;
+      np.options=addrs.slice(0,6).map(function(a){return a.Present;});
+      np.warn='кілька населених пунктів «'+od.city+'», уточніть область'; np.summary=mkSummary(); return { np: np };
+    }
+  }
+  var a=addrs[0]; np.checked=true; np.ask=false; np.city=a.Present; np.ref=a.DeliveryCity||a.Ref; np.warn='';
+  var bnum=(String(od.branch||'').match(/\\d+/)||[])[0];
+  var wantP=/поштомат|термінал/i.test(String(od.branch||''));
+  if(np.ref){
+    var w=await npCall('Address','getWarehouses',{SettlementRef:np.ref,Limit:'1000'});
+    var whs=(w.data)||[]; var hit=null;
+    if(bnum){ hit=whs.filter(function(x){return String(x.Number)===String(bnum)&&(!wantP||x.CategoryOfWarehouse==='Postomat');})[0] || whs.filter(function(x){return String(x.Number)===String(bnum);})[0]; }
+    if(hit){ np.warehouse=hit.Description; np.warehouseRef=hit.Ref; np.warehouseType=hit.CategoryOfWarehouse; }
+    else if(bnum){ np.warehouse='№'+bnum; np.warn='відділення №'+bnum+' у цьому місті не знайдено, перевірте номер'; }
+    else { np.warn='не вказано номер відділення/поштомата'; }
+  }
+  np.summary=mkSummary(); return { np: np };
+}catch(e){ np.checked=false; np.summary=''; np.warn='НП недоступна'; return { np: np }; }
+`.trim();
+
 function upsertNode(nodes, id, patch) {
     const i = nodes.findIndex((n) => n.id === id);
     if (i >= 0) { nodes[i] = { ...nodes[i], ...patch, data: { ...(nodes[i].data || {}), ...(patch.data || {}) } }; return false; }
@@ -287,7 +326,16 @@ function setEdge(edges, source, target, sourceHandle) {
     setEdge(edges, 'n_pay_amount', 'n_iban_invoice');
     setEdge(edges, 'n_iban_invoice', 'n_requisites');
     setEdge(edges, 'n_requisites', 'n_collect');
-    setEdge(edges, 'n_collect', 'n_mono_fetch');
+    // ── Нова Пошта: перевірка адреси між збором адреси і звіркою оплати ──
+    upsertNode(nodes, 'n_np_check', { type: 'js', position: { x: 320, y: 3640 }, data: { label: '12.6 Нова Пошта: перевірка адреси', code: NP_CHECK_CODE } });
+    upsertNode(nodes, 'n_np_gate', { type: 'condition', position: { x: 320, y: 3690 }, data: { label: '12.62 Уточнити область?', condition: 'context.np && context.np.ask === true' } });
+    upsertNode(nodes, 'n_np_ask', { type: 'message', position: { x: 620, y: 3690 }, data: { label: '12.63 Спитати область',
+        text: 'Щоб не помилитись із доставкою 🙂 у нас знайшлось кілька населених пунктів «{{context.orderData.city}}». Підкажіть, будь ласка, область (або повну назву з районом) — і я оформлю точно 💛' } });
+    setEdge(edges, 'n_collect', 'n_np_check');
+    setEdge(edges, 'n_np_check', 'n_np_gate');
+    setEdge(edges, 'n_np_gate', 'n_np_ask', 'true');
+    setEdge(edges, 'n_np_gate', 'n_mono_fetch', 'false');
+    setEdge(edges, 'n_np_ask', 'n_collect');
     setEdge(edges, 'n_mono_fetch', 'n_reconcile');
     setEdge(edges, 'n_reconcile', 'n_pay_status_cond');
     setEdge(edges, 'n_pay_status_cond', 'n_mark_consumed', 'true');
@@ -339,7 +387,7 @@ function setEdge(edges, source, target, sourceHandle) {
     upsertNode(nodes, 'n_avail_no', { data: { variants: [], text:
         'Ой, саме цей варіант зараз розібрали 😔 Але не засмучуйтесь — підберемо не гірше! Напишіть, будь ласка, який ще колір розглядаєте, і я одразу перевірю наявність ✨' } });
     upsertNode(nodes, 'n_confirm', { data: { variants: [], text:
-        'Дякуємо за замовлення — ви супер! 🎉 Ми вже його оформили 💛\nНомер накладної (ТТН) надішлемо прямо сюди, щойно передамо посилку Новій Пошті 📦\nА поки її не відправили — можна додати ще щось за акційною ціною (діє лише зараз 🔥). Якщо щось сподобалось — просто напишіть, залюбки допоможу 😊' } });
+        'Дякуємо за замовлення — ви супер! 🎉 Ми вже його оформили 💛\n\n{{context.np.summary}}Номер накладної (ТТН) надішлемо прямо сюди, щойно передамо посилку Новій Пошті 📦\nА поки її не відправили — можна додати ще щось за акційною ціною (діє лише зараз 🔥). Якщо щось сподобалось — просто напишіть, залюбки допоможу 😊' } });
 
     // ── FAQ/RAG: консультант-ноди тягнуть відповіді з вектор-бази + low-confidence handoff ──
     upsertNode(nodes, 'n_size', { data: { useKb: true } });
@@ -390,6 +438,7 @@ function setEdge(edges, source, target, sourceHandle) {
     await upKey('BREWDROP_DRY_RUN', '1', 'brewdrop: 1=тест (не відправляє замовлення), 0=бойовий', { keepValue: true });
     await upKey('EASYDROP_DRY_RUN', '1', 'easydrop: 1=тест, 0=бойовий', { keepValue: true });
     await upKey('EASYDROP_SUPPLIER_NAME', '', 'easydrop: назва постачальника лоферів (напр. zahid_drop) — для пошуку id', { keepValue: true });
+    await upKey('NOVAPOSHTA_API_KEY', '', 'Нова Пошта: API-ключ (кабінет НП → Налаштування → Безпека → Ключі API). Порожній — перевірка адреси пропускається', { isSecret: true, keepValue: true });
     await upKey('VECTOR_URL', 'http://127.0.0.1:4500', 'Вектор-база (FAQ/скрипти)', { keepValue: true });
     await upKey('VECTOR_TOKEN', 'vec_ee2079ec29fedd3498ad1dc15684e84fbc10be413bfad4a1', 'Токен проєкту covercar FAQ у вектор-базі', { isSecret: true });
     console.log('✅ Записано + бекап збережено + ключі оновлено (канали: zernio).');

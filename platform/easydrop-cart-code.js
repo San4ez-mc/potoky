@@ -125,7 +125,9 @@ if(!seen['csrfmiddlewaretoken']) fd.append('csrfmiddlewaretoken', tok(odHtml)||c
 fd.set('comment', 'Замовлення '+(context.orderRef||'')+' (бот)');
 if(Number(prod.price)) fd.set('cost', String(Number(prod.price)));
 // форма order-data-form сабмітиться як звичайний multipart-POST (кнопка «Підтвердити»)
-var fin=await fetch(base+odUrl,{method:'POST',headers:{'Cookie':ck(),'Referer':base+odUrl,'Origin':base,'X-Requested-With':'XMLHttpRequest'},body:fd});
-var ftxt=(await fin.text()).slice(0,400);
-var ok=(fin.status>=200&&fin.status<300)&&/orders_redirect/i.test(ftxt);
-return { supplierOrderResult:summary+(ok?'\n✅ Замовлення СТВОРЕНО в easydrop':('\n❌ не створилось (HTTP '+fin.status+'): '+ftxt.replace(/\s+/g,' ').slice(0,180))), supplierOrderStatus:ok?'created':'error', supplierNeedsManual:!ok, supplierCartItem:itemId };
+var fin=await fetch(base+odUrl,{method:'POST',redirect:'manual',headers:{'Cookie':ck(),'Referer':base+odUrl,'Origin':base},body:fd});
+var floc=fin.headers.get('location')||'';
+var ftxt=(fin.status>=300&&fin.status<400)?'':(await fin.text()).slice(0,400);
+// Успіх = 302 на список замовлень (звичайний submit форми) або 'orders_redirect' в AJAX-відповіді.
+var ok=(fin.status>=300&&fin.status<400&&/order/i.test(floc))||/orders_redirect/i.test(ftxt);
+return { supplierOrderResult:summary+(ok?('\n✅ Замовлення СТВОРЕНО в easydrop'+(floc?(' ('+floc+')'):'')):('\n❌ не створилось (HTTP '+fin.status+' '+floc+'): '+ftxt.replace(/\s+/g,' ').slice(0,150))), supplierOrderStatus:ok?'created':'error', supplierNeedsManual:!ok, supplierCartItem:itemId };

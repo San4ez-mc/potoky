@@ -233,6 +233,9 @@ try{
 }catch(e){ np.checked=false; np.summary=''; np.warn='НП недоступна'; return { np: np }; }
 `.trim();
 
+// Дропшип-кошик easydrop (Zaxid_drop тощо) — код у окремому файлі, щоб не плодити екранування.
+const EASYDROP_CART_CODE = require('fs').readFileSync(require('path').join(__dirname, 'easydrop-cart-code.js'), 'utf8').trim();
+
 function upsertNode(nodes, id, patch) {
     const i = nodes.findIndex((n) => n.id === id);
     if (i >= 0) { nodes[i] = { ...nodes[i], ...patch, data: { ...(nodes[i].data || {}), ...(patch.data || {}) } }; return false; }
@@ -361,8 +364,15 @@ function setEdge(edges, source, target, sourceHandle) {
     upsertNode(nodes, 'n_supplier_cond', { type: 'condition', position: { x: 320, y: 4380 }, data: {
         label: '13.5 Механізм = brewdrop?', condition: "context.supplierMechanism === 'brewdrop'",
     } });
-    // Постачальник без автоматизації (напр. «по накидках», zahid-дропшип поки вручну) → сигнал менеджеру
-    upsertNode(nodes, 'n_supplier_manual', { type: 'notifyAdmin', position: { x: 960, y: 4600 }, data: {
+    // Дропшип-кошик easydrop (Zaxid_drop): каталог → кошик → адреса
+    upsertNode(nodes, 'n_supplier_cond_cart', { type: 'condition', position: { x: 960, y: 4500 }, data: {
+        label: '13.6c Механізм = easydrop-кошик?', condition: "context.supplierMechanism === 'easydrop_cart'",
+    } });
+    upsertNode(nodes, 'n_supplier_order_cart', { type: 'js', position: { x: 960, y: 4600 }, data: {
+        label: '13.6d Замовлення дропшип-кошиком (easydrop)', code: EASYDROP_CART_CODE,
+    } });
+    // Постачальник без автоматизації (напр. «по накидках») → сигнал менеджеру
+    upsertNode(nodes, 'n_supplier_manual', { type: 'notifyAdmin', position: { x: 1280, y: 4600 }, data: {
         label: '13.7 Постачальник вручну — сигнал', targetKey: 'ADMIN_TELEGRAM_ID',
         message: '📦 ЗАМОВЛЕННЯ ПОТРЕБУЄ РУЧНОГО ОФОРМЛЕННЯ У ПОСТАЧАЛЬНИКА\nПостачальник: {{context.supplier}} (механізм: {{context.supplierMechanism}})\nЗамовлення: {{context.orderRef}} | CRM: {{context.crmOrderId}}\nТовар: {{context.product.name}} | колір {{context.colorChoice.color}}\nКлієнт: {{context.orderData.fullName}}, {{context.orderData.phone}}\nДоставка: {{context.orderData.city}}, {{context.orderData.branch}}',
     } });
@@ -430,8 +440,11 @@ function setEdge(edges, source, target, sourceHandle) {
     setEdge(edges, 'n_supplier_cond', 'n_supplier_cond_ed', 'false');
     setEdge(edges, 'n_supplier_cond_ed', 'n_supplier_order_ed', 'true');
     setEdge(edges, 'n_supplier_order_ed', 'n_supplier_notify');
-    // не brewdrop і не easydrop → ручне оформлення: сигнал менеджеру, клієнту все одно підтвердження
-    setEdge(edges, 'n_supplier_cond_ed', 'n_supplier_manual', 'false');
+    // не brewdrop і не easydrop-offline → перевіряємо дропшип-кошик, тоді ручне оформлення
+    setEdge(edges, 'n_supplier_cond_ed', 'n_supplier_cond_cart', 'false');
+    setEdge(edges, 'n_supplier_cond_cart', 'n_supplier_order_cart', 'true');
+    setEdge(edges, 'n_supplier_order_cart', 'n_supplier_notify');
+    setEdge(edges, 'n_supplier_cond_cart', 'n_supplier_manual', 'false');
     setEdge(edges, 'n_supplier_manual', 'n_confirm');
     // Прибрати дубль «Цей товар у наявності» з щасливого шляху (менше повідомлень підряд)
     setEdge(edges, 'n_avail_cond', 'n_upsell_cond', 'true');
@@ -514,9 +527,12 @@ function setEdge(edges, source, target, sourceHandle) {
     await upKey('BREWDROP_DRY_RUN', '1', 'brewdrop: 1=тест (не відправляє замовлення), 0=бойовий', { keepValue: true });
     await upKey('EASYDROP_DRY_RUN', '1', 'easydrop: 1=тест, 0=бойовий', { keepValue: true });
     await upKey('EASYDROP_SUPPLIER_NAME', '', 'easydrop: назва постачальника лоферів (напр. zahid_drop) — для пошуку id', { keepValue: true });
+    await upKey('EASYDROP_CART_DRY_RUN', '1', 'easydrop дропшип-кошик: 1=тест (додає й прибирає з кошика), 0=бойовий (оформлює)', { keepValue: true });
     await upKey('SUPPLIER_CONFIG', JSON.stringify({
         'brewdrop.in.ua': { mechanism: 'brewdrop' },
-        'zahid_drop': { mechanism: 'manual', note: 'дропшип-кошик easydrop (каталог→кошик) — поки вручну' },
+        // Zaxid_drop (через «x») — дропшип-каталог easydrop: catalogId 4658; категорії: лофери 17556, демісезон 3127, літо 3128, зима 7585, аксесуари 8792
+        'zahid_drop': { mechanism: 'easydrop_cart', catalogId: '4658', categories: ['17556', '3127', '3128', '7585', '8792'] },
+        'Zaxid_drop': { mechanism: 'easydrop_cart', catalogId: '4658', categories: ['17556', '3127', '3128', '7585', '8792'] },
         'по накидках': { mechanism: 'manual', note: 'прямий постачальник накидок — оформлення вручну' },
     }), 'Постачальник (значення CT_1003) → механізм: brewdrop | easydrop_offline | manual', { keepValue: true });
     await upKey('NOVAPOSHTA_API_KEY', '','Нова Пошта: API-ключ (кабінет НП → Налаштування → Безпека → Ключі API). Порожній — перевірка адреси пропускається', { isSecret: true, keepValue: true });

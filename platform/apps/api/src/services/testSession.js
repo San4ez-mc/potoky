@@ -717,6 +717,30 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
         return { session, botResponse: null, flowDriven: false, paused: true };
     }
 
+    // Явне прохання живої людини — детермінований детект (не покладаємось лише на LLM).
+    // Не спрацьовує, якщо замовлення вже оформлене (там веде інший сценарій).
+    if (incomingUserMessage && !ctx.crmOrderId
+        && /менеджер|оператор(?!ськ)|з\s*людин|живою\s*людин|жива\s*людин|людину\s*(покличте|дайте)|ви\s*бот|це\s*бот|справжн(я|ій)\s*людин/i.test(String(incomingUserMessage))) {
+        ctx.adminEngaged = true;
+        ctx.handoffReason = String(incomingUserMessage).slice(0, 160);
+        const hoMsg = 'Добре, зараз покличу менеджера 🙂 Незабаром вам відповість жива людина — дякую за терпіння 💛';
+        await persistAssistantMessage(session.id, hoMsg, { source: 'handoff_keyword' });
+        try {
+            const _env = Object.fromEntries((await db.funnelKey.findMany({ where: { botId: session.botId }, select: { key: true, value: true } })).map((k) => [k.key, k.value]));
+            const _admin = _env.ADMIN_TELEGRAM_ID || '';
+            const _tok = _env.TELEGRAM_BOT_TOKEN || '';
+            if (_admin && /^\d+:[A-Za-z0-9_-]{20,}$/.test(_tok) && !ctx.testMode) {
+                const _txt = shopPrefix(_env) + '🙋 Клієнт просить живу людину.\nКлієнт: ' + (ctx.senderName || '') + ' (' + (ctx.igUsername || '') + ')\nПовідомлення: ' + String(incomingUserMessage).slice(0, 160) + '\nСесія: ' + session.id;
+                const _r = await fetch('https://api.telegram.org/bot' + _tok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(_admin), text: _txt }) }).catch(() => null);
+                const _j = _r ? await _r.json().catch(() => ({})) : {};
+                pushDelivery(runtime, 'telegram_notify', !!_j.ok, _j.ok ? null : (_j.description || 'fetch failed'), { chatId: String(_admin), reason: 'handoff_keyword' });
+            }
+        } catch (_e) { /* сповіщення не має ламати handoff */ }
+        runtime.waitingForUser = true;
+        await db.session.update({ where: { id: session.id }, data: { context: { ...ctx, flowRuntime: runtime } } }).catch(() => {});
+        return { session, botResponse: hoMsg, flowDriven: true, handoff: true };
+    }
+
     const funnelKeyRows = await db.funnelKey.findMany({
         where: { botId: session.botId },
         select: { key: true, value: true },

@@ -392,7 +392,7 @@ function setEdge(edges, source, target, sourceHandle) {
 
     // ── Тепліші, «дбайливіші» тексти + прибрати дубль «у наявності» ──
     upsertNode(nodes, 'n_welcome', { data: { variants: [], text:
-        'Вітаємо у GOVERLA! 🙌 Дуже раді, що завітали 💛\nОсь ваш товар: {{context.product.name}} — лише {{context.product.price}} грн 🔥\n{{context.product.desc}}\n\nЩоб підібрати ідеальний розмір — напишіть, будь ласка, ваш зріст (см) і вагу (кг) 😊' } });
+        'Вітаємо у GOVERLA! 🙌 Дуже раді, що завітали 💛\nОсь ваш товар: {{context.product.name}} — лише {{context.product.price}} грн 🔥\n{{context.product.desc}}' } });
     upsertNode(nodes, 'n_size_reply', { data: { variants: [], text:
         'Дякую! 🙌 За вашими параметрами ідеально підійде розмір {{context.recommendedSize}} 📏 — сяде якраз, перевірено 👌' } });
     upsertNode(nodes, 'n_avail_no', { data: { variants: [], text:

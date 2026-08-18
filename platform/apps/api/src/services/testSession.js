@@ -954,7 +954,26 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
             // compressed version.
             const claudeScope = { ...scope, context: compressContextForPrompt(ctx) };
 
-            const systemPrompt = renderTemplate(data.systemPrompt || 'You are a helpful assistant.', claudeScope);
+            let systemPrompt = renderTemplate(data.systemPrompt || 'You are a helpful assistant.', claudeScope);
+            // RAG: якщо нода з useKb — шукаємо у вектор-базі за повідомленням клієнта й
+            // додаємо топ-результати у системний промпт (FAQ/заперечення з Google Doc).
+            if (data.useKb && runtime.lastUserMessage) {
+                try {
+                    const vURL = (funnelEnv.VECTOR_URL || 'http://127.0.0.1:4500').replace(/\/$/, '');
+                    const vTok = (funnelEnv.VECTOR_TOKEN || '').trim();
+                    if (vTok) {
+                        const vr = await fetch(vURL + '/search', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + vTok }, body: safeJsonStringify({ query: runtime.lastUserMessage, limit: 3 }) });
+                        const vj = await vr.json().catch(() => ({}));
+                        const hits = (vj && vj.results) || [];
+                        if (hits.length) {
+                            systemPrompt += '\n\n=== БАЗА ЗНАНЬ (FAQ/скрипти — використай, якщо доречно до питання клієнта) ===\n'
+                                + hits.map((h) => '• ' + String(h.content || '').slice(0, 500)).join('\n')
+                                + '\nЯкщо у клієнта нестандартне питання чи заперечення — відповідай СПИРАЮЧИСЬ на цю базу. Якщо потрібної інформації тут НЕМА і ти не впевнений у відповіді — НЕ вигадуй: додай у json_output {"handoff": true}.';
+                        }
+                        db.apiCall.create({ data: { sessionId: session.id, service: 'vector', method: 'search', requestData: { query: String(runtime.lastUserMessage).slice(0, 120) }, responseData: { count: hits.length }, statusCode: vr.status, durationMs: null } }).catch(() => {});
+                    }
+                } catch (_kbErr) { /* KB best-effort */ }
+            }
             let messages;
 
             if (mode === 'dialog') {
@@ -1067,6 +1086,20 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                 runtime.dialogHistory[node.id] = historyWithReply;
 
                 if (exit.done) {
+                    // Low-confidence handoff: модель сама сигналить {"handoff":true} → кличемо людину й зупиняємось.
+                    if (exit.parsed && exit.parsed.handoff === true) {
+                        ctx.adminEngaged = true;
+                        const hoMsg = 'Добре, зараз покличу менеджера 🙂 Незабаром вам відповість жива людина — дякую за терпіння 💛';
+                        await persistAssistantMessage(session.id, hoMsg, { nodeId: node.id, nodeType: node.type, source: 'handoff' });
+                        lastAssistant = hoMsg;
+                        try {
+                            const adminId = await getSystemKeyValue('ADMIN_TELEGRAM_ID') || funnelEnv.ADMIN_TELEGRAM_ID;
+                            if (adminId) await sendMessage(String(adminId), '🙋 Бот передав діалог людині (низька впевненість). Сесія: ' + session.id, {}, session.id).catch(() => {});
+                        } catch (_e) { /* silent */ }
+                        runtime.lastUserMessage = '';
+                        runtime.waitingForUser = true;
+                        break;
+                    }
                     if (data.outputVar && !isUserConfirmExit) {
                         const outputPath = String(data.outputVar).replace(/^context\./, '');
                         setByPath(ctx, outputPath, exit.parsed !== null ? exit.parsed : responseText);

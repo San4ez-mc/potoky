@@ -88,7 +88,7 @@ function norm(x){ return String(x||'').toLowerCase().trim(); }
 var prod=context.product||{}; var od=context.orderData||{};
 var map={}; try{ map=JSON.parse(keys.BREWDROP_ARTICLE_MAP||'{}'); }catch(e){}
 var m=map[String(prod.id)]||{};
-var article=(m.article||prod.supplierArticle||'').trim();
+var article=(m.article||prod.supplierArticle||prod.article||prod.vendor_code||prod.sku||context.orderSku||((prod.offers&&prod.offers[0]&&prod.offers[0].sku))||'').trim();
 var color=(m.color||(context.colorChoice&&context.colorChoice.color)||'').trim();
 var size=(context.recommendedSize||'').trim();
 if(!article) return { supplierOrderResult:'❌ Немає артикулу brewdrop для товару '+(prod.name||prod.id)+' — заповни BREWDROP_ARTICLE_MAP' };
@@ -146,7 +146,7 @@ if(!cookies['sessionid']) return { supplierOrderResult:'❌ easydrop: логін
 // 2) постачальник
 var prod=context.product||{}, od=context.orderData||{};
 var map={}; try{ map=JSON.parse(keys.BREWDROP_ARTICLE_MAP||'{}'); }catch(e){}
-var mm=map[String(prod.id)]||{}; var article=(mm.article||prod.supplierArticle||'').trim();
+var mm=map[String(prod.id)]||{}; var article=(mm.article||prod.supplierArticle||prod.article||prod.vendor_code||prod.sku||context.orderSku||((prod.offers&&prod.offers[0]&&prod.offers[0].sku))||'').trim();
 var supId=(keys.EASYDROP_SUPPLIER_ID||'').trim();
 if(!supId && keys.EASYDROP_SUPPLIER_NAME){ var rs=await get('/autocomplete/offline-supplier/?q='+encodeURIComponent(keys.EASYDROP_SUPPLIER_NAME)); var sj=await rs.json().catch(function(){return[];}); if(sj[0])supId=String(sj[0].value); }
 if(!supId) return { supplierOrderResult:'❌ easydrop: не задано EASYDROP_SUPPLIER_ID або NAME' };
@@ -341,6 +341,11 @@ function setEdge(edges, source, target, sourceHandle) {
     upsertNode(nodes, 'n_confirm', { data: { variants: [], text:
         'Дякуємо за замовлення — ви супер! 🎉 Ми вже його оформили 💛\nНомер накладної (ТТН) надішлемо прямо сюди, щойно передамо посилку Новій Пошті 📦\nА поки її не відправили — можна додати ще щось за акційною ціною (діє лише зараз 🔥). Якщо щось сподобалось — просто напишіть, залюбки допоможу 😊' } });
 
+    // ── FAQ/RAG: консультант-ноди тягнуть відповіді з вектор-бази + low-confidence handoff ──
+    upsertNode(nodes, 'n_size', { data: { useKb: true } });
+    upsertNode(nodes, 'n_color', { data: { useKb: true } });
+    upsertNode(nodes, 'n_order_intent', { data: { useKb: true } });
+
     // ── testMode-гард у KeyCRM-ноді: тестові прогони не створюють реальних замовлень ──
     const crm = nodes.find((n) => n.id === 'n_crm_order');
     if (crm && crm.data && crm.data.code && crm.data.code.indexOf('context.testMode') < 0) {
@@ -385,6 +390,8 @@ function setEdge(edges, source, target, sourceHandle) {
     await upKey('BREWDROP_DRY_RUN', '1', 'brewdrop: 1=тест (не відправляє замовлення), 0=бойовий', { keepValue: true });
     await upKey('EASYDROP_DRY_RUN', '1', 'easydrop: 1=тест, 0=бойовий', { keepValue: true });
     await upKey('EASYDROP_SUPPLIER_NAME', '', 'easydrop: назва постачальника лоферів (напр. zahid_drop) — для пошуку id', { keepValue: true });
+    await upKey('VECTOR_URL', 'http://127.0.0.1:4500', 'Вектор-база (FAQ/скрипти)', { keepValue: true });
+    await upKey('VECTOR_TOKEN', 'vec_ee2079ec29fedd3498ad1dc15684e84fbc10be413bfad4a1', 'Токен проєкту covercar FAQ у вектор-базі', { isSecret: true });
     console.log('✅ Записано + бекап збережено + ключі оновлено (канали: zernio).');
     process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });

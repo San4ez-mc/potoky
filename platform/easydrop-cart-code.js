@@ -90,7 +90,41 @@ var form='csrfmiddlewaretoken='+encodeURIComponent(atok)
   +'&warehouse_text='+encodeURIComponent(whPick)
   +'&is_permanent_client=on';
 summary+='\nАдреса easydrop: '+cityPick.trim()+' | '+whPick;
-var fin=await fetch(base+'/select-address?type=warehouse',{method:'POST',redirect:'manual',headers:{'Content-Type':'application/x-www-form-urlencoded','Cookie':ck(),'Referer':base+'/select-address?type=warehouse','Origin':base},body:form});
-var loc=fin.headers.get('location')||'';
-var ok=(fin.status>=200&&fin.status<400);
-return { supplierOrderResult:summary+(ok?('\n✅ Адресу відправлено (HTTP '+fin.status+(loc?(' → '+loc):'')+')'):('\n❌ HTTP '+fin.status)), supplierOrderStatus:ok?'created':'error', supplierCartItem:itemId };
+// Крок 5: адресу передають GET-ом на /order-data (prepareAddress у select_address.js), тоді
+// фінальний POST multipart форми create-order-form з action=create (orderRequest у main.js).
+var odUrl='/order-data?type=warehouse&'+form;
+var odRes=await fetch(base+odUrl,{headers:{'Cookie':ck(),'Referer':base+'/select-address?type=warehouse'}});
+setCk(odRes);
+var odHtml=await odRes.text();
+if(odRes.status>=400) return { supplierOrderResult:summary+'\n❌ /order-data HTTP '+odRes.status, supplierOrderStatus:'error', supplierNeedsManual:true };
+var fm=odHtml.match(/<form[^>]*id="create-order-form"[\s\S]*?<\/form>/i);
+var fhtml=fm?fm[0]:odHtml;
+// збираємо поля форми як їх віддає сторінка
+var fd=new FormData();
+var seen={}, mi;
+var ire=/<input[^>]*>/g;
+while((mi=ire.exec(fhtml))){
+  var tag=mi[0];
+  var nm=(tag.match(/name="([^"]+)"/)||[])[1]; if(!nm||seen[nm]) continue;
+  var ty=((tag.match(/type="([^"]+)"/)||[])[1]||'text').toLowerCase();
+  if((ty==='checkbox'||ty==='radio') && !/checked/i.test(tag)) continue;
+  var vl=(tag.match(/value="([^"]*)"/)||[])[1]||'';
+  fd.append(nm, vl); seen[nm]=1;
+}
+var sre=/<select[^>]*name="([^"]+)"[\s\S]*?<\/select>/g, ms;
+while((ms=sre.exec(fhtml))){
+  if(seen[ms[1]]) continue;
+  var sel=(ms[0].match(/<option[^>]*selected[^>]*value="([^"]*)"/)||ms[0].match(/<option[^>]*value="([^"]*)"/)||[])[1]||'';
+  fd.append(ms[1], sel); seen[ms[1]]=1;
+}
+var tre=/<textarea[^>]*name="([^"]+)"[^>]*>([\s\S]*?)<\/textarea>/g, mt;
+while((mt=tre.exec(fhtml))){ if(seen[mt[1]]) continue; fd.append(mt[1], mt[2]||''); seen[mt[1]]=1; }
+if(!seen['csrfmiddlewaretoken']) fd.append('csrfmiddlewaretoken', tok(odHtml)||cookies['csrftoken']||'');
+// наші дані замовлення
+fd.set('comment', 'Замовлення '+(context.orderRef||'')+' (бот)');
+if(Number(prod.price)) fd.set('cost', String(Number(prod.price)));
+fd.append('action','create');
+var fin=await fetch(base+odUrl,{method:'POST',headers:{'Cookie':ck(),'Referer':base+odUrl,'Origin':base,'X-Requested-With':'XMLHttpRequest'},body:fd});
+var ftxt=(await fin.text()).slice(0,400);
+var ok=(fin.status>=200&&fin.status<300)&&/orders_redirect/i.test(ftxt);
+return { supplierOrderResult:summary+(ok?'\n✅ Замовлення СТВОРЕНО в easydrop':('\n❌ не створилось (HTTP '+fin.status+'): '+ftxt.replace(/\s+/g,' ').slice(0,180))), supplierOrderStatus:ok?'created':'error', supplierNeedsManual:!ok, supplierCartItem:itemId };

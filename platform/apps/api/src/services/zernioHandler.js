@@ -28,15 +28,45 @@ async function getSelfIds(botId) {
     const rows = await db.funnelKey.findMany({ where: { botId, key: { in: ['INSTAGRAM_BUSINESS_ID', 'ZERNIO_ACCOUNT_ID', 'INSTAGRAM_BUSINESS_ACCOUNT_ID'] } }, select: { value: true } });
     return new Set(rows.map((r) => (r.value || '').trim()).filter(Boolean));
 }
-async function sendTelegramAlert(botId, text) {
-    const rows = await db.funnelKey.findMany({ where: { botId, key: { in: ['TELEGRAM_BOT_TOKEN', 'ADMIN_TELEGRAM_ID'] } }, select: { key: true, value: true } });
+async function sendTelegramAlert(botId, text, sessionId) {
+    const rows = await db.funnelKey.findMany({ where: { botId, key: { in: ['TELEGRAM_BOT_TOKEN', 'ADMIN_TELEGRAM_ID', 'SHOP_TAG'] } }, select: { key: true, value: true } });
     const m = Object.fromEntries(rows.map((r) => [r.key, (r.value || '').trim()]));
-    if (!m.TELEGRAM_BOT_TOKEN || m.TELEGRAM_BOT_TOKEN === 'REPLACE_ME' || !m.ADMIN_TELEGRAM_ID || m.ADMIN_TELEGRAM_ID === 'REPLACE_ME') return false;
+    // Назва магазину в кожному сповіщенні — воронка дублюється на різні магазини.
+    const shop = m.SHOP_TAG || '';
+    const body = (shop ? '🏪 ' + shop + '\n' : '') + text;
+    if (!m.TELEGRAM_BOT_TOKEN || m.TELEGRAM_BOT_TOKEN === 'REPLACE_ME' || !m.ADMIN_TELEGRAM_ID || m.ADMIN_TELEGRAM_ID === 'REPLACE_ME') {
+        await logDelivery(sessionId, botId, 'telegram_alert', false, 'немає TELEGRAM_BOT_TOKEN або ADMIN_TELEGRAM_ID', { chatId: m.ADMIN_TELEGRAM_ID || null });
+        return false;
+    }
     try {
-        const r = await fetch('https://api.telegram.org/bot' + m.TELEGRAM_BOT_TOKEN + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: m.ADMIN_TELEGRAM_ID, text }) });
+        const r = await fetch('https://api.telegram.org/bot' + m.TELEGRAM_BOT_TOKEN + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: m.ADMIN_TELEGRAM_ID, text: body }) });
         const d = await r.json().catch(() => ({}));
+        await logDelivery(sessionId, botId, 'telegram_alert', !!d.ok, d.ok ? null : (d.description || ('HTTP ' + r.status)), { chatId: m.ADMIN_TELEGRAM_ID, messageId: d?.result?.message_id || null, text: String(body).slice(0, 200) });
         return !!d.ok;
-    } catch (e) { logger.warn('[zernioHandler] TG alert: ' + e.message); return false; }
+    } catch (e) {
+        logger.warn('[zernioHandler] TG alert: ' + e.message);
+        await logDelivery(sessionId, botId, 'telegram_alert', false, e.message, { chatId: m.ADMIN_TELEGRAM_ID });
+        return false;
+    }
+}
+
+// Лог доставки у сесію (runtime.deliveryLog) — щоб «чому не прийшло» було видно у вкладці Ноди.
+// Кап на 100 записів; старіші за DELIVERY_LOG_TTL_DAYS (14) відсікаються.
+const DELIVERY_LOG_MAX = 100;
+const DELIVERY_LOG_TTL_DAYS = 14;
+async function logDelivery(sessionId, botId, channel, ok, error, extra) {
+    if (!sessionId) return;
+    try {
+        const s = await db.session.findUnique({ where: { id: sessionId }, select: { context: true } });
+        if (!s) return;
+        const ctx = s.context || {};
+        const rt = ctx.flowRuntime || {};
+        const cutoff = Date.now() - DELIVERY_LOG_TTL_DAYS * 86400000;
+        const prev = (Array.isArray(rt.deliveryLog) ? rt.deliveryLog : []).filter((e) => !e.ts || new Date(e.ts).getTime() > cutoff);
+        prev.push({ ts: new Date().toISOString(), channel, ok: !!ok, ...(error ? { error: String(error).slice(0, 300) } : {}), ...(extra || {}) });
+        rt.deliveryLog = prev.slice(-DELIVERY_LOG_MAX);
+        await db.session.update({ where: { id: sessionId }, data: { context: { ...ctx, flowRuntime: rt } } });
+    } catch (_e) { /* лог не має ламати основний потік */ }
 }
 function synthIdFromPsid(psid) {
     const hex = crypto.createHash('sha256').update('zernio:' + String(psid)).digest('hex').slice(0, 15);
@@ -171,6 +201,45 @@ async function sendMetaPhoto(botId, igsid, imageUrl) {
     return sd.message_id || null;
 }
 
+// Альбом: IG приймає до 10 attachment-обʼєктів в ОДНОМУ повідомленні (message.attachments[]).
+// Вантажимо кожне фото у Meta (attachment_id) і шлемо одним повідомленням.
+async function sendMetaPhotoAlbum(botId, igsid, imageUrls) {
+    const urls = (Array.isArray(imageUrls) ? imageUrls : []).filter(Boolean).slice(0, 10);
+    if (!urls.length) return null;
+    if (urls.length === 1) return sendMetaPhoto(botId, igsid, urls[0]);
+    if (!igsid) throw new Error('немає IGSID отримувача');
+    const km = await db.funnelKey.findFirst({ where: { botId, key: 'INSTAGRAM_ACCESS_TOKEN' }, select: { value: true } });
+    const token = (km?.value || '').trim();
+    if (!token || token === 'REPLACE_ME') throw new Error('немає INSTAGRAM_ACCESS_TOKEN для Meta-фото');
+    const ids = [];
+    for (const u of urls) {
+        try {
+            const ir = await fetch(String(u));
+            if (!ir.ok) continue;
+            const buf = Buffer.from(await ir.arrayBuffer());
+            const ct = ir.headers.get('content-type') || 'image/jpeg';
+            const fd = new FormData();
+            fd.append('access_token', token);
+            fd.append('message', JSON.stringify({ attachment: { type: 'image', payload: { is_reusable: true } } }));
+            fd.append('filedata', new Blob([buf], { type: ct }), 'photo.jpg');
+            const ur = await fetch('https://graph.instagram.com/v21.0/me/message_attachments', { method: 'POST', body: fd });
+            const ud = await ur.json().catch(() => ({}));
+            if (ur.ok && ud.attachment_id) ids.push(ud.attachment_id);
+        } catch (_e) { /* пропускаємо збійне фото */ }
+    }
+    if (!ids.length) throw new Error('жодне фото не завантажилось у Meta');
+    const sr = await fetch(`https://graph.instagram.com/v21.0/me/messages?access_token=${encodeURIComponent(token)}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            recipient: { id: String(igsid) },
+            message: { attachments: ids.map((id) => ({ type: 'image', payload: { attachment_id: id } })) },
+        }),
+    });
+    const sd = await sr.json().catch(() => ({}));
+    if (!sr.ok || sd.error) throw new Error(sd?.error?.message || `HTTP ${sr.status}`);
+    return sd.message_id || null;
+}
+
 // ── Диспетчер ────────────────────────────────────────────────────────────────
 // Серіалізуємо обробку подій ОДНІЄЇ розмови (per conversation), щоб паралельні
 // reaction/read/delivered не перетирали metadata одного повідомлення (read-modify-write гонка).
@@ -273,7 +342,7 @@ async function handleIncomingMessage(botId, body) {
         const handoffMsg = 'Добре, зараз покличу менеджера 🙂 Незабаром вам відповість жива людина — дякую за терпіння 💛';
         try { await sendZernioMessage(botId, conversationId, handoffMsg); } catch (e) { logger.warn('[zernioHandler] handoff reply failed', { error: e.message }); }
         await db.message.create({ data: { sessionId: session.id, role: 'assistant', content: handoffMsg, metadata: { source: 'handoff' } } }).catch(() => {});
-        await sendTelegramAlert(botId, '🙋 Потрібна людина у чаті (авто): "' + String(text).slice(0, 180) + '"\nКлієнт: ' + (contactName || contactId) + '\nСесія: ' + session.id);
+        await sendTelegramAlert(botId, '🙋 Потрібна людина у чаті (авто): "' + String(text).slice(0, 180) + '"\nКлієнт: ' + (contactName || contactId) + '\nСесія: ' + session.id, session.id);
         logger.info('[zernioHandler] handoff triggered', { botId, sessionId: session.id });
         return { ok: true, handoff: true };
     }
@@ -293,19 +362,34 @@ async function handleIncomingMessage(botId, body) {
                     // Усі фото товару з CRM (галерея) поспіль; підпис → текстом.
                     const _fresh = await db.session.findUnique({ where: { id: session.id }, select: { context: true } }).catch(() => null);
                     const _gal = (((_fresh && _fresh.context && _fresh.context.product && _fresh.context.product.imageUrls) || [])).filter((u) => u && String(u).startsWith('http'));
-                    // IG Send API не має альбомів — кожне фото окреме повідомлення, тож ліміт (ключ PRODUCT_PHOTOS_MAX, дефолт 3).
+                    // IG приймає до 10 attachment-обʼєктів в одному повідомленні → шлемо АЛЬБОМОМ.
                     const _maxRow = await db.funnelKey.findFirst({ where: { botId, key: 'PRODUCT_PHOTOS_MAX' }, select: { value: true } }).catch(() => null);
-                    const _max = Math.max(1, parseInt((_maxRow && _maxRow.value) || '3', 10) || 3);
+                    const _max = Math.min(10, Math.max(1, parseInt((_maxRow && _maxRow.value) || '10', 10) || 10));
                     const _list = (_gal.length ? _gal : [imgUrl]).slice(0, _max);
-                    for (const _g of _list) { try { await sendMetaPhoto(botId, contactId, _g); } catch (e) { logger.warn('[zernioHandler] фото: ' + e.message); } }
+                    try {
+                        const _albumId = await sendMetaPhotoAlbum(botId, contactId, _list);
+                        await logDelivery(session.id, botId, 'ig_photo_album', true, null, { nodeId: m.nodeId || null, count: _list.length, messageId: _albumId });
+                    } catch (e) {
+                        logger.warn('[zernioHandler] альбом не пройшов, шлемо по одному: ' + e.message);
+                        await logDelivery(session.id, botId, 'ig_photo_album', false, e.message, { nodeId: m.nodeId || null, count: _list.length });
+                        for (const _g of _list) {
+                            try { await sendMetaPhoto(botId, contactId, _g); await logDelivery(session.id, botId, 'ig_photo', true, null, { nodeId: m.nodeId || null, url: _g }); }
+                            catch (e2) { logger.warn('[zernioHandler] фото: ' + e2.message); await logDelivery(session.id, botId, 'ig_photo', false, e2.message, { nodeId: m.nodeId || null, url: _g }); }
+                        }
+                    }
                     const cap = att.caption || om.content;
-                    if (cap) await sendZernioMessage(botId, conversationId, cap);
+                    if (cap) {
+                        const zcid = await sendZernioMessage(botId, conversationId, cap);
+                        await logDelivery(session.id, botId, 'zernio', !!zcid, zcid ? null : 'sendZernioMessage не повернув id', { nodeId: m.nodeId || null, text: String(cap).slice(0, 160) });
+                    }
                 } else if (om.content) {
                     const zid = await sendZernioMessage(botId, conversationId, om.content);
+                    await logDelivery(session.id, botId, 'zernio', !!zid, zid ? null : 'sendZernioMessage не повернув id', { nodeId: m.nodeId || null, text: String(om.content).slice(0, 160) });
                     if (zid) await db.message.update({ where: { id: om.id }, data: { metadata: { ...m, zernioMessageId: zid, status: 'sent' } } }).catch(() => {});
                 }
             } catch (e) {
                 // Фолбек: Meta-фото не пройшло → підпис+URL текстом через Zernio.
+                await logDelivery(session.id, botId, imgUrl ? 'ig_photo' : 'zernio', false, e.message, { nodeId: m.nodeId || null });
                 if (imgUrl) { await sendZernioMessage(botId, conversationId, (att.caption || om.content || '') + '\n' + imgUrl).catch(() => {}); }
                 logger.warn('[zernioHandler] доставка: ' + e.message);
             }
@@ -320,7 +404,7 @@ async function handleIncomingMessage(botId, body) {
             const _reason = adId ? ('ad_id ne zmapleno: ' + adId) : 'post/artykul ne znaydeno v CRM';
             const _postPart = (sharedPost && sharedPost.caption) ? (' | Post: ' + String(sharedPost.caption).slice(0, 70)) : '';
             const _msg = 'UVAGA: bot ne vyznachyv tovar, obrobit vruchnu. Klient: ' + (contactName || 'klient') + ' | Prychyna: ' + _reason + _postPart + ' | Povidomlennia: ' + (text || '') + ' | Default: ' + (_prod.name || '');
-            await sendTelegramAlert(botId, _msg);
+            await sendTelegramAlert(botId, _msg, session.id);
             await db.session.update({ where: { id: session.id }, data: { context: { ..._c, unmatchedNotified: true } } }).catch(() => {});
         }
     } catch (e) { logger.warn('[zernioHandler] unmatched notify: ' + e.message); }

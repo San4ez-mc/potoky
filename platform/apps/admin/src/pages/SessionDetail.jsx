@@ -698,6 +698,39 @@ function AllApiCallsSection({ apiCalls }) {
     );
 }
 
+// Лог доставки (Telegram-алерти, Zernio, IG-фото) — щоб бачити «чому не прийшло».
+function DeliveryLogSection({ log }) {
+    const [open, setOpen] = useState(false);
+    const rows = Array.isArray(log) ? log : [];
+    if (!rows.length) return null;
+    const failed = rows.filter(r => !r.ok).length;
+    const CH = { telegram_alert: '✈️ Telegram', zernio: '💬 Zernio', ig_photo: '🖼 IG фото', ig_photo_album: '🖼 IG альбом' };
+    return (
+        <div className="border border-gray-700 rounded-lg overflow-hidden mt-3">
+            <button onClick={() => setOpen(o => !o)} className="w-full flex items-center gap-2 px-3 py-2 bg-gray-900 hover:bg-gray-800 text-left transition-colors">
+                <span className="text-sm text-gray-200">📮 Доставка повідомлень ({rows.length})</span>
+                {failed > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-900/40 text-red-300">✖ {failed}</span>}
+                <span className="ml-auto text-gray-600">{open ? '▲' : '▼'}</span>
+            </button>
+            {open && (
+                <div className="px-3 py-2 bg-gray-950 space-y-1">
+                    {rows.slice().reverse().map((r, i) => (
+                        <div key={i} className="text-[11px] flex flex-wrap items-baseline gap-x-2 border-b border-gray-800/60 pb-1">
+                            <span className={r.ok ? 'text-emerald-400' : 'text-red-400'}>{r.ok ? '✓' : '✖'}</span>
+                            <span className="text-gray-300">{CH[r.channel] || r.channel}</span>
+                            {r.nodeId && <span className="text-gray-600 font-mono">{r.nodeId}</span>}
+                            {r.ts && <span className="text-gray-600">{String(r.ts).slice(11, 19)}</span>}
+                            {r.count != null && <span className="text-gray-500">×{r.count}</span>}
+                            {r.error && <span className="text-red-300 break-all">{r.error}</span>}
+                            {r.text && <span className="text-gray-500 break-all">«{String(r.text).slice(0, 70)}»</span>}
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
+
 function NodeTraceTab({ traces, apiCalls, errors, rawContext }) {
     const [page, setPage] = useState(0);
     const PAGE = 10;
@@ -739,6 +772,7 @@ function NodeTraceTab({ traces, apiCalls, errors, rawContext }) {
                         </div>
                     )}
                     <AllApiCallsSection apiCalls={apiCalls} />
+                    <DeliveryLogSection log={rawContext?.flowRuntime?.deliveryLog} />
                 </div>
             </div>
             <VariablesPanel traces={ordered} rawContext={rawContext} />

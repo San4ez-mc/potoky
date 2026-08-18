@@ -463,6 +463,43 @@ setTimeout(() => {
     setInterval(cleanupProcessedMessages, PROCESSED_MSG_CLEANUP_INTERVAL_MS);
 }, 4 * 60 * 1000);
 
+// ── Ретенція логів: трейси нод, лог доставки, api_calls, помилки ──────────────
+// Логуємо все (щоб можна було розібрати «чому не прийшло»), але тримаємо обмежений
+// час, інакше БД і context сесій роздуваються. Раз на добу.
+const LOG_RETENTION_DAYS = Number(process.env.LOG_RETENTION_DAYS || 14);
+const LOG_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+async function cleanupOldLogs() {
+    const cutoff = new Date(Date.now() - LOG_RETENTION_DAYS * 86400000);
+    try {
+        const a = await db.apiCall.deleteMany({ where: { createdAt: { lt: cutoff } } });
+        const e = await db.appError.deleteMany({ where: { createdAt: { lt: cutoff } } });
+        // Трейси/лог доставки живуть у context сесій — чистимо в неактивних сесіях
+        const stale = await db.session.findMany({
+            where: { lastActive: { lt: cutoff } },
+            select: { id: true, context: true },
+            take: 500,
+        });
+        let trimmed = 0;
+        for (const s of stale) {
+            const ctx = s.context || {};
+            const rt = ctx.flowRuntime;
+            if (!rt || (!Array.isArray(rt.nodeTraces) && !Array.isArray(rt.deliveryLog))) continue;
+            if (!rt.nodeTraces?.length && !rt.deliveryLog?.length) continue;
+            const next = { ...ctx, flowRuntime: { ...rt, nodeTraces: [], deliveryLog: [] } };
+            await db.session.update({ where: { id: s.id }, data: { context: next } }).catch(() => {});
+            trimmed += 1;
+        }
+        if (a.count || e.count || trimmed) {
+            logger.info('Ретенція логів', { apiCalls: a.count, appErrors: e.count, sessionsTrimmed: trimmed, olderThan: cutoff.toISOString(), days: LOG_RETENTION_DAYS });
+        }
+    } catch (err) {
+        logger.error('Ретенція логів: помилка', { error: err.message });
+    }
+}
+
+setTimeout(() => { cleanupOldLogs(); setInterval(cleanupOldLogs, LOG_CLEANUP_INTERVAL_MS); }, 5 * 60 * 1000);
+
 // ── Broadcast queue ──────────────────────────────────────────
 const broadcastQueue = new Bull('broadcasts', REDIS_URL);
 

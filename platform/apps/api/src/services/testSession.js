@@ -253,6 +253,25 @@ function truncateHistory(messages, maxItems = 24) {
 // assistant turns and merge consecutive same-role turns into one. Used to seed a
 // dialog Claude node with recent cross-node context (e.g. a terse "Так" after a
 // follow-up reminder) so the model doesn't misread the reply in isolation.
+// Назва магазину в кожному сповіщенні (воронка дублюється на різні магазини).
+function shopPrefix(env) {
+    const shop = ((env && (env.SHOP_TAG || env.SHOP_NAME)) || '').trim();
+    return shop ? '🏪 ' + shop + '\n' : '';
+}
+
+// Лог доставки у runtime (видно у вкладці «Ноди» → «Доставка повідомлень»).
+// Кап 100 записів; старіші за 14 днів відсікаються — щоб context не роздувався.
+function pushDelivery(runtime, channel, ok, error, extra) {
+    try {
+        if (!runtime) return;
+        const cutoff = Date.now() - 14 * 86400000;
+        const prev = (Array.isArray(runtime.deliveryLog) ? runtime.deliveryLog : [])
+            .filter((e) => !e.ts || new Date(e.ts).getTime() > cutoff);
+        prev.push({ ts: new Date().toISOString(), channel, ok: !!ok, ...(error ? { error: String(error).slice(0, 300) } : {}), ...(extra || {}) });
+        runtime.deliveryLog = prev.slice(-100);
+    } catch (_e) { /* лог не має ламати потік */ }
+}
+
 function normalizeAlternating(messages) {
     const out = [];
     for (const m of (messages || [])) {
@@ -2027,11 +2046,15 @@ ${sourceContent || '(немає даних)'}
             try {
                 const _chat = funnelEnv[data.targetKey || 'ADMIN_TELEGRAM_ID'] || '';
                 const _tok = funnelEnv.TELEGRAM_BOT_TOKEN || '';
-                const _msg = renderTemplate(data.message || '', scope);
+                const _msg = shopPrefix(funnelEnv) + renderTemplate(data.message || '', scope);
                 if (_chat && _tok && /^\d+:[A-Za-z0-9_-]{20,}$/.test(_tok) && _msg) {
-                    await fetch('https://api.telegram.org/bot' + _tok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(_chat), text: _msg, parse_mode: 'HTML', disable_web_page_preview: true }) }).catch(function(e){ console.error('[notifyTg] ' + e.message); });
+                    const _r = await fetch('https://api.telegram.org/bot' + _tok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(_chat), text: _msg, parse_mode: 'HTML', disable_web_page_preview: true }) }).catch(function(e){ console.error('[notifyTg] ' + e.message); return null; });
+                    const _j = _r ? await _r.json().catch(() => ({})) : {};
+                    pushDelivery(runtime, 'telegram_notify', !!_j.ok, _j.ok ? null : (_j.description || 'fetch failed'), { nodeId: node.id, chatId: String(_chat) });
+                } else {
+                    pushDelivery(runtime, 'telegram_notify', false, 'немає chat_id/токена або порожній текст', { nodeId: node.id, chatId: String(_chat || '') });
                 }
-            } catch (e) { console.error('[notifyTg] ' + e.message); }
+            } catch (e) { console.error('[notifyTg] ' + e.message); pushDelivery(runtime, 'telegram_notify', false, e.message, { nodeId: node.id }); }
             runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
             continue;
         }
@@ -2066,7 +2089,7 @@ ${sourceContent || '(немає даних)'}
                 } else {
                     adminTelegramId = renderTemplate(data.telegramId || '{{env.ADMIN_TELEGRAM_ID}}', enrichedScope);
                 }
-                const adminMessage = renderTemplate(data.message || 'Нова подія в системі.', enrichedScope);
+                const adminMessage = shopPrefix(funnelEnv) + renderTemplate(data.message || 'Нова подія в системі.', enrichedScope);
 
                 if (adminTelegramId && adminMessage) {
                     // Resolve bot token: prefer bot's own funnel key → system key → env fallback
@@ -2095,11 +2118,13 @@ ${sourceContent || '(немає даних)'}
 
                     if (notifyToken) {
                         // Direct Telegram API call — bypasses the global singleton bot instance
-                        await fetch(`https://api.telegram.org/bot${notifyToken}/sendMessage`, {
+                        const _r = await fetch(`https://api.telegram.org/bot${notifyToken}/sendMessage`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ chat_id: String(adminTelegramId), text: adminMessage }),
-                        }).catch((e) => console.error('[notifyAdmin] fetch error:', e.message));
+                        }).catch((e) => { console.error('[notifyAdmin] fetch error:', e.message); return null; });
+                        const _j = _r ? await _r.json().catch(() => ({})) : {};
+                        pushDelivery(runtime, 'telegram_notify', !!_j.ok, _j.ok ? null : (_j.description || 'fetch failed'), { nodeId: node.id, chatId: String(adminTelegramId) });
                     } else {
                         // Legacy fallback
                         await sendMessage(String(adminTelegramId), adminMessage, {}, session.id);

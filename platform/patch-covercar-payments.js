@@ -183,7 +183,7 @@ function mkSummary(){ var s='📦 Доставка: '+(np.city||od.city)+(np.war
 try{
   var s=await npCall('Address','searchSettlements',{CityName:String(od.city),Limit:'20'});
   var addrs=(s.data&&s.data[0]&&s.data[0].Addresses)||[];
-  if(!addrs.length){ np.checked=true; np.ask=false; np.city=od.city; np.warn='місто «'+od.city+'» не знайдено в Новій Пошті'; np.summary=mkSummary(); return { np: np }; }
+  if(!addrs.length){ np.checked=true; np.ask=(np.tries<2); np.city=od.city; np.warn='місто «'+od.city+'» не знайдено в Новій Пошті'; np.askMsg='Не знайшла населений пункт «'+od.city+'» у Новій Пошті 🤔 Підкажіть, будь ласка, точну назву міста/села (можна з областю).'; np.summary=mkSummary(); return { np: np }; }
   if(addrs.length>1){
     var reg=''; var mm=String((od.region||'')+' '+od.city).toLowerCase().match(/([а-яіїєґ']{4,})\\s*обл/i); if(mm) reg=mm[1];
     var narrow=reg?addrs.filter(function(a){return String(a.Present).toLowerCase().indexOf(reg)>=0;}):addrs;
@@ -191,10 +191,12 @@ try{
     else {
       np.checked=true; np.ask=(np.tries<2); np.city=od.city;
       np.options=addrs.slice(0,6).map(function(a){return a.Present;});
-      np.warn='кілька населених пунктів «'+od.city+'», уточніть область'; np.summary=mkSummary(); return { np: np };
+      np.warn='кілька населених пунктів «'+od.city+'», уточніть область';
+      np.askMsg='Щоб не помилитись із доставкою 🙂 у нас кілька населених пунктів «'+od.city+'». Підкажіть, будь ласка, область (або повну назву з районом).';
+      np.summary=mkSummary(); return { np: np };
     }
   }
-  var a=addrs[0]; np.checked=true; np.ask=false; np.city=a.Present; np.ref=a.DeliveryCity||a.Ref; np.warn='';
+  var a=addrs[0]; np.checked=true; np.ask=false; np.city=a.Present; np.ref=a.DeliveryCity||a.Ref; np.warn=''; np.askMsg='';
   var bnum=(String(od.branch||'').match(/\\d+/)||[])[0];
   var wantP=/поштомат|термінал/i.test(String(od.branch||''));
   if(np.ref){
@@ -202,8 +204,8 @@ try{
     var whs=(w.data)||[]; var hit=null;
     if(bnum){ hit=whs.filter(function(x){return String(x.Number)===String(bnum)&&(!wantP||x.CategoryOfWarehouse==='Postomat');})[0] || whs.filter(function(x){return String(x.Number)===String(bnum);})[0]; }
     if(hit){ np.warehouse=hit.Description; np.warehouseRef=hit.Ref; np.warehouseType=hit.CategoryOfWarehouse; }
-    else if(bnum){ np.warehouse='№'+bnum; np.warn='відділення №'+bnum+' у цьому місті не знайдено, перевірте номер'; }
-    else { np.warn='не вказано номер відділення/поштомата'; }
+    else if(bnum){ np.warehouse='№'+bnum; np.ask=(np.tries<2); np.warn=(wantP?'поштомат':'відділення')+' №'+bnum+' у місті «'+np.city+'» не знайдено'; np.askMsg='У місті «'+np.city+'» не знайшла '+(wantP?'поштомат':'відділення')+' №'+bnum+' 🤔 Перевірте, будь ласка, номер (можна написати «поштомат N» чи «відділення N»).'; }
+    else { np.ask=(np.tries<2); np.warn='не вказано номер відділення/поштомата'; np.askMsg='Підкажіть, будь ласка, номер відділення або поштомата Нової Пошти 🙂'; }
   }
   np.summary=mkSummary(); return { np: np };
 }catch(e){ np.checked=false; np.summary=''; np.warn='НП недоступна'; return { np: np }; }
@@ -329,8 +331,8 @@ function setEdge(edges, source, target, sourceHandle) {
     // ── Нова Пошта: перевірка адреси між збором адреси і звіркою оплати ──
     upsertNode(nodes, 'n_np_check', { type: 'js', position: { x: 320, y: 3640 }, data: { label: '12.6 Нова Пошта: перевірка адреси', code: NP_CHECK_CODE } });
     upsertNode(nodes, 'n_np_gate', { type: 'condition', position: { x: 320, y: 3690 }, data: { label: '12.62 Уточнити область?', condition: 'context.np && context.np.ask === true' } });
-    upsertNode(nodes, 'n_np_ask', { type: 'message', position: { x: 620, y: 3690 }, data: { label: '12.63 Спитати область',
-        text: 'Щоб не помилитись із доставкою 🙂 у нас знайшлось кілька населених пунктів «{{context.orderData.city}}». Підкажіть, будь ласка, область (або повну назву з районом) — і я оформлю точно 💛' } });
+    upsertNode(nodes, 'n_np_ask', { type: 'message', position: { x: 620, y: 3690 }, data: { label: '12.63 Уточнити адресу',
+        variants: [], text: '{{context.np.askMsg}}' } });
     setEdge(edges, 'n_collect', 'n_np_check');
     setEdge(edges, 'n_np_check', 'n_np_gate');
     setEdge(edges, 'n_np_gate', 'n_np_ask', 'true');

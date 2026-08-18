@@ -158,10 +158,19 @@ if(!pick) return { supplierOrderResult:'❌ easydrop: товар «'+(article||p
 // 4) csrf форми
 var r3=await fetch(base+'/offline-supplier-order',{headers:{'Cookie':ck()}}); setCk(r3); var otok=tok(await r3.text());
 // 5) форма
-var parts=String(od.fullName||'').split(/\\s+/); var last=parts[0]||'', first=parts[1]||'';
+// Розумний розбір ПІБ: по-батькові як якір + суфікси прізвищ (щоб не плутати «Ім'я Прізвище» ↔ «Прізвище Ім'я»)
+var _t=String(od.fullName||'').split(/\\s+/).filter(Boolean); var _patr='',_rest=[];
+for(var _i=0;_i<_t.length;_i++){ if(!_patr && _t.length>=2 && /(ович|евич|йович|івна|ївна|инична|ічна)$/i.test(_t[_i])) _patr=_t[_i]; else _rest.push(_t[_i]); }
+function _isSur(w){ return /(енко|ко|ук|юк|чук|ський|цький|ська|цька|ишин|ів|ова|єва|ов|ев|ін)$/i.test(w); }
+var last='',first='';
+if(_rest.length>=2){ if(_isSur(_rest[1])&&!_isSur(_rest[0])){ first=_rest[0]; last=_rest[1]; } else { last=_rest[0]; first=_rest[1]; } }
+else if(_rest.length===1){ last=_rest[0]; }
+if(_patr) first=(first?first+' ':'')+_patr;
 var payType=((context.paymentInfo&&context.paymentInfo.method)==='full')?'2':'1';
 var prepay=payType==='1'?'200':'0';
-var send_data=(od.city||'')+', НП '+(od.branch||'');
+// send_data: пріоритет — валідована адреса НП (місто+відділення), інакше сирий ввід
+var _np=context.np||{};
+var send_data=_np.warehouse?((_np.city||od.city||'')+', '+_np.warehouse):((od.city||'')+', НП '+(od.branch||''));
 var form='date='+new Date().toISOString().slice(0,10)+'&send_data='+encodeURIComponent(send_data)+'&offline_supplier_select='+encodeURIComponent(supId)+'&payment_type='+payType+'&person_first_name='+encodeURIComponent(first)+'&person_last_name='+encodeURIComponent(last)+'&person_phone='+encodeURIComponent(od.phone||'')+'&ttn=&comment='+encodeURIComponent('Замовлення '+(context.orderRef||''))+'&partial_prepayment='+prepay+'&sell='+(Number(prod.price)||0)+'&cost=0&item_select='+encodeURIComponent(pick.value)+'&is_permanent_client=on&csrfmiddlewaretoken='+encodeURIComponent(otok);
 var summary='🧾 easydrop '+(dryRun?'(DRY-RUN)':'СТВОРЕНО')+':\\nПостачальник:'+supId+' | Товар: '+String(pick.text||'').slice(0,60)+'\\nОтримувач: '+last+' '+first+' '+(od.phone||'')+'\\nНП: '+send_data+' | оплата:'+(payType==='1'?'часткова 200':'повна');
 if(dryRun) return { supplierOrderResult:summary+'\\n⚠️ DRY-RUN: НЕ відправлено (EASYDROP_DRY_RUN=1).', supplierOrderPayload:form };

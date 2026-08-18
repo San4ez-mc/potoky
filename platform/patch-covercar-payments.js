@@ -346,14 +346,31 @@ function setEdge(edges, source, target, sourceHandle) {
     } });
 
     // ── Постачальник: brewdrop (REST API, dry-run) ──
+    // Маршрутизація постачальників за ключем SUPPLIER_CONFIG (опція CT_1003 → механізм).
+    // Так нові магазини/постачальники додаються без правок коду.
+    upsertNode(nodes, 'n_supplier_route', { type: 'js', position: { x: 320, y: 4300 }, data: {
+        label: '13.4 Механізм постачальника (SUPPLIER_CONFIG)',
+        code: "var cfg={}; try{cfg=JSON.parse(keys.SUPPLIER_CONFIG||'{}')}catch(e){}\n"
+            + "var sup=String(context.supplier||'').trim();\n"
+            + "function pick(){ if(!sup) return null; if(cfg[sup]) return cfg[sup]; var lo=sup.toLowerCase(); for(var k in cfg){ if(String(k).toLowerCase()===lo) return cfg[k]; } for(var k2 in cfg){ if(lo.indexOf(String(k2).toLowerCase())>=0) return cfg[k2]; } return null; }\n"
+            + "var c=pick()||{};\n"
+            + "var mech=String(c.mechanism||'').trim();\n"
+            + "if(!mech){ var lo2=sup.toLowerCase(); mech = lo2.indexOf('brewdrop')>=0 ? 'brewdrop' : (/easydrop|zahid/.test(lo2) ? 'easydrop_offline' : 'manual'); }\n"
+            + "return { supplierMechanism: mech, supplierCfg: c };",
+    } });
     upsertNode(nodes, 'n_supplier_cond', { type: 'condition', position: { x: 320, y: 4380 }, data: {
-        label: '13.5 Постачальник brewdrop?', condition: "context.supplier && String(context.supplier).toLowerCase().indexOf('brewdrop') >= 0",
+        label: '13.5 Механізм = brewdrop?', condition: "context.supplierMechanism === 'brewdrop'",
+    } });
+    // Постачальник без автоматизації (напр. «по накидках», zahid-дропшип поки вручну) → сигнал менеджеру
+    upsertNode(nodes, 'n_supplier_manual', { type: 'notifyAdmin', position: { x: 960, y: 4600 }, data: {
+        label: '13.7 Постачальник вручну — сигнал', targetKey: 'ADMIN_TELEGRAM_ID',
+        message: '📦 ЗАМОВЛЕННЯ ПОТРЕБУЄ РУЧНОГО ОФОРМЛЕННЯ У ПОСТАЧАЛЬНИКА\nПостачальник: {{context.supplier}} (механізм: {{context.supplierMechanism}})\nЗамовлення: {{context.orderRef}} | CRM: {{context.crmOrderId}}\nТовар: {{context.product.name}} | колір {{context.colorChoice.color}}\nКлієнт: {{context.orderData.fullName}}, {{context.orderData.phone}}\nДоставка: {{context.orderData.city}}, {{context.orderData.branch}}',
     } });
     upsertNode(nodes, 'n_supplier_order', { type: 'js', position: { x: 120, y: 4500 }, data: {
         label: '13.6 Замовлення постачальнику (brewdrop)', code: BREWDROP_ORDER_CODE,
     } });
     upsertNode(nodes, 'n_supplier_cond_ed', { type: 'condition', position: { x: 640, y: 4500 }, data: {
-        label: '13.6b Постачальник easydrop/zahid?', condition: "context.supplier && /easydrop|zahid/i.test(String(context.supplier))",
+        label: '13.6b Механізм = easydrop (offline-форма)?', condition: "context.supplierMechanism === 'easydrop_offline'",
     } });
     upsertNode(nodes, 'n_supplier_order_ed', { type: 'js', position: { x: 640, y: 4600 }, data: {
         label: '13.6c Замовлення постачальнику (easydrop)', code: EASYDROP_ORDER_CODE,
@@ -401,7 +418,8 @@ function setEdge(edges, source, target, sourceHandle) {
     setEdge(edges, 'n_pay_notfound_admin', 'n_pay_notfound_msg');
     setEdge(edges, 'n_pay_notfound_msg', 'n_crm_order');
     // n_crm_order → n_create лишається; далі — гілка постачальника перед підтвердженням клієнту
-    setEdge(edges, 'n_create', 'n_supplier_cond');
+    setEdge(edges, 'n_create', 'n_supplier_route');
+    setEdge(edges, 'n_supplier_route', 'n_supplier_cond');
     setEdge(edges, 'n_supplier_cond', 'n_supplier_order', 'true');
     setEdge(edges, 'n_supplier_order', 'n_supplier_notify');
     setEdge(edges, 'n_supplier_notify', 'n_ttn_cond');
@@ -412,7 +430,9 @@ function setEdge(edges, source, target, sourceHandle) {
     setEdge(edges, 'n_supplier_cond', 'n_supplier_cond_ed', 'false');
     setEdge(edges, 'n_supplier_cond_ed', 'n_supplier_order_ed', 'true');
     setEdge(edges, 'n_supplier_order_ed', 'n_supplier_notify');
-    setEdge(edges, 'n_supplier_cond_ed', 'n_confirm', 'false');
+    // не brewdrop і не easydrop → ручне оформлення: сигнал менеджеру, клієнту все одно підтвердження
+    setEdge(edges, 'n_supplier_cond_ed', 'n_supplier_manual', 'false');
+    setEdge(edges, 'n_supplier_manual', 'n_confirm');
     // Прибрати дубль «Цей товар у наявності» з щасливого шляху (менше повідомлень підряд)
     setEdge(edges, 'n_avail_cond', 'n_upsell_cond', 'true');
     // Другий допродаж: n_confirm → чекаємо відповідь → фінал → нагадування (як було)
@@ -494,7 +514,12 @@ function setEdge(edges, source, target, sourceHandle) {
     await upKey('BREWDROP_DRY_RUN', '1', 'brewdrop: 1=тест (не відправляє замовлення), 0=бойовий', { keepValue: true });
     await upKey('EASYDROP_DRY_RUN', '1', 'easydrop: 1=тест, 0=бойовий', { keepValue: true });
     await upKey('EASYDROP_SUPPLIER_NAME', '', 'easydrop: назва постачальника лоферів (напр. zahid_drop) — для пошуку id', { keepValue: true });
-    await upKey('NOVAPOSHTA_API_KEY', '', 'Нова Пошта: API-ключ (кабінет НП → Налаштування → Безпека → Ключі API). Порожній — перевірка адреси пропускається', { isSecret: true, keepValue: true });
+    await upKey('SUPPLIER_CONFIG', JSON.stringify({
+        'brewdrop.in.ua': { mechanism: 'brewdrop' },
+        'zahid_drop': { mechanism: 'manual', note: 'дропшип-кошик easydrop (каталог→кошик) — поки вручну' },
+        'по накидках': { mechanism: 'manual', note: 'прямий постачальник накидок — оформлення вручну' },
+    }), 'Постачальник (значення CT_1003) → механізм: brewdrop | easydrop_offline | manual', { keepValue: true });
+    await upKey('NOVAPOSHTA_API_KEY', '','Нова Пошта: API-ключ (кабінет НП → Налаштування → Безпека → Ключі API). Порожній — перевірка адреси пропускається', { isSecret: true, keepValue: true });
     await upKey('VECTOR_URL', 'http://127.0.0.1:4500', 'Вектор-база (FAQ/скрипти)', { keepValue: true });
     await upKey('VECTOR_TOKEN', 'vec_ee2079ec29fedd3498ad1dc15684e84fbc10be413bfad4a1', 'Токен проєкту covercar FAQ у вектор-базі', { isSecret: true });
     console.log('✅ Записано + бекап збережено + ключі оновлено (канали: zernio).');

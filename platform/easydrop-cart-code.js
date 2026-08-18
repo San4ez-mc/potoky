@@ -68,15 +68,28 @@ if(dryRun){
   for(var li=0; li<lineIds.length; li++){ await api('action=cart-remove&item='+lineIds[li]+'&csrfmiddlewaretoken='+encodeURIComponent(csrf), '/cart').catch(function(){}); }
   return { supplierOrderResult:summary+'\n⚠️ DRY-RUN: додано в кошик і прибрано; адресу НЕ відправлено (EASYDROP_CART_DRY_RUN=1).', supplierOrderStatus:'dry_run' };
 }
+// Адресні поля мають бути ДОСЛІВНО з автокомпліту easydrop, інакше форма відбивається.
+async function ac(url){ try{ var r=await get(url); var t=await r.text(); var j=JSON.parse(t); return Array.isArray(j)?j:[]; }catch(e){ return []; } }
+var cityQ=String(addrCity).replace(/^[мсмт]+\.\s*/i,'').split(',')[0].split('|')[0].trim();
+var cityOpts=await ac('/autocomplete/city/?q='+encodeURIComponent(cityQ));
+var cityPick=cityOpts.filter(function(x){ return String(x).toLowerCase().indexOf(cityQ.toLowerCase())===0 || /^м\./i.test(String(x)); })[0]||cityOpts[0]||'';
+var bnum2=(String(od.branch||'').match(/\d+/)||[])[0]||'';
+var whOpts=await ac('/autocomplete/department/?q='+encodeURIComponent(cityQ));
+var whPick=(bnum2?whOpts.filter(function(x){ return new RegExp('№\\s*'+bnum2+'(?!\\d)').test(String(x)); })[0]:null)||whOpts[0]||'';
+if(!cityPick||!whPick) return { supplierOrderResult:summary+'\n❌ easydrop: не підібрав місто/відділення в автокомпліті (місто «'+cityQ+'», відділення №'+bnum2+')', supplierOrderStatus:'error', supplierNeedsManual:true };
 var addrPage=await (await get('/select-address?type=warehouse')).text();
 var atok=tok(addrPage);
 var form='csrfmiddlewaretoken='+encodeURIComponent(atok)
+  +'&template_pk=&edit='
   +'&person_first_name='+encodeURIComponent(first)
   +'&person_last_name='+encodeURIComponent(last)
   +'&person_phone='+encodeURIComponent(od.phone||'')
-  +'&settlement_text='+encodeURIComponent(addrCity)
-  +'&warehouse_text='+encodeURIComponent(addrWh)
+  +'&settlement_select='+encodeURIComponent(cityPick)
+  +'&settlement_text='+encodeURIComponent(cityPick)
+  +'&warehouse_select='+encodeURIComponent(whPick)
+  +'&warehouse_text='+encodeURIComponent(whPick)
   +'&is_permanent_client=on';
+summary+='\nАдреса easydrop: '+cityPick.trim()+' | '+whPick;
 var fin=await fetch(base+'/select-address?type=warehouse',{method:'POST',redirect:'manual',headers:{'Content-Type':'application/x-www-form-urlencoded','Cookie':ck(),'Referer':base+'/select-address?type=warehouse','Origin':base},body:form});
 var loc=fin.headers.get('location')||'';
 var ok=(fin.status>=200&&fin.status<400);

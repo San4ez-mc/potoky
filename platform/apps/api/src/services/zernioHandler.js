@@ -293,7 +293,10 @@ async function handleIncomingMessage(botId, body) {
                     // Усі фото товару з CRM (галерея) поспіль; підпис → текстом.
                     const _fresh = await db.session.findUnique({ where: { id: session.id }, select: { context: true } }).catch(() => null);
                     const _gal = (((_fresh && _fresh.context && _fresh.context.product && _fresh.context.product.imageUrls) || [])).filter((u) => u && String(u).startsWith('http'));
-                    const _list = _gal.length ? _gal : [imgUrl];
+                    // IG Send API не має альбомів — кожне фото окреме повідомлення, тож ліміт (ключ PRODUCT_PHOTOS_MAX, дефолт 3).
+                    const _maxRow = await db.funnelKey.findFirst({ where: { botId, key: 'PRODUCT_PHOTOS_MAX' }, select: { value: true } }).catch(() => null);
+                    const _max = Math.max(1, parseInt((_maxRow && _maxRow.value) || '3', 10) || 3);
+                    const _list = (_gal.length ? _gal : [imgUrl]).slice(0, _max);
                     for (const _g of _list) { try { await sendMetaPhoto(botId, contactId, _g); } catch (e) { logger.warn('[zernioHandler] фото: ' + e.message); } }
                     const cap = att.caption || om.content;
                     if (cap) await sendZernioMessage(botId, conversationId, cap);

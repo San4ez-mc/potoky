@@ -4,6 +4,7 @@ import { markOneSessionRead } from './Sessions.jsx';
 import { api } from '../api/client.js';
 import { format } from 'date-fns';
 import mermaid from 'mermaid';
+import { formatJs, looksLikeJs } from '../utils/formatJs.js';
 
 let mermaidInitialized = false;
 function ensureMermaidInitialized() {
@@ -486,7 +487,9 @@ const NODE_ICON = {
 function prettyVal(raw) {
     if (raw == null) return '';
     if (typeof raw !== 'string') return JSON.stringify(raw, null, 2);
-    try { return JSON.stringify(JSON.parse(raw), null, 2); } catch { return raw; }
+    try { return JSON.stringify(JSON.parse(raw), null, 2); } catch { /* не JSON */ }
+    if (looksLikeJs(raw)) return formatJs(raw);
+    return raw;
 }
 
 // Значення, згорнуте за замовчуванням якщо довге; іконка ⤢ розгортає повністю.

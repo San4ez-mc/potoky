@@ -37,25 +37,44 @@ function TextInput({ value, onChange, placeholder, multiline }) {
 }
 
 function CodeBlock({ value, onChange, language = 'javascript' }) {
+    const editorRef = React.useRef(null);
+    const canFormat = language === 'javascript' || language === 'typescript' || language === 'json';
+    const doFormat = async () => {
+        const ed = editorRef.current;
+        if (!ed) return;
+        const act = ed.getAction('editor.action.formatDocument');
+        if (act) await act.run();
+    };
     return (
-        <div className="h-64 border border-gray-700 rounded-lg overflow-hidden">
-            <Suspense fallback={<div className="flex items-center justify-center h-full text-gray-500 text-sm">Завантаження редактора...</div>}>
-                <MonacoEditor
-                    defaultLanguage={language}
-                    value={value || ''}
-                    onChange={onChange}
-                    theme="vs-dark"
-                    options={{
-                        minimap: { enabled: false },
-                        fontSize: 13,
-                        fontFamily: 'JetBrains Mono, monospace',
-                        scrollBeyondLastLine: false,
-                        lineNumbers: 'on',
-                        tabSize: 2,
-                        automaticLayout: true,
-                    }}
-                />
-            </Suspense>
+        <div className="border border-gray-700 rounded-lg overflow-hidden">
+            {canFormat && (
+                <div className="flex justify-end px-2 py-1 bg-gray-900 border-b border-gray-800">
+                    <button type="button" onClick={doFormat}
+                        className="text-[11px] text-gray-300 hover:text-white px-2 py-0.5 rounded hover:bg-gray-700 transition-colors"
+                        title="Відформатувати код (розбити на рядки з відступами)">✨ Формат</button>
+                </div>
+            )}
+            <div className="h-64">
+                <Suspense fallback={<div className="flex items-center justify-center h-full text-gray-500 text-sm">Завантаження редактора...</div>}>
+                    <MonacoEditor
+                        defaultLanguage={language}
+                        value={value || ''}
+                        onChange={onChange}
+                        onMount={(editor) => { editorRef.current = editor; }}
+                        theme="vs-dark"
+                        options={{
+                            minimap: { enabled: false },
+                            fontSize: 13,
+                            fontFamily: 'JetBrains Mono, monospace',
+                            scrollBeyondLastLine: false,
+                            lineNumbers: 'on',
+                            tabSize: 2,
+                            wordWrap: 'on',
+                            automaticLayout: true,
+                        }}
+                    />
+                </Suspense>
+            </div>
         </div>
     );
 }

@@ -74,7 +74,8 @@ var cityQ=String(addrCity).replace(/^[мсмт]+\.\s*/i,'').split(',')[0].split(
 var cityOpts=await ac('/autocomplete/city/?q='+encodeURIComponent(cityQ));
 var cityPick=cityOpts.filter(function(x){ return String(x).toLowerCase().indexOf(cityQ.toLowerCase())===0 || /^м\./i.test(String(x)); })[0]||cityOpts[0]||'';
 var bnum2=(String(od.branch||'').match(/\d+/)||[])[0]||'';
-var whOpts=await ac('/autocomplete/department/?q='+encodeURIComponent(cityQ));
+var whOpts=await ac("/autocomplete/department/?q="+encodeURIComponent(cityQ+(bnum2?(" Відділення №"+bnum2):"")));
+if(!whOpts.length) whOpts=await ac("/autocomplete/department/?q="+encodeURIComponent(cityQ));
 var whPick=(bnum2?whOpts.filter(function(x){ return new RegExp('№\\s*'+bnum2+'(?!\\d)').test(String(x)); })[0]:null)||whOpts[0]||'';
 if(!cityPick||!whPick) return { supplierOrderResult:summary+'\n❌ easydrop: не підібрав місто/відділення в автокомпліті (місто «'+cityQ+'», відділення №'+bnum2+')', supplierOrderStatus:'error', supplierNeedsManual:true };
 var addrPage=await (await get('/select-address?type=warehouse')).text();
@@ -97,7 +98,7 @@ var odRes=await fetch(base+odUrl,{headers:{'Cookie':ck(),'Referer':base+'/select
 setCk(odRes);
 var odHtml=await odRes.text();
 if(odRes.status>=400) return { supplierOrderResult:summary+'\n❌ /order-data HTTP '+odRes.status, supplierOrderStatus:'error', supplierNeedsManual:true };
-var fm=odHtml.match(/<form[^>]*id="create-order-form"[\s\S]*?<\/form>/i);
+var fm=odHtml.match(/<form[^>]*id="order-data-form"[\s\S]*?<\/form>/i);
 var fhtml=fm?fm[0]:odHtml;
 // збираємо поля форми як їх віддає сторінка
 var fd=new FormData();
@@ -123,7 +124,7 @@ if(!seen['csrfmiddlewaretoken']) fd.append('csrfmiddlewaretoken', tok(odHtml)||c
 // наші дані замовлення
 fd.set('comment', 'Замовлення '+(context.orderRef||'')+' (бот)');
 if(Number(prod.price)) fd.set('cost', String(Number(prod.price)));
-fd.append('action','create');
+// форма order-data-form сабмітиться як звичайний multipart-POST (кнопка «Підтвердити»)
 var fin=await fetch(base+odUrl,{method:'POST',headers:{'Cookie':ck(),'Referer':base+odUrl,'Origin':base,'X-Requested-With':'XMLHttpRequest'},body:fd});
 var ftxt=(await fin.text()).slice(0,400);
 var ok=(fin.status>=200&&fin.status<300)&&/orders_redirect/i.test(ftxt);

@@ -711,6 +711,12 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
     const nodesById = new Map(flow.nodes.map((node) => [node.id, node]));
     const { ctx, runtime } = getFlowRuntime(session.context);
 
+    // Оператор перехопив діалог (handoff) — бот мовчить, доки прапорець не знято.
+    // Це страхує канали, які не мають власного гарду (тести, інші хендлери).
+    if (ctx.adminEngaged || ctx.funnelPaused) {
+        return { session, botResponse: null, flowDriven: false, paused: true };
+    }
+
     const funnelKeyRows = await db.funnelKey.findMany({
         where: { botId: session.botId },
         select: { key: true, value: true },
@@ -1113,7 +1119,15 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                         lastAssistant = hoMsg;
                         try {
                             const adminId = await getSystemKeyValue('ADMIN_TELEGRAM_ID') || funnelEnv.ADMIN_TELEGRAM_ID;
-                            if (adminId) await sendMessage(String(adminId), '🙋 Бот передав діалог людині (низька впевненість). Сесія: ' + session.id, {}, session.id).catch(() => {});
+                            const hoText = shopPrefix(funnelEnv) + '🙋 Бот передав діалог людині (низька впевненість).\nКлієнт: ' + (ctx.senderName || '') + ' (' + (ctx.igUsername || '') + ')\nОстаннє: ' + String(runtime.lastUserMessage || '').slice(0, 160) + '\nСесія: ' + session.id;
+                            const hoTok = funnelEnv.TELEGRAM_BOT_TOKEN || '';
+                            if (adminId && /^\d+:[A-Za-z0-9_-]{20,}$/.test(hoTok)) {
+                                const _hr = await fetch('https://api.telegram.org/bot' + hoTok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(adminId), text: hoText }) }).catch(() => null);
+                                const _hj = _hr ? await _hr.json().catch(() => ({})) : {};
+                                pushDelivery(runtime, 'telegram_notify', !!_hj.ok, _hj.ok ? null : (_hj.description || 'fetch failed'), { nodeId: node.id, chatId: String(adminId), reason: 'handoff' });
+                            } else {
+                                pushDelivery(runtime, 'telegram_notify', false, 'немає ADMIN_TELEGRAM_ID або валідного TELEGRAM_BOT_TOKEN', { nodeId: node.id, reason: 'handoff' });
+                            }
                         } catch (_e) { /* silent */ }
                         runtime.lastUserMessage = '';
                         runtime.waitingForUser = true;

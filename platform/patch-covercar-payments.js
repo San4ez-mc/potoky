@@ -193,6 +193,17 @@ try{
   var s=await npCall('Address','searchSettlements',{CityName:String(od.city),Limit:'20'});
   var addrs=(s.data&&s.data[0]&&s.data[0].Addresses)||[];
   if(!addrs.length){ np.checked=true; np.ask=(np.tries<2); np.city=od.city; np.warn='місто «'+od.city+'» не знайдено в Новій Пошті'; np.askMsg='Не знайшла населений пункт «'+od.city+'» у Новій Пошті 🤔 Підкажіть, будь ласка, точну назву міста/села (можна з областю).'; np.summary=mkSummary(); return { np: np }; }
+  // 1) ТОЧНИЙ збіг назви: «Київ» не має перепитуватись лише тому, що є «Київець» тощо.
+  function nrm(x){ return String(x||'').toLowerCase().replace(/[’'\`]/g,'').replace(/\\s+/g,' ').trim(); }
+  var q=nrm(od.city);
+  var exact=addrs.filter(function(a){ return nrm(a.MainDescription)===q; });
+  if(exact.length>1){
+    // серед однойменних — місто має пріоритет над селом/смт
+    var cities=exact.filter(function(a){ return /^м\\.|^m\\./i.test(String(a.SettlementTypeCode||'')) || /місто/i.test(String(a.SettlementTypeDescription||'')) || /^м\\.\\s/i.test(String(a.Present||'')); });
+    if(cities.length===1) exact=cities;
+  }
+  if(exact.length===1){ addrs=exact; }
+  else if(exact.length>1){ addrs=exact; }
   if(addrs.length>1){
     var reg=''; var mm=String((od.region||'')+' '+od.city).toLowerCase().match(/([а-яіїєґ']{4,})\\s*обл/i); if(mm) reg=mm[1];
     var narrow=reg?addrs.filter(function(a){return String(a.Present).toLowerCase().indexOf(reg)>=0;}):addrs;

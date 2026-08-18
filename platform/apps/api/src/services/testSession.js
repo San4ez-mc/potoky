@@ -1478,6 +1478,7 @@ ${sourceContent || '(немає даних)'}
                 const target = matchedIndex >= 0
                     ? outgoing[matchedIndex]?.target
                     : outgoing[0]?.target;
+                if (pendingTrace) { pendingTrace.branch = matchedIndex >= 0 ? ('cond#' + matchedIndex) : 'default'; pendingTrace.branchTarget = target || null; }
                 runtime.currentNodeId = target || null;
                 continue;
             }
@@ -1491,6 +1492,7 @@ ${sourceContent || '(немає даних)'}
                 result = false;
             }
 
+            if (pendingTrace) { pendingTrace.branch = result ? 'true' : 'false'; pendingTrace.branchTarget = pickNextNodeId(flow.edges, node.id, result ? 'true' : 'false'); }
             runtime.currentNodeId = pickNextNodeId(flow.edges, node.id, result ? 'true' : 'false');
             continue;
         }

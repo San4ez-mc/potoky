@@ -557,6 +557,13 @@ function NodeTraceCard({ trace, apiCalls, errors, defaultOpen }) {
             </button>
             {open && (
                 <div className="px-3 pb-3 bg-gray-950 space-y-3 pt-2">
+                    {trace.branch != null && (
+                        <div className="text-[11px]">
+                            <span className="text-gray-500">Гілка: </span>
+                            <span className={`font-mono px-1.5 py-0.5 rounded ${trace.branch === 'true' ? 'bg-emerald-900/40 text-emerald-300' : trace.branch === 'false' ? 'bg-red-900/40 text-red-300' : 'bg-sky-900/40 text-sky-300'}`}>{String(trace.branch)}</span>
+                            {trace.branchTarget && <span className="text-gray-500"> → <span className="text-gray-300 font-mono">{trace.branchTarget}</span></span>}
+                        </div>
+                    )}
                     {trace.userInput && (
                         <div>
                             <div className="text-[11px] text-gray-500 mb-1 font-semibold">👤 Повідомлення користувача (вхід)</div>

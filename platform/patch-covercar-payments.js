@@ -1,7 +1,7 @@
 'use strict';
 /*
  * Патч воронки «Instagram — реклама (Zernio, covercar)» (bot cc03657f-…)
- *   Ф0  Біла нода: n_create notifyTg → notifyAdmin
+ *   Ф0  Сповіщення адміну — тип notifyTg (chat_id з ключа воронки ADMIN_TELEGRAM_ID)
  *   Ф1  Памʼять: messagesTemplate '{{conversationHistory}}' на діалог-нодах + петля нагадування
  *   Ф2  Гілка оплати: ibanoplata-лінк → реквізити → збір → виписка Mono → звірка → гілки
  *   Ф5  Прибрати осиротілі ноди реквізитів (зведені в одне повідомлення)
@@ -263,7 +263,7 @@ function setEdge(edges, source, target, sourceHandle) {
     const before = JSON.stringify({ nodes, edges });
 
     // ── Ф0 біла нода ──
-    upsertNode(nodes, 'n_create', { type: 'notifyAdmin' });
+    upsertNode(nodes, 'n_create', { type: 'notifyTg' });
 
     // ── Ф1 памʼять ──
     upsertNode(nodes, 'n_order_intent', { data: {
@@ -340,7 +340,7 @@ function setEdge(edges, source, target, sourceHandle) {
     upsertNode(nodes, 'n_del_invoice', { type: 'connector', position: { x: 120, y: 4130 }, data: {
         label: '12.95 Видалити посилання', connectorType: 'ibanoplata', action: 'delete_invoice', invoiceUid: '{{context.ibanInvoiceUid}}',
     } });
-    upsertNode(nodes, 'n_pay_notfound_admin', { type: 'notifyAdmin', position: { x: 640, y: 4080 }, data: {
+    upsertNode(nodes, 'n_pay_notfound_admin', { type: 'notifyTg', position: { x: 640, y: 4080 }, data: {
         label: '12.96 Не знайдено — сигнал', targetKey: 'ADMIN_TELEGRAM_ID',
         message: '⚠️ Клієнт каже, що оплатив, але оплату НЕ знайдено у виписці.\nКлієнт: {{user.username}} ({{context.senderName}})\nЗамовлення: {{context.orderRef}} | сума {{context.payAmount}} грн\nТовар: {{context.product.name}} / {{context.recommendedSize}} / {{context.colorChoice.color}}\nПеревір вручну.',
     } });
@@ -372,7 +372,7 @@ function setEdge(edges, source, target, sourceHandle) {
         label: '13.6d Замовлення дропшип-кошиком (easydrop)', code: EASYDROP_CART_CODE,
     } });
     // Постачальник без автоматизації (напр. «по накидках») → сигнал менеджеру
-    upsertNode(nodes, 'n_supplier_manual', { type: 'notifyAdmin', position: { x: 1280, y: 4600 }, data: {
+    upsertNode(nodes, 'n_supplier_manual', { type: 'notifyTg', position: { x: 1280, y: 4600 }, data: {
         label: '13.7 Постачальник вручну — сигнал', targetKey: 'ADMIN_TELEGRAM_ID',
         message: '📦 ЗАМОВЛЕННЯ ПОТРЕБУЄ РУЧНОГО ОФОРМЛЕННЯ У ПОСТАЧАЛЬНИКА\nПостачальник: {{context.supplier}} (механізм: {{context.supplierMechanism}})\nЗамовлення: {{context.orderRef}} | CRM: {{context.crmOrderId}}\nТовар: {{context.product.name}} | колір {{context.colorChoice.color}}\nКлієнт: {{context.orderData.fullName}}, {{context.orderData.phone}}\nДоставка: {{context.orderData.city}}, {{context.orderData.branch}}',
     } });
@@ -385,7 +385,7 @@ function setEdge(edges, source, target, sourceHandle) {
     upsertNode(nodes, 'n_supplier_order_ed', { type: 'js', position: { x: 640, y: 4600 }, data: {
         label: '13.6c Замовлення постачальнику (easydrop)', code: EASYDROP_ORDER_CODE,
     } });
-    upsertNode(nodes, 'n_supplier_notify', { type: 'notifyAdmin', position: { x: 120, y: 4650 }, data: {
+    upsertNode(nodes, 'n_supplier_notify', { type: 'notifyTg', position: { x: 120, y: 4650 }, data: {
         label: '13.7 Результат постачальнику → Telegram', targetKey: 'ADMIN_TELEGRAM_ID',
         message: '🏭 Постачальник (замовлення {{context.orderRef}}):\n{{context.supplierOrderResult}}',
     } });

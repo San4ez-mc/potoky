@@ -711,6 +711,22 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
     const nodesById = new Map(flow.nodes.map((node) => [node.id, node]));
     const { ctx, runtime } = getFlowRuntime(session.context);
 
+    // Бот замовк, бо не визначив товар. Якщо клієнт САМ прислав товар (рілс/пост/реклама
+    // або артикул у тексті) — це нова спроба, відновлюємось і шукаємо товар знову.
+    // Явне прохання менеджера (handoffKind !== 'product_unknown') так НЕ знімається.
+    if (ctx.adminEngaged && ctx.handoffKind === 'product_unknown' && !ctx.funnelPaused) {
+        const _hasProductSignal = Boolean(ctx.sharedPost && ctx.sharedPost.caption)
+            || Boolean(ctx.entryAd || ctx.entryAdId || ctx.postId)
+            || /(?:артикул|арт\.?|код|sku|№)\s*[:#№.-]?\s*[A-Za-zА-Яа-я]{0,5}\d{2,8}|\b[A-Za-z]\d{3,6}\b|\b\d{4,8}\b/i.test(String(incomingUserMessage || ''));
+        if (_hasProductSignal) {
+            ctx.adminEngaged = false;
+            delete ctx.handoffKind;
+            delete ctx.handoffReason;
+            const _startNode = flow.nodes.find((n) => n.type === 'start') || flow.nodes[0];
+            if (_startNode) { runtime.currentNodeId = _startNode.id; runtime.waitingForUser = false; }
+        }
+    }
+
     // Оператор перехопив діалог (handoff) — бот мовчить, доки прапорець не знято.
     // Це страхує канали, які не мають власного гарду (тести, інші хендлери).
     if (ctx.adminEngaged || ctx.funnelPaused) {
@@ -2106,7 +2122,9 @@ ${sourceContent || '(немає даних)'}
                     ...scope,
                     env: {
                         ...scope.env,
-                        ADMIN_TELEGRAM_ID: adminTelegramIdValue || scope.env.ADMIN_TELEGRAM_ID || process.env.ADMIN_TELEGRAM_ID || '',
+                        // Ключ ВОРОНКИ має пріоритет над системним: у кожного магазину своя група,
+                        // а системний id часто особистий — бот не може писати юзеру, який йому не писав.
+                        ADMIN_TELEGRAM_ID: funnelEnv.ADMIN_TELEGRAM_ID || scope.env.ADMIN_TELEGRAM_ID || adminTelegramIdValue || process.env.ADMIN_TELEGRAM_ID || '',
                     },
                     timestamp: new Date().toISOString(),
                 };

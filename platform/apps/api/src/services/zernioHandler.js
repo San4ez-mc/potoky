@@ -346,7 +346,12 @@ async function handleIncomingMessage(botId, body) {
         logger.info('[zernioHandler] handoff triggered', { botId, sessionId: session.id });
         return { ok: true, handoff: true };
     }
-    if (!ctxNow.adminEngaged && !ctxNow.funnelPaused) {
+    // Бот замовк лише тому, що не визначив товар? Якщо клієнт САМ прислав товар
+    // (рілс/пост/реклама або артикул) — це нова спроба: рушій зніме прапорець і знайде товар.
+    const _resumeOnProduct = ctxNow.adminEngaged && ctxNow.handoffKind === 'product_unknown' && !ctxNow.funnelPaused
+        && (Boolean(sharedPost && sharedPost.caption) || Boolean(adId)
+            || /(?:артикул|арт\.?|код|sku|№)\s*[:#№.-]?\s*[A-Za-zА-Яа-я]{0,5}\d{2,8}|\b[A-Za-z]\d{3,6}\b|\b\d{4,8}\b/i.test(String(text || '')));
+    if ((!ctxNow.adminEngaged && !ctxNow.funnelPaused) || _resumeOnProduct) {
         const sinceTime = new Date();
         const inImageUrl = (attachment && attachment.type === 'photo' && attachment.url && String(attachment.url).startsWith('http')) ? attachment.url : null;
         try { await executeFlowStep({ sessionId: session.id, incomingUserMessage: text, incomingImageUrl: inImageUrl }); }

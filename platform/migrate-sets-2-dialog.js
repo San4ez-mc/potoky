@@ -5,7 +5,7 @@ const APPLY = process.argv.includes('--apply');
 const NL = String.fromCharCode(10);
 
 const SET_PROMPT = [
-  'Ти — Оля, тепла продавчиня GOVERLA. Клієнт цікавиться КОМПЛЕКТОМ: {{context.product.name}} — {{context.product.price}} грн (фіксована ціна за весь набір).',
+  'Ти — {{env.PERSONA_NAME}}, тепла продавчиня {{env.SHOP_TAG}}. Клієнт цікавиться КОМПЛЕКТОМ: {{context.product.name}} — {{context.product.price}} грн (фіксована ціна за весь набір).',
   'Склад комплекту: {{context.product.setList}}',
   '',
   'ЗАДАЧА: зʼясувати, клієнт бере ВЕСЬ КОМПЛЕКТ чи ОКРЕМУ ПОЗИЦІЮ з нього.',

@@ -9,16 +9,16 @@ const crypto = require('crypto');
 const https = require('https');
 const vm = require('vm');
 const { extractDocumentText } = require('./docExtract');
+const { redisClient } = require('../lib/sessionStore');
+const { getMonoStatement, markConsumed: markMonoConsumed, getConsumedSet: getMonoConsumedSet } = require('@platform/mono-statement');
 
 const { handleTelegramUpdate } = require('../../../../projects/finance-course/src/telegramHandler');
 
 const MAX_SAFE_TELEGRAM_ID = 9007199254740991;
 
-// monobank personal API дозволяє 1 запит виписки / 60 c на токен. Кешуємо останню
-// відповідь у памʼяті процесу і віддаємо кеш, якщо з моменту виклику минуло < 60 c.
-// Ключ — токен. { at: ms, items: [...] }
-const MONO_STATEMENT_CACHE = new Map();
-const MONO_MIN_INTERVAL_MS = 60 * 1000;
+// monobank personal API дозволяє 1 запит виписки / 60 c на токен. Кеш+лок тепер
+// у Redis (@platform/mono-statement) — спільний між api/worker процесами і
+// захищає від "thundering herd" (N сесій одночасно б'ють Mono API повз кеш).
 
 const FILE_SEED_DEFAULTS = {
     articles: JSON.stringify({
@@ -2483,37 +2483,24 @@ ${_baseUrl}/legal/terms — Правила використання`;
                 }
 
                 // ── monobank ФОП: отримання виписки (кредити) для звірки оплат ──
+                // Кеш+лок у Redis (@platform/mono-statement) — спільний між усіма
+                // одночасними сесіями (і api, і worker), захищає ліміт 1/60c навіть
+                // коли десятки клієнтів чекають підтвердження одночасно.
                 if (connectorType === 'monobank' && action === 'get_statement') {
                     const token = (funnelEnv.MONO_TOKEN || config.token || config.api_key || '').trim();
                     const account = (renderTemplate(data.accountId || funnelEnv.MONO_ACCOUNT_ID || config.account_id || '0', scope) || '0').trim() || '0';
                     const windowHours = parseInt(data.windowHours || 48, 10) || 48;
-                    const cacheKey = `${token}:${account}`;
-                    const cached = MONO_STATEMENT_CACHE.get(cacheKey);
-                    let items = null; let monoStatus = null;
                     const monoStart = Date.now();
-                    if (cached && (Date.now() - cached.at) < MONO_MIN_INTERVAL_MS) {
-                        items = cached.items; monoStatus = 304; // кеш — щоб не порушити ліміт 1/60c
-                    } else {
-                        const from = Math.floor((Date.now() - windowHours * 3600 * 1000) / 1000);
-                        try {
-                            const r = await fetch(`https://api.monobank.ua/personal/statement/${encodeURIComponent(account)}/${from}`, { headers: { 'X-Token': token } });
-                            monoStatus = r.status;
-                            const j = await r.json().catch(() => null);
-                            if (Array.isArray(j)) { items = j; MONO_STATEMENT_CACHE.set(cacheKey, { at: Date.now(), items: j }); }
-                            else if (cached) { items = cached.items; } // 429/помилка — беремо останнє добре
-                            else { items = []; }
-                        } catch (e) { items = cached ? cached.items : []; }
-                    }
+                    const { items, fromCache, status: monoStatus } = await getMonoStatement({ redisClient, token, account, windowHours });
                     const credits = (items || []).filter((t) => t && Number(t.amount) > 0).map((t) => ({
                         id: t.id, amountUah: Math.round(Number(t.amount)) / 100, time: t.time,
                         comment: t.comment || '', description: t.description || '',
                         counterName: t.counterName || '', counterIban: t.counterIban || '',
                     }));
                     ctx.monoStatement = credits;
-                    // Глобальний реєстр уже зарахованих транзакцій (антидубль між сесіями).
+                    // Глобальний реєстр уже зарахованих транзакцій (антидубль між сесіями) — Redis SET, atomic.
                     try {
-                        const reg = await db.funnelKey.findFirst({ where: { botId: session.botId, key: '_CONSUMED_MONO_TX' }, select: { value: true } });
-                        const globalConsumed = reg && reg.value ? (JSON.parse(reg.value) || []) : [];
+                        const globalConsumed = await getMonoConsumedSet({ redisClient, botId: session.botId });
                         const sess = Array.isArray(ctx.consumedTxIds) ? ctx.consumedTxIds : [];
                         ctx.consumedTxIds = Array.from(new Set([...sess, ...globalConsumed]));
                     } catch (_e) { /* ignore */ }
@@ -2521,26 +2508,18 @@ ${_baseUrl}/legal/terms — Правила використання`;
                     db.apiCall.create({ data: {
                         sessionId: session.id, service: 'monobank', method: 'get_statement',
                         requestData: { account, windowHours },
-                        responseData: { count: credits.length, fromCache: monoStatus === 304 },
-                        statusCode: monoStatus, durationMs: Date.now() - monoStart,
+                        responseData: { count: credits.length, fromCache: !!fromCache },
+                        statusCode: monoStatus || (fromCache ? 304 : null), durationMs: Date.now() - monoStart,
                     } }).catch(() => {});
                 }
 
                 // ── monobank: позначити транзакцію зарахованою у глобальному реєстрі ──
+                // Redis SADD — atomic, без read-modify-write гонки при одночасних оплатах
+                // (попередній варіант читав JSON-масив із funnelKey, редагував і писав
+                // назад — дві одночасні оплати могли загубити одна одну).
                 if (connectorType === 'monobank' && action === 'mark_consumed') {
                     const txId = (renderTemplate(data.txId || '{{context.payTxId}}', scope) || '').trim();
-                    if (txId) {
-                        try {
-                            const reg = await db.funnelKey.findFirst({ where: { botId: session.botId, key: '_CONSUMED_MONO_TX' } });
-                            let arr = reg && reg.value ? (JSON.parse(reg.value) || []) : [];
-                            if (!arr.includes(txId)) {
-                                arr.push(txId);
-                                if (arr.length > 500) arr = arr.slice(-500); // обмежуємо розмір реєстру
-                                if (reg) await db.funnelKey.update({ where: { id: reg.id }, data: { value: JSON.stringify(arr) } });
-                                else await db.funnelKey.create({ data: { botId: session.botId, key: '_CONSUMED_MONO_TX', value: JSON.stringify(arr), isSecret: false } });
-                            }
-                        } catch (_e) { /* best-effort */ }
-                    }
+                    if (txId) await markMonoConsumed({ redisClient, botId: session.botId, txId });
                 }
 
                 // ── ibanoplata: видалення посилання (після оплати або протягом cron) ──

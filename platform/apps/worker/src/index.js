@@ -3,10 +3,17 @@
 require('dotenv').config();
 
 const Bull = require('bull');
+const { createClient } = require('redis');
 const logger = require('@platform/logger');
 const { db } = require('@platform/db');
+const { getMonoStatement, hasFreshCache } = require('@platform/mono-statement');
 
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+
+// Окремий redis-клієнт (не через Bull) — для mono-statement кешу, спільного з apps/api.
+const monoRedisClient = createClient({ url: REDIS_URL });
+monoRedisClient.on('error', (e) => logger.error('Mono redis client error', { message: e.message }));
+monoRedisClient.connect().then(() => logger.info('Mono redis client connected', { redis: REDIS_URL })).catch((e) => logger.error('Mono redis connect failed', { message: e.message }));
 
 // ── Queues ───────────────────────────────────────────────────
 const telegramQueue = new Bull('telegram-messages', REDIS_URL);
@@ -285,6 +292,53 @@ async function checkZernioReminders() {
     } catch (err) { logger.error('[zernio-reminder] checker error', { error: err.message }); }
 }
 setTimeout(() => { checkZernioReminders(); setInterval(checkZernioReminders, ZERNIO_REMINDER_INTERVAL_MS); }, 3 * 60 * 1000);
+
+// ── Mono statement: фонове оновлення ЛИШЕ коли є сесія, що чекає оплату ───────
+// Ідея власника (2026-08-20): не смикати Mono API, коли нікого немає в черзі
+// підтвердження — тримати кеш "теплим" тільки за реальної потреби. Coordination
+// (лок проти одночасних запитів з різних сесій) — у @platform/mono-statement.
+const MONO_REFRESH_INTERVAL_MS = 45 * 1000; // з запасом під ліміт 1/60c
+const MONO_PENDING_WINDOW_MS = 6 * 60 * 60 * 1000; // 6 год — далі рахуємо кинутим кошиком
+
+async function refreshMonoIfPending() {
+    try {
+        const botsWithMono = await db.funnelKey.findMany({
+            where: { key: 'MONO_TOKEN', value: { not: '' } },
+            select: { botId: true },
+        });
+        const botIds = [...new Set(botsWithMono.map((b) => b.botId))];
+        if (!botIds.length) return;
+
+        const sessions = await db.session.findMany({
+            where: {
+                botId: { in: botIds }, isTest: false,
+                lastActive: { gte: new Date(Date.now() - MONO_PENDING_WINDOW_MS) },
+            },
+            select: { botId: true, context: true },
+            take: 500,
+        });
+        const pendingBotIds = new Set();
+        for (const s of sessions) {
+            const ctx = (typeof s.context === 'object' ? s.context : JSON.parse(s.context || '{}')) || {};
+            if (ctx.orderRef && ctx.payStatus !== 'confirmed') pendingBotIds.add(s.botId);
+        }
+        if (!pendingBotIds.size) return; // нікого не чекаємо — не смикаємо Mono взагалі
+
+        for (const botId of pendingBotIds) {
+            const rows = await db.funnelKey.findMany({ where: { botId, key: { in: ['MONO_TOKEN', 'MONO_ACCOUNT_ID'] } }, select: { key: true, value: true } });
+            const km = Object.fromEntries(rows.map((k) => [k.key, (k.value || '').trim()]));
+            if (!km.MONO_TOKEN) continue;
+            const account = km.MONO_ACCOUNT_ID || '0';
+            const fresh = await hasFreshCache({ redisClient: monoRedisClient, token: km.MONO_TOKEN, account });
+            if (fresh) continue; // вже свіжо (можливо, хтось інший щойно оновив) — не дублюємо запит
+            await getMonoStatement({ redisClient: monoRedisClient, token: km.MONO_TOKEN, account, windowHours: 48 }).catch((e) => {
+                logger.warn('[mono-refresh] fetch failed', { botId, error: e.message });
+            });
+            logger.info('[mono-refresh] statement refreshed', { botId, pendingSessions: sessions.filter((s) => s.botId === botId).length });
+        }
+    } catch (err) { logger.error('[mono-refresh] checker error', { error: err.message }); }
+}
+setTimeout(() => { refreshMonoIfPending(); setInterval(refreshMonoIfPending, MONO_REFRESH_INTERVAL_MS); }, 20 * 1000);
 
 // ── Morning homework reminder ─────────────────────────────────
 // Runs every 30 min. Between 09:00-09:30 Kyiv time (UTC+2/+3),

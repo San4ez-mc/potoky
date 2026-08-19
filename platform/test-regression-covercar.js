@@ -98,10 +98,23 @@ const fresh = async (sid) => (await db.session.findUnique({ where: { id: sid } }
   c = await fresh(s.id);
   ok('B3', 'прохання людини -> бот замовкає', !!c.adminEngaged);
 
+  // Адаптивний прогін: реальний клієнт не завжди відповідає в тому порядку, якого чекає
+  // фіксований скрипт (напр. n_set_choice і n_color — окремі кроки з одним обов'язком
+  // кожен, §3 правила). Тому дивимось на поточну ноду й відповідаємо доречно, а не за
+  // жорстким списком повідомлень.
   s = await mkSession('B4', { sharedPost: { kind: 'reel', caption: CAPTION } });
-  await play(s.id, ['', 'Скільки?', 'Темно-сірий', 'так', '2']);
+  await play(s.id, ['']);
+  for (let i = 0; i < 8; i++) {
+    c = await fresh(s.id);
+    const node = (c.flowRuntime || {}).currentNodeId;
+    if (node === 'n_set_choice') await play(s.id, ['весь комплект']);
+    else if (node === 'n_color') await play(s.id, ['Темно-сірий']);
+    else if (node === 'n_order_intent') await play(s.id, ['так']);
+    else if (node === 'n_pay_collect') await play(s.id, ['2']);
+    else break;
+  }
   c = await fresh(s.id);
-  ok('B4', 'підтвердження -> дійшли до оплати', !!c.paymentInfo && !!c.orderRef, 'pay=' + JSON.stringify(c.paymentInfo || null) + ' ref=' + (c.orderRef || '-'));
+  ok('B4', 'підтвердження -> дійшли до оплати', !!c.orderRef && !!c.payAmount, 'ref=' + (c.orderRef || '-') + ' amount=' + (c.payAmount || '-') + ' node=' + (c.flowRuntime || {}).currentNodeId);
 
   s = await mkSession('B5', {});
   await play(s.id, ['', 'привіт']);

@@ -56,7 +56,7 @@ try{
           var mimep=(irp.headers.get('content-type')||'image/jpeg').split(';')[0];
           var catList=all.map(function(p,i){return i+': '+(p.name||'');}).join('\n').slice(0,6000);
           var promptp='Це скріншот, який клієнт надіслав замість посту/рілс — ймовірно, товар з нашого магазину. Опиши коротко, що на фото (тип товару, колір, помітний текст/бренд). Потім знайди НАЙБЛИЖЧИЙ відповідник у каталозі нижче (формат: індекс: назва). Якщо жодного релевантного немає — bestMatchIndex null. Поверни ЛИШЕ JSON {"description":"...","bestMatchIndex":число_або_null}.\nКаталог:\n'+catList;
-          var grp=await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key='+encodeURIComponent(keys.GEMINI_API_KEY),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:promptp},{inline_data:{mime_type:mimep,data:b64p}}]}]})});
+          var grp=await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key='+encodeURIComponent(keys.GEMINI_API_KEY),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:promptp},{inline_data:{mime_type:mimep,data:b64p}}]}]})});
           var gjp=await grp.json();
           var tp=((((gjp.candidates||[])[0]||{}).content||{}).parts||[{}])[0].text||'';
           var mmp=tp.match(/\{[\s\S]*\}/);

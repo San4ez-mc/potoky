@@ -170,7 +170,11 @@ async function sendZernioMessage(botId, conversationId, text) {
         logger.warn('[zernioHandler] Send error', { botId, status: res.status, error: msg });
         throw new Error(`Zernio Send API: ${msg}`);
     }
-    return data.id || data.messageId || data.message?.id || null;
+    // Реальна форма відповіді Zernio: {"success":true,"data":{"messageId":"...","conversationId":"..."}}
+    // (перевірено live-запитом 2026-08-19) — id лежить у data.data.messageId, а НЕ на
+    // верхньому рівні. Через це кожна УСПІШНА відправка логувалась як "не повернув id"
+    // (deliveryLog показував ok:false для реально доставлених повідомлень).
+    return data.data?.messageId || data.data?.id || data.id || data.messageId || data.message?.id || null;
 }
 
 // Фото через Meta-direct: Zernio-send текстовий, тож зображення шлемо напряму в Meta

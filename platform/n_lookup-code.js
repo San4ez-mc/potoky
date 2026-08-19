@@ -17,23 +17,22 @@ function matchArticle(all,art){ if(!art)return null; var A=String(art).toUpperCa
 try{
   var all=[];
   for(var page=1;page<=10;page++){ var r=await fetch(base+'/products?include=customFields&limit=50&page='+page,{headers:hdr()}); if(!r.ok)break; var d=await r.json(); var items=(d&&d.data)||[]; for(var i=0;i<items.length;i++)all.push(items[i]); if(items.length<50)break; }
-  var found=null, via='', mk='', preColor='', preSize='';
+  var found=null, via='', mk='', preColor='', preSize='', preFromUser=false;
 
   // ПРІОРИТЕТ 1: ad_id / post_id (клік із реклами)
   if(context.entryAd){ found=matchCT(all,String(context.entryAd)); if(found){ via='ad_id'; mk=String(context.entryAd); } }
 
   // ПРІОРИТЕТ 2: АРТИКУЛ (з опису поста + з тексту клієнта + adTitle)
   if(!found){
-    var cands=extractArticles((context.sharedPost&&context.sharedPost.caption)||'')
-      .concat(extractArticles(context.lastUserMessage||input||''))
-      .concat(extractArticles(context.adTitle||''));
+    var fromUser=extractArticles(context.lastUserMessage||input||'');
+    var cands=fromUser.concat(extractArticles((context.sharedPost&&context.sharedPost.caption)||'')).concat(extractArticles(context.adTitle||''));
     var seen={},cc=[]; for(var ci=0;ci<cands.length;ci++){ if(!seen[cands[ci]]){seen[cands[ci]]=1;cc.push(cands[ci]);} } cc=cc.slice(0,8);
     // 2a) offer-SKU → товар + колір/розмір
     for(var a=0;a<cc.length&&!found;a++){
       try{ var orq=await fetch(base+'/offers?filter[sku]='+encodeURIComponent(cc[a])+'&limit=1',{headers:hdr()});
         if(orq.ok){ var oj=await orq.json(); var of=(oj.data||[])[0];
           if(of&&of.product_id){ var pr=null; for(var pi=0;pi<all.length;pi++){ if(String(all[pi].id)===String(of.product_id)){pr=all[pi];break;} }
-            if(pr){ found=pr; via='offer:'+cc[a]; mk='art_'+cc[a];
+            if(pr){ found=pr; via='offer:'+cc[a]; mk='art_'+cc[a]; preFromUser=(fromUser.indexOf(cc[a])>=0); preFromUser=(fromUser.indexOf(cc[a])>=0); preFromUser=(fromUser.indexOf(cc[a])>=0); preFromUser=(fromUser.indexOf(cc[a])>=0); preFromUser=(fromUser.indexOf(cc[a])>=0); preFromUser=(fromUser.indexOf(cc[a])>=0); preFromUser=(fromUser.indexOf(cc[a])>=0); preFromUser=(fromUser.indexOf(cc[a])>=0);
               var ops=of.properties||[]; for(var oi=0;oi<ops.length;oi++){ var onm=String(ops[oi].name||'').toLowerCase(); if(onm.indexOf('колір')>=0)preColor=ops[oi].value; if(onm.indexOf('розмір')>=0)preSize=ops[oi].value; } } } } }catch(e){}
     }
     // 2b) артикул на рівні товару (sku / CT_1001 / будь-яке кастом-поле)
@@ -41,6 +40,31 @@ try{
   }
 
   // ПРІОРИТЕТ 3: media_id рілса — опційно (поле в CRM); наразі пропускаємо
+
+  // ПРІОРІТЕТ 2.9: клієнт кинув СКРІН товару замість поста/рілс — ШІ-візія (Gemini)
+  // проти каталогу KeyCRM. На цьому кроці ще немає orderRef/оплати, тож будь-яке
+  // вхідне фото тут — майже напевно спроба показати товар, не квитанція.
+  if(!found && context.lastUserImageUrl && keys.GEMINI_API_KEY){
+    function imgOk(u){ try{ var h=new URL(u).hostname.toLowerCase(); if(h==='api.telegram.org') return true; return ['cdninstagram.com','fbcdn.net','fbsbx.com','lookaside.fbsbx.com'].some(function(d){return h===d||h.endsWith('.'+d);}); }catch(e){return false;} }
+    if(imgOk(context.lastUserImageUrl)){
+      var acp=new AbortController(); var top=setTimeout(function(){try{acp.abort();}catch(e){}},10000);
+      try{
+        var irp=await fetch(context.lastUserImageUrl,{signal:acp.signal});
+        var abp=await irp.arrayBuffer();
+        if(abp.byteLength<=8000000){
+          var b64p=Buffer.from(abp).toString('base64');
+          var mimep=(irp.headers.get('content-type')||'image/jpeg').split(';')[0];
+          var catList=all.map(function(p,i){return i+': '+(p.name||'');}).join('\n').slice(0,6000);
+          var promptp='Це скріншот, який клієнт надіслав замість посту/рілс — ймовірно, товар з нашого магазину. Опиши коротко, що на фото (тип товару, колір, помітний текст/бренд). Потім знайди НАЙБЛИЖЧИЙ відповідник у каталозі нижче (формат: індекс: назва). Якщо жодного релевантного немає — bestMatchIndex null. Поверни ЛИШЕ JSON {"description":"...","bestMatchIndex":число_або_null}.\nКаталог:\n'+catList;
+          var grp=await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key='+encodeURIComponent(keys.GEMINI_API_KEY),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:promptp},{inline_data:{mime_type:mimep,data:b64p}}]}]})});
+          var gjp=await grp.json();
+          var tp=((((gjp.candidates||[])[0]||{}).content||{}).parts||[{}])[0].text||'';
+          var mmp=tp.match(/\{[\s\S]*\}/);
+          if(mmp){ var fp=JSON.parse(mmp[0]); if(fp.bestMatchIndex!=null && all[fp.bestMatchIndex]){ found=all[fp.bestMatchIndex]; via='photo'; mk='photo_'+fp.bestMatchIndex; } }
+        }
+      }catch(e){} finally{ clearTimeout(top); }
+    }
+  }
 
   // ОСТАННІЙ РЕЗЕРВ: DEFAULT_AD_ID (зараз порожній)
   if(!found){ var dk=(keys.DEFAULT_AD_ID||'').trim(); if(dk){ found=matchCT(all,dk); if(found){ via='default'; mk='def_'+dk; } } }
@@ -56,8 +80,35 @@ try{
   function cfVal(u){ var f=(found.custom_fields||[]).find(function(c){return c&&c.uuid===u;}); return f?String(f.value||'').trim():''; }
   var __sup=cfVal('CT_1003');
   var __set=cfVal('CT_1005');
-  var result={ supplier:__sup, product:{ _source:'keycrm', supplier:__sup, setComponents:__set, isSet:!!__set, _matchKey:mk, _via:via, id:found.id, category_id:found.category_id, name:found.name||'Товар', desc:found.description||'', price:price, currency:found.currency_code||'UAH', photoUrl:img||'', imageUrls:imgs.slice(0,5), colors:colors.join(', '), colorsList:colors, sizes:sizes, offers:offers, upsell:upsell.join('; '), isClothing:sizes.length>0 } };
-  if(preColor){ result.colorChoice={color:preColor,_pre:true}; result.product.preColor=preColor; }
+  // Набір: розгортаємо артикули компонентів у реальні товари (назва/ціна/постачальник)
+  var setItems=[];
+  if(__set){
+    var toks=String(__set).split(/[,;\s]+/).map(function(t){return String(t).trim();}).filter(Boolean);
+    for(var si=0; si<toks.length && setItems.length<10; si++){
+      var tk=toks[si].toUpperCase();
+      var cp=null;
+      for(var pi=0; pi<all.length && !cp; pi++){
+        var pp=all[pi];
+        if(String(pp.id)===String(found.id)) continue;
+        if(String(pp.id)===toks[si]) { cp=pp; break; }
+        if(pp.sku && String(pp.sku).toUpperCase().trim()===tk) { cp=pp; break; }
+        var pcf=pp.custom_fields||[];
+        for(var cj=0; cj<pcf.length; cj++){
+          var f=pcf[cj]; if(!f) continue;
+          if(f.uuid==='CT_1002'||f.uuid==='CT_1005'||f.uuid==='CT_1003') continue;
+          var vv=f.value; if(vv==null) continue;
+          if(String(vv).toUpperCase().split(/[,;\s]+/).map(function(z){return z.trim();}).indexOf(tk)>=0){ cp=pp; break; }
+        }
+      }
+      if(!cp) continue;
+      var csup=(cp.custom_fields||[]).filter(function(c){return c&&c.uuid==='CT_1003';})[0];
+      setItems.push({ article:toks[si], id:cp.id, name:cp.name||'', price:(cp.price!=null?cp.price:cp.min_price), supplier:csup?String(csup.value||'').trim():'' });
+    }
+  }
+  var result={ supplier:__sup, product:{ _source:'keycrm', supplier:__sup, setComponents:__set, isSet:!!__set, setItems:setItems, setList:setItems.map(function(x){return x.name+(x.price?(" — "+x.price+" грн"):"")+" [арт. "+x.article+"]";}).join("; "), _matchKey:mk, _via:via, id:found.id, category_id:found.category_id, name:found.name||'Товар', desc:found.description||'', price:price, currency:found.currency_code||'UAH', photoUrl:img||'', imageUrls:imgs.slice(0,5), colors:colors.join(', '), colorsList:colors, sizes:sizes, offers:offers, upsell:upsell.join('; '), isClothing:sizes.length>0 } };
+  // Колір автопідставляємо ТІЛЬКИ якщо клієнт САМ написав артикул (а не з опису поста):
+  if(preColor && preFromUser){ result.colorChoice={color:preColor,_pre:true}; }
+  if(preColor) result.product.preColor=preColor;
   if(preSize){ result.product.preSize=preSize; }
   return result;
 }catch(e){ return fallback(); }

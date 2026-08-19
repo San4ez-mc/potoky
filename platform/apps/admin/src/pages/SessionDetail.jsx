@@ -993,16 +993,20 @@ export function SessionDetail() {
 
                 {/* Action toggles — icon only */}
                 <div className="flex items-center gap-1 shrink-0">
+                    {/* Іконка показує ДІЮ: бот працює → ⏸ (зупинити); бот зупинений → ▶ (запустити).
+                        «Запустити» знімає і паузу, і handoff — бот відповідає з наступного повідомлення. */}
                     <button
-                        onClick={() => toggleFlag('funnelPaused', !funnelPaused)}
-                        title={funnelPaused ? 'Пауза активна — натисни щоб відновити воронку' : 'Призупинити воронку'}
-                        className={`w-7 h-7 flex items-center justify-center rounded text-base transition-colors ${funnelPaused ? 'bg-orange-900/40 text-orange-300' : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800'}`}
-                    >{funnelPaused ? '⏸' : '▶'}</button>
+                        onClick={() => toggleFlag('funnelPaused', !(funnelPaused || adminEngaged))}
+                        title={(funnelPaused || adminEngaged)
+                            ? ((adminEngaged && !funnelPaused) ? 'Бот зупинений (діалог веде людина) — натисни, щоб знову увімкнути бота' : 'Бот зупинений — натисни, щоб запустити')
+                            : 'Бот працює — натисни, щоб зупинити (відповідатиме людина)'}
+                        className={`w-7 h-7 flex items-center justify-center rounded text-base transition-colors ${(funnelPaused || adminEngaged) ? 'bg-orange-900/40 text-orange-300' : 'text-emerald-400 hover:bg-gray-800'}`}
+                    >{(funnelPaused || adminEngaged) ? '▶' : '⏸'}</button>
                     <button
                         onClick={() => toggleFlag('adminEngaged', !adminEngaged)}
-                        title={adminEngaged ? 'Сповіщення увімкнені — натисни щоб вимкнути' : 'Увімкнути сповіщення'}
+                        title={adminEngaged ? 'Діалог веде людина (бот мовчить) — натисни, щоб зняти' : 'Позначити, що діалог веде людина (бот замовкне)'}
                         className={`w-7 h-7 flex items-center justify-center rounded text-base transition-colors ${adminEngaged ? 'bg-brand/20 text-brand-light' : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800'}`}
-                    >{adminEngaged ? '🔔' : '🔕'}</button>
+                    >{adminEngaged ? '🙋' : '🤖'}</button>
                     <button
                         onClick={restartChat}
                         disabled={restarting}

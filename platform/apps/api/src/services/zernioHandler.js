@@ -336,7 +336,7 @@ async function handleIncomingMessage(botId, body) {
     // Авто-передача людині: явне прохання / повернення / скарга / конфлікт / оплата.
     // Не спрацьовує якщо замовлення вже прийняте (є crmOrderId) або оператор вже в діалозі.
     const HANDOFF_RE = /менеджер|оператор|з людин|живою людин|поверн|обмін|обмен|\bбрак\b|скарг|жалоб|конфлікт|обман|шахра|не прийшл|не дійшл|не дошл/i;
-    if (text && HANDOFF_RE.test(text) && !ctxNow.adminEngaged && !ctxNow.crmOrderId) {
+    if (text && HANDOFF_RE.test(text) && !ctxNow.adminEngaged && !ctxNow.funnelPaused && !ctxNow.crmOrderId) {
         await db.session.update({ where: { id: session.id }, data: { context: { ...ctxNow, adminEngaged: true, handoffReason: text.slice(0, 120) } } }).catch(() => {});
         // Бот каже клієнту, що кличе людину, і БІЛЬШЕ не відповідає (adminEngaged ставить флоу на паузу).
         const handoffMsg = 'Добре, зараз покличу менеджера 🙂 Незабаром вам відповість жива людина — дякую за терпіння 💛';

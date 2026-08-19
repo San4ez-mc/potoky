@@ -363,7 +363,33 @@ router.patch('/:id/flags',
         const ctx = { ...(session.context || {}) };
         if (req.body.adminEngaged !== undefined) ctx.adminEngaged = req.body.adminEngaged;
         if (req.body.funnelPaused !== undefined) ctx.funnelPaused = req.body.funnelPaused;
-        const updated = await db.session.update({ where: { id: session.id }, data: { context: ctx } });
+
+        const data = { context: ctx };
+        // «Запустити бота» (знімаємо паузу) має реально повертати бота в діалог:
+        // 1) знімаємо і handoff-прапорець (інакше бот лишається мовчазним),
+        // 2) якщо флоу нікуди не вказує (сесія завершилась/була передана людині) —
+        //    ставимо на стартову ноду, щоб бот відповів на НАСТУПНЕ повідомлення.
+        if (req.body.funnelPaused === false) {
+            ctx.adminEngaged = false;
+            delete ctx.handoffReason;
+            const rt = { ...(ctx.flowRuntime || {}) };
+            if (!rt.currentNodeId) {
+                const flowDef = await db.flowDefinition.findUnique({ where: { botId: session.botId } }).catch(() => null);
+                const nodes = Array.isArray(flowDef?.nodes) ? flowDef.nodes : [];
+                const startNode = nodes.find((n) => n.type === 'start') || nodes[0] || null;
+                if (startNode) {
+                    rt.currentNodeId = startNode.id;
+                    rt.waitingForUser = false;
+                    ctx.currentNode = startNode.id;
+                    data.state = startNode.id;
+                }
+            }
+            ctx.flowRuntime = rt;
+            data.isActive = true;
+            data.completedAt = null;
+        }
+
+        const updated = await db.session.update({ where: { id: session.id }, data });
         res.json({ ok: true, data: { context: updated.context } });
     })
 );

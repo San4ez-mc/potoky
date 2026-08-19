@@ -824,8 +824,13 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
         runtime.currentNodeId = findStartNode(flow.nodes)?.id || null;
     }
 
-    if (incomingUserMessage || incomingFile) {
-        runtime.lastUserMessage = incomingUserMessage || '';
+    if (incomingUserMessage || incomingFile || incomingImageUrl) {
+        // Фото/скрін БЕЗ підпису — теж хід клієнта: без цього runtime.lastUserMessage
+        // лишається порожнім і будь-яка dialog-нода (claude) мовчки виходить у
+        // waitingForUser нічого не зробивши (клієнт "зависає" без відповіді).
+        // Знайдено 2026-08-19: клієнт скинув скрін оплати на кроці n_collect — бот
+        // не відповів і не обробив фото взагалі.
+        runtime.lastUserMessage = incomingUserMessage || (incomingImageUrl && !incomingFile ? '[фото]' : '');
         runtime.waitingForUser = false;
         // Вхідний файл кладемо у контекст (як lastUserMessage) — його спожиє нода readFile.
         if (incomingFile) ctx.lastFile = incomingFile;

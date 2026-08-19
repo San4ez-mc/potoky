@@ -46,6 +46,8 @@ function TopBar({
     onBack,
     onEdit,
     onTest,
+    onTidy,
+    isTidying,
     isTesting,
     missingKeys,
     missingSystemKeys,
@@ -134,6 +136,15 @@ function TopBar({
             </button>
 
             <button
+                onClick={onTidy}
+                disabled={isTidying}
+                title="Перерахувати позиції нод по сітці (BFS-рядки + branch-колонки, без перетинів)"
+                className="text-sm px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+                {isTidying ? '⟳ Впорядковую...' : '🧹 Впорядкувати'}
+            </button>
+
+            <button
                 onClick={onTest}
                 disabled={isTesting}
                 title='Запустити тест воронки'
@@ -172,6 +183,20 @@ export function FunnelEditor() {
     const [isSavingEdit, setIsSavingEdit] = useState(false);
     const [missingSystemKeys, setMissingSystemKeys] = useState([]);
     const [isCompactLayout, setIsCompactLayout] = useState(false);
+    const [isTidying, setIsTidying] = useState(false);
+
+    const handleTidy = async () => {
+        if (!bot?.id || isTidying) return;
+        setIsTidying(true);
+        try {
+            await api.autoLayoutFunnel(bot.id);
+            await loadFunnel(bot.id); // тягнемо свіжі позиції з БД (ендпоінт вже зберіг)
+        } catch (e) {
+            console.error('auto-layout failed', e);
+        } finally {
+            setIsTidying(false);
+        }
+    };
 
     useEffect(() => {
         const media = window.matchMedia('(max-width: 1200px)');
@@ -367,6 +392,8 @@ export function FunnelEditor() {
                     onBack={handleBack}
                     onEdit={() => setEditModalOpen(true)}
                     onTest={handleRunTest}
+                    onTidy={handleTidy}
+                    isTidying={isTidying}
                     isTesting={isTesting}
                     missingKeys={missingKeys}
                     missingSystemKeys={missingSystemKeys}

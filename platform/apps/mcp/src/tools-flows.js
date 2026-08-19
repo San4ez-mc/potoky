@@ -1,6 +1,7 @@
 'use strict';
 
 const { PrismaClient } = require('@prisma/client');
+const { computeAutoLayout } = require('@platform/flow-layout');
 
 const prisma = new PrismaClient();
 
@@ -172,6 +173,16 @@ const TOOLS = [
                 edgeId: { type: 'string', description: 'Edge ID to delete (e.g. edge_1234567890)' },
             },
             required: ['botId', 'edgeId'],
+        },
+    },
+    {
+        name: 'auto_layout',
+        description: 'Recompute grid positions for ALL nodes in the funnel (BFS row = distance from start, column = branch lane, barycenter edge-crossing minimization, merge-point centering, zigzag for long linear chains). '
+            + 'ALWAYS call this after any batch of add_node/create_edge/delete_node calls that changes the funnel structure — never hand-pick x/y coordinates. Safe to re-run any time; positions-only, no logic changes.',
+        inputSchema: {
+            type: 'object',
+            properties: { botId: { type: 'string' } },
+            required: ['botId'],
         },
     },
     {
@@ -667,6 +678,14 @@ async function createEdge({ botId, source, target }) {
     return { edge };
 }
 
+async function autoLayout({ botId }) {
+    const flow = await prisma.flowDefinition.findUnique({ where: { botId } });
+    if (!flow) throw new Error(`No flow found for botId: ${botId}`);
+    const nodes = computeAutoLayout(flow.nodes || [], flow.edges || []);
+    await prisma.flowDefinition.update({ where: { botId }, data: { nodes } });
+    return { relaidOut: nodes.length };
+}
+
 async function deleteEdge({ botId, edgeId }) {
     const flow = await prisma.flowDefinition.findUnique({ where: { botId } });
     if (!flow) throw new Error(`No flow found for botId: ${botId}`);
@@ -1019,6 +1038,7 @@ async function callTool(name, args = {}) {
         case 'delete_node': return deleteNode(args);
         case 'create_edge': return createEdge(args);
         case 'delete_edge': return deleteEdge(args);
+        case 'auto_layout': return autoLayout(args);
         case 'update_funnel_key': return updateFunnelKey(args);
         case 'delete_funnel_key': return deleteFunnelKey(args);
         case 'list_connectors': return listConnectors();

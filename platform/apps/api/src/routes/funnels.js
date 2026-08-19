@@ -297,6 +297,21 @@ router.get('/:botId/keys/:key/reveal',
 // ── EDGES (Gap #7: create_edge & update_edges) ────────────
 
 // POST /api/funnels/:botId/edges — add or update a single edge
+// POST /api/funnels/:botId/auto-layout — перерахувати grid-позиції всіх нод
+// (кнопка «🧹 Впорядкувати» в редакторі). Той самий алгоритм, що й MCP auto_layout.
+router.post('/:botId/auto-layout',
+    validateParams({ params: z.object({ botId: z.string().uuid() }) }),
+    asyncHandler(async (req, res) => {
+        const { botId } = req.params;
+        const flow = await db.flowDefinition.findUnique({ where: { botId } });
+        if (!flow) throw new NotFoundError('FlowDefinition', botId);
+        const { computeAutoLayout } = require('@platform/flow-layout');
+        const nodes = computeAutoLayout(flow.nodes || [], flow.edges || []);
+        await db.flowDefinition.update({ where: { botId }, data: { nodes } });
+        res.json({ ok: true, data: { nodes } });
+    })
+);
+
 router.post('/:botId/edges',
     validateParams({
         params: z.object({ botId: z.string().uuid() }),

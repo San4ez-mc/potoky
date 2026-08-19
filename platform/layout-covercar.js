@@ -14,8 +14,12 @@ const { PrismaClient } = require('@prisma/client');
 const db = new PrismaClient();
 const BOT = 'cc03657f-9e72-46e5-a16d-88826e70c2ee';
 const APPLY = process.argv.includes('--apply');
-const COL_W = 260;
-const ROW_H = 150;
+// Картки нод у редакторі: min-w-[220px] max-w-[320px] (BaseNode, NodeTypes.jsx),
+// висота плаває 90-220px залежно від типу (condition з TRUE/FALSE-прев'ю,
+// claude з прев'ю промпту — найвищі). COL_W має перевищувати max-width картки
+// з запасом на проміжок; ROW_H — з запасом під найвищі картки.
+const COL_W = 360;
+const ROW_H = 200;
 const ZIGZAG_RUN = 6;
 
 (async () => {

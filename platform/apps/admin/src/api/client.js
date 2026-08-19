@@ -69,6 +69,9 @@ export const api = {
     saveFunnel: (botId, nodes, edges, viewport) => req('PUT', `/funnels/${botId}`, { nodes, edges, viewport }),
     exportFunnel: (botId) => fetch(`${BASE}/funnels/${botId}/export`, { credentials: 'include' }),
     importFunnel: (botId, flow) => req('POST', `/funnels/${botId}/import`, { flow }),
+    // Перераховує grid-позиції всіх нод (кнопка «🧹 Впорядкувати») — той самий
+    // алгоритм, що й MCP auto_layout (packages/flowLayout).
+    autoLayoutFunnel: (botId) => req('POST', `/funnels/${botId}/auto-layout`),
 
     // Funnel Keys
     getFunnelKeys: (botId) => req('GET', `/funnels/${botId}/keys`),

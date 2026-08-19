@@ -9,34 +9,37 @@ function safeJsonStringify(value) {
 }
 
 const NODE_TYPES = [
-    'start',
-    'message',
-    'claude',
-    'js',
-    'condition',
-    'connector',
-    'saveFile',
-    'wait',
-    'loadFile',
-    'readFile',             // очікує документ/текст від юзера → витягує текст; data: { outputVar, maxChars }. Мета у context.readFileMeta {wasFile, ok, fileName}
-    'httpRequest',
+    // ── Керування потоком ─────────────────────────────────────────
+    'start',                // вхід у воронку; data: { label, trigger:'/start <slug>' }
+    'condition',            // розгалуження; data: { condition } (ребра true/false) АБО { conditions:[{id,label,expression}] } (порядок ребер = порядок умов). ОБИДВІ гілки мають вести кудись осмислено
+    'wait',                 // пауза/подія; data: { mode:'delay'|'event', unit, duration, eventKey, buttonText, waitMessage }
+    'js',                   // довільний код; data: { code }. Доступно context,user,session,input,keys,fetch,Buffer,FormData,Blob,crypto; return {} мержиться в context (root!)
+    // ── Спілкування ───────────────────────────────────────────────
+    'message',              // статичний текст; data: { text, variants:[], buttons:[[{text,url}]], attachmentUrl }. УВАГА: Instagram НЕ показує inline-кнопки — посилання давай текстом
+    'claude',               // AI; data: { mode:'dialog'|'single', systemPrompt, exitCondition:'json_output'|'user_confirms'|'keyword:X'|'markdown_output'|'none', outputVar, messagesTemplate, model, temperature, connectorId, useKb }
+    'agent',                // AI з інструментами в циклі; data: { systemPrompt, tools, maxIterations, outputVar, dialogMode, finishTool }
+    'knowledgeBase',        // пошук по вбудованих блоках; data: { blocks:[{id,title,content}], contextKey }
+    // ── Медіа та файли ────────────────────────────────────────────
+    'sendPhoto',            // фото з context; data: { photoVar, caption } (порожній caption = без тексту)
+    'sendDocument',         // файл/PDF; data: { fileKey, fileType, fileVar, url, fileName, caption }
+    'sendFile',             // файл за прямим URL; data: { fileUrl, fileName, caption }
+    'readFile',             // приймає документ від клієнта → текст; data: { outputVar, maxChars }; мета в context.readFileMeta
+    'saveFile',             // чекпоінт; data: { fileType, contentVar, template }
+    'loadFile',             // відновлення чекпоінта; data: { fileType, outputVar, onMissing }
+    'generateDocument',     // DOCX за шаблоном; data: { template, sourceVar, filename, sendToUser }
+    // ── Сповіщення ────────────────────────────────────────────────
+    'notifyTg',             // ⭐ ОСНОВНЕ сповіщення менеджеру: chat_id з КЛЮЧА ВОРОНКИ; data: { targetKey:'ADMIN_TELEGRAM_ID', message }
+    'notifyAdmin',          // легасі (має системні фолбеки → може піти не туди); data: { targetKey|telegramId, message, notifyUser, userMessage }
+    // ── Інтеграції ────────────────────────────────────────────────
+    'httpRequest',          // простий виклик API; data: { url, method, headers, body|bodyFields, outputVar, responseField }
+    'httpEncode',           // base64; data: { sourceVar, outputVar }
+    'connector',            // data: { connectorType:'wayforpay'|'ibanoplata'|'monobank'|'browser_agent', action, outputVar, ... } — ключі читаються з funnelEnv
+    'wait_payment',         // блокує до вебхука WayForPay; data: { timeoutHours }
+    'fbEvent',              // Facebook CAPI; data: { eventName, value, currency }; ключі FB_PIXEL_ID + FB_CAPI_TOKEN
+    'fetchTelegramProfile', // тихо кладе context.tg_bio, context.tg_photo_url; data: {}
+    // ── Легасі (є у старих воронках) ──────────────────────────────
     'tag',
     'abtest',
-    // ── Admin / Telegram ──────────────────────────────────────────
-    'notifyAdmin',          // sends Telegram message to admin;   data: { message, targetKey }
-    'notifyTg',             // sends Telegram message to a group/chat; data: { message, targetKey }
-    'fbEvent',              // Facebook Conversions API server-side event; data: { eventName, value?, currency? }; keys FB_PIXEL_ID + FB_CAPI_TOKEN
-    'sendDocument',         // sends file/PDF to user;             data: { fileKey, fileVar, caption }
-    'sendPhoto',            // sends image to user;                data: { photoVar, caption }
-    // ── Payments ──────────────────────────────────────────────────
-    'wait_payment',         // blocks until WayForPay webhook fires; data: { timeoutHours }
-    // ── AI + Documents ────────────────────────────────────────────
-    'generateDocument',     // generates DOCX via template;       data: { template, sourceVar, filename, sendToUser }
-    // ── Utility ───────────────────────────────────────────────────
-    'httpEncode',           // Base64-encodes a context var;      data: { sourceVar, outputVar }
-    'fetchTelegramProfile', // fetches TG bio + photo_url (silent); data: {}
-    // ── Knowledge ────────────────────────────────────────────────────────────
-    'knowledgeBase',        // smart keyword search over blocks;  data: { contextKey, blocks: [{id,title,content}] }
 ];
 
 const TOOLS = [

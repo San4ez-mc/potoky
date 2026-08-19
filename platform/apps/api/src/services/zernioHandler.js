@@ -487,10 +487,16 @@ async function handleSideEvent(botId, event, body) {
     if (event === 'message.sent') {
         if (msg.id) { const mine = await findMessageByZid(session.id, msg.id, msg.platformMessageId); if (mine) return { ok: true, processed: 0 }; }
         // Echo нашого ж вихідного (flow вже зберіг це повідомлення) — не дублювати, лише дотегнути id.
+        // Порівнюємо НОРМАЛІЗОВАНИЙ текст (trim + згорнуті пробіли/переноси) в JS, а не
+        // точну SQL-рівність — Zernio-echo інколи трохи відрізняється пробілами/CRLF,
+        // через що exact-match запит не знаходив щойно збережене повідомлення й
+        // створював видимий дубль у сесії (той самий текст двічі).
         const _sentText = msg.text || '';
+        const _norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
         if (_sentText) {
-            const _recent = await db.message.findMany({ where: { sessionId: session.id, role: 'assistant', content: _sentText, createdAt: { gte: new Date(Date.now() - 180000) } }, orderBy: { createdAt: 'desc' }, take: 3 });
-            const _ourEcho = _recent.find((r) => ((r.metadata || {}).source) !== 'zernio_inbox');
+            const _recent = await db.message.findMany({ where: { sessionId: session.id, role: 'assistant', createdAt: { gte: new Date(Date.now() - 180000) } }, orderBy: { createdAt: 'desc' }, take: 10 });
+            const _sentNorm = _norm(_sentText);
+            const _ourEcho = _recent.find((r) => ((r.metadata || {}).source) !== 'zernio_inbox' && _norm(r.content) === _sentNorm);
             if (_ourEcho) { const _c = _ourEcho.metadata || {}; if (!_c.zernioMessageId && msg.id) await db.message.update({ where: { id: _ourEcho.id }, data: { metadata: { ..._c, zernioMessageId: msg.id, status: 'sent' } } }).catch(() => {}); return { ok: true, processed: 0 }; }
         }
         await db.message.create({ data: { sessionId: session.id, role: 'assistant', content: msg.text || '[повідомлення]', metadata: { source: 'zernio_inbox', zernioMessageId: msg.id || null, platformMessageId: msg.platformMessageId || null, status: 'sent' } } });

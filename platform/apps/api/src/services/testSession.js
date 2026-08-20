@@ -1044,6 +1044,41 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                     }
                 } catch (_kbErr) { /* KB best-effort */ }
             }
+            // Каталог: якщо нода з useCatalog — клієнт міг спитати про ІНШИЙ товар,
+            // не той, що вже "заблокований" у context.product (напр. запитав про
+            // чорні класичні накидки посеред оформлення тестової позиції) — раніше
+            // модель без реальних даних або вигадувала відповідь, або відмовлялась
+            // ("немає каталогу під рукою"), хоча каталог насправді доступний через
+            // KeyCRM. Підмішуємо релевантні товари в промпт — реальні дані замість
+            // вигадки чи відмовки.
+            if (data.useCatalog && runtime.lastUserMessage) {
+                try {
+                    const token = (funnelEnv.KEYCRM_API_TOKEN || '').trim();
+                    const base = (funnelEnv.KEYCRM_API_BASE || 'https://openapi.keycrm.app/v1').replace(/\/$/, '');
+                    if (token && token !== 'REPLACE_ME') {
+                        const stop = new Set(['який','яка','яке','які','чи','є','у','вас','мене','цікавить','хочу','можна','будь','ласка','для','на','по','те','то','це','та','і','в','з','мені','покажіть','покажи','скільки','коштує','коштують']);
+                        const qWords = String(runtime.lastUserMessage).toLowerCase().replace(/[^\wа-яіїєґ\s]/gi, ' ').split(/\s+/).filter((w) => w.length > 2 && !stop.has(w));
+                        if (qWords.length) {
+                            const r = await fetch(base + '/products?limit=50&page=1', { headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' } });
+                            const j = await r.json().catch(() => ({}));
+                            const all = (j && j.data) || [];
+                            const scored = all.map((p) => {
+                                const name = String(p.name || '').toLowerCase();
+                                const score = qWords.reduce((acc, w) => acc + (name.includes(w) ? 1 : 0), 0);
+                                return { p, score };
+                            }).filter((x) => x.score > 0).sort((a, b) => b.score - a.score).slice(0, 5);
+                            if (scored.length) {
+                                systemPrompt += '\n\n=== ТОВАРИ З КАТАЛОГУ (реальні, знайдені за запитом клієнта — використай ЛИШЕ ці дані, не вигадуй інші) ===\n'
+                                    + scored.map((x) => '• ' + x.p.name + (x.p.price != null ? (' — ' + x.p.price + ' грн') : '')).join('\n')
+                                    + '\nЯкщо жоден із цих товарів не відповідає питанню — чесно скажи, що зараз не бачиш точного відповідника, і попроси клієнта скинути пост/рілс/артикул товару АБО запропонуй покликати менеджера. НІКОЛИ не кажи "немає каталогу під рукою" — каталог у тебе є, просто з цього переліку.';
+                            } else {
+                                systemPrompt += '\n\n=== КАТАЛОГ: за запитом клієнта нічого релевантного не знайдено ===\nЧесно скажи клієнту, що не знайшов точного відповідника, і попроси уточнити або скинути пост/артикул. НІКОЛИ не кажи "немає каталогу під рукою" і не вигадуй товари.';
+                            }
+                            db.apiCall.create({ data: { sessionId: session.id, service: 'keycrm', method: 'catalog_search', requestData: { query: String(runtime.lastUserMessage).slice(0, 120) }, responseData: { count: scored.length }, statusCode: r.status, durationMs: null } }).catch(() => {});
+                        }
+                    }
+                } catch (_catErr) { /* catalog search best-effort */ }
+            }
             let messages;
 
             if (mode === 'dialog') {

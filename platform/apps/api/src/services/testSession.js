@@ -1184,6 +1184,23 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                     lastAssistant = visibleAssistantText;
                 }
 
+                // Фото на вимогу: клієнт попросив фото посеред діалогу (напр. n_set_choice/
+                // n_color) — раніше модель могла лише чесно сказати "не можу надіслати",
+                // хоча платформа насправді вміє слати альбом. Модель сигналить
+                // {"wantsPhoto":true} у json_output (разом з іншими полями або окремо),
+                // рушій бере готові context.product.imageUrls і шле як окреме повідомлення
+                // з attachments — той самий формат, що й sendPhoto-нода/zernioHandler альбом.
+                if (exit.parsed && exit.parsed.wantsPhoto === true) {
+                    // zernioHandler сам підтягує ПОВНУ галерею з context.product.imageUrls і
+                    // шле альбомом — тут достатньо позначити attachment ОДНИМ фото (той самий
+                    // формат, що й у sendPhoto-ноді), решту логіки альбому він добере сам.
+                    const firstImg = (ctx.product && Array.isArray(ctx.product.imageUrls) && ctx.product.imageUrls[0])
+                        || (ctx.product && ctx.product.photoUrl) || '';
+                    if (firstImg && String(firstImg).startsWith('http')) {
+                        await persistAssistantMessage(session.id, '', { nodeId: node.id, nodeType: 'photo_on_demand', attachment: { type: 'photo', url: firstImg, caption: '' } });
+                    }
+                }
+
                 const historyWithReply = truncateHistory([
                     ...messages,
                     { role: 'assistant', content: responseText },

@@ -1587,8 +1587,10 @@ ${sourceContent || '(немає даних)'}
                     runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
                     continue;
                 }
-                // First encounter — send a callback button so user can confirm homework done
-                if (runtime.waitEventNodeId !== node.id) {
+                // First encounter — send a callback button so user can confirm homework done.
+                // Повторний показ теж — якщо клієнт написав текстом замість кнопки, раніше
+                // бот мовчав повністю; тепер нагадуємо про кнопку замість повної тиші.
+                if (runtime.waitEventNodeId !== node.id || runtime.lastUserMessage) {
                     const buttonLabel = renderTemplate(String(data.buttonText || '✅ Домашнє завдання виконано'), scope);
                     const waitMsg = renderTemplate(String(data.waitMessage || 'Виконай домашнє завдання і натисни кнопку нижче, коли буде готово 👇'), scope);
                     await persistAssistantMessage(session.id, waitMsg, {
@@ -1596,6 +1598,7 @@ ${sourceContent || '(немає даних)'}
                         nodeType: 'wait_event_prompt',
                         keyboard: [[{ text: buttonLabel, callback_data: `hw_done:${eventKey}` }]],
                     });
+                    lastAssistant = waitMsg;
                 }
                 // Still waiting for event
                 runtime.waitEventNodeId = node.id;
@@ -1640,6 +1643,19 @@ ${sourceContent || '(немає даних)'}
                 break;
             }
 
+            // Клієнт сам написав, поки бот "спав" на паузі (напр. n_followup_wait —
+            // 20-годинна пауза перед нагадуванням) — раніше повідомлення просто
+            // мовчки ігнорувалось до спливу таймера (реальний баг: власник написав
+            // "Привіт" і НЕ отримав відповіді). Якщо це genuine вхідне повідомлення
+            // (не рутинна перевірка таймера воркером) — пропускаємо очікування й
+            // одразу продовжуємо потік, бо клієнт явно повернувся сам.
+            if (runtime.lastUserMessage) {
+                runtime.waitUntil = null;
+                runtime.waitNodeId = null;
+                runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
+                continue;
+            }
+
             // Keep waiting until target timestamp.
             if (now < Number(runtime.waitUntil)) {
                 runtime.waitingForUser = false;
@@ -1677,12 +1693,22 @@ ${sourceContent || '(немає даних)'}
             }
 
             if (now < Number(runtime.waitPaymentUntil)) {
+                // Клієнт написав, поки чекаємо підтвердження оплати — НЕ пропускаємо
+                // очікування (це б обходило перевірку оплати), але й не мовчимо повністю:
+                // одна коротка відповідь на "сесію очікування" (не на кожне повідомлення).
+                if (runtime.lastUserMessage && runtime.waitPaymentAckNodeId !== node.id) {
+                    runtime.waitPaymentAckNodeId = node.id;
+                    const ackMsg = renderTemplate(String(data.waitingMessage || 'Ще очікуємо підтвердження оплати — щойно надійде, одразу продовжимо 🙂'), scope);
+                    await persistAssistantMessage(session.id, ackMsg, { nodeId: node.id, nodeType: 'wait_payment_ack' });
+                    lastAssistant = ackMsg;
+                }
                 runtime.waitingForUser = false;
                 break;
             }
 
             runtime.waitPaymentUntil = null;
             runtime.waitPaymentNodeId = null;
+            runtime.waitPaymentAckNodeId = null;
             runtime.currentNodeId = pickNextNodeId(flow.edges, node.id, 'unpaid') || pickNextNodeId(flow.edges, node.id, 'false') || pickNextNodeId(flow.edges, node.id);
             continue;
         }
@@ -2714,7 +2740,12 @@ ${_baseUrl}/legal/terms — Правила використання`;
                             const resolvedUrl = renderTemplate(toolDef.url, toolScope);
                             const toolMethod = (toolDef.method || 'POST').toUpperCase();
                             const toolBody = toolMethod !== 'GET' ? JSON.stringify(toolCall.input) : undefined;
-                            const toolHeaders = { 'Content-Type': 'application/json', ...(toolDef.headers || {}) };
+                            // Заголовки теж рендеримо: без цього в них не можна покласти
+                            // {{env.TOKEN}}, і жоден інструмент не дістанеться захищеного API.
+                            const toolHeaders = { 'Content-Type': 'application/json' };
+                            for (const [hk, hv] of Object.entries(toolDef.headers || {})) {
+                                toolHeaders[hk] = typeof hv === 'string' ? renderTemplate(hv, toolScope) : hv;
+                            }
 
                             const httpStart = Date.now();
                             const httpRes = await fetch(resolvedUrl, {

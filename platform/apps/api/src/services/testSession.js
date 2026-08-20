@@ -653,7 +653,9 @@ function searchKnowledgeBase(blocks, query) {
 }
 
 async function persistAssistantMessage(sessionId, content, metadata = {}) {
-    if (!content) return;
+    // Порожній content дозволений, ЯКЩО є attachment (фото без підпису) —
+    // інакше sendPhoto/wantsPhoto з пустим caption тихо губили повідомлення.
+    if (!content && !(metadata && metadata.attachment)) return;
     await db.message.create({
         data: {
             sessionId,
@@ -1174,8 +1176,18 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                     inputText: runtime.lastUserMessage,
                 });
 
+                // Якщо json_output містить ЛИШЕ wantsPhoto (клієнт просто попросив фото,
+                // жодного реального рішення типу setChoice/color не назвав) — це НЕ привід
+                // просувати воронку далі. Інакше клієнт випадково "вибирає" щось, чого не казав.
+                if (exit.parsed && exit.parsed.wantsPhoto === true) {
+                    const otherKeys = Object.keys(exit.parsed).filter((k) => k !== 'wantsPhoto');
+                    if (otherKeys.length === 0) exit.done = false;
+                }
+
                 const isJsonExit = String(exitCondition).trim() === 'json_output';
-                const visibleAssistantText = (exit.done && isJsonExit)
+                // Використовуємо jsonStart (а не exit.done) — інакше форсований wantsPhoto-only
+                // "continue" (див. вище) показав би клієнту сирий ```json{"wantsPhoto":true}``` блок.
+                const visibleAssistantText = (isJsonExit && typeof exit.jsonStart === 'number')
                     ? stripJsonAndTrailingText(responseText, exit.jsonStart)
                     : responseText;
 

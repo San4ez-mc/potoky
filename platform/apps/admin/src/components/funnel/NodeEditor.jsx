@@ -1331,6 +1331,96 @@ function GenericJsonNodeEditor({ type, data, update }) {
     );
 }
 
+// ── Наступний крок — редагування вихідних ребер прямо з панелі ноди ──────────
+// Раніше єдиний спосіб змінити "куди веде нода" — тягати стрілку руками на
+// полотні. Для condition-нод (мінімум 2 гілки) і особливо для multi-condition
+// (N гілок за порядком conditions[]) це незручно й легко забути гілку.
+function NextStepEditor({ nodeId, type, data }) {
+    const { nodes, edges, setEdges } = useFunnelStore();
+    const candidates = nodes.filter((n) => n.id !== nodeId);
+    const isMulti = type === 'condition' && Array.isArray(data.conditions) && data.conditions.length > 0;
+    const isLegacyCond = type === 'condition' && !isMulti;
+    const outEdges = edges.filter((e) => e.source === nodeId);
+    const selectCls = "w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand";
+    const label = (n) => (n && (n.data?.label || n.id)) || '';
+
+    const setSingleTarget = (targetId) => {
+        setEdges((prev) => {
+            const filtered = prev.filter((e) => e.source !== nodeId);
+            if (!targetId) return filtered;
+            return [...filtered, { id: `edge_${nodeId}_${Date.now()}`, source: nodeId, target: targetId }];
+        });
+    };
+    const setHandleTarget = (handle, targetId) => {
+        setEdges((prev) => {
+            const filtered = prev.filter((e) => !(e.source === nodeId && (e.sourceHandle || 'true') === handle));
+            if (!targetId) return filtered;
+            return [...filtered, { id: `edge_${nodeId}_${handle}_${Date.now()}`, source: nodeId, target: targetId, sourceHandle: handle }];
+        });
+    };
+    // multi-condition: N-та позиція conditions[] = N-те вихідне ребро ЗА ПОРЯДКОМ
+    // (двигун не дивиться на handle тут, лише на позицію серед ребер цієї ноди).
+    const setOrderedTarget = (index, targetId) => {
+        setEdges((prev) => {
+            const others = prev.filter((e) => e.source !== nodeId);
+            const current = prev.filter((e) => e.source === nodeId);
+            const next = [...current];
+            while (next.length <= index) next.push(null);
+            next[index] = targetId ? { id: current[index]?.id || `edge_${nodeId}_${index}_${Date.now()}`, source: nodeId, target: targetId } : null;
+            return [...others, ...next.filter(Boolean)];
+        });
+    };
+
+    if (isMulti) {
+        return (
+            <div className="px-4 py-3 border-t border-gray-800 space-y-2">
+                <div className="text-xs text-gray-400 mb-1">Наступний крок (за умовами, у порядку зверху вниз)</div>
+                {data.conditions.map((c, i) => (
+                    <div key={c.id || i}>
+                        <label className="text-[11px] text-gray-500 block mb-0.5">{c.label || `Умова ${i + 1}`}</label>
+                        <select className={selectCls} value={outEdges[i]?.target || ''} onChange={(e) => setOrderedTarget(i, e.target.value)}>
+                            <option value="">— не задано —</option>
+                            {candidates.map((n) => <option key={n.id} value={n.id}>{label(n)}</option>)}
+                        </select>
+                    </div>
+                ))}
+            </div>
+        );
+    }
+    if (isLegacyCond) {
+        const trueEdge = outEdges.find((e) => (e.sourceHandle || 'true') === 'true');
+        const falseEdge = outEdges.find((e) => e.sourceHandle === 'false');
+        return (
+            <div className="px-4 py-3 border-t border-gray-800 space-y-2">
+                <div className="text-xs text-gray-400 mb-1">Наступний крок</div>
+                <div>
+                    <label className="text-[11px] text-gray-500 block mb-0.5">Якщо TRUE</label>
+                    <select className={selectCls} value={trueEdge?.target || ''} onChange={(e) => setHandleTarget('true', e.target.value)}>
+                        <option value="">— не задано —</option>
+                        {candidates.map((n) => <option key={n.id} value={n.id}>{label(n)}</option>)}
+                    </select>
+                </div>
+                <div>
+                    <label className="text-[11px] text-gray-500 block mb-0.5">Якщо FALSE</label>
+                    <select className={selectCls} value={falseEdge?.target || ''} onChange={(e) => setHandleTarget('false', e.target.value)}>
+                        <option value="">— не задано —</option>
+                        {candidates.map((n) => <option key={n.id} value={n.id}>{label(n)}</option>)}
+                    </select>
+                </div>
+            </div>
+        );
+    }
+    return (
+        <div className="px-4 py-3 border-t border-gray-800">
+            <div className="text-xs text-gray-400 mb-1">Наступний крок</div>
+            <select className={selectCls} value={outEdges[0]?.target || ''} onChange={(e) => setSingleTarget(e.target.value)}>
+                <option value="">— не задано —</option>
+                {candidates.map((n) => <option key={n.id} value={n.id}>{label(n)}</option>)}
+            </select>
+        </div>
+    );
+}
+
 export function NodeEditor({ embedded = false, onClose }) {
     const { selectedNode, updateNodeData, connectors, deleteNode } = useFunnelStore();
 
@@ -1419,6 +1509,9 @@ export function NodeEditor({ embedded = false, onClose }) {
             <div className="flex-1 overflow-y-auto px-4 py-3">
                 {renderEditor()}
             </div>
+
+            {/* Наступний крок — окремо від типового редактора, завжди внизу */}
+            <NextStepEditor nodeId={selectedNode.id} type={type} data={data} />
 
             <div className="px-4 py-3 border-t border-gray-800">
                 <button

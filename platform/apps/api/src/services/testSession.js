@@ -1176,6 +1176,13 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                     inputText: runtime.lastUserMessage,
                 });
 
+                // Модель іноді видає порожній {} замість того щоб взагалі промовчати про json
+                // (напр. коли не зрозуміла клієнта, але звикла завжди щось повертати) — порожній
+                // об'єкт не несе жодного сигналу, тому НЕ вважається завершенням діалогу.
+                if (exit.parsed && typeof exit.parsed === 'object' && !Array.isArray(exit.parsed) && Object.keys(exit.parsed).length === 0) {
+                    exit.done = false;
+                }
+
                 // Якщо json_output містить ЛИШЕ wantsPhoto (клієнт просто попросив фото,
                 // жодного реального рішення типу setChoice/color не назвав) — це НЕ привід
                 // просувати воронку далі. Інакше клієнт випадково "вибирає" щось, чого не казав.

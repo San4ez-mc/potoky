@@ -108,14 +108,14 @@ function TopBar({
                 <Link
                     to={`/bots/${bot?.id}/sessions`}
                     title="Сесії цієї воронки"
-                    className="text-sm px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors shrink-0"
+                    className="text-xs px-2.5 py-1 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors shrink-0"
                 >
                     💬 Сесії
                 </Link>
 
                 <button
                     onClick={() => importRef.current?.click()}
-                    className="text-sm px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors shrink-0"
+                    className="text-xs px-2.5 py-1 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors shrink-0"
                 >
                     📥 Імпорт
                 </button>
@@ -123,7 +123,7 @@ function TopBar({
 
                 <button
                     onClick={onExport}
-                    className="text-sm px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors shrink-0"
+                    className="text-xs px-2.5 py-1 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors shrink-0"
                 >
                     📤 Експорт
                 </button>
@@ -131,7 +131,7 @@ function TopBar({
                 <button
                     onClick={onEdit}
                     title="Редагувати назву та опис"
-                    className="text-sm px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors shrink-0"
+                    className="text-xs px-2.5 py-1 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors shrink-0"
                 >
                     ✏ Редагувати
                 </button>

@@ -53,7 +53,7 @@ function buildWebhookInfo(bot, channels = []) {
     if (channels.includes('zernio')) {
         return {
             startUrl: `${webhookBase}/webhook/zernio/${bot.id}`,
-            note: 'Callback URL для кабінету Zernio (Inbox → Webhooks). Приймає формат Zernio message.received.',
+            note: 'Callback URL для кабінету Zernio (Inbox → Webhooks). Приймає формат Zernio message.received. (Якщо сам Meta App окремо вимагає webhook-верифікацію для свого дашборду — це в окремій службовій воронці "Meta Webhook Verify", не тут.)',
         };
     }
     // Instagram-воронка → показуємо саме Instagram callback URL (для Meta App → Webhooks),

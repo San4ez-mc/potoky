@@ -4,6 +4,16 @@ import { api } from '../../api/client.js';
 
 const CHANNELS_KEY = 'FUNNEL_CHANNELS';
 
+function EyeIcon({ off = false, className = 'w-4 h-4' }) {
+    return (
+        <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z" />
+            <circle cx="12" cy="12" r="3" />
+            {off && <line x1="3" y1="21" x2="21" y2="3" />}
+        </svg>
+    );
+}
+
 const KEY_HINTS = {
     'TELEGRAM_BOT_TOKEN': {
         hint: 'Отримати у @BotFather → /newbot або /token',
@@ -398,10 +408,11 @@ function KeyRow({ k, onEdit, onDelete, onReveal, onSaveAsConnector, isRequired =
                         <button
                             onClick={handleReveal}
                             disabled={isRevealing}
-                            className="text-xs px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white transition-colors disabled:opacity-50"
+                            className="p-1.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white transition-colors disabled:opacity-50"
                             title={revealed ? 'Сховати значення' : 'Показати значення'}
+                            aria-label={revealed ? 'Сховати значення' : 'Показати значення'}
                         >
-                            {isRevealing ? '…' : revealed ? 'Сховати' : 'Показати'}
+                            {isRevealing ? <span className="text-xs">…</span> : <EyeIcon off={revealed} />}
                         </button>
                     )}
                     <button
@@ -512,7 +523,7 @@ function KeyForm({ initial, onSave, onCancel, savedConnectors = [] }) {
                 <input
                     value={form.label}
                     onChange={e => set('label', e.target.value)}
-                    placeholder="Telegram Bot Token"
+                    placeholder={form.key ? form.key.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, c => c.toUpperCase()) : 'Напр. Telegram Bot Token'}
                     className="w-full bg-gray-700 border border-gray-600 rounded px-2.5 py-1.5 text-sm text-white focus:outline-none focus:border-brand"
                 />
             </div>

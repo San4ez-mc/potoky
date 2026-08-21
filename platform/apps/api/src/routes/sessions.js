@@ -256,6 +256,37 @@ router.post('/:id/send',
             return res.status(400).json({ ok: false, error: { message: 'Надішліть текст, фото або документ' } });
         }
 
+        // ── Zernio-сесія (Instagram через Zernio): відповідь через Zernio Send API,
+        // НЕ Telegram. Без цієї гілки ручна відповідь падала в telegram-логіку нижче
+        // й показувала «Чат не знайдено в Telegram», хоча в цій воронці Telegram
+        // взагалі не використовується (напр. covercar/goverla_shop).
+        if (session.context?.channel === 'zernio') {
+            if (!text) {
+                return res.status(422).json({ ok: false, error: { message: 'Для Zernio поки підтримується лише текстова відповідь.' } });
+            }
+            const conversationId = session.context?.conversationId || '';
+            let znMsgId = null;
+            try {
+                const { sendZernioMessage } = require('../services/zernioHandler');
+                znMsgId = await sendZernioMessage(session.botId, conversationId, text);
+            } catch (znErr) {
+                return res.status(422).json({ ok: false, error: { message: znErr.message } });
+            }
+            await db.message.create({
+                data: {
+                    sessionId: session.id,
+                    role: 'assistant',
+                    content: text,
+                    metadata: { source: 'admin_manual', channel: 'zernio', ...(znMsgId ? { zernioMessageId: znMsgId } : {}) },
+                },
+            });
+            const ctxUpdate = { ...(session.context || {}) };
+            if (!ctxUpdate.adminEngaged) ctxUpdate.adminEngaged = true;
+            if (!ctxUpdate.funnelPaused) ctxUpdate.funnelPaused = true;
+            await db.session.update({ where: { id: session.id }, data: { context: ctxUpdate } });
+            return res.json({ ok: true });
+        }
+
         // ── Instagram-сесія: відповідь через Meta Send API (не Telegram) ──────────
         // Ізольована гілка — Telegram-логіка нижче лишається без змін.
         if (session.context?.channel === 'instagram') {

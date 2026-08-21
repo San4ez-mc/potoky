@@ -280,10 +280,12 @@ async function handleIncomingMessage(botId, body) {
     const eventId = body.id || msg.id || `${conversationId}_${body.timestamp || Date.now()}`;
     if (!(await dedup(botId, eventId))) return { ok: true, processed: 0 };
 
-    // Тестовий режим воронки: не в списку дозволених -> повна тиша, нічого не пишемо в БД.
-    if (await isBlockedByTestMode(botId, [contactUsername, contactName])) {
-        return { ok: true, skipped: 'test-mode' };
-    }
+    // Тестовий режим воронки: не в списку дозволених -> бот просто МОВЧИТЬ (як після
+    // ручної кнопки "зупинити"), АЛЕ сесія і повідомлення все одно створюються —
+    // видно в дашборді. НЕ займає ctxNow.funnelPaused/adminEngaged (див. нижче) —
+    // це окремий, незалежний гейт, щоб перемикання тестового режиму ніколи не чіпало
+    // ручний per-сесійний стоп/старт конкретного клієнта.
+    const testModeBlocked = await isBlockedByTestMode(botId, [contactUsername, contactName]);
 
     const text = msg.text || body?.data?.text || '';
     const zMsgId = msg.id || null;
@@ -352,7 +354,7 @@ async function handleIncomingMessage(botId, body) {
     const _resumeOnProduct = ctxNow.adminEngaged && ctxNow.handoffKind === 'product_unknown' && !ctxNow.funnelPaused
         && (Boolean(sharedPost && sharedPost.caption) || Boolean(adId)
             || /(?:артикул|арт\.?|код|sku|№)\s*[:#№.-]?\s*[A-Za-zА-Яа-я]{0,5}\d{2,8}|\b[A-Za-z]\d{3,6}\b|\b\d{4,8}\b/i.test(String(text || '')));
-    if ((!ctxNow.adminEngaged && !ctxNow.funnelPaused) || _resumeOnProduct) {
+    if (!testModeBlocked && ((!ctxNow.adminEngaged && !ctxNow.funnelPaused) || _resumeOnProduct)) {
         const sinceTime = new Date();
         const inImageUrl = (attachment && attachment.type === 'photo' && attachment.url && String(attachment.url).startsWith('http')) ? attachment.url : null;
         try { await executeFlowStep({ sessionId: session.id, incomingUserMessage: text, incomingImageUrl: inImageUrl }); }

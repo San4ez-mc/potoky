@@ -442,8 +442,30 @@ function KeyRow({ k, onEdit, onDelete, onReveal, onSaveAsConnector, isRequired =
 
 // ─── KeyForm ──────────────────────────────────────────────────────────────────
 function KeyForm({ initial, onSave, onCancel, savedConnectors = [] }) {
-    const [form, setForm] = useState(initial || { key: '', value: '', label: '', isSecret: false });
+    // label/value з БД можуть бути null (ключі, створені міграціями без мітки) — контрольований
+    // input з value=null падає в React-варнінг, а бекенд-валідація (Zod: label — string, не
+    // nullable) відхиляла збереження БЕЗ жодного видимого маркера для користувача (мовчазний
+    // unhandled promise rejection). Нормалізуємо null → '' одразу тут.
+    const [form, setForm] = useState(() => ({
+        key: initial?.key || '',
+        value: initial?.value || '',
+        label: initial?.label || '',
+        isSecret: initial?.isSecret || false,
+    }));
     const [showValue, setShowValue] = useState(false);
+    const [saving, setSaving] = useState(false);
+    const [error, setError] = useState('');
+    const doSave = async () => {
+        setSaving(true);
+        setError('');
+        try {
+            await onSave(form);
+        } catch (e) {
+            setError(e?.message || 'Не вдалося зберегти ключ');
+        } finally {
+            setSaving(false);
+        }
+    };
     const [pickerConnectorId, setPickerConnectorId] = useState('');
     const set = (field, val) => setForm(f => ({ ...f, [field]: val }));
 
@@ -536,12 +558,18 @@ function KeyForm({ initial, onSave, onCancel, savedConnectors = [] }) {
                 />
                 Секретний (буде замасковано)
             </label>
+            {error && (
+                <div className="text-xs text-red-400 bg-red-900/20 border border-red-900/40 rounded px-2.5 py-1.5">
+                    ⚠ {error}
+                </div>
+            )}
             <div className="flex gap-2 pt-1">
                 <button
-                    onClick={() => onSave(form)}
-                    className="flex-1 bg-brand hover:bg-brand-dark text-white rounded py-1.5 text-sm transition-colors"
+                    onClick={doSave}
+                    disabled={saving}
+                    className="flex-1 bg-brand hover:bg-brand-dark text-white rounded py-1.5 text-sm transition-colors disabled:opacity-50"
                 >
-                    Зберегти
+                    {saving ? 'Збереження...' : 'Зберегти'}
                 </button>
                 <button
                     onClick={onCancel}

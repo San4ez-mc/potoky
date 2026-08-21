@@ -365,23 +365,23 @@ function KeyRow({ k, onEdit, onDelete, onReveal, onSaveAsConnector, isRequired =
 
     return (
         <div className={`rounded-lg p-3 border ${isMissing ? 'bg-red-900/10 border-red-900/40' : 'bg-gray-900 border-gray-800'}`}>
-            <div className="flex items-start justify-between gap-2">
+            <div className="flex items-start justify-between gap-2 flex-wrap">
                 <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                        <code className={`text-sm font-mono ${isMissing ? 'text-red-400' : 'text-brand-light'}`}>{k.key}</code>
-                        {k.isSecret && <span className="text-[10px] bg-yellow-900/40 text-yellow-400 border border-yellow-800 rounded px-1.5 py-0.5">SECRET</span>}
-                        {isMissing && <span className="text-[10px] bg-red-900/40 text-red-400 border border-red-800 rounded px-1.5 py-0.5">⚠ БРАКУЄ</span>}
+                    <div className="flex items-center gap-2 flex-wrap">
+                        <code className={`text-sm font-mono break-all ${isMissing ? 'text-red-400' : 'text-brand-light'}`} title={k.key}>{k.key}</code>
+                        {k.isSecret && <span className="text-[10px] bg-yellow-900/40 text-yellow-400 border border-yellow-800 rounded px-1.5 py-0.5 shrink-0">SECRET</span>}
+                        {isMissing && <span className="text-[10px] bg-red-900/40 text-red-400 border border-red-800 rounded px-1.5 py-0.5 shrink-0">⚠ БРАКУЄ</span>}
                     </div>
-                    {k.label && <div className="text-xs text-gray-400 mt-0.5">{k.label}</div>}
+                    {k.label && <div className="text-xs text-gray-400 mt-0.5 break-words">{k.label}</div>}
                     {KEY_HINTS[k.key] && (
-                        <div className="text-[11px] text-gray-500 mt-0.5 flex items-center gap-1">
-                            <span>💡 {KEY_HINTS[k.key].hint}</span>
+                        <div className="text-[11px] text-gray-500 mt-0.5 flex items-start gap-1">
+                            <span className="break-words">💡 {KEY_HINTS[k.key].hint}</span>
                             {KEY_HINTS[k.key].url && (
                                 <a
                                     href={KEY_HINTS[k.key].url}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="text-brand-light hover:text-brand underline"
+                                    className="text-brand-light hover:text-brand underline shrink-0"
                                     onClick={e => e.stopPropagation()}
                                 >
                                     →
@@ -393,7 +393,7 @@ function KeyRow({ k, onEdit, onDelete, onReveal, onSaveAsConnector, isRequired =
                         {revealed ? revealedValue : (k.isSecret ? '••••••••' : k.value)}
                     </div>
                 </div>
-                <div className="flex gap-1 shrink-0">
+                <div className="flex gap-1 shrink-0 flex-wrap justify-end">
                     {k.isSecret && (
                         <button
                             onClick={handleReveal}
@@ -559,7 +559,21 @@ export function KeysPanel({ embedded = false }) {
     const [loadingConnectors, setLoadingConnectors] = useState(false);
     const [saveAsConnectorKey, setSaveAsConnectorKey] = useState(null); // { key, value, isSecret, label }
     const [saveAsSuccess, setSaveAsSuccess] = useState('');
-    const visibleKeys = useMemo(() => keys, [keys]);
+    const [search, setSearch] = useState('');
+    const allKeys = useMemo(() => keys, [keys]);
+    const visibleKeys = useMemo(() => {
+        const q = search.trim().toLowerCase();
+        if (!q) return allKeys;
+        return allKeys.filter((k) => {
+            const hint = KEY_HINTS[k.key]?.hint || '';
+            return (
+                k.key.toLowerCase().includes(q)
+                || (k.label || '').toLowerCase().includes(q)
+                || hint.toLowerCase().includes(q)
+                || (!k.isSecret && (k.value || '').toLowerCase().includes(q))
+            );
+        });
+    }, [allKeys, search]);
     const savedClaudeConnectors = useMemo(
         () => allSavedConnectors.filter((item) => String(item.type || '').startsWith('claude_')),
         [allSavedConnectors]
@@ -777,6 +791,33 @@ export function KeysPanel({ embedded = false }) {
                 </div>
             )}
 
+            <div className="px-3 pt-3">
+                <div className="relative">
+                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 text-xs pointer-events-none">🔍</span>
+                    <input
+                        type="text"
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                        placeholder="Пошук по ключах…"
+                        className="w-full bg-gray-900 border border-gray-800 rounded-lg pl-7 pr-7 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-brand"
+                    />
+                    {search && (
+                        <button
+                            onClick={() => setSearch('')}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white text-xs"
+                            title="Очистити"
+                        >
+                            ✕
+                        </button>
+                    )}
+                </div>
+                {search && (
+                    <div className="text-[10px] text-gray-500 mt-1">
+                        Знайдено {visibleKeys.length} з {allKeys.length}
+                    </div>
+                )}
+            </div>
+
             <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
                 {embedded && (
                     <div className="flex justify-end">
@@ -916,7 +957,14 @@ export function KeysPanel({ embedded = false }) {
                     )
                 ))}
 
-                {visibleKeys.length === 0 && !isNew && (
+                {visibleKeys.length === 0 && !isNew && search && (
+                    <div className="text-center text-gray-500 text-sm py-8">
+                        Нічого не знайдено за «{search}».<br />
+                        <button onClick={() => setSearch('')} className="text-brand-light hover:text-brand mt-2">Очистити пошук</button>
+                    </div>
+                )}
+
+                {visibleKeys.length === 0 && !isNew && !search && (
                     <div className="text-center text-gray-500 text-sm py-8">
                         Немає ключів.<br />
                         <button onClick={handleNew} className="text-brand-light hover:text-brand mt-2">Додати перший</button>

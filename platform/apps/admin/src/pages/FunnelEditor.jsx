@@ -64,102 +64,104 @@ function TopBar({
     };
 
     return (
-        <div className="h-12 bg-gray-900 border-b border-gray-800 flex items-center gap-3 px-4 shrink-0">
+        <div className="min-h-12 bg-gray-900 border-b border-gray-800 flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2 shrink-0">
             <button
                 onClick={onBack}
-                className="text-sm px-2.5 py-1 rounded-md text-gray-300 hover:text-white hover:bg-gray-800 transition-colors"
+                className="text-sm px-2.5 py-1 rounded-md text-gray-300 hover:text-white hover:bg-gray-800 transition-colors shrink-0"
             >
                 ← До воронок
             </button>
 
             {/* Bot info */}
-            <div className="flex items-center gap-2">
-                <div className="w-6 h-6 bg-brand/20 rounded flex items-center justify-center text-brand-light text-xs font-bold">
+            <div className="flex items-center gap-2 min-w-0 max-w-full sm:max-w-xs">
+                <div className="w-6 h-6 shrink-0 bg-brand/20 rounded flex items-center justify-center text-brand-light text-xs font-bold">
                     {bot?.name?.[0] || '?'}
                 </div>
-                <span className="text-sm font-medium text-white">{bot?.name || '…'}</span>
-                <span className="text-xs text-gray-500 font-mono">/{bot?.slug}</span>
+                <span className="text-sm font-medium text-white truncate" title={bot?.name}>{bot?.name || '…'}</span>
+                <span className="text-xs text-gray-500 font-mono shrink-0">/{bot?.slug}</span>
             </div>
 
             {isDirty && (
-                <span className="text-xs text-yellow-400 bg-yellow-900/30 px-2 py-0.5 rounded-full border border-yellow-800">
+                <span className="text-xs text-yellow-400 bg-yellow-900/30 px-2 py-0.5 rounded-full border border-yellow-800 shrink-0">
                     Незбережено
                 </span>
             )}
 
             {missingKeys && missingKeys.length > 0 && (
-                <span className="text-xs text-red-400 bg-red-900/30 px-2 py-0.5 rounded-full border border-red-800 flex items-center gap-1.5">
+                <span className="text-xs text-red-400 bg-red-900/30 px-2 py-0.5 rounded-full border border-red-800 flex items-center gap-1.5 shrink-0">
                     <span>⚠</span>
                     <span>Бракує {missingKeys.length} ключів</span>
                 </span>
             )}
 
             {missingSystemKeys && missingSystemKeys.length > 0 && (
-                <span className="text-xs text-amber-300 bg-amber-900/30 px-2 py-0.5 rounded-full border border-amber-800 flex items-center gap-1.5">
+                <span className="text-xs text-amber-300 bg-amber-900/30 px-2 py-0.5 rounded-full border border-amber-800 flex items-center gap-1.5 shrink-0">
                     <span>⚠</span>
                     <span>Системні ключі: {missingSystemKeys.length}</span>
                 </span>
             )}
 
-            <div className="flex-1" />
+            <div className="flex-1 min-w-[1px]" />
 
             {/* Actions */}
-            <Link
-                to={`/bots/${bot?.id}/sessions`}
-                title="Сесії цієї воронки"
-                className="text-sm px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors"
-            >
-                💬 Сесії
-            </Link>
+            <div className="flex flex-wrap items-center gap-2">
+                <Link
+                    to={`/bots/${bot?.id}/sessions`}
+                    title="Сесії цієї воронки"
+                    className="text-sm px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors shrink-0"
+                >
+                    💬 Сесії
+                </Link>
 
-            <button
-                onClick={() => importRef.current?.click()}
-                className="text-sm px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors"
-            >
-                📥 Імпорт
-            </button>
-            <input ref={importRef} type="file" accept=".json" onChange={handleImport} className="hidden" />
+                <button
+                    onClick={() => importRef.current?.click()}
+                    className="text-sm px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors shrink-0"
+                >
+                    📥 Імпорт
+                </button>
+                <input ref={importRef} type="file" accept=".json" onChange={handleImport} className="hidden" />
 
-            <button
-                onClick={onExport}
-                className="text-sm px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors"
-            >
-                📤 Експорт
-            </button>
+                <button
+                    onClick={onExport}
+                    className="text-sm px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors shrink-0"
+                >
+                    📤 Експорт
+                </button>
 
-            <button
-                onClick={onEdit}
-                title="Редагувати назву та опис"
-                className="text-sm px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors"
-            >
-                ✏ Редагувати
-            </button>
+                <button
+                    onClick={onEdit}
+                    title="Редагувати назву та опис"
+                    className="text-sm px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors shrink-0"
+                >
+                    ✏ Редагувати
+                </button>
 
-            <button
-                onClick={onTidy}
-                disabled={isTidying}
-                title="Перерахувати позиції нод по сітці (BFS-рядки + branch-колонки, без перетинів)"
-                className="text-sm px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-                {isTidying ? '⟳ Впорядковую...' : '🧹 Впорядкувати'}
-            </button>
+                <button
+                    onClick={onTidy}
+                    disabled={isTidying}
+                    title="Перерахувати позиції нод по сітці (BFS-рядки + branch-колонки, без перетинів)"
+                    className="text-sm px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                >
+                    {isTidying ? '⟳ Впорядковую...' : '🧹 Впорядкувати'}
+                </button>
 
-            <button
-                onClick={onTest}
-                disabled={isTesting}
-                title='Запустити тест воронки'
-                className="text-sm px-3 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-                {isTesting ? '⟳ Тестується...' : '🧪 Тест'}
-            </button>
+                <button
+                    onClick={onTest}
+                    disabled={isTesting}
+                    title='Запустити тест воронки'
+                    className="text-sm px-3 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                >
+                    {isTesting ? '⟳ Тестується...' : '🧪 Тест'}
+                </button>
 
-            <button
-                onClick={onSave}
-                disabled={isSaving || !isDirty}
-                className="text-sm px-4 py-1.5 rounded-lg bg-brand hover:bg-brand-dark disabled:opacity-40 text-white font-medium transition-colors"
-            >
-                {isSaving ? 'Збереження...' : '💾 Зберегти'}
-            </button>
+                <button
+                    onClick={onSave}
+                    disabled={isSaving || !isDirty}
+                    className="text-sm px-4 py-1.5 rounded-lg bg-brand hover:bg-brand-dark disabled:opacity-40 text-white font-medium transition-colors shrink-0"
+                >
+                    {isSaving ? 'Збереження...' : '💾 Зберегти'}
+                </button>
+            </div>
         </div>
     );
 }

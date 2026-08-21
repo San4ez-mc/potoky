@@ -344,7 +344,12 @@ export function FunnelEditor() {
         try {
             // Pass projectId if it changed (null = remove from project)
             const projectId = form.projectId || null;
-            await api.updateBot(botId, form.name, form.description, projectId);
+            const settings = {
+                testMode: !!form.testMode,
+                testModeAllowedUsers: String(form.testModeAllowedUsers || '')
+                    .split(',').map((s) => s.trim()).filter(Boolean),
+            };
+            await api.updateBot(botId, form.name, form.description, projectId, settings);
             loadFunnel(botId);
             setEditModalOpen(false);
         } catch (e) {

@@ -53,9 +53,10 @@ export const api = {
 
     // Bots
     getBot: (id) => req('GET', `/bots/${id}`),
-    updateBot: (id, name, description, projectId) => req('PATCH', `/bots/${id}`, {
+    updateBot: (id, name, description, projectId, settings) => req('PATCH', `/bots/${id}`, {
         name, description,
         ...(projectId !== undefined && { projectId }),
+        ...(settings !== undefined && { settings }),
     }),
     archiveBot: (id) => req('PATCH', `/bots/${id}`, { isActive: false }),
     unarchiveBot: (id) => req('PATCH', `/bots/${id}`, { isActive: true }),

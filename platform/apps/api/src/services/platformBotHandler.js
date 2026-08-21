@@ -16,6 +16,7 @@
 const { db } = require('@platform/db');
 const logger = require('@platform/logger');
 const { executeFlowStep } = require('./testSession');
+const { isBlockedByTestMode } = require('./testModeGate');
 
 // ---------------------------------------------------------------------------
 // Telegram API helper (direct HTTP, per-bot token)
@@ -800,6 +801,13 @@ async function _handlePlatformBotUpdateInner(botId, update) {
     // ── Deduplicate by update_id ──────────────────────────────────────────────
     if (update.update_id && _isAlreadyProcessed(update.update_id)) {
         logger.debug('[platformBotHandler] Duplicate update_id skipped', { updateId: update.update_id, botId });
+        return;
+    }
+
+    // Тестовий режим воронки: не в списку дозволених -> повна тиша.
+    const _fromForGate = update.message?.from || update.edited_message?.from || update.callback_query?.from;
+    if (_fromForGate && await isBlockedByTestMode(botId, [_fromForGate.username, [_fromForGate.first_name, _fromForGate.last_name].filter(Boolean).join(' ')])) {
+        logger.debug('[platformBotHandler] blocked by test mode', { botId, username: _fromForGate.username });
         return;
     }
 

@@ -14,6 +14,7 @@ const crypto = require('crypto');
 const { db } = require('@platform/db');
 const logger = require('@platform/logger');
 const { executeFlowStep } = require('./testSession');
+const { isBlockedByTestMode } = require('./testModeGate');
 
 async function getZernioKeys(botId) {
     const keys = await db.funnelKey.findMany({
@@ -278,6 +279,11 @@ async function handleIncomingMessage(botId, body) {
     }
     const eventId = body.id || msg.id || `${conversationId}_${body.timestamp || Date.now()}`;
     if (!(await dedup(botId, eventId))) return { ok: true, processed: 0 };
+
+    // Тестовий режим воронки: не в списку дозволених -> повна тиша, нічого не пишемо в БД.
+    if (await isBlockedByTestMode(botId, [contactUsername, contactName])) {
+        return { ok: true, skipped: 'test-mode' };
+    }
 
     const text = msg.text || body?.data?.text || '';
     const zMsgId = msg.id || null;

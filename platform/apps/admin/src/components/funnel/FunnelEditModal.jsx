@@ -2,16 +2,19 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../../api/client.js';
 
 export function FunnelEditModal({ isOpen, bot, onClose, onSave, isSaving }) {
-    const [form, setForm] = useState({ name: '', description: '', projectId: '' });
+    const [form, setForm] = useState({ name: '', description: '', projectId: '', testMode: false, testModeAllowedUsers: '' });
     const [projects, setProjects] = useState([]);
     const [loadingProjects, setLoadingProjects] = useState(false);
 
     useEffect(() => {
         if (bot) {
+            const settings = bot.settings || {};
             setForm({
                 name: bot.name || '',
                 description: bot.description || '',
                 projectId: bot.projectId || '',
+                testMode: settings.testMode === true,
+                testModeAllowedUsers: (Array.isArray(settings.testModeAllowedUsers) ? settings.testModeAllowedUsers : []).join(', '),
             });
         }
     }, [bot, isOpen]);
@@ -97,6 +100,40 @@ export function FunnelEditModal({ isOpen, bot, onClose, onSave, isSaving }) {
                         {projectChanged && (
                             <div className="mt-1 text-xs text-yellow-400">
                                 ⚠️ Воронку буде переміщено до іншого проекту
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="rounded-lg border border-gray-800 bg-gray-900/60 p-3">
+                        <label className="flex items-center justify-between gap-3 cursor-pointer">
+                            <span className="text-sm font-medium text-gray-200">
+                                {form.testMode ? '🧪 Тестовий режим' : '🚀 Бойовий режим'}
+                            </span>
+                            <input
+                                type="checkbox"
+                                checked={form.testMode}
+                                onChange={(e) => setForm({ ...form, testMode: e.target.checked })}
+                                disabled={isSaving}
+                                className="h-5 w-9 shrink-0 accent-brand"
+                            />
+                        </label>
+                        <p className="mt-1 text-xs text-gray-500">
+                            {form.testMode
+                                ? 'Бот відповідає ТІЛЬКИ нікнеймам зі списку нижче — усім іншим повна тиша.'
+                                : 'Бот відповідає всім клієнтам як зазвичай.'}
+                        </p>
+                        {form.testMode && (
+                            <div className="mt-3">
+                                <label className="mb-1 block text-xs text-gray-400">Дозволені нікнейми (через кому)</label>
+                                <textarea
+                                    value={form.testModeAllowedUsers}
+                                    onChange={(e) => setForm({ ...form, testModeAllowedUsers: e.target.value })}
+                                    placeholder="oleksandr_m, sirazetdinov_o"
+                                    rows={2}
+                                    disabled={isSaving}
+                                    className="w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-white placeholder-gray-500 focus:border-brand focus:outline-none resize-none transition-colors text-sm"
+                                />
+                                <p className="mt-1 text-xs text-gray-600">Instagram/Telegram username без "@", або ім'я відправника.</p>
                             </div>
                         )}
                     </div>

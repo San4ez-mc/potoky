@@ -39,6 +39,10 @@ router.patch('/:id',
             goal: z.string().optional(),
             projectId: z.string().uuid().nullable().optional(),
             isActive: z.boolean().optional(),
+            settings: z.object({
+                testMode: z.boolean().optional(),
+                testModeAllowedUsers: z.array(z.string()).optional(),
+            }).partial().optional(),
         }),
     }),
     asyncHandler(async (req, res) => {
@@ -59,6 +63,8 @@ router.patch('/:id',
                 ...(req.body.goal !== undefined && { goal: req.body.goal }),
                 ...(req.body.projectId !== undefined && { projectId: req.body.projectId }),
                 ...(req.body.isActive !== undefined && { isActive: req.body.isActive }),
+                // settings — часткове злиття (не перезаписує інші ключі типу isSystem/anchorBotId).
+                ...(req.body.settings !== undefined && { settings: { ...(bot.settings || {}), ...req.body.settings } }),
             },
         });
         res.json({ ok: true, data: updated });

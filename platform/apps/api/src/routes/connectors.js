@@ -13,27 +13,15 @@ router.use(authMiddleware);
 
 const BUILTIN_CONNECTORS = [
     {
-        type: 'claude_haiku',
-        name: 'Claude Haiku',
-        description: 'Anthropic Claude Haiku - швидка модель для простих задач.',
-        icon: '⚡',
-        color: '#D4A800',
-        schema: { fields: [{ key: 'api_key', label: 'Anthropic API Key', secret: true }] },
-    },
-    {
-        type: 'claude_sonnet',
-        name: 'Claude Sonnet',
-        description: 'Anthropic Claude Sonnet - основна модель для складних задач.',
+        // Один ключ Anthropic на всі моделі — Haiku/Sonnet/Opus обираються на рівні
+        // ноди (data.model), а не ключа/конектора. Раніше було 3 окремих типи
+        // (claude_haiku/claude_sonnet/claude_opus) з ІДЕНТИЧНИМ ключем у кожному —
+        // штучне дублення, злито в один 2026-08-21.
+        type: 'claude',
+        name: 'Claude',
+        description: 'Anthropic Claude — один ключ на всі моделі (Haiku/Sonnet/Opus обираються на ноді).',
         icon: '🎭',
         color: '#7C3AED',
-        schema: { fields: [{ key: 'api_key', label: 'Anthropic API Key', secret: true }] },
-    },
-    {
-        type: 'claude_opus',
-        name: 'Claude Opus',
-        description: 'Anthropic Claude Opus - максимальна якість для важких задач.',
-        icon: '🧠',
-        color: '#5B21B6',
         schema: { fields: [{ key: 'api_key', label: 'Anthropic API Key', secret: true }] },
     },
     {

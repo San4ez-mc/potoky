@@ -104,8 +104,8 @@ const KEY_HINTS = {
 // Smart mapping: key name → suggested connector type + target field
 const KEY_TO_CONNECTOR_HINT = {
     'FAL_AI_KEY':          { type: 'fal_ai',       field: 'api_key' },
-    'CLAUDE_API_KEY':      { type: 'claude_sonnet', field: 'api_key' },
-    'ANTHROPIC_API_KEY':   { type: 'claude_sonnet', field: 'api_key' },
+    'CLAUDE_API_KEY':      { type: 'claude', field: 'api_key' },
+    'ANTHROPIC_API_KEY':   { type: 'claude', field: 'api_key' },
     'OPENAI_API_KEY':      { type: 'openai_gpt4',   field: 'api_key' },
     'GPT_API_KEY':         { type: 'openai_gpt4',   field: 'api_key' },
     'GEMINI_API_KEY':      { type: 'google_gemini', field: 'api_key' },
@@ -589,7 +589,6 @@ export function KeysPanel({ embedded = false }) {
     const [isNew, setIsNew] = useState(false);
     const [allSavedConnectors, setAllSavedConnectors] = useState([]);
     const [connectorDefs, setConnectorDefs] = useState([]);
-    const [selectedConnectorId, setSelectedConnectorId] = useState('');
     const [selectedOpenAIConnectorId, setSelectedOpenAIConnectorId] = useState('');
     const [selectedGeminiConnectorId, setSelectedGeminiConnectorId] = useState('');
     const [selectedTelegramConnectorId, setSelectedTelegramConnectorId] = useState('');
@@ -613,10 +612,6 @@ export function KeysPanel({ embedded = false }) {
             );
         });
     }, [allKeys, search]);
-    const savedClaudeConnectors = useMemo(
-        () => allSavedConnectors.filter((item) => String(item.type || '').startsWith('claude_')),
-        [allSavedConnectors]
-    );
     const savedOpenAIConnectors = useMemo(
         () => allSavedConnectors.filter((item) => String(item.type || '').startsWith('openai_')),
         [allSavedConnectors]
@@ -746,11 +741,6 @@ export function KeysPanel({ embedded = false }) {
         await deleteKey(key);
     };
 
-    const handleUseSavedClaudeConnector = async () => {
-        if (!selectedConnectorId) return;
-        await upsertKey('CLAUDE_CONNECTOR_ID', selectedConnectorId, 'Claude Connector ID', false);
-    };
-
     const handleUseSavedOpenAIConnector = async () => {
         if (!selectedOpenAIConnectorId) return;
         await upsertKey('OPENAI_CONNECTOR_ID', selectedOpenAIConnectorId, 'OpenAI Connector ID', false);
@@ -788,11 +778,6 @@ export function KeysPanel({ embedded = false }) {
 
     const handleUseManualGeminiKey = () => {
         setEditing({ key: 'GEMINI_API_KEY', value: '', label: 'Gemini API Key', isSecret: true });
-        setIsNew(true);
-    };
-
-    const handleUseManualClaudeKey = () => {
-        setEditing({ key: 'CLAUDE_API_KEY', value: '', label: 'Claude API Key', isSecret: true });
         setIsNew(true);
     };
 
@@ -874,41 +859,6 @@ export function KeysPanel({ embedded = false }) {
                         {saveAsSuccess}
                     </div>
                 )}
-
-                <div className="rounded-lg p-3 border bg-blue-900/10 border-blue-900/40 space-y-2">
-                    <div className="text-xs text-blue-300 font-medium">Claude для цієї воронки</div>
-                    <div className="text-xs text-gray-400">
-                        Можна або зберегти ключ напряму в CLAUDE_API_KEY, або вибрати існуючий Claude-конектор.
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                        <button
-                            onClick={handleUseManualClaudeKey}
-                            className="text-xs px-2 py-1 rounded bg-blue-900/30 hover:bg-blue-900/50 text-blue-200 border border-blue-800"
-                        >
-                            Ввести CLAUDE_API_KEY
-                        </button>
-                    </div>
-                    <div className="flex gap-2">
-                        <select
-                            value={selectedConnectorId}
-                            onChange={(e) => setSelectedConnectorId(e.target.value)}
-                            className="flex-1 bg-gray-900 border border-gray-700 rounded px-2.5 py-1.5 text-xs text-white"
-                            disabled={loadingConnectors || savedClaudeConnectors.length === 0}
-                        >
-                            <option value="">{loadingConnectors ? 'Завантаження...' : 'Оберіть Claude-конектор'}</option>
-                            {savedClaudeConnectors.map((item) => (
-                                <option key={item.id} value={item.id}>{item.name}</option>
-                            ))}
-                        </select>
-                        <button
-                            onClick={handleUseSavedClaudeConnector}
-                            disabled={!selectedConnectorId}
-                            className="text-xs px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 disabled:opacity-50"
-                        >
-                            Використати
-                        </button>
-                    </div>
-                </div>
 
                 {showTelegramCard && (
                     <div className="rounded-lg p-3 border bg-cyan-900/10 border-cyan-900/40 space-y-2">

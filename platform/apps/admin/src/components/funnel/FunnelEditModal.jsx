@@ -39,23 +39,23 @@ export function FunnelEditModal({ isOpen, bot, onClose, onSave, isSaving }) {
     const projectChanged = form.projectId !== (bot?.projectId || '');
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
-            <div className="w-full max-w-md rounded-2xl border border-gray-800 bg-gray-950 shadow-2xl shadow-black/40">
-                <div className="flex items-center justify-between border-b border-gray-800 px-5 py-4">
-                    <div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-8">
+            <div className="w-full max-w-md max-h-full rounded-2xl border border-gray-800 bg-gray-950 shadow-2xl shadow-black/40 flex flex-col overflow-hidden">
+                <div className="flex items-center justify-between border-b border-gray-800 px-5 py-4 shrink-0">
+                    <div className="min-w-0">
                         <h2 className="text-base font-semibold text-white">Інформація про воронку</h2>
-                        <div className="text-xs text-gray-500 font-mono mt-0.5">/{bot?.slug}</div>
+                        <div className="text-xs text-gray-500 font-mono mt-0.5 truncate">/{bot?.slug}</div>
                     </div>
                     <button
                         onClick={onClose}
                         disabled={isSaving}
-                        className="text-gray-400 hover:text-white disabled:opacity-50"
+                        className="text-gray-400 hover:text-white disabled:opacity-50 shrink-0 ml-3"
                     >
                         ✕
                     </button>
                 </div>
 
-                <form onSubmit={handleSubmit} className="space-y-4 p-5">
+                <form onSubmit={handleSubmit} className="space-y-4 p-5 overflow-y-auto min-h-0">
                     <div>
                         <label className="mb-2 block text-sm text-gray-300 font-medium">Назва</label>
                         <input

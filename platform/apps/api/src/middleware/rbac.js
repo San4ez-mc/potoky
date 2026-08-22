@@ -35,6 +35,37 @@ function isProjectAllowed(req, projectId) {
     return !!projectId && a.includes(String(projectId));
 }
 
+// null = усі сторінки (суперадмін); масив = додатково дозволені (крім базових).
+function allowedPageIds(req) {
+    if (isSuperadmin(req)) return null;
+    return Array.isArray(req.session && req.session.allowedPageIds) ? req.session.allowedPageIds : [];
+}
+
+// Базові сторінки доступні будь-якому залогіненому 'user' без явного гранту —
+// той самий список, що НЕ позначений superadminOnly в Sidebar.jsx.
+const BASE_PAGE_IDS = ['funnels', 'funnels-compare', 'sessions', 'subscribers'];
+
+// true якщо pageId дозволений цьому користувачу (суперадміну і базовим сторінкам — завжди).
+function isPageAllowed(req, pageId) {
+    if (BASE_PAGE_IDS.includes(pageId)) return true;
+    const a = allowedPageIds(req);
+    if (a === null) return true;
+    return a.includes(String(pageId));
+}
+
+// Express-гард для роутів, що ЦІЛКОМ належать одній сторінці (напр. /broadcasts).
+// НЕ застосовувати до роутів, які читають кілька менших ресурсів для інших сторінок
+// (напр. GET /connectors для пікера в KeysPanel на сторінці Funnel Editor) — там
+// потрібне точковіше розмежування за методом/дією, не блокувати весь роутер.
+function requirePage(pageId) {
+    return (req, res, next) => {
+        if (!isPageAllowed(req, pageId)) {
+            return res.status(403).json({ ok: false, error: { code: 'FORBIDDEN', message: 'Немає доступу до цієї сторінки' } });
+        }
+        next();
+    };
+}
+
 const { db } = require('@platform/db');
 
 function notFound(res) {
@@ -75,6 +106,7 @@ function botProjectScopeWhere(req) { // для сесій: bot.projectId
 
 module.exports = {
     roleOf, isSuperadmin, allowedProjectIds, requireSuperadmin, isProjectAllowed,
+    allowedPageIds, isPageAllowed, requirePage,
     guardBotParam, guardSessionParam, guardUserParam,
     projectScopeWhere, botProjectScopeWhere,
 };

@@ -1,6 +1,14 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Sidebar } from './Sidebar.jsx';
+import { Sidebar, NAV } from './Sidebar.jsx';
+import { useAuthStore } from '../../stores/authStore.js';
+
+// Гард прямої навігації: приховати посилання в меню недостатньо — людина може
+// ввести URL напряму. pageId сторінки бере з того самого NAV, що й Sidebar.
+function pageIdForPath(pathname) {
+    const hit = NAV.find((n) => pathname === n.to || pathname.startsWith(n.to + '/'));
+    return hit ? hit.pageId : undefined;
+}
 
 function routeMeta(pathname, search) {
     const params = new URLSearchParams(search || '');
@@ -29,6 +37,14 @@ export function Layout() {
     const navigate = useNavigate();
     const meta = routeMeta(location.pathname, location.search);
     const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+    const role = useAuthStore((s) => s.role);
+    const allowedPageIds = useAuthStore((s) => s.allowedPageIds);
+
+    useEffect(() => {
+        if (role === 'superadmin') return;
+        const pageId = pageIdForPath(location.pathname);
+        if (pageId && !(allowedPageIds || []).includes(pageId)) navigate('/funnels', { replace: true });
+    }, [location.pathname, role, allowedPageIds, navigate]);
 
     const handleBack = () => {
         if (meta.backTo) {

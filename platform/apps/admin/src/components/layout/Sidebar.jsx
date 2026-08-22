@@ -4,17 +4,20 @@ import { useAuthStore } from '../../stores/authStore.js';
 import { api } from '../../api/client.js';
 import clsx from 'clsx';
 
-const NAV = [
+// pageId (для перевірки allowedPageIds з SSO) — базові 4 пункти без pageId завжди
+// доступні будь-якому 'user'; решта потребує явного гранту в SSO «Компанії».
+// Єдине джерело правди для path→pageId — Layout.jsx імпортує NAV для гарду прямої навігації.
+export const NAV = [
     { to: '/funnels', icon: '🗺', label: 'Воронки' },
     { to: '/funnels-compare', icon: '📈', label: 'Аналітика' },
-    { to: '/projects', icon: '📁', label: 'Проєкти', superadminOnly: true },
+    { to: '/projects', icon: '📁', label: 'Проєкти', pageId: 'projects' },
     { to: '/sessions', icon: '💬', label: 'Сесії', unreadKey: true },
-    { to: '/broadcasts', icon: '📣', label: 'Розсилки', superadminOnly: true },
-    { to: '/dashboard', icon: '📊', label: 'Дашборд', superadminOnly: true },
-    { to: '/connectors', icon: '🔌', label: 'Конектори', superadminOnly: true },
+    { to: '/broadcasts', icon: '📣', label: 'Розсилки', pageId: 'broadcasts' },
+    { to: '/dashboard', icon: '📊', label: 'Дашборд', pageId: 'dashboard' },
+    { to: '/connectors', icon: '🔌', label: 'Конектори', pageId: 'connectors' },
     { to: '/subscribers', icon: '👥', label: 'Підписники' },
-    { to: '/logs', icon: '📡', label: 'Логи', superadminOnly: true },
-    { to: '/settings', icon: '⚙️', label: 'Налаштування', superadminOnly: true },
+    { to: '/logs', icon: '📡', label: 'Логи', pageId: 'logs' },
+    { to: '/settings', icon: '⚙️', label: 'Налаштування', pageId: 'settings' },
 ];
 
 const STORAGE_KEY = 'sidebarCollapsed';
@@ -22,7 +25,8 @@ const STORAGE_KEY = 'sidebarCollapsed';
 export function Sidebar({ mobileOpen, onMobileClose }) {
     const logout = useAuthStore(s => s.logout);
     const role = useAuthStore(s => s.role);
-    const navItems = NAV.filter(n => role === 'superadmin' || !n.superadminOnly);
+    const allowedPageIds = useAuthStore(s => s.allowedPageIds);
+    const navItems = NAV.filter(n => role === 'superadmin' || !n.pageId || (allowedPageIds || []).includes(n.pageId));
     const navigate = useNavigate();
     const [collapsed, setCollapsed] = useState(() => {
         try { return localStorage.getItem(STORAGE_KEY) === '1'; } catch { return false; }

@@ -3,10 +3,15 @@ const { Router } = require('express');
 const { db } = require('@platform/db');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const { authMiddleware } = require('../middleware/auth');
+const { requirePage } = require('../middleware/rbac');
 const Bull = require('bull');
 
 const router = Router();
 router.use(authMiddleware);
+// Весь роутер належить ЛИШЕ сторінці "Розсилки" (перевірено: жодна інша сторінка
+// адмінки цей API не читає) — безпечно гейтити ЦІЛИМ роутером, на відміну від
+// connectors.js/projects.js, де GET-и використовуються й іншими сторінками.
+router.use(requirePage('broadcasts'));
 
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 const broadcastQueue = new Bull('broadcasts', REDIS_URL);

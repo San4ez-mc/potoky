@@ -6,6 +6,7 @@ export const useAuthStore = create((set) => ({
     isLoading: true,
     role: 'superadmin',            // superadmin | user
     allowedProjectIds: null,       // null = усі проєкти (суперадмін); масив = дозволені
+    allowedPageIds: null,          // null = усі сторінки (суперадмін); масив = додатково дозволені (крім базових)
 
     checkAuth: async () => {
         try {
@@ -16,6 +17,7 @@ export const useAuthStore = create((set) => ({
                     isLoading: false,
                     role: me.role || 'superadmin',
                     allowedProjectIds: me.allowedProjectIds ?? null,
+                    allowedPageIds: me.allowedPageIds ?? null,
                 });
             } else {
                 set({ isAuthenticated: false, isLoading: false });
@@ -29,7 +31,7 @@ export const useAuthStore = create((set) => ({
         await api.login(loginVal, password, rememberMe);
         try {
             const me = await api.getMe();
-            set({ isAuthenticated: true, role: me?.role || 'superadmin', allowedProjectIds: me?.allowedProjectIds ?? null });
+            set({ isAuthenticated: true, role: me?.role || 'superadmin', allowedProjectIds: me?.allowedProjectIds ?? null, allowedPageIds: me?.allowedPageIds ?? null });
         } catch {
             set({ isAuthenticated: true });
         }
@@ -37,6 +39,6 @@ export const useAuthStore = create((set) => ({
 
     logout: async () => {
         await api.logout();
-        set({ isAuthenticated: false, role: 'superadmin', allowedProjectIds: null });
+        set({ isAuthenticated: false, role: 'superadmin', allowedProjectIds: null, allowedPageIds: null });
     },
 }));

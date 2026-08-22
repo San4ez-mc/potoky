@@ -130,17 +130,17 @@ function TopBar({
 
                 <button
                     onClick={onEdit}
-                    title="Редагувати назву та опис"
+                    title="Про воронку: назва, опис, проєкт, тестовий режим"
                     className="text-xs px-2.5 py-1 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors shrink-0"
                 >
-                    ✏ Редагувати
+                    ℹ️ Про воронку
                 </button>
 
                 <button
                     onClick={onTidy}
                     disabled={isTidying}
                     title="Перерахувати позиції нод по сітці (BFS-рядки + branch-колонки, без перетинів)"
-                    className="text-sm px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                    className="text-xs px-2.5 py-1 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
                 >
                     {isTidying ? '⟳ Впорядковую...' : '🧹 Впорядкувати'}
                 </button>
@@ -149,7 +149,7 @@ function TopBar({
                     onClick={onTest}
                     disabled={isTesting}
                     title='Запустити тест воронки'
-                    className="text-sm px-3 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                    className="text-xs px-2.5 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
                 >
                     {isTesting ? '⟳ Тестується...' : '🧪 Тест'}
                 </button>
@@ -157,7 +157,7 @@ function TopBar({
                 <button
                     onClick={onSave}
                     disabled={isSaving || !isDirty}
-                    className="text-sm px-4 py-1.5 rounded-lg bg-brand hover:bg-brand-dark disabled:opacity-40 text-white font-medium transition-colors shrink-0"
+                    className="text-xs px-2.5 py-1 rounded-lg bg-brand hover:bg-brand-dark disabled:opacity-40 text-white font-medium transition-colors shrink-0"
                 >
                     {isSaving ? 'Збереження...' : '💾 Зберегти'}
                 </button>

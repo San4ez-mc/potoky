@@ -2,91 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { format } from 'date-fns';
-
-function EditInfoModal({ isOpen, bot, onClose, onSaved }) {
-    const [form, setForm] = useState({ name: '', description: '' });
-    const [saving, setSaving] = useState(false);
-    const [error, setError] = useState('');
-    const textareaRef = useRef(null);
-
-    useEffect(() => {
-        if (isOpen && bot) {
-            setForm({ name: bot.name || '', description: bot.description || '' });
-            setError('');
-        }
-    }, [isOpen, bot]);
-
-    if (!isOpen || !bot) return null;
-
-    const handleSave = async () => {
-        if (!form.name.trim()) { setError('Назва обов\'язкова'); return; }
-        setSaving(true);
-        setError('');
-        try {
-            await api.updateBot(bot.id, form.name.trim(), form.description.trim());
-            onSaved({ ...bot, name: form.name.trim(), description: form.description.trim() });
-            onClose();
-        } catch (e) {
-            setError(e.message || 'Помилка збереження');
-        } finally {
-            setSaving(false);
-        }
-    };
-
-    return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
-            <div className="w-full max-w-md rounded-2xl border border-gray-800 bg-gray-950 shadow-2xl shadow-black/40">
-                <div className="flex items-center justify-between border-b border-gray-800 px-5 py-4">
-                    <div>
-                        <h2 className="text-base font-semibold text-white">Інформація про воронку</h2>
-                        <div className="text-xs text-gray-500 font-mono mt-0.5">/{bot.slug}</div>
-                    </div>
-                    <button onClick={onClose} className="text-gray-400 hover:text-white text-xl leading-none">✕</button>
-                </div>
-                <div className="p-5 space-y-3">
-                    {error && (
-                        <div className="rounded-lg bg-red-900/20 border border-red-900/40 px-3 py-2 text-sm text-red-300">{error}</div>
-                    )}
-                    <div>
-                        <label className="mb-1 block text-sm text-gray-300">Назва</label>
-                        <input
-                            type="text"
-                            value={form.name}
-                            onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                            className="w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-white focus:border-brand focus:outline-none"
-                        />
-                    </div>
-                    <div>
-                        <label className="mb-1 block text-sm text-gray-300">Опис воронки</label>
-                        <textarea
-                            ref={textareaRef}
-                            value={form.description}
-                            onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-                            rows={4}
-                            placeholder="Для кого ця воронка, що вона робить, коли запускається..."
-                            className="w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-brand focus:outline-none resize-none"
-                        />
-                    </div>
-                    <div className="flex gap-2 pt-1">
-                        <button
-                            onClick={handleSave}
-                            disabled={saving}
-                            className="flex-1 rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand/90 disabled:opacity-50"
-                        >
-                            {saving ? 'Збереження...' : 'Зберегти'}
-                        </button>
-                        <button
-                            onClick={onClose}
-                            className="flex-1 rounded-lg border border-gray-700 bg-gray-900 px-4 py-2 text-sm text-gray-300 transition-colors hover:bg-gray-800"
-                        >
-                            Скасувати
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
-    );
-}
+import { FunnelEditModal } from '../components/funnel/FunnelEditModal.jsx';
 
 function Modal({ isOpen, title, children, onClose }) {
     if (!isOpen) return null;
@@ -308,8 +224,25 @@ export function Bots() {
         }
     };
 
-    const handleEditInfoSaved = (updated) => {
-        setRows(prev => prev.map(r => r.id === updated.id ? { ...r, name: updated.name, description: updated.description } : r));
+    const [isSavingEditInfo, setIsSavingEditInfo] = useState(false);
+    const handleSaveEditInfo = async (form) => {
+        if (!editInfoBot) return;
+        setIsSavingEditInfo(true);
+        try {
+            const projectId = form.projectId || null;
+            const settings = {
+                testMode: !!form.testMode,
+                testModeAllowedUsers: String(form.testModeAllowedUsers || '')
+                    .split(',').map((s) => s.trim()).filter(Boolean),
+            };
+            await api.updateBot(editInfoBot.id, form.name, form.description, projectId, settings);
+            setEditInfoBot(null);
+            await fetchData();
+        } catch (e) {
+            console.error('Error saving bot info:', e);
+        } finally {
+            setIsSavingEditInfo(false);
+        }
     };
 
     const handleArchive = async (bot) => {
@@ -629,11 +562,12 @@ export function Bots() {
                 </div>
             </div>
 
-            <EditInfoModal
+            <FunnelEditModal
                 isOpen={!!editInfoBot}
                 bot={editInfoBot}
                 onClose={() => setEditInfoBot(null)}
-                onSaved={handleEditInfoSaved}
+                onSave={handleSaveEditInfo}
+                isSaving={isSavingEditInfo}
             />
 
             <Modal

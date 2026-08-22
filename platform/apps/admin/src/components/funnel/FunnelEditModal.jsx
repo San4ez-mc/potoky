@@ -105,37 +105,46 @@ export function FunnelEditModal({ isOpen, bot, onClose, onSave, isSaving }) {
                     </div>
 
                     <div className="rounded-lg border border-gray-800 bg-gray-900/60 p-3">
-                        <label className="flex items-center justify-between gap-3 cursor-pointer">
-                            <span className="text-sm font-medium text-gray-200">
-                                {form.testMode ? '🧪 Тестовий режим' : '🚀 Бойовий режим'}
-                            </span>
-                            <input
-                                type="checkbox"
-                                checked={form.testMode}
-                                onChange={(e) => setForm({ ...form, testMode: e.target.checked })}
+                        <label className="mb-2 block text-sm text-gray-300 font-medium">Режим воронки</label>
+                        <div className="grid grid-cols-2 gap-2">
+                            <button
+                                type="button"
+                                onClick={() => setForm({ ...form, testMode: true })}
                                 disabled={isSaving}
-                                className="h-5 w-9 shrink-0 accent-brand"
-                            />
-                        </label>
-                        <p className="mt-1 text-xs text-gray-500">
+                                className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors border ${form.testMode
+                                    ? 'bg-amber-900/40 border-amber-700 text-amber-200'
+                                    : 'bg-gray-900 border-gray-800 text-gray-400 hover:text-white hover:border-gray-600'}`}
+                            >
+                                🧪 Тестовий
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setForm({ ...form, testMode: false })}
+                                disabled={isSaving}
+                                className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors border ${!form.testMode
+                                    ? 'bg-emerald-900/40 border-emerald-700 text-emerald-200'
+                                    : 'bg-gray-900 border-gray-800 text-gray-400 hover:text-white hover:border-gray-600'}`}
+                            >
+                                🚀 Бойовий
+                            </button>
+                        </div>
+                        <p className="mt-2 text-xs text-gray-500">
                             {form.testMode
-                                ? 'Бот відповідає ТІЛЬКИ нікнеймам зі списку нижче — усім іншим повна тиша.'
+                                ? 'Бот відповідає ТІЛЬКИ нікнеймам зі списку нижче. Усім іншим — повна тиша (сесія все одно створюється, видно в дашборді).'
                                 : 'Бот відповідає всім клієнтам як зазвичай.'}
                         </p>
-                        {form.testMode && (
-                            <div className="mt-3">
-                                <label className="mb-1 block text-xs text-gray-400">Дозволені нікнейми (через кому)</label>
-                                <textarea
-                                    value={form.testModeAllowedUsers}
-                                    onChange={(e) => setForm({ ...form, testModeAllowedUsers: e.target.value })}
-                                    placeholder="oleksandr_m, sirazetdinov_o"
-                                    rows={2}
-                                    disabled={isSaving}
-                                    className="w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-white placeholder-gray-500 focus:border-brand focus:outline-none resize-none transition-colors text-sm"
-                                />
-                                <p className="mt-1 text-xs text-gray-600">Instagram/Telegram username без "@", або ім'я відправника.</p>
-                            </div>
-                        )}
+                        <div className="mt-3">
+                            <label className="mb-1 block text-xs text-gray-400">Дозволені нікнейми (через кому)</label>
+                            <textarea
+                                value={form.testModeAllowedUsers}
+                                onChange={(e) => setForm({ ...form, testModeAllowedUsers: e.target.value })}
+                                placeholder="oleksandr_m, sirazetdinov_o"
+                                rows={2}
+                                disabled={isSaving}
+                                className="w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-white placeholder-gray-500 focus:border-brand focus:outline-none resize-none transition-colors text-sm"
+                            />
+                            <p className="mt-1 text-xs text-gray-600">Instagram/Telegram username без "@", або ім'я відправника. Список зберігається навіть у бойовому режимі — не треба вводити заново.</p>
+                        </div>
                     </div>
 
                     <div className="flex gap-2 pt-2">

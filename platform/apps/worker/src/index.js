@@ -293,6 +293,62 @@ async function checkZernioReminders() {
 }
 setTimeout(() => { checkZernioReminders(); setInterval(checkZernioReminders, ZERNIO_REMINDER_INTERVAL_MS); }, 3 * 60 * 1000);
 
+// ── Авто-рестарт сесії після покупки або тривалої тиші ─────────────────────
+// Ідея власника (2026-08-23): не лишати сесію "мертвою" назавжди на термінальній
+// ноді (n_final/n_confirm) чи посеред покинутого діалогу. Коли клієнт УЖЕ купив
+// АБО мовчить 24+ год — скидаємо стан воронки (сесію/історію НЕ видаляємо), щоб
+// наступне повідомлення від тієї ж людини стартувало з початку графа, а не
+// застрягало в старому контексті (чужий товар/колір/адреса з минулого разу).
+const SESSION_RESET_INTERVAL_MS = 30 * 60 * 1000;
+const SESSION_RESET_MIN_IDLE_MS = 60 * 60 * 1000; // грейс-період 1 год (не рвати діалог одразу після покупки, поки триває апсейл2)
+// Поля, специфічні для ПОПЕРЕДНЬОГО проходу воронки — прибираємо, щоб наступний
+// прохід не тягнув чужий товар/колір/адресу. Ідентичність (igUsername, senderName,
+// conversationId, channel) і прапорці ручного керування (adminEngaged/funnelPaused/
+// testMode) НЕ займаємо.
+const VOLATILE_CONTEXT_KEYS = [
+    'product', 'colorChoice', 'sizeInput', 'recommendedSize', 'sizeOutOfRange', 'sizeOorReason',
+    'orderIntent', 'paymentInfo', 'orderData', 'np', 'ibanPayUrl', 'ibanInvoiceUid', 'payAmount',
+    'payLabel', 'orderRef', 'orderQty', 'crmOrderId', 'crmClientId', 'orderSku', 'supplier',
+    'supplierMechanism', 'supplierCfg', 'supplierSetBreakdown', 'supplierOrderResult', 'supplierOrderId',
+    'supplierOrderStatus', 'supplierNeedsManual', 'supplierTtn', 'monoStatement', 'consumedTxIds',
+    'payStatus', 'payVia', 'payTxId', 'reminders', 'followUpCount', 'upsell2', 'available',
+    'entryAd', 'skipFollowup', 'lastReceiptImageUrl', 'lastUserImageUrl',
+];
+async function resetStaleOrCompletedSessions() {
+    try {
+        const now = Date.now();
+        const sessions = await db.session.findMany({
+            where: { isActive: true, isTest: false, lastActive: { lte: new Date(now - SESSION_RESET_MIN_IDLE_MS) } },
+            select: { id: true, context: true, lastActive: true },
+            take: 300,
+        });
+        for (const s of sessions) {
+            try {
+                const ctx = (typeof s.context === 'object' ? s.context : JSON.parse(s.context || '{}')) || {};
+                if (!ctx.flowRuntime) continue; // не flow-сесія (напр. курс/контент-бот) — не чіпаємо
+                if (ctx.adminEngaged || ctx.funnelPaused) continue; // людина зараз веде розмову — не втручаємось
+                const lastActiveMs = new Date(s.lastActive).getTime();
+                if (ctx.resetAt && lastActiveMs <= ctx.resetAt) continue; // вже скинуто, нової активності після скидання не було
+
+                const ageHours = (now - lastActiveMs) / 3600000;
+                const purchased = !!ctx.crmOrderId;
+                const silentTooLong = ageHours >= 24;
+                if (!purchased && !silentTooLong) continue;
+
+                const cleanCtx = { ...ctx };
+                for (const k of VOLATILE_CONTEXT_KEYS) delete cleanCtx[k];
+                cleanCtx.flowRuntime = {}; // engine сам знайде start-ноду на наступному кроці
+                cleanCtx.resetAt = now;
+                cleanCtx.resetReason = purchased ? 'purchased' : 'silent_24h';
+
+                await db.session.update({ where: { id: s.id }, data: { context: cleanCtx } });
+                logger.info('[session-reset] сесію скинуто до старту воронки', { sessionId: s.id, reason: cleanCtx.resetReason, ageHours: Math.round(ageHours) });
+            } catch (e) { logger.warn('[session-reset] session error', { sessionId: s.id, error: e.message }); }
+        }
+    } catch (err) { logger.error('[session-reset] checker error', { error: err.message }); }
+}
+setTimeout(() => { resetStaleOrCompletedSessions(); setInterval(resetStaleOrCompletedSessions, SESSION_RESET_INTERVAL_MS); }, 4 * 60 * 1000);
+
 // ── Mono statement: фонове оновлення ЛИШЕ коли є сесія, що чекає оплату ───────
 // Ідея власника (2026-08-20): не смикати Mono API, коли нікого немає в черзі
 // підтвердження — тримати кеш "теплим" тільки за реальної потреби. Coordination

@@ -26,29 +26,39 @@ if(hash){ cookies['manager_hash']=hash; cookies['uid']='u-'+hash; }
 if(!cookies['sessionid']) return { supplierOrderResult:'❌ easydrop: логін не вдався', supplierOrderStatus:'error' };
 // 2) знайти товар за артикулом у категоріях постачальника
 var prod=context.product||{}, od=context.orderData||{};
-var article=String(prod.supplierArticle||prod.article||prod.sku||context.orderSku||'').trim();
-if(!article) return { supplierOrderResult:'❌ easydrop-кошик: немає артикулу товару', supplierOrderStatus:'error' };
+// Артикул постачальника (CT_1006, явно заповнений у CRM) — довіряємо йому напряму,
+// без фолбеку. Інакше — CRM-артикул як є, а якщо не знайдеться — той самий артикул БЕЗ
+// суфіксу кольору (частина постачальників має ОДИН артикул на весь товар, не по кольору
+// окремо: наші «888888-1»/«888888-2» → в постачальника просто «888888»).
+var articleExplicit=String(prod.supplierArticle||'').trim();
+var articleBase=String(prod.article||prod.sku||context.orderSku||'').trim();
+var articleCandidates=articleExplicit ? [articleExplicit] : [articleBase];
+if(!articleExplicit && /-\d+$/.test(articleBase)){ articleCandidates.push(articleBase.replace(/-\d+$/,'')); }
+if(!articleCandidates[0]) return { supplierOrderResult:'❌ easydrop-кошик: немає артикулу товару', supplierOrderStatus:'error' };
 var wantSize=String(context.recommendedSize||(context.sizeInput&&context.sizeInput.clothingSize)||'').replace(/[^0-9A-Za-zXL]/g,'');
-var itemId=null, sizeId=null, sizeLabel='', foundCat='';
-for(var ci=0; ci<cats.length && !itemId; ci++){
-  var page=await (await get('/catalog-view/'+encodeURIComponent(supId)+'/'+encodeURIComponent(cats[ci])+'/?search='+encodeURIComponent(article)+'&item-text=&tags=')).text();
-  var ai=page.indexOf("copyText('"+article+"')");
-  if(ai<0) continue;
-  foundCat=cats[ci];
-  var head=page.slice(Math.max(0,ai-6000), ai);
-  var gm=head.match(/showItemImageGallery\((\d+)\)(?![\s\S]*showItemImageGallery\()/);
-  if(!gm) continue;
-  itemId=gm[1];
-  var tail=page.slice(ai, ai+9000), opts=[], m2;
-  var re=new RegExp("setSize\\('"+itemId+"',\\s*'(\\d+)',\\s*'(True|False)'\\)[^>]*>\\s*([0-9A-Za-zXL.,]+)","g");
-  while((m2=re.exec(tail))) opts.push({ id:m2[1], avail:m2[2]==='True', label:String(m2[3]).trim() });
-  if(!opts.length){ var re2=new RegExp("setSize\\('"+itemId+"',\\s*'(\\d+)',\\s*'(True|False)'\\)","g"); while((m2=re2.exec(tail))) opts.push({ id:m2[1], avail:m2[2]==='True', label:'' }); }
-  var hit=null;
-  if(wantSize) hit=opts.filter(function(o){ return o.avail && String(o.label).replace(/[^0-9A-Za-zXL]/g,'')===wantSize; })[0];
-  if(!hit) hit=opts.filter(function(o){ return o.avail; })[0];
-  if(hit){ sizeId=hit.id; sizeLabel=hit.label; }
+var itemId=null, sizeId=null, sizeLabel='', foundCat='', article='';
+for(var ari=0; ari<articleCandidates.length && !itemId; ari++){
+  article=articleCandidates[ari];
+  for(var ci=0; ci<cats.length && !itemId; ci++){
+    var page=await (await get('/catalog-view/'+encodeURIComponent(supId)+'/'+encodeURIComponent(cats[ci])+'/?search='+encodeURIComponent(article)+'&item-text=&tags=')).text();
+    var ai=page.indexOf("copyText('"+article+"')");
+    if(ai<0) continue;
+    foundCat=cats[ci];
+    var head=page.slice(Math.max(0,ai-6000), ai);
+    var gm=head.match(/showItemImageGallery\((\d+)\)(?![\s\S]*showItemImageGallery\()/);
+    if(!gm) continue;
+    itemId=gm[1];
+    var tail=page.slice(ai, ai+9000), opts=[], m2;
+    var re=new RegExp("setSize\\('"+itemId+"',\\s*'(\\d+)',\\s*'(True|False)'\\)[^>]*>\\s*([0-9A-Za-zXL.,]+)","g");
+    while((m2=re.exec(tail))) opts.push({ id:m2[1], avail:m2[2]==='True', label:String(m2[3]).trim() });
+    if(!opts.length){ var re2=new RegExp("setSize\\('"+itemId+"',\\s*'(\\d+)',\\s*'(True|False)'\\)","g"); while((m2=re2.exec(tail))) opts.push({ id:m2[1], avail:m2[2]==='True', label:'' }); }
+    var hit=null;
+    if(wantSize) hit=opts.filter(function(o){ return o.avail && String(o.label).replace(/[^0-9A-Za-zXL]/g,'')===wantSize; })[0];
+    if(!hit) hit=opts.filter(function(o){ return o.avail; })[0];
+    if(hit){ sizeId=hit.id; sizeLabel=hit.label; }
+  }
 }
-if(!itemId||!sizeId) return { supplierOrderResult:'❌ easydrop-кошик: товар «'+article+'»'+(wantSize?(' розмір '+wantSize):'')+' не знайдено у постачальника '+supId, supplierOrderStatus:'error' };
+if(!itemId||!sizeId) return { supplierOrderResult:'❌ easydrop-кошик: товар «'+articleCandidates.join(' / ')+'»'+(wantSize?(' розмір '+wantSize):'')+' не знайдено у постачальника '+supId, supplierOrderStatus:'error' };
 // 3) у кошик
 var csrf=cookies['csrftoken']||'';
 var addRes=await api('action=cart&item='+encodeURIComponent(itemId)+'&size='+encodeURIComponent(sizeId)+'&qty=1&csrfmiddlewaretoken='+encodeURIComponent(csrf), '/catalog-view/'+supId+'/'+foundCat+'/');

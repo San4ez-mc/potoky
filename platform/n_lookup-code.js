@@ -85,6 +85,15 @@ try{
   // без фолбек-спроб. CT_1007/1008/1009 — акційні ціни за 2/3/4 шт (якщо задані).
   var __supArticle=cfVal('CT_1006');
   var __qty2=cfVal('CT_1007'), __qty3=cfVal('CT_1008'), __qty4=cfVal('CT_1009');
+  // CT_1010 — посилання на фото розмірної сітки (окремо від фото товару, не показується
+  // клієнту напряму — тільки якщо він явно попросить, через окрему sendPhoto-ноду).
+  // CT_1011 — нотатки для ШІ (маломірність/великомірність/нюанси посадки тощо) — ЛИШЕ
+  // в промпт консультанта, ніколи не потрапляє в текст, який бачить клієнт дослівно.
+  var __sizeChartUrl=cfVal('CT_1010');
+  var __aiInfo=cfVal('CT_1011');
+  var __sizeChartNote=__sizeChartUrl
+    ? 'Розмірна сітка для цього товару Є — якщо клієнт попросить, скажи що зараз покажеш.'
+    : 'Розмірної сітки для цього товару ПОКИ НЕМА в системі — якщо клієнт попросить, чесно скажи, що зараз немає під рукою, і запропонуй підібрати розмір за зростом і вагою.';
   var __qtyPromoParts=[];
   if(__qty2) __qtyPromoParts.push('2 шт — '+Number(__qty2)+' грн');
   if(__qty3) __qtyPromoParts.push('3 шт — '+Number(__qty3)+' грн');
@@ -116,7 +125,7 @@ try{
       setItems.push({ article:toks[si], id:cp.id, name:cp.name||'', price:(cp.price!=null?cp.price:cp.min_price), supplier:csup?String(csup.value||'').trim():'', supplierArticle:cSupArt?String(cSupArt.value||'').trim():'' });
     }
   }
-  var result={ supplier:__sup, product:{ _source:'keycrm', supplier:__sup, setComponents:__set, isSet:!!__set, setItems:setItems, setList:setItems.map(function(x){return x.name+(x.price?(" — "+x.price+" грн"):"")+" [арт. "+x.article+"]";}).join("; "), _matchKey:mk, _via:via, id:found.id, category_id:found.category_id, name:found.name||'Товар', desc:found.description||'', price:price, currency:found.currency_code||'UAH', photoUrl:img||'', imageUrls:imgs.slice(0,5), colors:colors.join(', '), colorsList:colors, sizes:sizes, offers:offers, upsell:upsell.join('; '), isClothing:sizes.length>0, supplierArticle:__supArticle, qtyPrices:{ '2':__qty2?Number(__qty2):null, '3':__qty3?Number(__qty3):null, '4':__qty4?Number(__qty4):null }, qtyPromoText:__qtyPromoText } };
+  var result={ supplier:__sup, product:{ _source:'keycrm', supplier:__sup, setComponents:__set, isSet:!!__set, setItems:setItems, setList:setItems.map(function(x){return x.name+(x.price?(" — "+x.price+" грн"):"")+" [арт. "+x.article+"]";}).join("; "), _matchKey:mk, _via:via, id:found.id, category_id:found.category_id, name:found.name||'Товар', desc:found.description||'', price:price, currency:found.currency_code||'UAH', photoUrl:img||'', imageUrls:imgs.slice(0,5), colors:colors.join(', '), colorsList:colors, sizes:sizes, offers:offers, upsell:upsell.join('; '), isClothing:sizes.length>0, supplierArticle:__supArticle, qtyPrices:{ '2':__qty2?Number(__qty2):null, '3':__qty3?Number(__qty3):null, '4':__qty4?Number(__qty4):null }, qtyPromoText:__qtyPromoText, sizeChartUrl:__sizeChartUrl, aiInfo:__aiInfo, sizeChartNote:__sizeChartNote } };
   // Колір автопідставляємо ТІЛЬКИ якщо клієнт САМ написав артикул (а не з опису поста):
   if(preColor && preFromUser){ result.colorChoice={color:preColor,_pre:true}; }
   if(preColor) result.product.preColor=preColor;

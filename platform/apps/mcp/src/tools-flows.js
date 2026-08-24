@@ -736,7 +736,8 @@ async function getConnectorInstancesMap() {
 async function listConnectors() {
     const instancesByType = await getConnectorInstancesMap();
     const connectors = await prisma.connectorDef.findMany({ orderBy: { name: 'asc' } });
-    return connectors.map((connector) => ({
+
+    const list = connectors.map((connector) => ({
         id: connector.id,
         name: connector.name,
         type: connector.type,
@@ -747,6 +748,30 @@ async function listConnectors() {
         isActive: connector.isActive,
         instances: instancesByType[connector.type] || [],
     }));
+
+    // Збережені конектори, для типу яких немає рядка у connectorDef, раніше просто
+    // зникали зі списку — бо список будувався від визначень. Так сталося після
+    // консолідації claude_sonnet/haiku/opus у єдиний тип `claude`: ключі в базі є,
+    // а в списку їх не видно, і легко зробити висновок, що ключа немає взагалі.
+    // Тому показуємо їх окремою групою, а не мовчки ховаємо.
+    const definedTypes = new Set(connectors.map((c) => c.type));
+    for (const [type, instances] of Object.entries(instancesByType)) {
+        if (definedTypes.has(type)) continue;
+        list.push({
+            id: null,
+            name: type,
+            type,
+            description: 'Тип без опису в довіднику конекторів — показано за збереженими екземплярами.',
+            icon: null,
+            color: null,
+            isBuiltin: false,
+            isActive: true,
+            undefinedType: true,
+            instances,
+        });
+    }
+
+    return list;
 }
 
 async function getConnector({ id, type }) {

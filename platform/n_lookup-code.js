@@ -74,7 +74,30 @@ try{
   var sizes=[],colors=[],offers=[];
   var ro=await fetch(base+'/offers?filter[product_id]='+found.id+'&limit=50',{headers:hdr()});
   if(ro.ok){ var od2=await ro.json(); var os=(od2&&od2.data)||[]; for(var k=0;k<os.length;k++){ var pr2=os[k].properties||[]; offers.push({sku:os[k].sku,price:os[k].price,quantity:os[k].quantity,properties:pr2}); for(var mm=0;mm<pr2.length;mm++){ var nm=String(pr2[mm].name||'').toLowerCase(); if(nm.indexOf('розмір')>=0&&sizes.indexOf(pr2[mm].value)<0)sizes.push(pr2[mm].value); if(nm.indexOf('колір')>=0&&colors.indexOf(pr2[mm].value)<0)colors.push(pr2[mm].value); } } }
-  var upsell=[]; function upname(prod){ var up=(prod.price!=null?prod.price:prod.min_price); return prod.name+(up?(' — '+up+' грн'):''); } function findByToken(tok){ tok=String(tok).trim(); if(!tok)return null; for(var i=0;i<all.length;i++){ var pp=all[i]; if(String(pp.id)===tok) return pp; var cf=pp.custom_fields||[]; for(var j=0;j<cf.length;j++){ if(cf[j]&&cf[j].uuid==='CT_1001'&&String(cf[j].value||'').split(/[\s,;]+/).indexOf(tok)>=0) return pp; } } return null; } var scf=(found.custom_fields||[]).find(function(c){return c&&/супутн|допродаж/i.test(c.name||'');}); if(scf&&scf.value){ var stoks=String(scf.value).split(/[\s,;]+/); for(var t=0;t<stoks.length&&upsell.length<3;t++){ var pp2=findByToken(stoks[t]); if(pp2&&pp2.id!==found.id) upsell.push(upname(pp2)); } }
+  var upsell=[]; function upname(prod){ var up=(prod.price!=null?prod.price:prod.min_price); return prod.name+(up?(' — '+up+' грн'):''); }
+  // findByToken: id товару, sku товару, CT_1001, а якщо нічого не збіглось — токен може
+  // бути SKU КОНКРЕТНОГО ОФЕРА (кольору/розміру), а не товару в цілому (реальний кейс:
+  // CT_1002 заповнили значеннями типу "L0056-1, L0056-2" — це offer-sku) — той самий
+  // прийом пошуку офера, що й у Пріоритеті 2a вище.
+  async function findByToken(tok){
+    tok=String(tok).trim(); if(!tok) return null;
+    for(var i=0;i<all.length;i++){
+      var pp=all[i];
+      if(String(pp.id)===tok) return pp;
+      if(pp.sku && String(pp.sku).toUpperCase().trim()===tok.toUpperCase()) return pp;
+      var cf=pp.custom_fields||[];
+      for(var j=0;j<cf.length;j++){ if(cf[j]&&cf[j].uuid==='CT_1001'&&String(cf[j].value||'').split(/[\s,;]+/).indexOf(tok)>=0) return pp; }
+    }
+    try{
+      var orqU=await fetch(base+'/offers?filter[sku]='+encodeURIComponent(tok)+'&limit=1',{headers:hdr()});
+      if(orqU.ok){ var ojU=await orqU.json(); var ofU=(ojU.data||[])[0];
+        if(ofU&&ofU.product_id){ for(var pi2=0;pi2<all.length;pi2++){ if(String(all[pi2].id)===String(ofU.product_id)) return all[pi2]; } }
+      }
+    }catch(e){}
+    return null;
+  }
+  var scf=(found.custom_fields||[]).find(function(c){return c&&/супутн|допродаж/i.test(c.name||'');});
+  if(scf&&scf.value){ var stoks=String(scf.value).split(/[\s,;]+/); for(var t=0;t<stoks.length&&upsell.length<3;t++){ var pp2=await findByToken(stoks[t]); if(pp2&&pp2.id!==found.id) upsell.push(upname(pp2)); } }
   var imgs=[]; if(found.thumbnail_url)imgs.push(found.thumbnail_url); var adx=found.attachments_data||[]; for(var x=0;x<adx.length;x++){ var uu=(typeof adx[x]==='string')?adx[x]:(adx[x]&&(adx[x].url||adx[x].src)); if(uu&&imgs.indexOf(uu)<0)imgs.push(uu); } var img=imgs[0]||'';
   var price=(found.price!=null?found.price:found.min_price);
   function cfVal(u){ var f=(found.custom_fields||[]).find(function(c){return c&&c.uuid===u;}); return f?String(f.value||'').trim():''; }
@@ -126,7 +149,14 @@ try{
     }
   }
   var __footwearNote = (found.category_id === 7) ? '\n\n👟 Важливо: взуття відправляється окремою посилкою з іншого міста (не разом з одягом) — якщо у вас є ще одне замовлення одягу, воно приїде окремо.' : '';
-  var result={ supplier:__sup, product:{ _source:'keycrm', supplier:__sup, setComponents:__set, isSet:!!__set, setItems:setItems, setList:setItems.map(function(x){return x.name+(x.price?(" — "+x.price+" грн"):"")+" [арт. "+x.article+"]";}).join("; "), _matchKey:mk, _via:via, id:found.id, category_id:found.category_id, name:found.name||'Товар', desc:found.description||'', price:price, currency:found.currency_code||'UAH', photoUrl:img||'', imageUrls:imgs.slice(0,5), colors:colors.join(', '), colorsList:colors, sizes:sizes, offers:offers, upsell:upsell.join('; '), isClothing:sizes.length>0, supplierArticle:__supArticle, footwearNote:__footwearNote, qtyPrices:{ '2':__qty2?Number(__qty2):null, '3':__qty3?Number(__qty3):null, '4':__qty4?Number(__qty4):null }, qtyPromoText:__qtyPromoText, sizeChartUrl:__sizeChartUrl, aiInfo:__aiInfo, sizeChartNote:__sizeChartNote } };
+  // isClothing КАТЕГОРІЄЮ, не лише наявністю offer-властивості "Розмір" (аудит 2026-08-23
+  // виявив: майже всі товари одягу мають в офферах ЛИШЕ "Колір", без "Розмір" взагалі —
+  // sizes.length>0 було завжди false → n_is_clothing завжди false → підбір розміру НІКОЛИ
+  // не запускався по всьому каталогу. Категорія — надійніший сигнал, ніж рядок з назви
+  // offer-властивості (яка ще й хибно спрацьовувала на "Розмір кейса" в автотоварах).
+  var CLOTHING_CATEGORY_IDS=[1,2,4,5,6,8]; // Бомбери,Футболки,Кофти,Куртки,Костюми,Джинси
+  var __isClothing = CLOTHING_CATEGORY_IDS.indexOf(found.category_id)>=0;
+  var result={ supplier:__sup, product:{ _source:'keycrm', supplier:__sup, setComponents:__set, isSet:!!__set, setItems:setItems, setList:setItems.map(function(x){return x.name+(x.price?(" — "+x.price+" грн"):"")+" [арт. "+x.article+"]";}).join("; "), _matchKey:mk, _via:via, id:found.id, category_id:found.category_id, name:found.name||'Товар', desc:found.description||'', price:price, currency:found.currency_code||'UAH', photoUrl:img||'', imageUrls:imgs.slice(0,5), colors:colors.join(', '), colorsList:colors, sizes:sizes, offers:offers, upsell:upsell.join('; '), isClothing:__isClothing, supplierArticle:__supArticle, footwearNote:__footwearNote, qtyPrices:{ '2':__qty2?Number(__qty2):null, '3':__qty3?Number(__qty3):null, '4':__qty4?Number(__qty4):null }, qtyPromoText:__qtyPromoText, sizeChartUrl:__sizeChartUrl, aiInfo:__aiInfo, sizeChartNote:__sizeChartNote } };
   // Колір автопідставляємо ТІЛЬКИ якщо клієнт САМ написав артикул (а не з опису поста):
   if(preColor && preFromUser){ result.colorChoice={color:preColor,_pre:true}; }
   if(preColor) result.product.preColor=preColor;

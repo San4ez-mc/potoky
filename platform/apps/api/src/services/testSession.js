@@ -2763,6 +2763,27 @@ ${_baseUrl}/legal/terms — Правила використання`;
             const agentModel = data.model || 'claude-sonnet-4-6';
             const agentMaxTokens = parseInt(data.maxTokens, 10) || 4096;
 
+            // Агент-нода — це «чорна скринька»: на канвасі один прямокутник, а всередині
+            // цикл із викликами інструментів. Тому пишемо в лог сесії, що саме модель
+            // отримала на вхід — інакше при дивній поведінці нема за що зачепитись.
+            logFlowApiCall({
+                sessionId: session.id,
+                service: 'agent',
+                method: 'context',
+                requestData: {
+                    node: node.id,
+                    model: agentModel,
+                    systemPromptChars: String(systemPrompt || '').length,
+                    tools: claudeTools.map((t) => t.name),
+                    historyTurns: priorHistory.length,
+                    userInput: String(agentUserInput || '').slice(0, 500),
+                    contextKeys: Object.keys(agentScope.context || {}).slice(0, 40),
+                },
+                responseData: {},
+                statusCode: null,
+                durationMs: null,
+            }).catch(() => {});
+
             let agentResponse = '';
             let agentDone = false;
             for (let iter = 0; iter < maxIterations; iter++) {
@@ -2830,10 +2851,31 @@ ${_baseUrl}/legal/terms — Правила використання`;
                             let parsed;
                             try { parsed = JSON.parse(rawText); } catch { parsed = rawText; }
                             toolResult = typeof parsed === 'string' ? parsed : JSON.stringify(parsed);
-                            logger.info('[agent node] Tool call', { tool: toolCall.name, status: httpRes.status, ms: Date.now() - httpStart });
+                            const toolMs = Date.now() - httpStart;
+                            logger.info('[agent node] Tool call', { tool: toolCall.name, status: httpRes.status, ms: toolMs });
+                            logFlowApiCall({
+                                sessionId: session.id,
+                                service: 'agent-tool',
+                                method: toolCall.name,
+                                // Аргументи пише модель — саме вони найчастіше й пояснюють дивний результат.
+                                requestData: { input: toolCall.input, url: resolvedUrl.split('?')[0] },
+                                responseData: { preview: String(toolResult).slice(0, 800) },
+                                statusCode: httpRes.status,
+                                durationMs: toolMs,
+                            }).catch(() => {});
                         } catch (e) {
                             toolResult = `Tool error: ${e.message}`;
                             logger.error('[agent node] Tool HTTP error', { tool: toolCall.name, error: e.message });
+                            logFlowApiCall({
+                                sessionId: session.id,
+                                service: 'agent-tool',
+                                method: toolCall.name,
+                                requestData: { input: toolCall.input },
+                                responseData: {},
+                                statusCode: null,
+                                durationMs: null,
+                                error: e.message,
+                            }).catch(() => {});
                         }
                     } else {
                         toolResult = `Tool "${toolCall.name}" not found`;

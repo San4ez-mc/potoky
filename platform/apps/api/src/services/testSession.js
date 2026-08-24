@@ -2789,10 +2789,14 @@ ${_baseUrl}/legal/terms — Правила використання`;
             for (let iter = 0; iter < maxIterations; iter++) {
                 let response;
                 try {
+                    // Кешування префікса. Порядок рендеру в API: tools → system → messages,
+                    // тож точка кешу на system покриває і схеми інструментів.
+                    // Без цього кожен оберт циклу (а їх до maxIterations на одне
+                    // повідомлення) наново оплачує промпт і всі схеми за повною ціною.
                     response = await anthropic.messages.create({
                         model: agentModel,
                         max_tokens: agentMaxTokens,
-                        system: systemPrompt,
+                        system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
                         tools: claudeTools.length > 0 ? claudeTools : undefined,
                         messages,
                     });
@@ -2801,6 +2805,15 @@ ${_baseUrl}/legal/terms — Правила використання`;
                     agentResponse = `Помилка агента: ${e.message}`;
                     break;
                 }
+
+                // Чи спрацював кеш — видно тільки тут. Якщо cacheRead стабільно 0,
+                // значить префікс щоразу різний і кеш не працює.
+                const u = response.usage || {};
+                logger.info('[agent node] usage', {
+                    iter, in: u.input_tokens, out: u.output_tokens,
+                    cacheWrite: u.cache_creation_input_tokens || 0,
+                    cacheRead: u.cache_read_input_tokens || 0,
+                });
 
                 const textBlocks = response.content.filter((b) => b.type === 'text');
                 const toolBlocks = response.content.filter((b) => b.type === 'tool_use');

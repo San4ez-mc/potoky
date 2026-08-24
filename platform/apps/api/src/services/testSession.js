@@ -242,6 +242,44 @@ function parseClaudeMessages(template, scope, fallbackUserMessage) {
     return fallback;
 }
 
+// ── Робоча памʼять agent-ноди ────────────────────────────────────────────────
+// Чому не «останні N повідомлень»: день із десятьма короткими репліками і день із
+// важкою перепискою — це різні обсяги, а не різна кількість. Ріжемо за розміром.
+//
+// І ріжемо ЦІЛИМИ ходами. Хід = повідомлення користувача плюс усе, що сталося до
+// наступного його повідомлення, включно з парами виклик-інструмента ↔ результат.
+// Якщо різати посеред такої пари, Claude API поверне помилку — тому межа завжди
+// на повідомленні користувача.
+const HISTORY_BUDGET_CHARS = 40000; // ~10k токенів
+
+/** Справжня репліка людини, а не tool_result (той теж має role 'user', але масив). */
+function isUserTurnStart(m) {
+    return m && m.role === 'user' && typeof m.content === 'string';
+}
+
+function approxChars(m) {
+    return typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content || '').length;
+}
+
+function trimDialogTurns(messages, budget = HISTORY_BUDGET_CHARS) {
+    if (!Array.isArray(messages) || !messages.length) return [];
+
+    const turns = [];
+    for (const m of messages) {
+        if (isUserTurnStart(m) || !turns.length) turns.push([]);
+        turns[turns.length - 1].push(m);
+    }
+
+    let total = messages.reduce((sum, m) => sum + approxChars(m), 0);
+    // Останній хід лишаємо завжди, навіть якщо він сам перевищує бюджет:
+    // без нього модель втратить те, про що щойно йшлося.
+    while (turns.length > 1 && total > budget) {
+        const dropped = turns.shift();
+        total -= dropped.reduce((sum, m) => sum + approxChars(m), 0);
+    }
+    return turns.flat();
+}
+
 // ── MCP-клієнт для agent-ноди ────────────────────────────────────────────────
 // Каталог інструментів живе в самому продукті (ORG тощо), а не дублюється в кожній
 // воронці. Двигун читає його по JSON-RPC і кешує.
@@ -3050,11 +3088,17 @@ ${_baseUrl}/legal/terms — Правила використання`;
             if (data.dialogMode) {
                 const histUser = agentUserInput.length > 4000
                     ? agentUserInput.slice(0, 4000) + '…[обрізано]' : agentUserInput;
-                runtime.dialogHistory[node.id] = truncateHistory([
+
+                // `messages` містить увесь хід: репліку людини, виклики інструментів і
+                // їх результати. Зберігаємо саме його — інакше на наступному ході модель
+                // не памʼятає, що повернув пошук, і «прочитай його» змушує шукати заново.
+                const thisTurn = messages.slice(priorHistory.length);
+                const budget = parseInt(data.historyBudgetChars, 10) || HISTORY_BUDGET_CHARS;
+                runtime.dialogHistory[node.id] = trimDialogTurns([
                     ...priorHistory,
-                    { role: 'user', content: histUser || 'Продовжуємо.' },
+                    ...(thisTurn.length ? thisTurn : [{ role: 'user', content: histUser || 'Продовжуємо.' }]),
                     { role: 'assistant', content: agentResponse || 'Ок.' },
-                ]);
+                ], budget);
             }
             // dialogMode: якщо агент НЕ викликав finishTool — чекаємо наступне повідомлення
             // юзера (лишаємось на цій ноді). Інакше — йдемо далі.

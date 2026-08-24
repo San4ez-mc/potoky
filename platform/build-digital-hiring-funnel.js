@@ -61,73 +61,6 @@ const SYSTEM_PROMPT = [
 
 const TOOLS = [
   {
-    name: 'crm_search',
-    description: 'Подивитись CRM-таблицю. Порожній query повертає ВСІ рядки і назви колонок — так можна оглянути таблицю цілком. Непорожній query фільтрує за імʼям, компанією або Telegram-хендлом. У кожному рядку є rowNumber — його передають у crm_update, щоб оновити саме цей запис.',
-    inputSchema: {
-      type: 'object',
-      properties: { query: { type: 'string', description: 'Імʼя, компанія або @хендл' } },
-      required: ['query'],
-    },
-    url: ORG + '/drive/sheet/read?sheetId={{env.CRM_SHEET_ID}}',
-    method: 'POST',
-    headers: ORG_AUTH,
-  },
-  {
-    name: 'crm_update',
-    description: 'Оновити або додати запис у CRM. Передай rowNumber (з crm_search) щоб оновити наявний рядок, або не передавай — тоді додасться новий. record — обʼєкт за назвами колонок таблиці.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        rowNumber: { type: 'number', description: 'Номер рядка для оновлення; пропусти щоб додати новий' },
-        record: { type: 'object', description: 'Поля за назвами колонок, напр. {"name":"Іван","role":"client","notes":"..."}' },
-      },
-      required: ['record'],
-    },
-    url: ORG + '/drive/sheet/row?sheetId={{env.CRM_SHEET_ID}}',
-    method: 'POST',
-    headers: ORG_AUTH,
-  },
-  {
-    name: 'drive_search',
-    description: 'Пошук файлів на Google Drive за назвою і вмістом. Повертає назву, id, посилання і дату зміни.',
-    inputSchema: {
-      type: 'object',
-      properties: { query: { type: 'string' }, limit: { type: 'number' } },
-      required: ['query'],
-    },
-    url: ORG + '/drive/search?folderId={{env.DRIVE_ROOT_ID}}',
-    method: 'POST',
-    headers: ORG_AUTH,
-  },
-  {
-    name: 'drive_read',
-    description: 'Прочитати текст файлу з Drive за його id (Google Docs, таблиці, текстові файли).',
-    inputSchema: {
-      type: 'object',
-      properties: { fileId: { type: 'string' } },
-      required: ['fileId'],
-    },
-    url: ORG + '/drive/file/read',
-    method: 'POST',
-    headers: ORG_AUTH,
-  },
-  {
-    name: 'drive_write',
-    description: 'Створити або перезаписати документ на Drive. folder — одна з: 02_Клієнти, 03_Кандидати, 04_Згенеровано, 05_Звіти. У 01_База_знань писати не можна.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        folder: { type: 'string', enum: ['02_Клієнти', '03_Кандидати', '04_Згенеровано', '05_Звіти'] },
-        filename: { type: 'string' },
-        content: { type: 'string' },
-      },
-      required: ['folder', 'filename', 'content'],
-    },
-    url: ORG + '/drive/file/write?rootFolderId={{env.DRIVE_ROOT_ID}}',
-    method: 'POST',
-    headers: ORG_AUTH,
-  },
-  {
     name: 'query_vector',
     description: 'Семантичний пошук у базі знань і прикладах листування засновниці. Використовуй перед написанням будь-якого тексту від її імені, щоб влучити в її тон.',
     inputSchema: {
@@ -135,6 +68,7 @@ const TOOLS = [
       properties: { query: { type: 'string' } },
       required: ['query'],
     },
+    // Поки локальний: у MCP-каталозі його ще немає, перенесемо разом із рештою.
     url: ORG + '/companies/{{env.COMPANY_ID}}/search',
     method: 'POST',
     headers: ORG_AUTH,
@@ -208,6 +142,21 @@ function buildGraph() {
         startTrigger: 'Засновниця відкрила чат. Коротко спитай одним реченням, чим допомогти. Жодних інструментів на цьому кроці.',
         outputVar: 'context.lastAnswer',
         tools: TOOLS,
+        // Каталог Drive і CRM живе в орг-платформі, а не тут: додали можливість
+        // там — її бачать усі боти без правок воронок. Підписуємось лише на
+        // потрібні домени, щоб чужі схеми не зʼїдали контекст.
+        mcpServers: [
+          {
+            name: 'org-drive',
+            url: '{{env.MCP_BASE_URL}}/drive',
+            headers: { 'x-mcp-secret': '{{env.MCP_SECRET}}', 'x-company-id': '{{env.COMPANY_ID}}' },
+          },
+          {
+            name: 'org-crm',
+            url: '{{env.MCP_BASE_URL}}/crm',
+            headers: { 'x-mcp-secret': '{{env.MCP_SECRET}}', 'x-company-id': '{{env.COMPANY_ID}}' },
+          },
+        ],
       },
     },
   ];
@@ -221,6 +170,8 @@ function buildGraph() {
 // Порожнє значення = ключ створюється пустим, його заповнює людина в UI воронки.
 const KEYS = [
   ['ORG_API_URL', process.env.DH_ORG_API_URL || 'http://127.0.0.1:4100/api', 'База ORG API (той самий сервер, лише localhost)', false],
+  ['MCP_BASE_URL', process.env.DH_MCP_BASE_URL || 'http://127.0.0.1:4100/api/mcp', 'Базовий URL MCP-каталогу орг-платформи', false],
+  ['MCP_SECRET', process.env.DH_MCP_SECRET || '', 'MCP_TOOLS_SECRET орг-платформи', true],
   ['ORG_API_TOKEN', process.env.DH_ORG_API_TOKEN || '', 'PLATFORM_API_SECRET орг-платформи', true],
   ['WEB_SEARCH_URL', process.env.DH_WEB_SEARCH_URL || 'http://127.0.0.1:3000/api/websearch', 'Роут пошуку в інтернеті', false],
   ['SERPER_API_KEY', process.env.DH_SERPER_KEY || '', 'Ключ Serper. Порожній — пошук іде через DuckDuckGo', true],
@@ -229,8 +180,6 @@ const KEYS = [
   ['FETCH_PAGE_URL', process.env.DH_FETCH_PAGE_URL || 'http://127.0.0.1:3000/api/websearch/page', 'Роут читання сторінки в текст', false],
   ['BROWSER_AGENT_URL', process.env.DH_BROWSER_AGENT_URL || 'http://127.0.0.1:8091', 'Мікросервіс browser-agent (для JS-важких сторінок)', false],
   ['BROWSER_AGENT_SECRET', process.env.DH_BROWSER_AGENT_SECRET || '', 'X-Agent-Secret browser-agent', true],
-  ['DRIVE_ROOT_ID', process.env.DH_DRIVE_ROOT_ID || '', 'Коренева тека клієнтки на Drive', false],
-  ['CRM_SHEET_ID', process.env.DH_CRM_SHEET_ID || '', 'ID Google-таблиці CRM', false],
   ['COMPANY_ID', process.env.DH_COMPANY_ID || '', 'UUID компанії в орг-платформі (для query_vector)', false],
   ['ADMIN_TELEGRAM_ID', process.env.DH_ADMIN_TG || '', 'chat_id засновниці для алертів (notifyTg)', false],
 ];

@@ -242,6 +242,87 @@ function parseClaudeMessages(template, scope, fallbackUserMessage) {
     return fallback;
 }
 
+// ── MCP-клієнт для agent-ноди ────────────────────────────────────────────────
+// Каталог інструментів живе в самому продукті (ORG тощо), а не дублюється в кожній
+// воронці. Двигун читає його по JSON-RPC і кешує.
+//
+// Стабільність тут важливіша за свіжість: якщо продукт на хвилину ліг, ми беремо
+// ОСТАННІЙ РОБОЧИЙ каталог і бот працює далі. Впасти через те, що сусідній сервіс
+// перезапускається, — найгірший з можливих сценаріїв.
+const MCP_TTL_MS = 5 * 60 * 1000;
+const mcpCatalogCache = new Map(); // url → { tools, fetchedAt, lastGoodAt }
+
+async function mcpRpc(server, method, params, timeoutMs = 15000) {
+    const res = await fetch(server.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(server.headers || {}) },
+        body: JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method, params }),
+        signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const j = await res.json();
+    if (j.error) throw new Error(j.error.message || 'MCP error');
+    return j.result;
+}
+
+/** Каталог інструментів сервера: свіжий, або з кешу, або останній робочий. */
+async function mcpListTools(server) {
+    const cached = mcpCatalogCache.get(server.url);
+    if (cached && Date.now() - cached.fetchedAt < MCP_TTL_MS) return cached.tools;
+
+    try {
+        const result = await mcpRpc(server, 'tools/list', {}, 8000);
+        const tools = Array.isArray(result?.tools) ? result.tools : [];
+        mcpCatalogCache.set(server.url, { tools, fetchedAt: Date.now(), lastGoodAt: Date.now() });
+        return tools;
+    } catch (e) {
+        if (cached) {
+            // Не оновлюємо fetchedAt — щоб наступний хід спробував ще раз.
+            logger.warn('[mcp] каталог недоступний, працюємо на останньому робочому', {
+                url: server.url, error: e.message, ageMs: Date.now() - cached.lastGoodAt,
+            });
+            return cached.tools;
+        }
+        logger.error('[mcp] каталог недоступний і кешу немає', { url: server.url, error: e.message });
+        return [];
+    }
+}
+
+/**
+ * Зібрати інструменти з усіх MCP-серверів ноди.
+ * Повертає список у форматі Claude і мапу «назва → сервер» для виклику.
+ */
+async function mcpCollectTools(servers) {
+    const tools = [];
+    const owner = new Map();
+    for (const server of servers) {
+        const list = await mcpListTools(server);
+        for (const t of list) {
+            if (!t?.name) continue;
+            if (owner.has(t.name)) {
+                logger.warn('[mcp] дубль назви інструмента, лишаємо перший', { name: t.name, url: server.url });
+                continue;
+            }
+            owner.set(t.name, server);
+            tools.push({
+                name: t.name,
+                description: t.description || t.name,
+                input_schema: t.inputSchema || t.input_schema || { type: 'object', properties: {} },
+            });
+        }
+    }
+    return { tools, owner };
+}
+
+/** Виклик інструмента через MCP. Помилку віддаємо текстом — модель має шанс виправитись. */
+async function mcpCallTool(server, name, args) {
+    const result = await mcpRpc(server, 'tools/call', { name, arguments: args || {} }, 30000);
+    const text = Array.isArray(result?.content)
+        ? result.content.map((c) => (c?.type === 'text' ? c.text : JSON.stringify(c))).join(String.fromCharCode(10))
+        : JSON.stringify(result);
+    return { text, isError: Boolean(result?.isError) };
+}
+
 function truncateHistory(messages, maxItems = 24) {
     if (!Array.isArray(messages)) return [];
     if (messages.length <= maxItems) return messages;
@@ -2741,13 +2822,38 @@ ${_baseUrl}/legal/terms — Правила використання`;
                 }
             }
 
-            // Build Claude tools from node.data.tools
+            // Інструменти ноди: локальні (описані у воронці) + отримані з MCP-серверів.
             const rawTools = Array.isArray(data.tools) ? data.tools : [];
             const claudeTools = rawTools.map((t) => ({
                 name: t.name,
                 description: t.description || t.name,
                 input_schema: t.inputSchema || { type: 'object', properties: {}, required: [] },
             }));
+
+            // MCP: каталог живе в продукті, а не у воронці. Заголовки рендеримо —
+            // саме там їде секрет і companyId.
+            const mcpServers = (Array.isArray(data.mcpServers) ? data.mcpServers : []).map((srv) => ({
+                name: srv.name || srv.url,
+                url: renderTemplate(String(srv.url || ''), agentScope),
+                headers: Object.fromEntries(
+                    Object.entries(srv.headers || {}).map(([k, v]) => [k, typeof v === 'string' ? renderTemplate(v, agentScope) : v]),
+                ),
+            })).filter((srv) => srv.url);
+
+            let mcpOwner = new Map();
+            if (mcpServers.length) {
+                const collected = await mcpCollectTools(mcpServers);
+                mcpOwner = collected.owner;
+                // Локальні мають пріоритет: якщо назва збігається, воронка перекриває каталог.
+                const localNames = new Set(claudeTools.map((t) => t.name));
+                for (const t of collected.tools) {
+                    if (localNames.has(t.name)) { mcpOwner.delete(t.name); continue; }
+                    claudeTools.push(t);
+                }
+                logger.info('[agent node] MCP', {
+                    servers: mcpServers.length, fromMcp: mcpOwner.size, total: claudeTools.length,
+                });
+            }
 
             // Resolve API key
             const { createClient } = require('@platform/claude/src/client');
@@ -2837,6 +2943,34 @@ ${_baseUrl}/legal/terms — Правила використання`;
                         toolResults.push({ type: 'tool_result', tool_use_id: toolCall.id, content: 'Готово, завершую.' });
                         continue;
                     }
+                    // Інструмент із MCP — викликаємо через сервер каталогу.
+                    const mcpSrv = mcpOwner.get(toolCall.name);
+                    if (mcpSrv) {
+                        const mcpStart = Date.now();
+                        let mcpText = '';
+                        let mcpErr = null;
+                        try {
+                            const r = await mcpCallTool(mcpSrv, toolCall.name, toolCall.input);
+                            mcpText = r.text;
+                            if (r.isError) mcpErr = r.text;
+                        } catch (e) {
+                            mcpText = `Інструмент недоступний: ${e.message}`;
+                            mcpErr = e.message;
+                        }
+                        logFlowApiCall({
+                            sessionId: session.id,
+                            service: 'agent-mcp',
+                            method: toolCall.name,
+                            requestData: { input: toolCall.input, server: mcpSrv.name },
+                            responseData: { preview: String(mcpText).slice(0, 800) },
+                            statusCode: mcpErr ? null : 200,
+                            durationMs: Date.now() - mcpStart,
+                            error: mcpErr,
+                        }).catch(() => {});
+                        toolResults.push({ type: 'tool_result', tool_use_id: toolCall.id, content: mcpText });
+                        continue;
+                    }
+
                     const toolDef = rawTools.find((t) => t.name === toolCall.name);
                     let toolResult = '';
                     if (toolDef && toolDef.url) {

@@ -797,6 +797,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
     await __resolveConnectorKey('FAL_CONNECTOR_ID', 'FAL_AI_KEY');
     await __resolveConnectorKey('OPENAI_CONNECTOR_ID', 'OPENAI_API_KEY');
     await __resolveConnectorKey('GEMINI_CONNECTOR_ID', 'GEMINI_API_KEY');
+    await __resolveConnectorKey('CLAUDE_CONNECTOR_ID', 'ANTHROPIC_API_KEY');
     // Google Vertex connector carries TWO fields (SA JSON + project id) under exact names.
     const __vcid = (funnelEnv.GOOGLE_VERTEX_CONNECTOR_ID || '').trim();
     if (__vcid) {

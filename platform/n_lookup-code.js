@@ -122,10 +122,19 @@ try{
   if(__qty3) __qtyPromoParts.push('3 шт — '+Number(__qty3)+' грн');
   if(__qty4) __qtyPromoParts.push('4 шт — '+Number(__qty4)+' грн');
   var __qtyPromoText=__qtyPromoParts.length ? ('Акція за кількість: '+__qtyPromoParts.join(', ')+'.') : '';
-  // Набір: розгортаємо артикули компонентів у реальні товари (назва/ціна/постачальник)
+  // Набір: розгортаємо артикули компонентів у реальні товари (назва/ціна/постачальник).
+  // CT_1005 буває заповнене АБО короткими токенами через пробіл/кому (артикули/id) — тоді
+  // розбивка по [,;\s]+ ОК — АБО повними НАЗВАМИ товарів через кому ("Кофта Ангора, Джинси")
+  // — тоді розбивка по пробілу ЛАМАЄ багатослівні назви навпіл. Евристика: якщо в рядку є
+  // кома/крапка з комою — довіряємо ЛИШЕ їй як роздільнику (назви це витримують, короткі
+  // токени через пробіл без коми — рідкісний старий формат, і так далі підтримується нижче
+  // через збіг з sku/custom-field, не лише name).
   var setItems=[];
   if(__set){
-    var toks=String(__set).split(/[,;\s]+/).map(function(t){return String(t).trim();}).filter(Boolean);
+    var hasDelim=/[,;]/.test(__set);
+    var toks=hasDelim
+      ? String(__set).split(/[,;]+/).map(function(t){return String(t).trim();}).filter(Boolean)
+      : String(__set).split(/[,;\s]+/).map(function(t){return String(t).trim();}).filter(Boolean);
     for(var si=0; si<toks.length && setItems.length<10; si++){
       var tk=toks[si].toUpperCase();
       var cp=null;
@@ -134,6 +143,7 @@ try{
         if(String(pp.id)===String(found.id)) continue;
         if(String(pp.id)===toks[si]) { cp=pp; break; }
         if(pp.sku && String(pp.sku).toUpperCase().trim()===tk) { cp=pp; break; }
+        if(pp.name && String(pp.name).toUpperCase().trim()===tk) { cp=pp; break; }
         var pcf=pp.custom_fields||[];
         for(var cj=0; cj<pcf.length; cj++){
           var f=pcf[cj]; if(!f) continue;

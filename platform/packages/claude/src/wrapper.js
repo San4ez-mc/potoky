@@ -13,8 +13,10 @@ const FALLBACK_TIMEOUT_MS = parseInt(process.env.FALLBACK_TIMEOUT_MS || '120000'
 
 // OpenAI fallback model — gpt-4o надійніший за mini для структурованого JSON; override via env
 const OPENAI_FALLBACK_MODEL = process.env.OPENAI_FALLBACK_MODEL || 'gpt-4o';
-// Gemini fallback model (gemini-1.5-flash retired — use current flash model)
-const GEMINI_FALLBACK_MODEL = process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.0-flash';
+// Gemini fallback model (gemini-1.5-flash і gemini-2.0-flash обидва retired 2026-08-25 —
+// перевірено живим викликом: 2.0-flash → 404 "no longer available", 2.5-flash → 200 OK,
+// той самий, що вже надійно працює в n_lookup-code.js для ШІ-візії).
+const GEMINI_FALLBACK_MODEL = process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash';
 
 // ---------------------------------------------------------------------------
 // Error classification — transient vs permanent

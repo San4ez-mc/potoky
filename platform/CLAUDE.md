@@ -210,9 +210,11 @@ Auth: `Authorization: Bearer <MCP_SECRET>` або `?token=<user.mcpToken>`
 ## 11. Claude fallback (OpenAI / Gemini)
 
 При помилках `529 / 503 / timeout / overload` від Claude:
-1. Шукає `OPENAI_API_KEY` у funnelKey → пробує OpenAI `gpt-4o-mini`
-2. Якщо немає або теж упав — шукає `GEMINI_API_KEY` → пробує Gemini `gemini-1.5-flash`
+1. Шукає `OPENAI_API_KEY` у funnelKey → пробує OpenAI `gpt-4o`
+2. Якщо немає або теж упав — шукає `GEMINI_API_KEY` → пробує Gemini `gemini-2.5-flash`
 3. Якщо всі впали — кидає помилку з повідомленням
+
+**Урок з помилки (2026-08-25):** `gemini-1.5-flash`, потім і `gemini-2.0-flash` — обидва retired (404 "no longer available"). Резервний ланцюжок мовчки не працював, поки хтось реально не впав на нього. Якщо колись Google знову ретайрне модель — перевіряти живим викликом (`POST /v1beta/models/<model>:generateContent`), не вгадувати за назвою.
 
 Ключі ТІЛЬКИ per-funnel, глобальний `.env` не використовується.
 

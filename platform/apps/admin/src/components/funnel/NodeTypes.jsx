@@ -111,6 +111,61 @@ export const MessageNode = memo(({ id, selected, data }) => {
     );
 });
 
+// ─── Agent Node ────────────────────────────────────────────────────────────────
+// Агент — не одна дія, а цикл із виходами назовні. Раніше він малювався як
+// звичайна нода, і з канви не було видно ні того, чим він користується, ні того,
+// що частина інструментів приходить із зовнішнього каталогу. Тепер це контейнер.
+export const AgentNode = memo(({ id, selected, data }) => {
+    const tokens = useNodeStats(id);
+    const local = Array.isArray(data.tools) ? data.tools : [];
+    const servers = Array.isArray(data.mcpServers) ? data.mcpServers : [];
+
+    return (
+        <BaseNode id={id} selected={selected} color="bg-indigo-700" icon="🤖" label={data.label || 'ШІ агент'} description={data.description}>
+            <div className="mb-1.5 flex gap-1 flex-wrap">
+                <span className="inline-flex items-center rounded bg-indigo-900/70 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-200">
+                    {data.dialogMode ? '💬 діалог' : '1×'}
+                </span>
+                {data.model && <span className="inline-flex items-center rounded bg-indigo-900/50 px-2 py-0.5 text-[10px] text-indigo-300">{data.model}</span>}
+                {data.maxIterations && <span className="inline-flex items-center rounded bg-indigo-900/50 px-2 py-0.5 text-[10px] text-indigo-300">до {data.maxIterations} кроків</span>}
+            </div>
+
+            {(local.length > 0 || servers.length > 0) && (
+                <div className="mt-1 rounded-md border border-indigo-500/30 bg-indigo-950/40 p-1.5">
+                    <div className="mb-1 text-[10px] uppercase tracking-wide text-indigo-300/80">Інструменти</div>
+                    <div className="flex flex-wrap gap-1">
+                        {local.map((t) => (
+                            <span key={t.name} title={t.description || t.name}
+                                className="rounded bg-slate-800 border border-slate-600 px-1.5 py-0.5 text-[10px] text-slate-200">
+                                {t.name}
+                            </span>
+                        ))}
+                        {servers.map((srv) => (
+                            <span key={srv.name || srv.url} title={`Каталог MCP: ${srv.url}`}
+                                className="rounded bg-emerald-900/50 border border-emerald-600/60 px-1.5 py-0.5 text-[10px] text-emerald-200">
+                                ⇄ {srv.name || 'MCP'}
+                            </span>
+                        ))}
+                    </div>
+                    {servers.length > 0 && (
+                        <div className="mt-1 text-[9.5px] text-emerald-300/70">
+                            Зелені — каталог зовнішнього сервісу, список приходить під час запуску
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {tokens && tokens.total > 0 && (
+                <div className="mt-1.5 flex items-center gap-1 text-[10px] text-indigo-300 bg-indigo-900/30 rounded px-1.5 py-0.5 w-fit"
+                    title={`Вхідні: ${tokens.input.toLocaleString()}, Вихідні: ${tokens.output.toLocaleString()}, Виклики: ${tokens.calls}`}>
+                    <span>🪙</span>
+                    <span>{formatTokens(tokens.total)} токенів (30д)</span>
+                </div>
+            )}
+        </BaseNode>
+    );
+});
+
 // ─── Claude Node ───────────────────────────────────────────────────────────────
 export const ClaudeNode = memo(({ id, selected, data }) => {
     const tokens = useNodeStats(id);
@@ -468,7 +523,7 @@ export const NODE_TYPES = {
     notifyTg: NotifyAdminNode, // сповіщення в Telegram-групу — рендеримо як action-ноду (не білий квадрат)
     fbEvent: NotifyAdminNode, // #305 FB CAPI — рендеримо як action-ноду
     knowledgeBase: KnowledgeBaseNode,
-    agent: ClaudeNode, // AI agent (Claude + tools) — render like a Claude node instead of blank white
+    agent: AgentNode,
 };
 
 // ─── Node palette items (for drag sidebar) ────────────────────────────────────

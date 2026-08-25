@@ -322,6 +322,143 @@ function ClaudeNodeEditor({ data, update }) {
     );
 }
 
+// ── Agent Node ──────────────────────────────────────────────────────────────
+// Досі agent-нода не мала свого редактора: у неї правився лише системний промпт,
+// а інструменти й MCP-каталоги можна було змінити тільки скриптом. Тут вони
+// редагуються поштучно — кожен інструмент окремою карткою.
+function AgentToolCard({ tool, onChange, onRemove }) {
+    const [open, setOpen] = useState(false);
+    const set = (patch) => onChange({ ...tool, ...patch });
+
+    let schemaText = '';
+    try { schemaText = JSON.stringify(tool.inputSchema ?? {}, null, 2); } catch { schemaText = '{}'; }
+
+    return (
+        <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-2">
+            <div className="flex items-center gap-2">
+                <button type="button" onClick={() => setOpen(!open)} className="text-slate-400 hover:text-slate-200 text-xs w-4">
+                    {open ? '▾' : '▸'}
+                </button>
+                <span className="font-mono text-[12px] text-slate-200">{tool.name || 'без назви'}</span>
+                <span className="flex-1 truncate text-[11px] text-slate-500">{tool.description}</span>
+                <button type="button" onClick={onRemove} className="text-[11px] text-red-400 hover:text-red-300">видалити</button>
+            </div>
+
+            {open && (
+                <div className="mt-2 space-y-2 border-t border-slate-700 pt-2">
+                    <Field label="Назва (її бачить модель)">
+                        <TextInput value={tool.name} onChange={(v) => set({ name: v })} placeholder="drive_search" />
+                    </Field>
+                    <Field label="Опис — головне, за чим модель вирішує, коли викликати">
+                        <TextInput value={tool.description} onChange={(v) => set({ description: v })} />
+                    </Field>
+                    <Field label="URL (рендериться шаблоном, доступні {{env.*}})">
+                        <TextInput value={tool.url} onChange={(v) => set({ url: v })} placeholder="{{env.ORG_API_URL}}/drive/search" />
+                    </Field>
+                    <Field label="Схема аргументів (JSON Schema)">
+                        <CodeBlock
+                            value={schemaText}
+                            onChange={(v) => {
+                                try { set({ inputSchema: JSON.parse(v) }); } catch { /* лишаємо як є, поки JSON неповний */ }
+                            }}
+                            language="json"
+                        />
+                    </Field>
+                </div>
+            )}
+        </div>
+    );
+}
+
+function AgentNodeEditor({ data, update }) {
+    const tools = Array.isArray(data.tools) ? data.tools : [];
+    const servers = Array.isArray(data.mcpServers) ? data.mcpServers : [];
+
+    const setTool = (i, next) => update({ tools: tools.map((t, k) => (k === i ? next : t)) });
+    const setServer = (i, next) => update({ mcpServers: servers.map((x, k) => (k === i ? next : x)) });
+
+    return (
+        <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-2">
+                <Field label="Модель">
+                    <TextInput value={data.model} onChange={(v) => update({ model: v })} placeholder="claude-sonnet-4-6" />
+                </Field>
+                <Field label="maxTokens">
+                    <input type="number" value={data.maxTokens ?? ''} onChange={(e) => update({ maxTokens: e.target.value === '' ? undefined : parseInt(e.target.value, 10) })}
+                        className={selectCls} placeholder="4096" />
+                </Field>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+                <Field label="Кроків за один хід">
+                    <input type="number" value={data.maxIterations ?? ''} onChange={(e) => update({ maxIterations: e.target.value === '' ? undefined : parseInt(e.target.value, 10) })}
+                        className={selectCls} placeholder="12" />
+                </Field>
+                <Field label="Режим">
+                    <label className="flex items-center gap-2 text-[12px] text-gray-300 pt-2">
+                        <input type="checkbox" checked={Boolean(data.dialogMode)} onChange={(e) => update({ dialogMode: e.target.checked })} />
+                        діалоговий — лишається на ноді й чекає наступного повідомлення
+                    </label>
+                </Field>
+            </div>
+
+            <Field label="System Prompt">
+                <CodeBlock value={data.systemPrompt} onChange={(v) => update({ systemPrompt: v })} language="markdown" />
+            </Field>
+
+            <div className="rounded-lg border border-slate-700 p-2">
+                <div className="mb-2 flex items-center justify-between">
+                    <span className="text-[12px] font-semibold text-slate-200">Власні інструменти ({tools.length})</span>
+                    <button type="button"
+                        onClick={() => update({ tools: [...tools, { name: '', description: '', url: '', method: 'POST', inputSchema: { type: 'object', properties: {} } }] })}
+                        className="rounded bg-slate-700 px-2 py-1 text-[11px] text-slate-200 hover:bg-slate-600">+ інструмент</button>
+                </div>
+                <div className="space-y-2">
+                    {tools.map((t, i) => (
+                        <AgentToolCard key={i} tool={t}
+                            onChange={(next) => setTool(i, next)}
+                            onRemove={() => update({ tools: tools.filter((_, k) => k !== i) })} />
+                    ))}
+                    {!tools.length && <div className="text-[11px] text-gray-500">Немає. Інструменти можуть приходити з каталогу нижче.</div>}
+                </div>
+            </div>
+
+            <div className="rounded-lg border border-emerald-700/50 p-2">
+                <div className="mb-1 flex items-center justify-between">
+                    <span className="text-[12px] font-semibold text-emerald-200">Каталоги MCP ({servers.length})</span>
+                    <button type="button"
+                        onClick={() => update({ mcpServers: [...servers, { name: '', url: '', headers: {} }] })}
+                        className="rounded bg-emerald-800 px-2 py-1 text-[11px] text-emerald-100 hover:bg-emerald-700">+ каталог</button>
+                </div>
+                <div className="mb-2 text-[10.5px] text-emerald-300/70">
+                    Список інструментів приходить із самого сервісу під час запуску. Кешується, а при
+                    недоступності береться остання робоча версія — бот не падає через перезапуск сусіда.
+                </div>
+                <div className="space-y-2">
+                    {servers.map((srv, i) => (
+                        <div key={i} className="rounded border border-emerald-800/60 bg-emerald-950/30 p-2 space-y-2">
+                            <div className="flex items-center gap-2">
+                                <TextInput value={srv.name} onChange={(v) => setServer(i, { ...srv, name: v })} placeholder="org-drive" />
+                                <button type="button" onClick={() => update({ mcpServers: servers.filter((_, k) => k !== i) })}
+                                    className="text-[11px] text-red-400 hover:text-red-300">видалити</button>
+                            </div>
+                            <TextInput value={srv.url} onChange={(v) => setServer(i, { ...srv, url: v })} placeholder="{{env.MCP_BASE_URL}}/drive" />
+                            <Field label="Заголовки (JSON) — сюди йдуть секрет і companyId">
+                                <CodeBlock
+                                    value={(() => { try { return JSON.stringify(srv.headers ?? {}, null, 2); } catch { return '{}'; } })()}
+                                    onChange={(v) => { try { setServer(i, { ...srv, headers: JSON.parse(v) }); } catch { /* неповний JSON */ } }}
+                                    language="json"
+                                />
+                            </Field>
+                        </div>
+                    ))}
+                    {!servers.length && <div className="text-[11px] text-gray-500">Каталогів немає — агент користується лише власними інструментами.</div>}
+                </div>
+            </div>
+        </div>
+    );
+}
+
 function JsNodeEditor({ data, update }) {
     return (
         <div className="space-y-3">
@@ -1439,6 +1576,7 @@ export function NodeEditor({ embedded = false, onClose }) {
             case 'start': return <StartNodeEditor data={data} update={update} />;
             case 'message': return <MessageNodeEditor data={data} update={update} />;
             case 'claude': return <ClaudeNodeEditor data={data} update={update} />;
+            case 'agent': return <AgentNodeEditor data={data} update={update} />;
             case 'js': return <JsNodeEditor data={data} update={update} />;
             case 'condition': return <ConditionNodeEditor data={data} update={update} />;
             case 'connector': return <ConnectorNodeEditor data={data} update={update} connectors={connectors} />;

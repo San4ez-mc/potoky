@@ -13,6 +13,12 @@
 // 7. Merge-точки (кілька вхідних ребер) — колонка = округлене середнє колонок джерел.
 // 8. Довгі лінійні ділянки (>ZIGZAG_RUN нод без розгалуження) — компактний
 //    каскад колонок замість одного нескінченно довгого стовпця.
+// 9. Транспонування (аудит 2026-08-26): барицентр — не повна мінімізація
+//    перетинів, він лише тягне ноду до середнього сусідів і може застрягти
+//    в локальному мінімумі, де перетину не було б, якби дві сусідні ноди
+//    в одному рядку просто помінялись місцями. Явно пробуємо кожен такий
+//    своп і лишаємо, якщо він строго зменшує кількість перетинів на межах
+//    із сусідніми рядками.
 //
 // Не позиціонувати ноди вручну довільними координатами — викликати цю функцію.
 
@@ -102,6 +108,49 @@ function computeAutoLayout(nodesIn, edgesIn) {
         }
         decollide();
     }
+
+    // ── Транспонування, мінімізація перетинів (правило 9) ──
+    // Кількість перетинів стрілок на межі між рядком rowA і рядком rowB:
+    // для кожної пари ребер, що з'єднують ці два рядки, перетин є тоді й
+    // тільки тоді, коли їхній відносний порядок колонок інвертований.
+    function boundaryCrossings(rowA, rowB) {
+        const pairs = [];
+        edges.forEach((e) => {
+            const rs = row[e.source], rt = row[e.target];
+            if (rs === rowA && rt === rowB) pairs.push([col[e.source], col[e.target]]);
+            else if (rs === rowB && rt === rowA) pairs.push([col[e.target], col[e.source]]);
+        });
+        let count = 0;
+        for (let i = 0; i < pairs.length; i++) {
+            for (let j = i + 1; j < pairs.length; j++) {
+                const [a1, b1] = pairs[i]; const [a2, b2] = pairs[j];
+                if ((a1 - a2) * (b1 - b2) < 0) count++;
+            }
+        }
+        return count;
+    }
+    function transposePass() {
+        let improved = false;
+        const byRow = {};
+        nodes.forEach((n) => { (byRow[row[n.id]] = byRow[row[n.id]] || []).push(n.id); });
+        Object.keys(byRow).forEach((r) => {
+            const rNum = Number(r);
+            const ids = byRow[r].sort((a, b) => col[a] - col[b]);
+            for (let i = 0; i < ids.length - 1; i++) {
+                const a = ids[i]; const b = ids[i + 1];
+                const before = boundaryCrossings(rNum - 1, rNum) + boundaryCrossings(rNum, rNum + 1);
+                const tmp = col[a]; col[a] = col[b]; col[b] = tmp;
+                const after = boundaryCrossings(rNum - 1, rNum) + boundaryCrossings(rNum, rNum + 1);
+                if (after < before) { improved = true; ids[i] = b; ids[i + 1] = a; }
+                else { const back = col[a]; col[a] = col[b]; col[b] = back; }
+            }
+        });
+        return improved;
+    }
+    for (let pass = 0; pass < 6; pass++) {
+        if (!transposePass()) break;
+    }
+    decollide();
 
     // ── Зигзаг довгих лінійних ділянок (правило 8) ──
     const visited = new Set();

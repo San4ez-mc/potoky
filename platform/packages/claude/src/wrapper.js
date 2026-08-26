@@ -320,6 +320,51 @@ async function callGemini({ apiKey, systemPrompt, messages, options = {} }) {
 }
 
 // ---------------------------------------------------------------------------
+// Admin alert — коли AI повністю недоступний (клієнт лишиться без відповіді)
+// ---------------------------------------------------------------------------
+// Аудит 2026-08-26 (goverla_shop, сесія Сіразетдінова): Claude впав через
+// "credit balance too low" (400), фолбек на Gemini ТЕЖ не відповів у ту мить
+// (транзієнтний збіг — сам конектор при повторній перевірці живий) — клієнт
+// лишився без жодної відповіді на ~13 годин, поки власник магазину випадково
+// не помітив і не відповів вручну напряму в Instagram. Жодного алерту не було.
+// Правило: коли AI-виклик остаточно провалився (нема кому відповісти клієнту) —
+// адмін дізнається одразу через Telegram, а не випадково.
+const _aiOutageAlertCooldown = new Map(); // botId -> timestamp останнього алерту
+const AI_OUTAGE_ALERT_COOLDOWN_MS = 15 * 60 * 1000; // не частіше ніж раз на 15 хв на бота
+
+async function notifyAdminOfAiOutage(sessionId, errorMessage) {
+    try {
+        if (!sessionId) return;
+        const session = await db.session.findUnique({ where: { id: sessionId }, select: { botId: true } });
+        const botId = session?.botId;
+        if (!botId) return;
+
+        const last = _aiOutageAlertCooldown.get(botId) || 0;
+        if (Date.now() - last < AI_OUTAGE_ALERT_COOLDOWN_MS) return; // вже сповіщали нещодавно
+        _aiOutageAlertCooldown.set(botId, Date.now());
+
+        const keys = await db.funnelKey.findMany({
+            where: { botId, key: { in: ['ADMIN_TELEGRAM_ID', 'TELEGRAM_BOT_TOKEN'] } },
+            select: { key: true, value: true },
+        });
+        const km = keys.reduce((acc, k) => { acc[k.key] = k.value; return acc; }, {});
+        const chatId = km.ADMIN_TELEGRAM_ID || '';
+        const token = km.TELEGRAM_BOT_TOKEN || '';
+        if (!chatId || !token || !/^\d+:[A-Za-z0-9_-]{20,}$/.test(token)) return;
+
+        const text = '⚠️ ШІ недоступний — бот НЕ відповідає клієнтам!\n'
+            + `Помилка: ${String(errorMessage || '').slice(0, 400)}\n\n`
+            + 'Перевірте баланс/статус Claude (і резервних провайдерів) якнайшвидше.';
+
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: String(chatId), text, disable_web_page_preview: true }),
+        }).catch(() => {});
+    } catch { /* найгірше — просто не сповістили, не ламаємо основний потік */ }
+}
+
+// ---------------------------------------------------------------------------
 // Main callClaude — with automatic fallback
 // ---------------------------------------------------------------------------
 
@@ -529,13 +574,13 @@ async function callClaude({ sessionId, systemPrompt, messages, options = {} }) {
             }
 
             // All fallbacks exhausted — throw original Claude error
-            throw new ClaudeError(
-                `Claude недоступний (${errorMessage}) і всі резервні провайдери також не відповіли.`,
-                { sessionId }
-            );
+            const finalMessage = `Claude недоступний (${errorMessage}) і всі резервні провайдери також не відповіли.`;
+            await notifyAdminOfAiOutage(sessionId, finalMessage);
+            throw new ClaudeError(finalMessage, { sessionId });
         }
 
-        // Non-transient error (bad key, 400, 401) — throw as-is
+        // Non-transient error, без спроби фолбеку — клієнт так само лишиться без відповіді
+        await notifyAdminOfAiOutage(sessionId, error.message);
         throw new ClaudeError(error.message, { sessionId });
     }
 

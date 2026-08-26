@@ -71,7 +71,7 @@ export function FunnelCanvas({ onNodeClick }) {
                 connectionRadius={40}
                 snapToGrid
                 snapGrid={[15, 15]}
-                defaultEdgeOptions={{ animated: true, style: { stroke: '#6366f1', strokeWidth: 2 } }}
+                defaultEdgeOptions={{ animated: true, type: 'smoothstep', style: { stroke: '#6366f1', strokeWidth: 2 } }}
                 className="bg-gray-950"
             >
                 <Background color="#1f2937" gap={20} size={1} />

@@ -17,6 +17,8 @@ const paginationSchema = z.object({
     limit: z.coerce.number().int().min(1).max(100).default(50),
     hasErrors: z.enum(['true', 'false']).optional(),
     isTest: z.enum(['true', 'false']).optional(),
+    source: z.enum(['bot', 'webhook', 'instagram']).optional(),
+    search: z.string().trim().min(1).max(200).optional(),
 });
 
 // GET /api/bots/:id
@@ -78,12 +80,33 @@ router.get('/:id/sessions',
         query: paginationSchema,
     }),
     asyncHandler(async (req, res) => {
-        const { page, limit, hasErrors, isTest } = req.query;
+        const { page, limit, hasErrors, isTest, source, search } = req.query;
         const where = { botId: req.params.id };
         if (hasErrors !== undefined) {
             where.errors = hasErrors === 'true' ? { some: {} } : { none: {} };
         }
         if (isTest !== undefined) where.isTest = isTest === 'true';
+        if (source === 'webhook') where.user = { username: 'webhook_system' };
+        else if (source === 'instagram') where.context = { path: ['channel'], equals: 'instagram' };
+        else if (source === 'bot') {
+            where.user = { NOT: { username: 'webhook_system' } };
+            where.NOT = { context: { path: ['channel'], equals: 'instagram' } };
+        }
+        // Пошук по імені/username користувача АБО по тексту переписки (по словах, AND між словами).
+        if (search) {
+            const tokens = search.split(/\s+/).filter(Boolean);
+            where.AND = [
+                ...(where.AND || []),
+                ...tokens.map((token) => ({
+                    OR: [
+                        { user: { firstName: { contains: token, mode: 'insensitive' } } },
+                        { user: { lastName: { contains: token, mode: 'insensitive' } } },
+                        { user: { username: { contains: token, mode: 'insensitive' } } },
+                        { messages: { some: { content: { contains: token, mode: 'insensitive' } } } },
+                    ],
+                })),
+            ];
+        }
 
         const [sessions, total] = await Promise.all([
             db.session.findMany({

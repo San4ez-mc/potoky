@@ -108,16 +108,28 @@ export function Sessions() {
     // #12: за замовчуванням показуємо лише справжні сесії (bot), webhook — це тести
     const [source, setSource] = useState('bot');
     const [readMap, setReadMap] = useState(() => getReadMap());
+    const [searchInput, setSearchInput] = useState('');
+    const [search, setSearch] = useState('');
+
+    // Дебаунс: не смикаємо API на кожне натискання клавіші
+    useEffect(() => {
+        const t = setTimeout(() => {
+            setSearch(searchInput.trim());
+            setPage(0);
+        }, 400);
+        return () => clearTimeout(t);
+    }, [searchInput]);
 
     const backTo = useMemo(() => {
         const params = new URLSearchParams();
         params.set('page', String(page));
         if (errorsOnly) params.set('hasErrors', 'true');
         if (sessionType !== 'all') params.set('sessionType', sessionType);
+        if (search) params.set('search', search);
         return botId
             ? `/bots/${botId}/sessions?${params.toString()}`
             : `/sessions?${params.toString()}`;
-    }, [botId, page, errorsOnly, sessionType]);
+    }, [botId, page, errorsOnly, sessionType, search]);
 
     const buildFilters = () => {
         const filters = {};
@@ -125,6 +137,7 @@ export function Sessions() {
         if (sessionType === 'test') filters.isTest = 'true';
         else if (sessionType === 'real') filters.isTest = 'false';
         if (source !== 'all') filters.source = source;
+        if (search) filters.search = search;
         return filters;
     };
 
@@ -151,7 +164,7 @@ export function Sessions() {
 
     useEffect(() => {
         loadSessions();
-    }, [botId, page, errorsOnly, sessionType, source]);
+    }, [botId, page, errorsOnly, sessionType, source, search]);
 
     const visibleIds = sessions.map(s => s.id);
     const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.includes(id));
@@ -272,6 +285,23 @@ export function Sessions() {
                             🗑 {selectedIds.length > 0 ? `(${selectedIds.length})` : ''}
                         </button>
                     </div>
+                </div>
+                <div className="relative">
+                    <input
+                        type="text"
+                        value={searchInput}
+                        onChange={(e) => setSearchInput(e.target.value)}
+                        placeholder="Пошук за іменем, username або текстом переписки…"
+                        className="w-full px-3 py-2 pl-9 rounded-lg bg-gray-800 border border-gray-700 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-brand"
+                    />
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm">🔍</span>
+                    {searchInput && (
+                        <button
+                            onClick={() => setSearchInput('')}
+                            title="Очистити пошук"
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 text-sm px-1"
+                        >✕</button>
+                    )}
                 </div>
                 <div className="flex flex-wrap gap-2 items-center">
                     {/* Type radio */}

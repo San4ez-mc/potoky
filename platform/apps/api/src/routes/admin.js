@@ -125,12 +125,13 @@ router.get('/sessions',
             hasErrors: z.enum(['true', 'false']).optional(),
             isTest: z.enum(['true', 'false']).optional(),
             source: z.enum(['bot', 'webhook', 'instagram']).optional(),
+            search: z.string().trim().min(1).max(200).optional(),
             page: z.coerce.number().int().min(0).default(0),
             limit: z.coerce.number().int().min(1).max(100).default(50),
         }),
     }),
     asyncHandler(async (req, res) => {
-        const { botId, isActive, hasErrors, isTest, source, page, limit } = req.query;
+        const { botId, isActive, hasErrors, isTest, source, search, page, limit } = req.query;
         const where = {};
         if (botId) where.botId = botId;
         if (isActive !== undefined) where.isActive = isActive === 'true';
@@ -145,6 +146,23 @@ router.get('/sessions',
         else if (source === 'bot') {
             where.user = { NOT: { username: 'webhook_system' } };
             where.NOT = { context: { path: ['channel'], equals: 'instagram' } };
+        }
+        // Пошук по імені/username користувача АБО по тексту переписки.
+        // Розбиваємо на слова, щоб "Олексій Сіразетдінов" знаходило юзера
+        // з таким firstName+lastName, а не шукало точну фразу як одне поле.
+        if (search) {
+            const tokens = search.split(/\s+/).filter(Boolean);
+            where.AND = [
+                ...(where.AND || []),
+                ...tokens.map((token) => ({
+                    OR: [
+                        { user: { firstName: { contains: token, mode: 'insensitive' } } },
+                        { user: { lastName: { contains: token, mode: 'insensitive' } } },
+                        { user: { username: { contains: token, mode: 'insensitive' } } },
+                        { messages: { some: { content: { contains: token, mode: 'insensitive' } } } },
+                    ],
+                })),
+            ];
         }
         // RBAC: 'user' — лише сесії ботів дозволених проєктів.
         const _allowedS = allowedProjectIds(req);

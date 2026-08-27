@@ -178,27 +178,27 @@ async function sendZernioMessage(botId, conversationId, text, opts = {}) {
         return data.data?.messageId || data.data?.id || data.id || data.messageId || data.message?.id || null;
     }
     // Немає conversationId — клієнт лише ЗАЛИШИВ КОМЕНТАР, ще не писав нам у директ.
-    // Meta Private Reply API (через Zernio) дозволяє ОДНЕ приватне повідомлення у
-    // відповідь на конкретний коментар без існуючої розмови — саме це нам треба для
-    // "спершу пишемо в директ" (аудит 2026-08-27, автовідповіді на коментарі).
-    // ⚠️ Ендпоінт/шлях НЕ підтверджений прямим тестовим викликом (реконструйовано з
-    // фрагментів документації Zernio: recipient.comment_id + message.text) — перша ж
-    // РЕАЛЬНА спроба (живий коментар) покаже, чи цей шлях і форма коректні;
-    // якщо ні — виправити тут за фактичною помилкою/відповіддю Zernio.
+    // Аудит 2026-08-27: перший здогад (Zernio-обгортка /v1/inbox/messages) дав живий
+    // HTTP 404 — шлях не існує. Перемкнувся на ПРЯМИЙ виклик Meta Graph API (той самий
+    // endpoint /me/messages, що вже перевірено робочим у sendMetaPhoto нижче, з
+    // INSTAGRAM_ACCESS_TOKEN) — офіційна фіча Meta "Private Replies": той самий
+    // /me/messages, але recipient:{comment_id} замість recipient:{id}.
     if (opts.commentId) {
-        const url = 'https://zernio.com/api/v1/inbox/messages';
-        const res = await fetch(url, {
+        const igKey = await db.funnelKey.findFirst({ where: { botId, key: 'INSTAGRAM_ACCESS_TOKEN' }, select: { value: true } });
+        const igToken = (igKey?.value || '').trim();
+        if (!igToken || igToken === 'REPLACE_ME') throw new Error('немає INSTAGRAM_ACCESS_TOKEN для приватної відповіді на коментар.');
+        const res = await fetch(`https://graph.instagram.com/v21.0/me/messages?access_token=${encodeURIComponent(igToken)}`, {
             method: 'POST',
-            headers: { Authorization: `Bearer ${km.ZERNIO_API_TOKEN}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ accountId: km.ZERNIO_ACCOUNT_ID, recipient: { comment_id: opts.commentId }, message: { text: String(text || '') } }),
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ recipient: { comment_id: opts.commentId }, message: { text: String(text || '') } }),
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok || data.error) {
-            const msg = data?.error?.message || data?.message || `HTTP ${res.status}`;
-            logger.warn('[zernioHandler] Private reply error', { botId, status: res.status, error: msg, commentId: opts.commentId });
-            throw new Error(`Zernio Private Reply API: ${msg}`);
+            const msg = data?.error?.message || `HTTP ${res.status}`;
+            logger.warn('[zernioHandler] Private reply (Meta direct) error', { botId, status: res.status, error: msg, commentId: opts.commentId });
+            throw new Error(`Meta Private Reply API: ${msg}`);
         }
-        return data.data?.messageId || data.data?.id || data.id || data.messageId || null;
+        return data.message_id || data.id || null;
     }
     throw new Error('Немає ні conversationId, ні commentId — неможливо надіслати повідомлення через Zernio.');
 }

@@ -3305,6 +3305,12 @@ ${_baseUrl}/legal/terms — Правила використання`;
         const _startNode = flow.nodes.find((n) => n.type === 'start') || flow.nodes[0];
         const _resetContext = {
             ...(ctx.testMode !== undefined ? { testMode: ctx.testMode } : {}),
+            // Аудит 2026-08-27 (автовідповіді на коментарі, живий тест): якщо ця ж
+            // нода-стоп спрацювала одразу після n_comment_entry (типово — товар не
+            // визначено з emoji-коментаря), commentReplyText/commentId треба донести
+            // до адаптера (він постить публічну відповідь ПІСЛЯ executeFlowStep) —
+            // інакше рестарт стирав їх до того, як відповідь встигала піти.
+            ...(ctx.commentReplyText !== undefined ? { commentReplyText: ctx.commentReplyText, commentCategory: ctx.commentCategory, commentId: ctx.commentId, commentMediaId: ctx.commentMediaId, commentReplyPosted: ctx.commentReplyPosted } : {}),
             flowRuntime: {
                 currentNodeId: _startNode?.id || null,
                 waitingForUser: false,

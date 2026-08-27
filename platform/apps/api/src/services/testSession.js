@@ -832,6 +832,40 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
     const nodesById = new Map(flow.nodes.map((node) => [node.id, node]));
     const { ctx, runtime } = getFlowRuntime(session.context);
 
+    // Повторний клієнт (ідея користувача 2026-08-27): якщо в ЦІЙ воронці підключена
+    // нода n_recall_cond, одноразово за сесію підтягуємо зріст/вагу і дані доставки
+    // з ОСТАННЬОГО завершеного замовлення цього ж клієнта в ЦІЙ ЖЕ воронці — щоб не
+    // питати спочатку, а лише запропонувати підтвердити чи скоригувати. Рахуємо ще
+    // ДО циклу по нодах (не всередині n_lookup чи іншої JS-ноди — ті не мають доступу
+    // до БД), щоб дані вже були готові, коли граф дійде до n_recall_cond у ЦЬОМУ Ж
+    // виклику (нода n_lookup і n_recall_cond можуть виконатись в одному кроці, без
+    // очікування наступного повідомлення користувача). Гейт на flow.nodes.some(...) —
+    // щоб не бити базу зайвим запитом на воронках, де фіча не підключена.
+    if (!ctx.returningCustomerChecked && !ctx.crmOrderId && session.userId && flow.nodes.some((n) => n.id === 'n_recall_cond')) {
+        ctx.returningCustomerChecked = true;
+        try {
+            const _prevSessions = await db.session.findMany({
+                where: { userId: session.userId, botId: session.botId, id: { not: session.id } },
+                orderBy: { startedAt: 'desc' },
+                take: 20,
+                select: { context: true },
+            });
+            const _prev = _prevSessions.find((s) => s.context && s.context.crmOrderId);
+            if (_prev) {
+                const _od = _prev.context.orderData || {};
+                const _si = _prev.context.sizeInput || {};
+                const _recall = {};
+                if (_od.fullName) _recall.fullName = _od.fullName;
+                if (_od.phone) _recall.phone = _od.phone;
+                if (_od.city) _recall.city = _od.city;
+                if (_od.branch) _recall.branch = _od.branch;
+                if (_si.height) _recall.height = _si.height;
+                if (_si.weight) _recall.weight = _si.weight;
+                if (Object.keys(_recall).length) ctx.returningCustomerData = _recall;
+            }
+        } catch (_e) { /* recall — не критично для замовлення, тихо ігноруємо помилку */ }
+    }
+
     // Бот замовк, бо не визначив товар. Якщо клієнт САМ прислав товар (рілс/пост/реклама
     // або артикул у тексті) — це нова спроба, відновлюємось і шукаємо товар знову.
     // Явне прохання менеджера (handoffKind !== 'product_unknown') так НЕ знімається.

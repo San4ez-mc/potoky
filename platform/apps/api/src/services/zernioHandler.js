@@ -153,29 +153,78 @@ async function findMessageByZid(sessionId, zernioMessageId, platformMessageId) {
 }
 
 // ── Вихід ──────────────────────────────────────────────────────────────────
-async function sendZernioMessage(botId, conversationId, text) {
+async function sendZernioMessage(botId, conversationId, text, opts = {}) {
     const km = await getZernioKeys(botId);
     if (!isReal(km.ZERNIO_API_TOKEN)) throw new Error('ZERNIO_API_TOKEN ще не налаштований у ключах воронки.');
     if (!isReal(km.ZERNIO_ACCOUNT_ID)) throw new Error('ZERNIO_ACCOUNT_ID ще не налаштований у ключах воронки.');
-    if (!conversationId) throw new Error('Немає conversationId у сесії — неможливо надіслати відповідь через Zernio.');
-    const tmpl = km.ZERNIO_SEND_URL || 'https://zernio.com/api/v1/inbox/conversations/{conversationId}/messages';
-    const url = tmpl.replace('{conversationId}', encodeURIComponent(conversationId));
+    if (conversationId) {
+        const tmpl = km.ZERNIO_SEND_URL || 'https://zernio.com/api/v1/inbox/conversations/{conversationId}/messages';
+        const url = tmpl.replace('{conversationId}', encodeURIComponent(conversationId));
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${km.ZERNIO_API_TOKEN}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ accountId: km.ZERNIO_ACCOUNT_ID, message: String(text || '') }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.error) {
+            const msg = data?.error?.message || data?.message || `HTTP ${res.status}`;
+            logger.warn('[zernioHandler] Send error', { botId, status: res.status, error: msg });
+            throw new Error(`Zernio Send API: ${msg}`);
+        }
+        // Реальна форма відповіді Zernio: {"success":true,"data":{"messageId":"...","conversationId":"..."}}
+        // (перевірено live-запитом 2026-08-19) — id лежить у data.data.messageId, а НЕ на
+        // верхньому рівні. Через це кожна УСПІШНА відправка логувалась як "не повернув id"
+        // (deliveryLog показував ok:false для реально доставлених повідомлень).
+        return data.data?.messageId || data.data?.id || data.id || data.messageId || data.message?.id || null;
+    }
+    // Немає conversationId — клієнт лише ЗАЛИШИВ КОМЕНТАР, ще не писав нам у директ.
+    // Meta Private Reply API (через Zernio) дозволяє ОДНЕ приватне повідомлення у
+    // відповідь на конкретний коментар без існуючої розмови — саме це нам треба для
+    // "спершу пишемо в директ" (аудит 2026-08-27, автовідповіді на коментарі).
+    // ⚠️ Ендпоінт/шлях НЕ підтверджений прямим тестовим викликом (реконструйовано з
+    // фрагментів документації Zernio: recipient.comment_id + message.text) — перша ж
+    // РЕАЛЬНА спроба (живий коментар) покаже, чи цей шлях і форма коректні;
+    // якщо ні — виправити тут за фактичною помилкою/відповіддю Zernio.
+    if (opts.commentId) {
+        const url = 'https://zernio.com/api/v1/inbox/messages';
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${km.ZERNIO_API_TOKEN}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ accountId: km.ZERNIO_ACCOUNT_ID, recipient: { comment_id: opts.commentId }, message: { text: String(text || '') } }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.error) {
+            const msg = data?.error?.message || data?.message || `HTTP ${res.status}`;
+            logger.warn('[zernioHandler] Private reply error', { botId, status: res.status, error: msg, commentId: opts.commentId });
+            throw new Error(`Zernio Private Reply API: ${msg}`);
+        }
+        return data.data?.messageId || data.data?.id || data.id || data.messageId || null;
+    }
+    throw new Error('Немає ні conversationId, ні commentId — неможливо надіслати повідомлення через Zernio.');
+}
+
+// Публічна відповідь ПІД коментарем (видима всім, на відміну від private reply
+// вище) — підтверджено кількома джерелами документації Zernio: POST на
+// /v1/inbox/comments/{postId} з {accountId, commentId, message}. postId тут —
+// mediaId допису, під яким лишили коментар.
+async function postZernioCommentReply(botId, commentId, text, mediaId) {
+    const km = await getZernioKeys(botId);
+    if (!isReal(km.ZERNIO_API_TOKEN)) throw new Error('ZERNIO_API_TOKEN ще не налаштований у ключах воронки.');
+    if (!isReal(km.ZERNIO_ACCOUNT_ID)) throw new Error('ZERNIO_ACCOUNT_ID ще не налаштований у ключах воронки.');
+    const postSegment = encodeURIComponent(mediaId || commentId);
+    const url = `https://zernio.com/api/v1/inbox/comments/${postSegment}`;
     const res = await fetch(url, {
         method: 'POST',
         headers: { Authorization: `Bearer ${km.ZERNIO_API_TOKEN}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accountId: km.ZERNIO_ACCOUNT_ID, message: String(text || '') }),
+        body: JSON.stringify({ accountId: km.ZERNIO_ACCOUNT_ID, commentId, message: String(text || '') }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data.error) {
         const msg = data?.error?.message || data?.message || `HTTP ${res.status}`;
-        logger.warn('[zernioHandler] Send error', { botId, status: res.status, error: msg });
-        throw new Error(`Zernio Send API: ${msg}`);
+        logger.warn('[zernioHandler] Comment reply error', { botId, status: res.status, error: msg, commentId });
+        throw new Error(`Zernio Comment Reply API: ${msg}`);
     }
-    // Реальна форма відповіді Zernio: {"success":true,"data":{"messageId":"...","conversationId":"..."}}
-    // (перевірено live-запитом 2026-08-19) — id лежить у data.data.messageId, а НЕ на
-    // верхньому рівні. Через це кожна УСПІШНА відправка логувалась як "не повернув id"
-    // (deliveryLog показував ok:false для реально доставлених повідомлень).
-    return data.data?.messageId || data.data?.id || data.id || data.messageId || data.message?.id || null;
+    return data.data?.id || data.id || data.data?.commentId || null;
 }
 
 // Фото через Meta-direct: Zernio-send текстовий, тож зображення шлемо напряму в Meta
@@ -260,8 +309,85 @@ async function handleZernioEvent(botId, body) {
     if (!event) return { ok: true, skipped: 'no-event' };
     const convId = body?.conversation?.id || body?.conversation?.conversationId || body?.data?.conversationId || 'nc';
     return withConvLock(`${botId}:${convId}`, () =>
-        (event === 'message.received' ? handleIncomingMessage(botId, body) : handleSideEvent(botId, event, body))
+        (event === 'message.received' ? handleIncomingMessage(botId, body)
+            : event === 'comment.received' ? handleCommentReceived(botId, body)
+            : handleSideEvent(botId, event, body))
     );
+}
+
+// Аудит 2026-08-27 (автовідповіді на коментарі, запит користувача): раніше
+// comment.received лише логувався рядком-подією. Тепер — повноцінний вхід у
+// воронку: класифікуємо коментар (нода n_comment_entry) → приватна відповідь у
+// директ (Meta Private Reply, без conversationId) → публічна відповідь на сам
+// коментар (з іменем — тому ж коментарю з різним іменем НЕ рахується дублем
+// антиспам-фільтром IG) → далі сесія зливається зі звичайним n_route/n_lookup,
+// той самий товар (за mediaId → CT_1001), 100% решти логіки не дублюється.
+// Лайк коментаря НЕ реалізовано — Instagram прибрав цю можливість з API ще в
+// 2018 (підтверджено документацією Zernio), жодного способу обійти немає.
+async function handleCommentReceived(botId, body) {
+    const c = body.comment || {};
+    const conv = body.conversation || {};
+    const contact = conv.contact || conv.participant || c.from || c.author || {};
+    const commentId = c.id || c.commentId || c.cid || null;
+    const mediaId = c.mediaId || c.media_id || c.postId || c.post_id || conv.mediaId || conv.postId || null;
+    const commentText = c.text || c.content || c.message || '';
+    const contactId = contact.id || contact.platformId || contact.psid || contact.accountId || null;
+    const contactName = contact.name || contact.displayName || contact.username || contact.accountUsername || 'друже';
+    const contactUsername = contact.username || contact.handle || contact.accountUsername || null;
+
+    const eventId = body.id || `comment_${commentId || contactId || Date.now()}`;
+    if (!(await dedup(botId, eventId))) return { ok: true, processed: 0 };
+
+    if (!commentId || !contactId) {
+        logger.warn('[zernioHandler] comment.received без commentId/contactId — RAW', { botId, raw: JSON.stringify(body).slice(0, 1500) });
+        return { ok: true, skipped: 'no-ids' };
+    }
+
+    const testModeBlocked = await isBlockedByTestMode(botId, [contactUsername, contactName]);
+
+    const user = await findOrCreateZernioUser(contactId, botId, contactName);
+    const patch = {
+        psid: String(contactId), senderName: contactName || undefined, igUsername: contactUsername || undefined,
+        commentId: String(commentId), commentText, commentMediaId: mediaId ? String(mediaId) : null,
+        // entryAd — той самий механізм, яким уже користується n_lookup (ПРІОРІТЕТ 1,
+        // ad_id по CT_1001) — коментар під конкретним постом ідентифікує товар так
+        // само, як клік із реклами на цей пост.
+        entryAd: mediaId ? String(mediaId) : undefined,
+    };
+    const session = await findOrCreateZernioSession(user.id, botId, patch);
+
+    await db.message.create({
+        data: {
+            sessionId: session.id, role: 'event', content: `💬 Коментар від ${contactName}: ${String(commentText).slice(0, 200)}`,
+            metadata: { source: 'zernio', eventType: 'comment.received', raw: c },
+        },
+    });
+
+    if (testModeBlocked) { logger.info('[zernioHandler] comment blocked by testMode', { botId, sessionId: session.id }); return { ok: true, processed: 1 }; }
+
+    const ctxNow = session.context || {};
+    if (ctxNow.adminEngaged || ctxNow.funnelPaused) return { ok: true, processed: 1 };
+
+    const flow = await getFlowDefinition(botId);
+    const hasCommentFlow = flow && flow.nodes.some((n) => n.id === 'n_comment_entry');
+    if (!hasCommentFlow) {
+        logger.info('[zernioHandler] n_comment_entry не підключено в цій воронці — коментар лише залоговано', { botId });
+        return { ok: true, processed: 1 };
+    }
+
+    // Скеровуємо сесію на спеціальний вхід "коментар" (не звичайний start_1) — щойно
+    // він зробить своє (класифікація + відповіді), решта графа веде в n_route/n_lookup
+    // так само, як і для DM.
+    await db.session.update({
+        where: { id: session.id },
+        data: { context: { ...session.context, flowRuntime: { ...(session.context.flowRuntime || {}), currentNodeId: 'n_comment_entry', waitingForUser: false } } },
+    });
+
+    scheduleFlowRun(session.id, {
+        botId, contactId, conversationId: conv.id || conv.conversationId || null, contactName, commentId: String(commentId), text: commentText,
+    });
+    logger.info('[zernioHandler] Comment routed to n_comment_entry', { botId, sessionId: session.id, commentId, mediaId });
+    return { ok: true, processed: 1 };
 }
 
 async function dedup(botId, id) {
@@ -376,12 +502,13 @@ const FLOW_DEBOUNCE_MS = 1200;
 function scheduleFlowRun(sessionId, msg) {
     let entry = _pendingFlowRuns.get(sessionId);
     if (!entry) {
-        entry = { texts: [], imageUrl: null, botId: msg.botId, contactId: msg.contactId, conversationId: msg.conversationId, contactName: msg.contactName, timer: null };
+        entry = { texts: [], imageUrl: null, botId: msg.botId, contactId: msg.contactId, conversationId: msg.conversationId, contactName: msg.contactName, commentId: msg.commentId || null, timer: null };
         _pendingFlowRuns.set(sessionId, entry);
     }
     if (msg.text) entry.texts.push(msg.text);
     if (msg.imageUrl && !entry.imageUrl) entry.imageUrl = msg.imageUrl;
     if (msg.contactName) entry.contactName = msg.contactName;
+    if (msg.commentId) entry.commentId = msg.commentId;
     if (entry.timer) clearTimeout(entry.timer);
     entry.timer = setTimeout(() => {
         _pendingFlowRuns.delete(sessionId);
@@ -390,7 +517,8 @@ function scheduleFlowRun(sessionId, msg) {
 }
 
 async function runFlowAndDeliver(sessionId, entry) {
-    const { botId, contactId, conversationId, contactName } = entry;
+    const { botId, contactId, conversationId, contactName, commentId } = entry;
+    const sendOpts = commentId ? { commentId } : {};
     const mergedText = entry.texts.filter(Boolean).join('\n').trim();
     const sinceTime = new Date();
     try { await executeFlowStep({ sessionId, incomingUserMessage: mergedText, incomingImageUrl: entry.imageUrl }); }
@@ -423,20 +551,39 @@ async function runFlowAndDeliver(sessionId, entry) {
                 }
                 const cap = att.caption || om.content;
                 if (cap) {
-                    const zcid = await sendZernioMessage(botId, conversationId, cap);
+                    const zcid = await sendZernioMessage(botId, conversationId, cap, sendOpts);
                     await logDelivery(sessionId, botId, 'zernio', !!zcid, zcid ? null : 'sendZernioMessage не повернув id', { nodeId: m.nodeId || null, text: String(cap).slice(0, 160) });
                 }
             } else if (om.content) {
-                const zid = await sendZernioMessage(botId, conversationId, om.content);
+                const zid = await sendZernioMessage(botId, conversationId, om.content, sendOpts);
                 await logDelivery(sessionId, botId, 'zernio', !!zid, zid ? null : 'sendZernioMessage не повернув id', { nodeId: m.nodeId || null, text: String(om.content).slice(0, 160) });
                 if (zid) await db.message.update({ where: { id: om.id }, data: { metadata: { ...m, zernioMessageId: zid, status: 'sent' } } }).catch(() => {});
             }
         } catch (e) {
             // Фолбек: Meta-фото не пройшло → підпис+URL текстом через Zernio.
             await logDelivery(sessionId, botId, imgUrl ? 'ig_photo' : 'zernio', false, e.message, { nodeId: m.nodeId || null });
-            if (imgUrl) { await sendZernioMessage(botId, conversationId, (att.caption || om.content || '') + '\n' + imgUrl).catch(() => {}); }
+            if (imgUrl) { await sendZernioMessage(botId, conversationId, (att.caption || om.content || '') + '\n' + imgUrl, sendOpts).catch(() => {}); }
             logger.warn('[zernioHandler] доставка: ' + e.message);
         }
+    }
+    // Публічна відповідь на сам коментар — окремо від DM-доставки вище. Нода
+    // n_comment_entry кладе готовий текст (з іменем, для антиспаму) у
+    // context.commentReplyText; тут лише ОДИН раз постимо його в Zernio.
+    if (commentId) {
+        try {
+            const _frc = await db.session.findUnique({ where: { id: sessionId }, select: { context: true } });
+            const _cc2 = (_frc && _frc.context) || {};
+            if (_cc2.commentReplyText && !_cc2.commentReplyPosted) {
+                try {
+                    const _rid = await postZernioCommentReply(botId, commentId, _cc2.commentReplyText, _cc2.commentMediaId);
+                    await logDelivery(sessionId, botId, 'zernio_comment_reply', !!_rid, _rid ? null : 'без id відповіді', { commentId, text: String(_cc2.commentReplyText).slice(0, 160) });
+                } catch (e) {
+                    await logDelivery(sessionId, botId, 'zernio_comment_reply', false, e.message, { commentId });
+                    logger.warn('[zernioHandler] публічна відповідь на коментар не пройшла: ' + e.message);
+                }
+                await db.session.update({ where: { id: sessionId }, data: { context: { ..._cc2, commentReplyPosted: true } } }).catch(() => {});
+            }
+        } catch (e) { logger.warn('[zernioHandler] comment reply block: ' + e.message); }
     }
     try {
         const _fr = await db.session.findUnique({ where: { id: sessionId }, select: { context: true } });
@@ -555,15 +702,8 @@ async function handleSideEvent(botId, event, body) {
         return { ok: true, processed: 1 };
     }
 
-    // ── Коментарі / інші події → рядок-подія ──
-    let content;
-    if (event === 'comment.received') {
-        const c = body.comment || {};
-        const t = c.text || '';
-        content = `💬 Коментар${c.ad ? ' (з реклами)' : ''}${t ? ': ' + t : ''}`;
-    } else {
-        content = EVENT_CONTENT[event] || `ℹ️ ${event}`;
-    }
+    // ── Інші події → рядок-подія (comment.received іде окремим шляхом, handleCommentReceived) ──
+    const content = EVENT_CONTENT[event] || `ℹ️ ${event}`;
     await db.message.create({ data: { sessionId: session.id, role: 'event', content, metadata: { source: 'zernio', eventType: event } } });
     logger.info('[zernioHandler] side event stored', { botId, event, sessionId: session.id });
     return { ok: true, processed: 1 };

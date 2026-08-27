@@ -895,6 +895,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
             return out;
         };
         const _candidates = _extractArticleCandidates(String(incomingUserMessage));
+        let _isDifferentProduct = false;
         if (_candidates.length) {
             const _known = new Set();
             if (ctx.product.supplierArticle) _known.add(String(ctx.product.supplierArticle).toUpperCase());
@@ -904,21 +905,41 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
             (Array.isArray(ctx.product.offers) ? ctx.product.offers : []).forEach((o) => {
                 if (o && o.sku) _known.add(String(o.sku).toUpperCase());
             });
-            const _isDifferentProduct = _candidates.some((c) => !_known.has(c));
-            if (_isDifferentProduct) {
-                delete ctx.product;
-                delete ctx.colorChoice;
-                delete ctx.recommendedSize;
-                delete ctx.sizeInput;
-                delete ctx.sizeOutOfRange;
-                delete ctx.available;
-                delete ctx.orderIntent;
-                const _startNode = flow.nodes.find((n) => n.type === 'start') || flow.nodes[0];
-                if (_startNode) {
-                    runtime.currentNodeId = _startNode.id;
-                    runtime.waitingForUser = false;
-                    runtime.dialogHistory = {};
-                }
+            _isDifferentProduct = _candidates.some((c) => !_known.has(c));
+        }
+        // Аудит 2026-08-27 (питання користувача "чи воронка спочатку зависає, якщо
+        // людина за деякий час/наступного дня кидає новий товар"): підтверджено живим
+        // прогоном — старий/призупинений діалог ЧАСТО не містить артикулу в тексті
+        // взагалі (клієнт просто ПЕРЕСИЛАЄ новий пост/рілс без підпису чи з описовим
+        // текстом типу "хочу такий бомбер"), тож перевірка вище нічого не ловила і
+        // застрягла нода (напр. n_collect з учорашньої адреси) намагалась "консультувати"
+        // по НОВОМУ товару, тримаючи в контексті СТАРИЙ product/currentNode — видима
+        // клієнту відповідь виглядала правдоподібно, але воронка фактично не зрушила з
+        // місця. Тепер додатково звіряємо: чи з'явився НОВИЙ sharedPost/entryAd,
+        // якого не було при визначенні ПОТОЧНОГО ctx.product (стемпиться в n_lookup —
+        // _matchedSharedPostId/_matchedEntryAd). Спрацьовує незалежно від часу, що минув
+        // між повідомленнями — сесія в БД не має TTL і завжди підхоплюється повторно.
+        if (!_isDifferentProduct) {
+            const _newSharedPostId = ctx.sharedPost && ctx.sharedPost.mediaId ? String(ctx.sharedPost.mediaId) : '';
+            const _newEntryAd = String(ctx.entryAd || ctx.entryAdId || '');
+            const _matchedPostId = String(ctx.product._matchedSharedPostId || '');
+            const _matchedEntryAd = String(ctx.product._matchedEntryAd || '');
+            if (_newSharedPostId && _newSharedPostId !== _matchedPostId) _isDifferentProduct = true;
+            else if (_newEntryAd && _newEntryAd !== _matchedEntryAd) _isDifferentProduct = true;
+        }
+        if (_isDifferentProduct) {
+            delete ctx.product;
+            delete ctx.colorChoice;
+            delete ctx.recommendedSize;
+            delete ctx.sizeInput;
+            delete ctx.sizeOutOfRange;
+            delete ctx.available;
+            delete ctx.orderIntent;
+            const _startNode = flow.nodes.find((n) => n.type === 'start') || flow.nodes[0];
+            if (_startNode) {
+                runtime.currentNodeId = _startNode.id;
+                runtime.waitingForUser = false;
+                runtime.dialogHistory = {};
             }
         }
     }

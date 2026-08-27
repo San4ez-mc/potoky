@@ -195,7 +195,15 @@ try{
   // offer-властивості (яка ще й хибно спрацьовувала на "Розмір кейса" в автотоварах).
   var CLOTHING_CATEGORY_IDS=[1,2,4,5,6,8]; // Бомбери,Футболки,Кофти,Куртки,Костюми,Джинси
   var __isClothing = CLOTHING_CATEGORY_IDS.indexOf(found.category_id)>=0;
-  var result={ supplier:__sup, product:{ _source:'keycrm', supplier:__sup, setComponents:__set, isSet:!!__set, setItems:setItems, setList:setItems.map(function(x){return x.name+(x.price?(" — "+x.price+" грн"):"")+" [арт. "+x.article+"]";}).join("; "), _matchKey:mk, _via:via, id:found.id, category_id:found.category_id, name:found.name||'Товар', desc:found.description||'', price:price, currency:found.currency_code||'UAH', photoUrl:img||'', imageUrls:imgs.slice(0,5), colors:colors.join(', '), colorsList:colors, sizes:sizes, offers:offers, upsell:upsell.join('; '), upsellPhotoUrl:__upsellPhoto, upsellPhotoNote:__upsellPhotoNote, isClothing:__isClothing, supplierArticle:__supArticle, footwearNote:__footwearNote, qtyPrices:{ '2':__qty2?Number(__qty2):null, '3':__qty3?Number(__qty3):null, '4':__qty4?Number(__qty4):null }, qtyPromoText:__qtyPromoText, sizeChartUrl:__sizeChartUrl, aiInfo:__aiInfo, sizeChartNote:__sizeChartNote, sizeChartData:__sizeChartData } };
+  // _matchedSharedPostId / _matchedEntryAd — "відбиток" того, ЯКИЙ саме пост/рілс/ad_id
+  // діяв на момент цього визначення товару. Аудит 2026-08-27: генератор перемикання
+  // товару в testSession.js звіряє це з АКТУАЛЬНИМ ctx.sharedPost/entryAd на кожному
+  // наступному повідомленні — якщо клієнт переслав НОВИЙ пост без жодного артикулу в
+  // тексті (типовий кейс "хочу такий бомбер" без коду), це єдиний спосіб відрізнити
+  // "новий товар" від "відповідь на поточне питання воронки".
+  var __matchedSharedPostId=(context.sharedPost&&context.sharedPost.mediaId)?String(context.sharedPost.mediaId):'';
+  var __matchedEntryAd=String(context.entryAd||context.entryAdId||'');
+  var result={ supplier:__sup, product:{ _source:'keycrm', supplier:__sup, setComponents:__set, isSet:!!__set, setItems:setItems, setList:setItems.map(function(x){return x.name+(x.price?(" — "+x.price+" грн"):"")+" [арт. "+x.article+"]";}).join("; "), _matchKey:mk, _via:via, _matchedSharedPostId:__matchedSharedPostId, _matchedEntryAd:__matchedEntryAd, id:found.id, category_id:found.category_id, name:found.name||'Товар', desc:found.description||'', price:price, currency:found.currency_code||'UAH', photoUrl:img||'', imageUrls:imgs.slice(0,5), colors:colors.join(', '), colorsList:colors, sizes:sizes, offers:offers, upsell:upsell.join('; '), upsellPhotoUrl:__upsellPhoto, upsellPhotoNote:__upsellPhotoNote, isClothing:__isClothing, supplierArticle:__supArticle, footwearNote:__footwearNote, qtyPrices:{ '2':__qty2?Number(__qty2):null, '3':__qty3?Number(__qty3):null, '4':__qty4?Number(__qty4):null }, qtyPromoText:__qtyPromoText, sizeChartUrl:__sizeChartUrl, aiInfo:__aiInfo, sizeChartNote:__sizeChartNote, sizeChartData:__sizeChartData } };
   // Колір автопідставляємо ТІЛЬКИ якщо клієнт САМ написав артикул (а не з опису поста):
   if(preColor && preFromUser){ result.colorChoice={color:preColor,_pre:true}; }
   if(preColor) result.product.preColor=preColor;

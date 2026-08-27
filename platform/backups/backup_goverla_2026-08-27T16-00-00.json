@@ -1,0 +1,2557 @@
+{
+  "backupOf": "goverla",
+  "botId": "5bdb3e38-1936-416f-b1f0-8f1125583193",
+  "botSettings": {
+    "testMode": true,
+    "testModeAllowedUsers": [
+      "prytula.katya",
+      "matsukoleksandr",
+      "oleksii_sirazetdinov"
+    ]
+  },
+  "flow": {
+    "nodes": [
+      {
+        "id": "start_1",
+        "data": {
+          "label": "Старт (Instagram)",
+          "trigger": "instagram",
+          "description": "Вхід у воронку — клієнт написав перше повідомлення або поділився постом/рілс з Instagram."
+        },
+        "type": "start",
+        "measured": {
+          "width": 220,
+          "height": 76
+        },
+        "position": {
+          "x": 0,
+          "y": 0
+        }
+      },
+      {
+        "id": "n_route",
+        "data": {
+          "code": "return { entryAd: context.entryAdId || context.postId || context.storyId || (context.lastReferral && context.lastReferral.ref) || '' };",
+          "label": "0. Джерело (ад-id)",
+          "description": "Витягує джерело трафіку (ad_id/postId/storyId/referral) з контексту заходу — далі використає n_lookup."
+        },
+        "type": "js",
+        "measured": {
+          "width": 320,
+          "height": 92
+        },
+        "position": {
+          "x": 0,
+          "y": 200
+        }
+      },
+      {
+        "id": "n_lookup",
+        "data": {
+          "code": "if (context.product && context.product._source === 'keycrm' && String(context.product._matchKey) === String(context.entryAd||context.__lk||'')) return {};\nfunction fallback(){ var cat={}; try{cat=JSON.parse(keys.PRODUCT_CATALOG||'{}')}catch(e){} var p=cat[context.entryAd]; return p ? { product: p } : { product: null, productUnknown: true }; }\nvar token=(keys.KEYCRM_API_TOKEN||'').trim();\nvar base=(keys.KEYCRM_API_BASE||'https://openapi.keycrm.app/v1').replace(/\\/$/,'');\nvar adField=(keys.KEYCRM_AD_FIELD||'CT_1001');\nif(!token||token==='REPLACE_ME') return fallback();\nfunction hdr(){ return {Authorization:'Bearer '+token,Accept:'application/json'}; }\n// Кандидати-артикули: з префіксом (в т.ч. числові), буквено-цифрові (A0188), чисті числові (SKU 10001)\nfunction extractArticles(txt){ if(!txt) return []; var s=String(txt); var out=[]; var m;\n  var re1=/(?:артикул|арт\\.?|art|код|sku|#|№)\\s*[:#№.\\-]?\\s*([A-Za-zА-Яа-яІЇЄҐіїєґ]{0,5}\\d{2,8})/gi; while((m=re1.exec(s))){ out.push(m[1].toUpperCase()); }\n  var re2=/\\b([A-Za-z]\\d{3,6})\\b/g; while((m=re2.exec(s))){ out.push(m[1].toUpperCase()); }\n  var re3=/\\b(\\d{4,8})\\b/g; while((m=re3.exec(s))){ out.push(m[1]); }\n  var seen={},res=[]; for(var i=0;i<out.length;i++){ if(!seen[out[i]]){seen[out[i]]=1;res.push(out[i]);} } return res;\n}\nfunction matchCT(all,k){ if(!k)return null; for(var i=0;i<all.length;i++){ var cf=all[i].custom_fields||[]; var adv=null; for(var j=0;j<cf.length;j++){ if(cf[j]&&cf[j].uuid===adField)adv=cf[j].value; } if(adv!=null && String(adv).split(/[\\s,;]+/).indexOf(String(k))>=0) return all[i]; } return null; }\nfunction matchArticle(all,art){ if(!art)return null; var A=String(art).toUpperCase().trim(); for(var i=0;i<all.length;i++){ var p=all[i]; if(p.sku&&String(p.sku).toUpperCase().trim()===A)return p; var cf=p.custom_fields||[]; for(var j=0;j<cf.length;j++){ var v=cf[j]&&cf[j].value; if(v==null)continue; if(String(v).toUpperCase().split(/[\\s,;]+/).indexOf(A)>=0)return p; } } return null; }\ntry{\n  var all=[];\n  for(var page=1;page<=10;page++){ var r=await fetch(base+'/products?include=customFields&limit=50&page='+page,{headers:hdr()}); if(!r.ok)break; var d=await r.json(); var items=(d&&d.data)||[]; for(var i=0;i<items.length;i++)all.push(items[i]); if(items.length<50)break; }\n  var found=null, via='', mk='', preColor='', preSize='', preFromUser=false;\n\n  // ПРІОРИТЕТ 1: ad_id / post_id (клік із реклами)\n  if(context.entryAd){ found=matchCT(all,String(context.entryAd)); if(found){ via='ad_id'; mk=String(context.entryAd); } }\n\n  // ПРІОРИТЕТ 2: АРТИКУЛ (з опису поста + з тексту клієнта + adTitle)\n  if(!found){\n    var fromUser=extractArticles(context.lastUserMessage||input||'');\n    var cands=fromUser.concat(extractArticles((context.sharedPost&&context.sharedPost.caption)||'')).concat(extractArticles(context.adTitle||''));\n    var seen={},cc=[]; for(var ci=0;ci<cands.length;ci++){ if(!seen[cands[ci]]){seen[cands[ci]]=1;cc.push(cands[ci]);} } cc=cc.slice(0,8);\n    // 2a) offer-SKU → товар + колір/розмір\n    for(var a=0;a<cc.length&&!found;a++){\n      try{ var orq=await fetch(base+'/offers?filter[sku]='+encodeURIComponent(cc[a])+'&limit=1',{headers:hdr()});\n        if(orq.ok){ var oj=await orq.json(); var of=(oj.data||[])[0];\n          if(of&&of.product_id){ var pr=null; for(var pi=0;pi<all.length;pi++){ if(String(all[pi].id)===String(of.product_id)){pr=all[pi];break;} }\n            if(pr){ found=pr; via='offer:'+cc[a]; mk='art_'+cc[a]; preFromUser=(fromUser.indexOf(cc[a])>=0); preFromUser=(fromUser.indexOf(cc[a])>=0); preFromUser=(fromUser.indexOf(cc[a])>=0); preFromUser=(fromUser.indexOf(cc[a])>=0); preFromUser=(fromUser.indexOf(cc[a])>=0); preFromUser=(fromUser.indexOf(cc[a])>=0); preFromUser=(fromUser.indexOf(cc[a])>=0); preFromUser=(fromUser.indexOf(cc[a])>=0);\n              var ops=of.properties||[]; for(var oi=0;oi<ops.length;oi++){ var onm=String(ops[oi].name||'').toLowerCase(); if(onm.indexOf('колір')>=0)preColor=ops[oi].value; if(onm.indexOf('розмір')>=0)preSize=ops[oi].value; } } } } }catch(e){}\n    }\n    // 2b) артикул на рівні товару (sku / CT_1001 / будь-яке кастом-поле)\n    if(!found){ for(var b=0;b<cc.length&&!found;b++){ var pm=matchArticle(all,cc[b]); if(pm){ found=pm; via='article:'+cc[b]; mk='art_'+cc[b]; } } }\n  }\n\n  // ПРІОРИТЕТ 3: media_id рілса — опційно (поле в CRM); наразі пропускаємо\n\n  // ПРІОРІТЕТ 2.9: клієнт кинув СКРІН товару замість поста/рілс — ШІ-візія (Gemini)\n  // проти каталогу KeyCRM. На цьому кроці ще немає orderRef/оплати, тож будь-яке\n  // вхідне фото тут — майже напевно спроба показати товар, не квитанція.\n  if(!found && context.lastUserImageUrl && keys.GEMINI_API_KEY){\n    function imgOk(u){ try{ var h=new URL(u).hostname.toLowerCase(); if(h==='api.telegram.org') return true; return ['cdninstagram.com','fbcdn.net','fbsbx.com','lookaside.fbsbx.com'].some(function(d){return h===d||h.endsWith('.'+d);}); }catch(e){return false;} }\n    if(imgOk(context.lastUserImageUrl)){\n      var acp=new AbortController(); var top=setTimeout(function(){try{acp.abort();}catch(e){}},10000);\n      try{\n        var irp=await fetch(context.lastUserImageUrl,{signal:acp.signal});\n        var abp=await irp.arrayBuffer();\n        if(abp.byteLength<=8000000){\n          var b64p=Buffer.from(abp).toString('base64');\n          // Аудит 2026-08-27: Telegram file-сервер ЗАВЖДИ віддає photos з content-type\n          // application/octet-stream (навіть якщо байти — реальний JPEG). Довіра цьому\n          // заголовку напряму зламала ВСЕ розпізнавання скрінів через Telegram-канал:\n          // Gemini повертає HTTP 400 \"Unsupported MIME type: application/octet-stream\" —\n          // мовчки (без throw), tp лишається порожнім, found=null, клієнт завжди\n          // потрапляє у \"не визначив товар\". Підтверджено прямим викликом Gemini API.\n          var mimepRaw=(irp.headers.get('content-type')||'').split(';')[0];\n          var mimep=(!mimepRaw || mimepRaw==='application/octet-stream') ? 'image/jpeg' : mimepRaw;\n          var catList=all.map(function(p,i){return i+': '+(p.name||'');}).join('\\n').slice(0,6000);\n          var promptp='Це скріншот, який клієнт надіслав замість посту/рілс — ймовірно, товар з нашого магазину. Опиши коротко, що на фото (тип товару, колір, помітний текст/бренд). Потім знайди НАЙБЛИЖЧИЙ відповідник у каталозі нижче (формат: індекс: назва). Якщо жодного релевантного немає — bestMatchIndex null. Поверни ЛИШЕ JSON {\"description\":\"...\",\"bestMatchIndex\":число_або_null}.\\nКаталог:\\n'+catList;\n          var grp=await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key='+encodeURIComponent(keys.GEMINI_API_KEY),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:promptp},{inline_data:{mime_type:mimep,data:b64p}}]}]})});\n          var gjp=await grp.json();\n          var tp=((((gjp.candidates||[])[0]||{}).content||{}).parts||[{}])[0].text||'';\n          var mmp=tp.match(/\\{[\\s\\S]*\\}/);\n          if(mmp){ var fp=JSON.parse(mmp[0]); if(fp.bestMatchIndex!=null && all[fp.bestMatchIndex]){ found=all[fp.bestMatchIndex]; via='photo'; mk='photo_'+fp.bestMatchIndex; } }\n        }\n      }catch(e){} finally{ clearTimeout(top); }\n    }\n  }\n\n  // ОСТАННІЙ РЕЗЕРВ: DEFAULT_AD_ID (зараз порожній)\n  if(!found){ var dk=(keys.DEFAULT_AD_ID||'').trim(); if(dk){ found=matchCT(all,dk); if(found){ via='default'; mk='def_'+dk; } } }\n\n  if(!found) return fallback();\n\n  var sizes=[],colors=[],offers=[];\n  var ro=await fetch(base+'/offers?filter[product_id]='+found.id+'&limit=50',{headers:hdr()});\n  if(ro.ok){ var od2=await ro.json(); var os=(od2&&od2.data)||[]; for(var k=0;k<os.length;k++){ var pr2=os[k].properties||[]; offers.push({sku:os[k].sku,price:os[k].price,quantity:os[k].quantity,properties:pr2}); for(var mm=0;mm<pr2.length;mm++){ var nm=String(pr2[mm].name||'').toLowerCase(); if(nm.indexOf('розмір')>=0&&sizes.indexOf(pr2[mm].value)<0)sizes.push(pr2[mm].value); if(nm.indexOf('колір')>=0&&colors.indexOf(pr2[mm].value)<0)colors.push(pr2[mm].value); } } }\n  var upsell=[]; function upname(prod){ var up=(prod.price!=null?prod.price:prod.min_price); return prod.name+(up?(' — '+up+' грн'):''); }\n  // findByToken: id товару, sku товару, CT_1001, а якщо нічого не збіглось — токен може\n  // бути SKU КОНКРЕТНОГО ОФЕРА (кольору/розміру), а не товару в цілому (реальний кейс:\n  // CT_1002 заповнили значеннями типу \"L0056-1, L0056-2\" — це offer-sku) — той самий\n  // прийом пошуку офера, що й у Пріоритеті 2a вище.\n  async function findByToken(tok){\n    tok=String(tok).trim(); if(!tok) return null;\n    for(var i=0;i<all.length;i++){\n      var pp=all[i];\n      if(String(pp.id)===tok) return pp;\n      if(pp.sku && String(pp.sku).toUpperCase().trim()===tok.toUpperCase()) return pp;\n      var cf=pp.custom_fields||[];\n      for(var j=0;j<cf.length;j++){ if(cf[j]&&cf[j].uuid==='CT_1001'&&String(cf[j].value||'').split(/[\\s,;]+/).indexOf(tok)>=0) return pp; }\n    }\n    try{\n      var orqU=await fetch(base+'/offers?filter[sku]='+encodeURIComponent(tok)+'&limit=1',{headers:hdr()});\n      if(orqU.ok){ var ojU=await orqU.json(); var ofU=(ojU.data||[])[0];\n        if(ofU&&ofU.product_id){ for(var pi2=0;pi2<all.length;pi2++){ if(String(all[pi2].id)===String(ofU.product_id)) return all[pi2]; } }\n      }\n    }catch(e){}\n    return null;\n  }\n  var scf=(found.custom_fields||[]).find(function(c){return c&&/супутн|допродаж/i.test(c.name||'');});\n  // __seenUp — дедуп за id товару: CT_1002 часто містить кілька offer-sku ОДНОГО й\n  // того ж товару (різні кольори/розміри, напр. \"L0056-1, L0056-2\" — та сама\n  // футболка), і без дедупу findByToken резолвив кожен токен окремо, показуючи\n  // клієнту той самий апсейл двічі (аудит 2026-08-26, goverla_shop/Притула).\n  // __upsellPhoto — фото ПЕРШОГО апсейл-товару (аудит 2026-08-26: клієнт попросив фото\n  // футболки-допродажу, а бот чесно сказав \"немає\", хоча фото Є в каталозі — просто\n  // apsell раніше ніс лише назву+ціну, без photoUrl. wantsUpsellPhoto в діалог-нодах\n  // (рушій, testSession.js) читає САМЕ це поле).\n  var __upsellPhoto='';\n  if(scf&&scf.value){ var stoks=String(scf.value).split(/[\\s,;]+/); var __seenUp={}; for(var t=0;t<stoks.length&&upsell.length<3;t++){ var pp2=await findByToken(stoks[t]); if(pp2&&pp2.id!==found.id&&!__seenUp[pp2.id]){ __seenUp[pp2.id]=1; upsell.push(upname(pp2)); if(!__upsellPhoto){ __upsellPhoto = pp2.thumbnail_url || (((pp2.attachments_data||[])[0])&&((typeof pp2.attachments_data[0]==='string')?pp2.attachments_data[0]:(pp2.attachments_data[0].url||pp2.attachments_data[0].src))) || ''; } } } }\n  var __upsellPhotoNote = __upsellPhoto\n    ? 'Фото товару(-ів) з допродажу Є — якщо клієнт попросить показати, скажи що зараз надішлеш.'\n    : 'Фото товару(-ів) з допродажу поки НЕМА під рукою — якщо клієнт попросить, чесно скажи що зараз немає, запропонуй подивитись каталог.';\n  var imgs=[]; if(found.thumbnail_url)imgs.push(found.thumbnail_url); var adx=found.attachments_data||[]; for(var x=0;x<adx.length;x++){ var uu=(typeof adx[x]==='string')?adx[x]:(adx[x]&&(adx[x].url||adx[x].src)); if(uu&&imgs.indexOf(uu)<0)imgs.push(uu); } var img=imgs[0]||'';\n  var price=(found.price!=null?found.price:found.min_price);\n  function cfVal(u){ var f=(found.custom_fields||[]).find(function(c){return c&&c.uuid===u;}); return f?String(f.value||'').trim():''; }\n  var __sup=cfVal('CT_1003');\n  var __set=cfVal('CT_1005');\n  // CT_1006 — явний артикул постачальника (якщо один артикул на весь товар, не по кольору\n  // окремо, як у CRM-полі sku/article) — коли заповнено, supplier-коди довіряють ЙОМУ напряму,\n  // без фолбек-спроб. CT_1007/1008/1009 — акційні ціни за 2/3/4 шт (якщо задані).\n  var __supArticle=cfVal('CT_1006');\n  var __qty2=cfVal('CT_1007'), __qty3=cfVal('CT_1008'), __qty4=cfVal('CT_1009');\n  // CT_1010 — посилання на фото розмірної сітки (окремо від фото товару, не показується\n  // клієнту напряму — тільки якщо він явно попросить, через окрему sendPhoto-ноду).\n  // CT_1011 — нотатки для ШІ (маломірність/великомірність/нюанси посадки тощо) — ЛИШЕ\n  // в промпт консультанта, ніколи не потрапляє в текст, який бачить клієнт дослівно.\n  var __sizeChartUrl=cfVal('CT_1010');\n  var __aiInfo=cfVal('CT_1011');\n  // CT_1012 — точні виміри ЦЬОГО товару по кожному розміру (обхват грудей, довжина\n  // рукава, довжина стопи для взуття тощо), розібрані вручну з фото/опису. Формат:\n  // {\"title\",\"unit\",\"sizes\":[\"S\",\"M\",...],\"measurements\":{\"Обхват грудей\":[110,116,...]}}\n  // На відміну від CT_1010 (лише посилання на картинку) — це структуровані числа,\n  // якими підбір розміру (n_calc) і консультант (n_size) можуть РЕАЛЬНО оперувати,\n  // а не просто \"сітка є/нема\". Якщо порожньо/битий JSON — просто немає точних даних,\n  // підбір далі працює по універсальній SIZE_CHART (зріст/вага), як і раніше.\n  var __sizeChartDataRaw=cfVal('CT_1012');\n  var __sizeChartData=null;\n  if(__sizeChartDataRaw){ try{ __sizeChartData=JSON.parse(__sizeChartDataRaw); }catch(e){ __sizeChartData=null; } }\n  // Аудит 2026-08-27 (лофери 5931-5935): CT_1012 буває заповнене БЕЗ CT_1010-картинки\n  // (напр. взуття — розмір/см узято текстом з опису постачальника, фото сітки нема).\n  // Раніше __sizeChartNote дивився ЛИШЕ на CT_1010 → консультант чесно, але ПОМИЛКОВО\n  // казав \"сітки нема\", хоча точні цифри (CT_1012) БУЛИ. Тепер три стани:\n  // є картинка → покажемо; нема картинки, але є точні цифри → назвемо словами, фото не обіцяємо;\n  // нема нічого → чесно \"нема\", як і раніше.\n  var __sizeChartNote=__sizeChartUrl\n    ? 'Розмірна сітка для цього товару Є — якщо клієнт попросить, скажи що зараз покажеш.'\n    : (__sizeChartData\n      ? 'Картинки розмірної сітки НЕМА, але є точні цифри по кожному розміру (нижче, поле 7) — якщо клієнт попросить сітку, НЕ обіцяй фото, а назви ці цифри словами.'\n      : 'Розмірної сітки для цього товару ПОКИ НЕМА в системі — якщо клієнт попросить, чесно скажи, що зараз немає під рукою, і запропонуй підібрати розмір за зростом і вагою.');\n  var __qtyPromoParts=[];\n  if(__qty2) __qtyPromoParts.push('2 шт — '+Number(__qty2)+' грн');\n  if(__qty3) __qtyPromoParts.push('3 шт — '+Number(__qty3)+' грн');\n  if(__qty4) __qtyPromoParts.push('4 шт — '+Number(__qty4)+' грн');\n  var __qtyPromoText=__qtyPromoParts.length ? ('Акція за кількість: '+__qtyPromoParts.join(', ')+'.') : '';\n  // Набір: розгортаємо артикули компонентів у реальні товари (назва/ціна/постачальник).\n  // CT_1005 буває заповнене АБО короткими токенами через пробіл/кому (артикули/id) — тоді\n  // розбивка по [,;\\s]+ ОК — АБО повними НАЗВАМИ товарів через кому (\"Кофта Ангора, Джинси\")\n  // — тоді розбивка по пробілу ЛАМАЄ багатослівні назви навпіл. Евристика: якщо в рядку є\n  // кома/крапка з комою — довіряємо ЛИШЕ їй як роздільнику (назви це витримують, короткі\n  // токени через пробіл без коми — рідкісний старий формат, і так далі підтримується нижче\n  // через збіг з sku/custom-field, не лише name).\n  var setItems=[];\n  if(__set){\n    var hasDelim=/[,;]/.test(__set);\n    var toks=hasDelim\n      ? String(__set).split(/[,;]+/).map(function(t){return String(t).trim();}).filter(Boolean)\n      : String(__set).split(/[,;\\s]+/).map(function(t){return String(t).trim();}).filter(Boolean);\n    for(var si=0; si<toks.length && setItems.length<10; si++){\n      var tk=toks[si].toUpperCase();\n      var cp=null;\n      for(var pi=0; pi<all.length && !cp; pi++){\n        var pp=all[pi];\n        if(String(pp.id)===String(found.id)) continue;\n        if(String(pp.id)===toks[si]) { cp=pp; break; }\n        if(pp.sku && String(pp.sku).toUpperCase().trim()===tk) { cp=pp; break; }\n        if(pp.name && String(pp.name).toUpperCase().trim()===tk) { cp=pp; break; }\n        var pcf=pp.custom_fields||[];\n        for(var cj=0; cj<pcf.length; cj++){\n          var f=pcf[cj]; if(!f) continue;\n          if(f.uuid==='CT_1002'||f.uuid==='CT_1005'||f.uuid==='CT_1003') continue;\n          var vv=f.value; if(vv==null) continue;\n          if(String(vv).toUpperCase().split(/[,;\\s]+/).map(function(z){return z.trim();}).indexOf(tk)>=0){ cp=pp; break; }\n        }\n      }\n      if(!cp) continue;\n      var csup=(cp.custom_fields||[]).filter(function(c){return c&&c.uuid==='CT_1003';})[0];\n      var cSupArt=(cp.custom_fields||[]).filter(function(c){return c&&c.uuid==='CT_1006';})[0];\n      setItems.push({ article:toks[si], id:cp.id, name:cp.name||'', price:(cp.price!=null?cp.price:cp.min_price), supplier:csup?String(csup.value||'').trim():'', supplierArticle:cSupArt?String(cSupArt.value||'').trim():'' });\n    }\n  }\n  var __footwearNote = (found.category_id === 7) ? '\\n\\n👟 Важливо: взуття відправляється окремою посилкою з іншого міста (не разом з одягом) — якщо у вас є ще одне замовлення одягу, воно приїде окремо.' : '';\n  // isClothing КАТЕГОРІЄЮ, не лише наявністю offer-властивості \"Розмір\" (аудит 2026-08-23\n  // виявив: майже всі товари одягу мають в офферах ЛИШЕ \"Колір\", без \"Розмір\" взагалі —\n  // sizes.length>0 було завжди false → n_is_clothing завжди false → підбір розміру НІКОЛИ\n  // не запускався по всьому каталогу. Категорія — надійніший сигнал, ніж рядок з назви\n  // offer-властивості (яка ще й хибно спрацьовувала на \"Розмір кейса\" в автотоварах).\n  var CLOTHING_CATEGORY_IDS=[1,2,4,5,6,8]; // Бомбери,Футболки,Кофти,Куртки,Костюми,Джинси\n  var __isClothing = CLOTHING_CATEGORY_IDS.indexOf(found.category_id)>=0;\n  // _matchedSharedPostId / _matchedEntryAd — \"відбиток\" того, ЯКИЙ саме пост/рілс/ad_id\n  // діяв на момент цього визначення товару. Аудит 2026-08-27: генератор перемикання\n  // товару в testSession.js звіряє це з АКТУАЛЬНИМ ctx.sharedPost/entryAd на кожному\n  // наступному повідомленні — якщо клієнт переслав НОВИЙ пост без жодного артикулу в\n  // тексті (типовий кейс \"хочу такий бомбер\" без коду), це єдиний спосіб відрізнити\n  // \"новий товар\" від \"відповідь на поточне питання воронки\".\n  var __matchedSharedPostId=(context.sharedPost&&context.sharedPost.mediaId)?String(context.sharedPost.mediaId):'';\n  var __matchedEntryAd=String(context.entryAd||context.entryAdId||'');\n  var result={ supplier:__sup, product:{ _source:'keycrm', supplier:__sup, setComponents:__set, isSet:!!__set, setItems:setItems, setList:setItems.map(function(x){return x.name+(x.price?(\" — \"+x.price+\" грн\"):\"\")+\" [арт. \"+x.article+\"]\";}).join(\"; \"), _matchKey:mk, _via:via, _matchedSharedPostId:__matchedSharedPostId, _matchedEntryAd:__matchedEntryAd, id:found.id, category_id:found.category_id, name:found.name||'Товар', desc:found.description||'', price:price, currency:found.currency_code||'UAH', photoUrl:img||'', imageUrls:imgs.slice(0,5), colors:colors.join(', '), colorsList:colors, sizes:sizes, offers:offers, upsell:upsell.join('; '), upsellPhotoUrl:__upsellPhoto, upsellPhotoNote:__upsellPhotoNote, isClothing:__isClothing, supplierArticle:__supArticle, footwearNote:__footwearNote, qtyPrices:{ '2':__qty2?Number(__qty2):null, '3':__qty3?Number(__qty3):null, '4':__qty4?Number(__qty4):null }, qtyPromoText:__qtyPromoText, sizeChartUrl:__sizeChartUrl, aiInfo:__aiInfo, sizeChartNote:__sizeChartNote, sizeChartData:__sizeChartData } };\n  // Колір автопідставляємо ТІЛЬКИ якщо клієнт САМ написав артикул (а не з опису поста):\n  if(preColor && preFromUser){ result.colorChoice={color:preColor,_pre:true}; }\n  if(preColor) result.product.preColor=preColor;\n  if(preSize){ result.product.preSize=preSize; }\n  return result;\n}catch(e){ return fallback(); }",
+          "label": "1. Товар по ad-id (KeyCRM)",
+          "description": "Головний матчер товару в KeyCRM: пріоритет ad_id(CT_1001) → артикул з опису поста АБО з тексту клієнта → offer-SKU (дає товар+колір разом). Розгортає CT_1005 (склад набору) у setItems."
+        },
+        "type": "js",
+        "measured": {
+          "width": 320,
+          "height": 92
+        },
+        "position": {
+          "x": 0,
+          "y": 800
+        }
+      },
+      {
+        "id": "n_photo",
+        "data": {
+          "label": "1. Фото товару",
+          "caption": "{{context.product.name}}",
+          "photoVar": "product.photoUrl",
+          "description": "Відправляє фото товару окремим повідомленням (без плейсхолдера \"Фото\" — тільки підпис або нічого)."
+        },
+        "type": "sendPhoto",
+        "dragging": false,
+        "measured": {
+          "width": 220,
+          "height": 92
+        },
+        "position": {
+          "x": 720,
+          "y": 1400
+        },
+        "selected": false
+      },
+      {
+        "id": "n_welcome",
+        "data": {
+          "text": "Вітаємо у {{env.SHOP_TAG}}! 🙌 Дуже раді, що завітали 💛\nОсь ваш товар: {{context.product.name}} — лише {{context.product.price}} грн 🔥\n{{context.product.desc}}",
+          "label": "1. Вітання + презентація",
+          "variants": [
+            "Вітаємо у {{env.SHOP_TAG}}! 🙌 Дуже раді, що завітали 💛\nОсь ваш товар: {{context.product.name}} — лише {{context.product.price}} грн 🔥\n{{context.product.desc}}",
+            "Раді вітати у {{env.SHOP_TAG}}! 💛 Ви саме там, де треба: {{context.product.name}} — лише {{context.product.price}} грн 🔥\n{{context.product.desc}}",
+            "Вітаємо! 🙌 {{env.SHOP_TAG}} на звʼязку. Ваш товар: {{context.product.name}} — усього {{context.product.price}} грн 🔥\n{{context.product.desc}}",
+            "Дякуємо, що завітали до {{env.SHOP_TAG}}! 💛 Ось що вас зацікавило: {{context.product.name}} — {{context.product.price}} грн 🔥\n{{context.product.desc}}",
+            "{{env.SHOP_TAG}} вітає! 🙌 Знайшли для вас: {{context.product.name}} — лише {{context.product.price}} грн 🔥\n{{context.product.desc}}"
+          ],
+          "description": "Привітання + базова презентація товару (назва, ціна, опис) з даних, знайдених n_lookup."
+        },
+        "type": "message",
+        "measured": {
+          "width": 320,
+          "height": 108
+        },
+        "position": {
+          "x": 1080,
+          "y": 1400
+        }
+      },
+      {
+        "id": "n_size",
+        "data": {
+          "mode": "dialog",
+          "label": "2. Консультант + збір зросту/ваги",
+          "useKb": true,
+          "outputVar": "sizeInput",
+          "connectorId": "2ec53ba5-144e-463b-9758-c217c4a69b0e",
+          "description": "Консультант питає зріст і вагу клієнта для підбору розміру одягу.",
+          "temperature": 0.3,
+          "systemPrompt": "Ти — {{env.PERSONA_NAME}}, жива тепла продавчиня-консультантка {{env.SHOP_TAG}}. Українською, з турботою, доречні емодзі.\nТОВАР: {{context.product.name}} — {{context.product.price}} грн. {{context.product.desc}}. Кольори: {{context.product.colors}}.\nВАЖЛИВІ НЮАНСИ ЦЬОГО ТОВАРУ (лише для тебе, НІКОЛИ не цитуй клієнту дослівно як список — вплети природно, якщо доречно): {{context.product.aiInfo}}\nВАЖЛИВО: клієнта вже привітали і презентували товар — НЕ вітайся повторно і не дублюй презентацію. Одразу по суті.\nЦІЛЬ кроку: отримати ЗРІСТ (см) і ВАГУ (кг), щоб підібрати розмір.\nПРАВИЛА:\n1. Клієнт може написати як завгодно: «181 71», «зріст 181 вага 71», «мій ріст 181, 71 кг», «71кг 181см», «180/70». САМ визнач де зріст (150–210 см), де вага (40–160 кг).\n2. Якщо чогось бракує — тепло попроси саме це (напр.: «Підкажіть, будь ласка, ще вагу 🙂»). Пиши живо, не сухо.\n3. На питання про матеріал/ціну/доставку/колір — коротко відповідай з даних вище, тоді м’яко повертай до зросту/ваги.\n4. КОЛИ Є І ЗРІСТ, І ВАГА — поверни РІВНО один JSON у json_output: {\"height\": <см>, \"weight\": <кг>} і БІЛЬШЕ НІЧОГО (жодного тексту, НЕ називай і НЕ вгадуй розмір — його порахує система далі). Якщо клієнт сам наполіг на конкретному розмірі — додай \"clothingSize\".\n5b. Якщо клієнт ОДРАЗУ назвав готовий розмір (S/M/L/XL/XXL) БЕЗ зросту й ваги — НЕ приймай одразу: у різних моделей різна посадка (є маломірні), тому ввічливо все одно попроси зріст і вагу (напр. «У нас деякі моделі маломірять, тому підкажіть, будь ласка, ще зріст і вагу — так точно не помилимось із розміром 🙂»). ЛИШЕ якщо клієнт після цього прохання все одно наполягає і не називає зріст/вагу (повторює розмір або просить \"просто дайте [розмір]\") — тоді поверни РІВНО {\"clothingSize\":\"<РОЗМІР>\"} і більше нічого.\n6. Якщо клієнт просить розмірну сітку/таблицю розмірів (\"скиньте сітку\", \"є розмірна таблиця?\") — {{context.product.sizeChartNote}} Якщо сітка Є і ти обіцяєш показати — обов'язково додай у json_output поле \"wantsSizeChart\":true (можна разом з height/weight/clothingSize в тому самому json_output). Якщо сітки НЕМА — просто чесно скажи це текстом, wantsSizeChart НЕ додавай.\n7. Точні виміри цього товару по розмірах (якщо є): {{context.product.sizeChartData}} — якщо клієнт питає конкретну цифру (\"який обхват грудей у L?\", \"яка довжина рукава?\") — відповідай РІВНО з цих даних, не вигадуй і не округлюй на око. Якщо тут порожньо/null — чесно скажи, що точних цифр по цій моделі поки нема, орієнтуйся на зріст/вагу.\n8. Якщо клієнт замість зросту й ваги сам ДОБРОВІЛЬНО назвав ТОЧНИЙ обхват грудей (\"обхват грудей 104\", \"груди 104 см\") — це сильніший сигнал, ніж зріст/вага: додай у json_output поле \"chest\": <см> (можна разом з height/weight, якщо він і їх назвав). НЕ питай обхват грудей сам — тільки якщо клієнт озвучив його першим.\nНе вигадуй товарів/кольорів, яких нема вище.",
+          "exitCondition": "json_output"
+        },
+        "type": "claude",
+        "dragging": false,
+        "measured": {
+          "width": 320,
+          "height": 116
+        },
+        "position": {
+          "x": 1440,
+          "y": 2200
+        },
+        "selected": false
+      },
+      {
+        "id": "n_calc",
+        "data": {
+          "code": "// Аудит 2026-08-27: якщо клієнт САМ назвав точний обхват грудей (не зріст/вагу) —\n// звіряємо НАПРЯМУ з реальними вимірами ЦЬОГО товару (CT_1012, sizeChartData), а не\n// вгадуємо конверсію зріст/вага→обхват (штучна формула дала б хибну точність).\n// Спрацьовує ЛИШЕ коли клієнт явно дав вимір — інакше (98% випадків, зріст+вага)\n// підбір іде як і раніше по універсальній SIZE_CHART нижче, без змін.\nvar s0 = context.sizeInput || {};\nvar chestVal = Number(s0.chest) || 0;\nvar sc = context.product && context.product.sizeChartData;\nif (chestVal > 0 && sc && Array.isArray(sc.sizes) && sc.measurements) {\n  var chestKey = Object.keys(sc.measurements).find(function(k){ return /груд/i.test(k); });\n  if (chestKey && Array.isArray(sc.measurements[chestKey]) && sc.measurements[chestKey].length === sc.sizes.length) {\n    var arr = sc.measurements[chestKey];\n    var bestIdx = 0, bestDiff = Infinity;\n    for (var ci = 0; ci < arr.length; ci++) {\n      var d = Math.abs(Number(arr[ci]) - chestVal);\n      if (d < bestDiff) { bestDiff = d; bestIdx = ci; }\n    }\n    var exactAvail = (context.product && context.product.sizes && context.product.sizes.length) ? context.product.sizes.slice() : [];\n    var exactSize = sc.sizes[bestIdx];\n    if (exactSize && (!exactAvail.length || exactAvail.indexOf(exactSize) >= 0)) {\n      return { recommendedSize: exactSize, sizeOutOfRange: false, sizeMatchedBy: 'exact_measurement' };\n    }\n  }\n}\n\nvar s = context.sizeInput || {};\nvar w = Number(s.weight) || 0, h = Number(s.height) || 0;\nvar order = ['XS','S','M','L','XL','XXL','XXXL','2XL','3XL','4XL'];\nvar avail = (context.product && context.product.sizes && context.product.sizes.length) ? context.product.sizes.slice() : ['S','M','L','XL'];\nvar chart = {};\ntry { chart = JSON.parse(keys.SIZE_CHART || '{}'); } catch (e) {}\nfunction inRange(v, r){ return r && v >= Number(r[0]) && v <= Number(r[1]); }\nfunction pick(v, dim){ if(!v) return null; for(var kk in chart){ if(inRange(v, chart[kk] && chart[kk][dim])) return kk; } return null; }\n// Межі сітки: якщо клієнт сильно поза ними — не вгадуємо, кличемо менеджера.\nvar hMin=1e9,hMax=-1e9,wMin=1e9,wMax=-1e9;\nfor (var k in chart){ var c=chart[k]||{}; if(c.height){ hMin=Math.min(hMin,Number(c.height[0])); hMax=Math.max(hMax,Number(c.height[1])); } if(c.weight){ wMin=Math.min(wMin,Number(c.weight[0])); wMax=Math.max(wMax,Number(c.weight[1])); } }\nvar TOL_H=5, TOL_W=8;\nvar oorH = h > 0 && isFinite(hMin) && (h < hMin - TOL_H || h > hMax + TOL_H);\nvar oorW = w > 0 && isFinite(wMin) && (w < wMin - TOL_W || w > wMax + TOL_W);\nvar byW = pick(w, 'weight'), byH = pick(h, 'height');\nvar size = null;\nif (byW && byH) { size = order.indexOf(byW) >= order.indexOf(byH) ? byW : byH; }\nelse { size = byW || byH; }\nif (!size && s.clothingSize) size = String(s.clothingSize).toUpperCase().trim();\nif ((oorH || oorW) && !s.clothingSize) {\n  return { sizeOutOfRange: true, sizeOorReason: (oorH?('зріст '+h+' см поза сіткою ('+hMin+'-'+hMax+')'):'') + (oorH&&oorW?'; ':'') + (oorW?('вага '+w+' кг поза сіткою ('+wMin+'-'+wMax+')'):''), recommendedSize: size || '' };\n}\nif (!size) size = 'M';\nif (avail.indexOf(size) < 0 && avail.length) {\n  var idx = order.indexOf(size), best = avail[0], bestd = 999;\n  for (var i = 0; i < avail.length; i++){ var dd = Math.abs(order.indexOf(avail[i]) - idx); if (dd < bestd){ bestd = dd; best = avail[i]; } }\n  size = best;\n}\nreturn { recommendedSize: size, sizeOutOfRange: false };",
+          "label": "3. Розмір за сіткою (SIZE_CHART)",
+          "description": "Рахує рекомендований розмір за таблицею SIZE_CHART (зріст/вага → S/M/L/...), перевіряє чи параметри виходять за межі сітки."
+        },
+        "type": "js",
+        "measured": {
+          "width": 320,
+          "height": 92
+        },
+        "position": {
+          "x": 1440,
+          "y": 2600
+        }
+      },
+      {
+        "id": "n_size_reply",
+        "data": {
+          "text": "Дякую! 🙌 За вашими параметрами ідеально підійде розмір {{context.recommendedSize}} 📏 — сяде якраз, перевірено 👌",
+          "label": "4. Рекомендований розмір",
+          "variants": [
+            "Дякую! 🙌 За вашими параметрами ідеально підійде розмір {{context.recommendedSize}} 📏 — сяде якраз, перевірено 👌",
+            "Супер, дякую! 🙌 Вам ідеально підійде розмір {{context.recommendedSize}} 📏 — перевірено, сяде як треба 👌",
+            "Дякую за параметри! За ними найкраще підійде розмір {{context.recommendedSize}} 📏 — сяде чудово 👌",
+            "Записала! 🙌 Ваш розмір — {{context.recommendedSize}} 📏, за такими параметрами сяде ідеально 👌",
+            "Дякую 🙌 За вашими даними рекомендую розмір {{context.recommendedSize}} 📏 — впевнена, сяде як влитий 👌"
+          ],
+          "description": "Одне повідомлення з рекомендованим розміром (не називає розмір напряму в n_calc — тільки тут, щоб не дублювати)."
+        },
+        "type": "message",
+        "dragging": false,
+        "measured": {
+          "width": 320,
+          "height": 108
+        },
+        "position": {
+          "x": 1440,
+          "y": 3000
+        },
+        "selected": false
+      },
+      {
+        "id": "n_color",
+        "data": {
+          "mode": "dialog",
+          "label": "5. Консультант + вибір кольору",
+          "useKb": true,
+          "outputVar": "colorChoice",
+          "useCatalog": true,
+          "connectorId": "2ec53ba5-144e-463b-9758-c217c4a69b0e",
+          "description": "Діалог вибору кольору. Відповідає на побічні питання (ціна/склад/матеріал) з даних товару. Handoff тільки на явний запит людини або 3 незрозумілі відповіді поспіль.",
+          "temperature": 0.3,
+          "systemPrompt": "Ти — {{env.PERSONA_NAME}}, жива тепла продавчиня-консультантка {{env.SHOP_TAG}}. Товар: {{context.product.name}} ({{context.product.desc}}), ціна {{context.product.price}} грн.\nВАЖЛИВІ НЮАНСИ ЦЬОГО ТОВАРУ (лише для тебе, НІКОЛИ не цитуй клієнту дослівно як список — вплети природно, якщо доречно, напр. точні розміри у см для взуття): {{context.product.aiInfo}}\nВеди діалог САМЕ про цей товар — НЕ вигадуй іншу категорію/характеристики, яких немає в даних вище.\nКЛІЄНТ ОБИРАЄ КОЛІР. Доступні кольори: {{context.product.colors}}.\n\nТВОЯ ЗОНА: тільки колір + короткі відповіді про товар/ціну/доставку/оплату/повернення (з даних вище).\nНЕ ПИТАЙ ПІБ, телефон, місто чи відділення — це наступний крок після підтвердження замовлення.\n\nЯКЩО клієнт просить фото товару (\"покажіть фото\", \"скиньте фото\", \"як виглядає наживо\") — у json_output ДОДАЙ поле \"wantsPhoto\":true (окремо або разом з іншими полями), і в тексті напиши, що зараз надішлеш фото.\nЯКЩО КЛІЄНТ ПРОСИТЬ ЖИВУ ЛЮДИНУ/МЕНЕДЖЕРА (навіть натяком: «хочу з людиною», «покличте оператора», «ви бот?») — НЕ переконуй, що ти жива. Одразу поверни json_output {\"handoff\":true}.\nЯКЩО питання поза твоїми даними (гарантія, доставка за кордон, нестандартна оплата, знижки, претензія) — НЕ вигадуй: поверни json_output {\"handoff\":true}.\nЯКЩО клієнт 3 рази поспіль відповідає односкладно/незрозуміло і не називає колір — поверни json_output {\"handoff\":true}.\n\nВідповідай ОДНИМ коротким дружнім реченням і ЗАВЖДИ закінчуй питанням, яке веде далі (ніколи не закінчуй просто похвалою).\nКоли клієнт назвав колір із наявних — підтверди його і ЗАВЖДИ додай у json_output рівно {\"color\":\"<колір>\"}. Жодних службових токенів.\nЯкщо клієнт питає про СПОСІБ оплати (передоплата/накладений/скільки зараз платити/\"як платити\") — відповідай РІВНО одним реченням, БЕЗ списку, БЕЗ цифр 1/2, БЕЗ суми комісії: «Оплата гнучка — можна частину зараз і решту при отриманні, або одразу повністю; на наступному кроці зручно оберете 🙂». Саме такою фразою (можеш трохи адаптувати тон, але без списку/цифр/деталей). Деталі (суми, комісію, конкретний вибір) дає ВИКЛЮЧНО наступний крок (n_pay) — якщо повторити їх зараз, клієнту доведеться відповідати на той самий вибір двічі.",
+          "exitCondition": "json_output"
+        },
+        "type": "claude",
+        "measured": {
+          "width": 320,
+          "height": 116
+        },
+        "position": {
+          "x": 1080,
+          "y": 2400
+        }
+      },
+      {
+        "id": "n_avail",
+        "data": {
+          "code": "var offers=(context.product&&context.product.offers)||[];\nvar chosenColor=(context.colorChoice&&context.colorChoice.color)||null;\nvar chosenSize=context.recommendedSize||null;\nvar avail=true;\nif(chosenColor){\n  var candidates=offers.filter(function(o){ var pr=o.properties||[]; return pr.some(function(x){ return String(x.value)===String(chosenColor); }); });\n  if(candidates.length){\n    // Якщо серед offer-властивостей кольору Є ще й \"розмір\" — звужуємо і по розміру (коли\n    // він вже відомий). Якщо в offers розміру взагалі нема (частий кейс — див. аудит) —\n    // не блокуємо на відсутніх даних.\n    var withSize = chosenSize ? candidates.filter(function(o){\n      var pr=o.properties||[];\n      var hasSizeProp = pr.some(function(x){ return String(x.name||'').toLowerCase().indexOf('розмір')>=0; });\n      if(!hasSizeProp) return true;\n      return pr.some(function(x){ return String(x.name||'').toLowerCase().indexOf('розмір')>=0 && String(x.value)===String(chosenSize); });\n    }) : candidates;\n    var pool = withSize.length ? withSize : candidates;\n    avail = pool.some(function(o){ return Number(o.quantity) > 0; });\n  }\n}\nreturn { available: avail };",
+          "label": "6. Наявність (з CRM)",
+          "description": "Перевіряє наявність обраного кольору/розміру в KeyCRM (offers)."
+        },
+        "type": "js",
+        "measured": {
+          "width": 320,
+          "height": 92
+        },
+        "position": {
+          "x": 1440,
+          "y": 2400
+        }
+      },
+      {
+        "id": "n_upsell_cond",
+        "data": {
+          "label": "8. Є допродаж?",
+          "condition": "context.product && context.product.upsell",
+          "description": "Чи є для цього товару допродаж (context.product.upsell)? TRUE → пропонуємо; FALSE → одразу до наміру замовити."
+        },
+        "type": "condition",
+        "dragging": false,
+        "measured": {
+          "width": 243,
+          "height": 128
+        },
+        "position": {
+          "x": 720,
+          "y": 2800
+        },
+        "selected": true
+      },
+      {
+        "id": "n_upsell_msg",
+        "data": {
+          "text": "До цього товару часто беруть: {{context.product.upsell}}. Додати до замовлення? 😊",
+          "label": "8. Пропозиція допродажу",
+          "variants": [
+            "До цього товару часто беруть: {{context.product.upsell}}. Додати до замовлення? 😊",
+            "Часто разом замовляють: {{context.product.upsell}}. Додамо? 😊",
+            "Рекомендую до комплекту: {{context.product.upsell}}. Цікаво? 🙂",
+            "З цим товаром гарно поєднується: {{context.product.upsell}}. Додати? ✨",
+            "Клієнти зазвичай беруть ще: {{context.product.upsell}}. Хочете додати? 😊"
+          ],
+          "description": "Пропозиція супутнього товару (допродаж) одним повідомленням."
+        },
+        "type": "message",
+        "measured": {
+          "width": 320,
+          "height": 92
+        },
+        "position": {
+          "x": 720,
+          "y": 3000
+        }
+      },
+      {
+        "id": "n_order_intent",
+        "data": {
+          "mode": "dialog",
+          "label": "9. Консультант + намір замовити",
+          "useKb": true,
+          "outputVar": "orderIntent",
+          "useCatalog": true,
+          "connectorId": "2ec53ba5-144e-463b-9758-c217c4a69b0e",
+          "description": "Діалог: підсумовує вибір (товар/колір/ціна) і питає \"Оформляємо?\". Розпізнає явну згоду (yes) чи відмову (no) в json_output, відповідає на побічні питання з наявних даних, БЕЗ вигаданих проміжних станів типу \"waiting\".",
+          "temperature": 0.2,
+          "systemPrompt": "Ти — тепла консультантка {{env.SHOP_TAG}}. Товар: {{context.product.name}} — {{context.product.price}} грн, колір {{context.colorChoice.color}}. Клієнт визначився з товаром і кольором. НЕ вигадуй розміри/характеристики.\n{{context.product.qtyPromoText}}\nВАЖЛИВІ НЮАНСИ ЦЬОГО ТОВАРУ (лише для тебе, НІКОЛИ не цитуй дослівно як список — вплети природно, якщо доречно): {{context.product.aiInfo}}\nЯКЩО у діалозі раніше пропонувався допродаж ({{context.product.upsell}}) і клієнт просить його фото (\"скиньте фото\", \"покажіть як виглядає\") — {{context.product.upsellPhotoNote}} Якщо фото Є і ти обіцяєш показати — додай у json_output {\"wantsUpsellPhoto\":true} (можна разом з іншими полями). Це НЕ фото основного товару — не плутай з ready/color.\nТвоя дія: коротко підсумуй (товар, колір, ціна) і спитай «Оформляємо замовлення?» 🙂 ЯКЩО рядок з акцією вище непорожній і клієнт ще не називав кількість — згадай акцію ОДИН раз у цьому підсумку (напр. «До речі, 2 шт зараз дешевше — 800 грн замість 1000»), не нав'язливо.\nФОРМАТ ВІДПОВІДІ (СУВОРО):\n- Якщо клієнт ЩОЙНО дав ЯВНУ ЗГОДУ (так/да/давай/оформляй/+/ок/хочу/беру) — додай У КІНЦІ рівно: {\"ready\":\"yes\"} — а якщо клієнт десь у діалозі явно називав КІЛЬКІСТЬ (напр. \"2 штуки\", \"візьму 3\") — додай ще й поле qty в те саме json_output: {\"ready\":\"yes\",\"qty\":2}. Якщо кількість жодного разу не звучала — просто {\"ready\":\"yes\"} (без qty, тоді вважається 1 шт).\n- Якщо клієнт ЯВНО і ОСТАТОЧНО відмовився (ні/не хочу/не буду/скасуйте/не треба) — додай у кінці рівно: {\"ready\":\"no\"}\n- Якщо клієнт ВАГАЄТЬСЯ, а не відмовляється (напр. «подумаю», «порадж усь», «може пізніше», «якщо встигнете відправити [день] — візьму») — це НЕ ready:no. Тепло, без тиску, наведи ОДИН реальний аргумент чому варто оформити саме сьогодні (черга на відправку зростає, чим раніше оформимо — тим раніше отримаєте, акція за кількість вище діє лише зараз) і знову м'яко спитай «Оформляємо сьогодні?» ЗВИЧАЙНИМ ТЕКСТОМ (без JSON, ready не пиши).\n- У ВСІХ інших випадках (ти лише питаєш «Оформляємо?», клієнт ще НЕ відповів на це) — пиши ЛИШЕ звичайний текст, БЕЗ фігурних дужок і БЕЗ слова ready. ЗАБОРОНЕНО писати {\"ready\":\"pending\"} або {\"ready\":\"waiting\"} — таких значень НЕ існує.\nКоротке «так/да/+» у відповідь на «Оформляємо?» = згода (yes). Без службових токенів, не згадуй сайтів/кошиків.\nЯКЩО клієнт замість згоди/відмови ставить ІНШЕ питання (доставка, склад, розмір, оплата тощо) — коротко тепло відповідай ЗВИЧАЙНИМ ТЕКСТОМ (без JSON) з наявних даних, тоді знову спитай «Оформляємо замовлення?».\nЯКЩО клієнт ЯВНО просить живу людину/менеджера, або питання СПРАВДІ поза даними (гарантія, міжнародна доставка, знижки, претензія, скарга) — одразу поверни json_output {\"handoff\":true} (без ready).\nЗАВЖДИ закінчуй повідомлення питанням або чітким наступним кроком — ніколи просто похвалою.\nЯкщо клієнт питає про СПОСІБ оплати (передоплата/накладений/скільки зараз платити/\"як платити\") — відповідай РІВНО одним реченням, БЕЗ списку, БЕЗ цифр 1/2, БЕЗ суми комісії: «Оплата гнучка — можна частину зараз і решту при отриманні, або одразу повністю; на наступному кроці зручно оберете 🙂». Саме такою фразою (можеш трохи адаптувати тон, але без списку/цифр/деталей). Деталі (суми, комісію, конкретний вибір) дає ВИКЛЮЧНО наступний крок (n_pay) — якщо повторити їх зараз, клієнту доведеться відповідати на той самий вибір двічі.",
+          "exitCondition": "json_output",
+          "messagesTemplate": ""
+        },
+        "type": "claude",
+        "measured": {
+          "width": 320,
+          "height": 116
+        },
+        "position": {
+          "x": 1080,
+          "y": 3000
+        }
+      },
+      {
+        "id": "n_order_cond",
+        "data": {
+          "label": "9. Розгалуження намір",
+          "condition": "context.orderIntent && !/^(n|ні|нет|не|no)/i.test(String(context.orderIntent.ready||\"\").trim())",
+          "description": "Клієнт погодився оформити (fail-forward: усе крім явного \"ні\" рахується згодою)? TRUE → до оплати; FALSE → у чергу нагадування."
+        },
+        "type": "condition",
+        "measured": {
+          "width": 320,
+          "height": 128
+        },
+        "position": {
+          "x": 360,
+          "y": 3200
+        }
+      },
+      {
+        "id": "n_pay",
+        "data": {
+          "text": "Клас, оформлюємо! 🎉 Оберіть спосіб оплати:\n\n1️⃣ Часткова передплата 200 грн, решта — накладним платежем (комісія пошти: 20 грн + 2% від суми).\n2️⃣ Повна передплата — оплата всієї суми зараз.\n\nНапишіть 1 або 2 👇\n\n🌍 Доставка за кордон? Напишіть, будь ласка, у яку країну — підкажу умови.",
+          "label": "10. Вибір оплати",
+          "buttons": [
+            [
+              {
+                "text": "Накладений + 200 грн передоплата",
+                "callback_data": "pay_cod"
+              }
+            ],
+            [
+              {
+                "text": "Повна передоплата",
+                "callback_data": "pay_full"
+              }
+            ]
+          ],
+          "variants": [
+            "Клас, оформлюємо! 🎉 Оберіть спосіб оплати:\n\n1️⃣ Часткова передплата 200 грн, решта — накладним платежем (комісія пошти: 20 грн + 2% від суми).\n2️⃣ Повна передплата — оплата всієї суми зараз.\n\nНапишіть 1 або 2 👇",
+            "Супер, переходимо до оплати! 🎉 Оберіть зручний варіант:\n\n1️⃣ Часткова передплата 200 грн, решта — накладним платежем (комісія пошти: 20 грн + 2% від суми).\n2️⃣ Повна передплата — вся сума одразу.\n\nНапишіть 1 або 2 👇",
+            "Чудово, оформлюємо замовлення! 🎉 Оберіть спосіб оплати:\n\n1️⃣ Часткова передплата 200 грн, решту — накладним платежем (комісія пошти: 20 грн + 2% від суми).\n2️⃣ Повна передплата зараз.\n\nНапишіть 1 або 2 👇",
+            "Готово, лишилось обрати оплату! 🎉\n\n1️⃣ Часткова передплата 200 грн, решта — накладним платежем (комісія пошти: 20 грн + 2% від суми).\n2️⃣ Повна передплата — оплата всієї суми зараз.\n\nНапишіть 1 або 2 👇",
+            "Оформлюємо! 🎉 Який спосіб оплати вам зручніший:\n\n1️⃣ Часткова передплата 200 грн, решта — накладним платежем (комісія пошти: 20 грн + 2% від суми).\n2️⃣ Повна передплата зараз.\n\nНапишіть 1 або 2 👇"
+          ],
+          "description": "Показує клієнту 2 способи оплати: часткова передоплата 200 грн (накладений платіж) або повна оплата."
+        },
+        "type": "message",
+        "measured": {
+          "width": 320,
+          "height": 128
+        },
+        "position": {
+          "x": 360,
+          "y": 3400
+        }
+      },
+      {
+        "id": "n_pay_collect",
+        "data": {
+          "mode": "dialog",
+          "label": "10. Фіксуємо спосіб оплати",
+          "outputVar": "paymentInfo",
+          "useCatalog": true,
+          "connectorId": "2ec53ba5-144e-463b-9758-c217c4a69b0e",
+          "description": "Діалог: визначає який спосіб оплати обрав клієнт (1/часткова чи 2/повна). Відповідає на побічні питання про оплату з наявних даних, не форсує вибір мовчки.",
+          "temperature": 0.1,
+          "systemPrompt": "Клієнту показали 2 способи оплати (1 — часткова передоплата 200 грн, 2 — повна). Визнач вибір.\n«1»/«часткова»/«післяплата»/«наложка»/«200» → cod. «2»/«повна»/«передоплата»/«зараз»/«повністю» → full.\nЯкщо вибір ЗРОЗУМІЛИЙ — поверни ТІЛЬКИ json_output {\"method\":\"cod\"} або {\"method\":\"full\"} — БЕЗ видимого тексту (клієнту напише наступний крок).\nЯКЩО клієнт називає КРАЇНУ доставки (не Україна) — це важливо, додай у ТОЙ САМИЙ json_output ще й поле \"country\":\"<назва країни українською>\" (разом з method, якщо метод теж зрозумілий; якщо метод ще не називав — просто {\"country\":\"<країна>\"} окремо, наступний крок сам розбереться з оплатою для міжнародної доставки).\nЯкщо клієнт замість вибору ставить ІНШЕ питання (доставка, термін, гарантія тощо) — коротко тепло відповідай ЗВИЧАЙНИМ ТЕКСТОМ (без JSON) і в кінці знову спитай «Який спосіб оплати оберете — 1 чи 2?».\nЯкщо клієнт ЗАПЕРЕЧУЄ проти передоплати (каже «тільки накладений», «не хочу передоплату», «оплата лише при отриманні», погрожує скасувати через це) — це НЕ привід одразу відмовляти чи скасовувати замовлення.\nКРОК 1 заперечення: тепло поясни ЗВИЧАЙНИМ ТЕКСТОМ (без JSON): «Ми працюємо з оплатою при отриманні — передоплата 200 грн це лише невелика гарантія доставки з нашого боку, і ми гарантуємо обмін та повернення протягом 14 днів, якщо щось не підійде.» Після цього знову м'яко запитай, чи готовий клієнт оформити з передоплатою 200 грн (спосіб 1), чи все ж хоче повну передоплату (спосіб 2).\nКРОК 2 (ЯКЩО клієнт після КРОКУ 1 все одно відмовляється) — НЕ переходь одразу до handoff: тепло і без тиску запитай ЧОМУ саме він проти передоплати (напр.: «Розумію ваше занепокоєння 🙂 Підкажіть, будь ласка, що саме бентежить — може, зможу допомогти?»).\nКРОК 3: коли клієнт пояснює причину:\n- ЯКЩО причина — недовіра/страх шахрайства («мене вже кидали», «боюсь що обманете», «не довіряю передоплаті», «звідки я знаю що ви не шахраї» тощо) — запропонуй виняток ЗВИЧАЙНИМ ТЕКСТОМ (без JSON): «Розумію занепокоєння, це справедливо 🙏 Ми на ринку більше 10 років і можемо піти назустріч — відправимо БЕЗ передоплати взагалі, накладним платежем повністю. Єдине прохання — обов'язково заберіть посилку на пошті, щоб нам не довелось оплачувати повернення з власної кишені 🙏 Домовились?». ЯКЩО клієнт погоджується (так/домовились/добре/ок) — поверни РІВНО json_output {\"method\":\"cod_trust\"}. ЯКЩО клієнт НЕ погоджується або далі заперечує — поверни json_output {\"handoff\":true}.\n- ЯКЩО причина ІНША (не про довіру/шахрайство — напр. просто \"дорого\", \"не хочу і все\") — тепло відповідай зрозумінням, але передоплату не скасовуй; якщо клієнт продовжує наполягати — поверни json_output {\"handoff\":true} (нехай менеджер вирішує).\nЯкщо клієнт ЯВНО просить живу людину/менеджера — поверни json_output {\"handoff\":true}.\nІнших способів оплати не вигадуй.",
+          "exitCondition": "json_output",
+          "messagesTemplate": ""
+        },
+        "type": "claude",
+        "measured": {
+          "width": 320,
+          "height": 116
+        },
+        "position": {
+          "x": 720,
+          "y": 3600
+        }
+      },
+      {
+        "id": "n_requisites",
+        "data": {
+          "text": "💳 Найзручніший спосіб — оплата за посиланням: просто відкрийте, оберіть свій банк унизу і оплатіть в 1 клік 👇\n{{context.ibanPayUrl}}\n\nЯкщо бажаєте оплатити вручну за реквізитами — просто напишіть, надішлемо 🙂\n\nПісля оплати надішліть, будь ласка, чек/скріншот або посилання на квитанцію — і я одразу оформлю відправку 🙂",
+          "label": "11. Оплата: посилання (найзручніше)",
+          "buttons": [],
+          "variants": [
+            "💳 Найзручніший спосіб — оплата за посиланням: просто відкрийте, оберіть свій банк унизу і оплатіть в 1 клік 👇\n{{context.ibanPayUrl}}\n\nЯкщо бажаєте оплатити вручну за реквізитами — просто напишіть, надішлемо 🙂\n\nПісля оплати надішліть, будь ласка, чек/скріншот або посилання на квитанцію — і я одразу оформлю відправку 🙂\n\n💚 Оплата з monobank підтверджується автоматично й швидше; з інших банків — обов'язково скиньте чек, щоб ми не шукали вашу оплату вручну.",
+            "💳 Найпростіше — оплатити за посиланням: відкрийте, оберіть свій банк і оплатіть в 1 клік 👇\n{{context.ibanPayUrl}}\n\nПотрібні реквізити для ручної оплати — просто напишіть, надішлю 🙂\n\nПісля оплати скиньте, будь ласка, чек/скріншот або посилання на квитанцію — і одразу оформлю відправку 🙂\n\n💚 Оплата з monobank підтверджується автоматично й швидше; з інших банків — обов'язково скиньте чек, щоб ми не шукали вашу оплату вручну.",
+            "💳 Швидше й зручніше — оплата за посиланням, оберіть свій банк унизу 👇\n{{context.ibanPayUrl}}\n\nЯкщо зручніше вручну за реквізитами — напишіть, надішлемо 🙂\n\nПісля оплати надішліть чек/скріншот або посилання на квитанцію — і відразу оформлю відправку 🙂\n\n💚 Оплата з monobank підтверджується автоматично й швидше; з інших банків — обов'язково скиньте чек, щоб ми не шукали вашу оплату вручну.",
+            "💳 Оплатити найпростіше за посиланням — відкрийте, оберіть банк і оплатіть в 1 клік 👇\n{{context.ibanPayUrl}}\n\nЗручніше вручну — напишіть, надішлю реквізити 🙂\n\nПісля оплати, будь ласка, скиньте чек/скріншот або посилання на квитанцію — оформлю відправку одразу 🙂\n\n💚 Оплата з monobank підтверджується автоматично й швидше; з інших банків — обов'язково скиньте чек, щоб ми не шукали вашу оплату вручну.",
+            "💳 Ось посилання на оплату — оберіть свій банк і оплатіть в 1 клік 👇\n{{context.ibanPayUrl}}\n\nХочете оплатити вручну — просто скажіть, скину реквізити 🙂\n\nПісля оплати надішліть чек/скріншот або лінк на квитанцію — і одразу відправлю замовлення 🙂\n\n💚 Оплата з monobank підтверджується автоматично й швидше; з інших банків — обов'язково скиньте чек, щоб ми не шукали вашу оплату вручну."
+          ],
+          "description": "Повідомлення: ibanoplata-посилання як найзручніший спосіб оплати (обрати банк, оплатити в 1 клік)."
+        },
+        "type": "message",
+        "measured": {
+          "width": 320,
+          "height": 128
+        },
+        "position": {
+          "x": 1080,
+          "y": 4800
+        }
+      },
+      {
+        "id": "n_collect",
+        "data": {
+          "mode": "dialog",
+          "label": "12. Збір адреси (+квитанція)",
+          "outputVar": "orderData",
+          "useCatalog": true,
+          "connectorId": "2ec53ba5-144e-463b-9758-c217c4a69b0e",
+          "description": "Діалог: збирає ПІБ/телефон/місто/відділення Нової Пошти. Відповідає на побічні питання з наявних даних, не перепитує підтвердження коли всі 4 поля вже є.",
+          "temperature": 0.2,
+          "systemPrompt": "Збери дані доставки Новою Поштою: ПІБ, ТЕЛЕФОН, МІСТО, № ВІДДІЛЕННЯ.\nПІБ приймай у форматі \"Ім'я Прізвище\" (2 слова) — цього ДОСТАТНЬО, по-батькові НЕ обов'язкове і уточнювати/вимагати його НЕ треба. Якщо клієнт сам написав по-батькові — просто прийми як є, без уточнень.\nЯкщо чогось бракує — тепло попроси саме це (коротко, з турботою).\nКоли у повідомленні є ВСІ 4 поля — НЕ перепитуй підтвердження, НЕ пиши видимого тексту, одразу поверни ТІЛЬКИ json_output {\"fullName\":\"...\",\"phone\":\"...\",\"city\":\"...\",\"branch\":\"...\"} (подяку напише наступний крок). Не згадуй сайтів.\nЯКЩО клієнт просить реквізити оплати вручну (IBAN/ЄДРПОУ/реквізити/\"як оплатити вручну\" тощо) — НЕ вигадуй їх сама і не пиши текст, поверни РІВНО json_output {\"wantsManualReq\":true} — наступний крок надішле реквізити окремими повідомленнями.\nЯкщо клієнт замість даних доставки ставить ІНШЕ питання (оплата, термін, гарантія тощо) — коротко тепло відповідай ЗВИЧАЙНИМ ТЕКСТОМ з відомих даних, і одразу після відповіді знову попроси саме ті поля, яких бракує.\nЯкщо клієнт ЯВНО просить живу людину/менеджера — поверни json_output {\"handoff\":true} (без інших полів).",
+          "exitCondition": "json_output"
+        },
+        "type": "claude",
+        "measured": {
+          "width": 320,
+          "height": 116
+        },
+        "position": {
+          "x": 1080,
+          "y": 5000
+        }
+      },
+      {
+        "id": "n_create",
+        "data": {
+          "label": "13. Сповіщення в групу",
+          "message": "НОВЕ ЗАМОВЛЕННЯ #{{context.crmOrderId}}\nТовар: {{context.product.name}}\nАртикул: {{context.orderSku}}\nРозмір: {{context.recommendedSize}} | Колір: {{context.colorChoice.color}}\nОплата: {{context.payLabel}}\nКлієнт: {{context.senderName}} — https://instagram.com/{{context.igUsername}}\nОтримувач: {{context.orderData.fullName}}, {{context.orderData.phone}}\nАдреса: {{context.orderData.city}}, НП {{context.orderData.branch}}\n———\n[ТУТ БУДЕ відправка постачальнику: {{context.supplier}}]\n(KeyCRM, статус: Отримано дані доставки)",
+          "targetKey": "ADMIN_TELEGRAM_ID",
+          "description": "Сповіщення в групу: нове замовлення створено, деталі клієнта/товару/оплати."
+        },
+        "type": "notifyTg",
+        "measured": {
+          "width": 220,
+          "height": 76
+        },
+        "position": {
+          "x": 1440,
+          "y": 6600
+        }
+      },
+      {
+        "id": "n_confirm",
+        "data": {
+          "text": "Дякуємо за замовлення — ви супер! 🎉 Ми вже його оформили 💛\n\n{{context.np.summary}}Номер накладної (ТТН) надішлемо прямо сюди, щойно передамо посилку Новій Пошті 📦\nА поки її не відправили — можна додати ще щось за акційною ціною (діє лише зараз 🔥). Якщо щось сподобалось — просто напишіть, залюбки допоможу 😊",
+          "label": "13. Підтвердження клієнту",
+          "variants": [
+            "Дякуємо за замовлення — ви супер! 🎉 Ми вже його оформили 💛\n\n{{context.np.summary}}Номер накладної (ТТН) надішлемо прямо сюди, щойно передамо посилку Новій Пошті 📦\nА поки її не відправили — можна додати ще щось за акційною ціною (діє лише зараз 🔥). Якщо щось сподобалось — просто напишіть, залюбки допоможу 😊{{context.product.footwearNote}}",
+            "Дякуємо за замовлення! 🎉 Ви супер, уже все оформили 💛\n\n{{context.np.summary}}Номер накладної надішлемо сюди, щойно віддамо посилку Новій Пошті 📦\nПоки не відправили — можна додати щось ще за акційною ціною (діє тільки зараз 🔥). Сподобалось щось — просто напишіть 😊{{context.product.footwearNote}}",
+            "Замовлення оформлено — дякуємо вам! 🎉 💛\n\n{{context.np.summary}}ТТН надішлемо прямо в цей чат, щойно передамо посилку Новій Пошті 📦\nПоки посилка ще тут — можна додати щось за акційною ціною (діє лише зараз 🔥). Якщо щось сподобалось — пишіть, допоможу 😊{{context.product.footwearNote}}",
+            "Дякуємо, ви чудові! 🎉 Замовлення вже в роботі 💛\n\n{{context.np.summary}}Номер накладної скинемо сюди, щойно віддамо посилку на Нову Пошту 📦\nПоки не відправили — встигнете додати щось за акційною ціною (діє лише зараз 🔥). Сподобалось щось — просто напишіть 😊{{context.product.footwearNote}}",
+            "Ура, замовлення оформлене! 🎉 Дякуємо, що обрали нас 💛\n\n{{context.np.summary}}ТТН надішлемо прямо сюди, щойно передамо посилку Новій Пошті 📦\nПоки посилку не відправили — можна встигнути додати щось за акційною ціною (діє лише зараз 🔥). Щось сподобалось — пишіть, залюбки допоможу 😊{{context.product.footwearNote}}"
+          ],
+          "description": "Підсумкове підтвердження клієнту: замовлення прийняте в обробку."
+        },
+        "type": "message",
+        "measured": {
+          "width": 320,
+          "height": 108
+        },
+        "position": {
+          "x": 1800,
+          "y": 7800
+        }
+      },
+      {
+        "id": "n_followup_wait",
+        "data": {
+          "mode": "delay",
+          "unit": "days",
+          "label": "14. Пауза ~20 год (в межах 24h)",
+          "delayMs": 72000000,
+          "duration": 1,
+          "description": "Пауза ~20 годин (в межах 24h) перед нагадуванням клієнту, який не оформив замовлення."
+        },
+        "type": "wait",
+        "measured": {
+          "width": 262,
+          "height": 76
+        },
+        "position": {
+          "x": 720,
+          "y": 3400
+        }
+      },
+      {
+        "id": "n_followup_msg",
+        "data": {
+          "text": "Доброго дня! 😊 Ви цікавились {{context.product.name}}. Якщо ще актуально — я поруч, допоможу з розміром і оформленням. Гарного дня!",
+          "label": "14. Ненавʼязливе нагадування",
+          "description": "Ненав'язливе нагадування клієнту про незавершене замовлення, повертає в n_order_intent."
+        },
+        "type": "message",
+        "measured": {
+          "width": 320,
+          "height": 108
+        },
+        "position": {
+          "x": 720,
+          "y": 4000
+        }
+      },
+      {
+        "id": "n_have_product",
+        "data": {
+          "label": "1. Товар відомий?",
+          "condition": "context.product && context.product.name && String(context.product.name).length > 0",
+          "description": "Товар визначено? (перевіряє context.product.name) — TRUE веде далі по воронці, FALSE — у гілку \"товар невідомий\"."
+        },
+        "type": "condition",
+        "measured": {
+          "width": 320,
+          "height": 128
+        },
+        "position": {
+          "x": 360,
+          "y": 1000
+        }
+      },
+      {
+        "id": "n_pay_amount",
+        "data": {
+          "code": "var method=(context.paymentInfo&&context.paymentInfo.method)||'cod'; var qty=Number((context.orderIntent&&context.orderIntent.qty)||1); if(!(qty>=1)) qty=1; var qp=(context.product&&context.product.qtyPrices)||{}; var tierPrice=qp[String(qty)]; var unit=(context.product&&context.product.price)||0; var full=tierPrice!=null?Number(tierPrice):(unit*qty); var ref=String(context.orderRef||'').trim(); if(!ref){ ref=('GOV'+((Number((user&&user.telegramId)||0)).toString(36).slice(-4)+Date.now().toString(36).slice(-4))).toUpperCase(); }\nif(method==='cod_trust') return { payAmount:0, payLabel:'без передоплати (виняток за домовленістю, накладений платіж повністю)', orderRef:ref, orderQty:qty };\nreturn { payAmount: method==='cod'?200:full, payLabel: method==='cod'?'передоплата 200 грн, решта при отриманні':'повна оплата', orderRef: ref, orderQty: qty };",
+          "label": "10.1 Сума до оплати",
+          "description": "Рахує суму до оплати (повна ціна чи 200 грн передоплата) за обраним методом."
+        },
+        "type": "js",
+        "measured": {
+          "width": 320,
+          "height": 92
+        },
+        "position": {
+          "x": 1080,
+          "y": 4200
+        }
+      },
+      {
+        "id": "n_is_clothing",
+        "data": {
+          "label": "2.0 Це одяг (розмір)?",
+          "condition": "context.product && context.product.isClothing",
+          "description": "Товар — одяг (має розмірну сітку)? TRUE → питаємо зріст/вагу для підбору розміру; FALSE → одразу до кольору."
+        },
+        "type": "condition",
+        "dragging": false,
+        "measured": {
+          "width": 262,
+          "height": 128
+        },
+        "position": {
+          "x": 720,
+          "y": 2000
+        },
+        "selected": false
+      },
+      {
+        "id": "n_crm_order",
+        "data": {
+          "code": "if(context.testMode) return { crmOrderId:('TEST-'+Date.now()), orderSku:'', supplier:'' };\ntry {\n  var token=(keys.KEYCRM_API_TOKEN||'').trim();\n  var base=keys.KEYCRM_API_BASE||'https://openapi.keycrm.app/v1'; if(base.charAt(base.length-1)==='/') base=base.slice(0,-1);\n  if(!token||token==='REPLACE_ME') return {};\n  if(context.crmOrderId) return {};\n  var p=context.product||{}; var od=context.orderData||{};\n  var col=(context.colorChoice&&context.colorChoice.color)||''; var size=context.recommendedSize||'';\n  var method=(context.paymentInfo&&context.paymentInfo.method)||'';\n  if(!od.phone) return {};\n  var phone=String(od.phone).replace(/[^0-9]/g,'');\n  var hdr={Authorization:'Bearer '+token,'Content-Type':'application/json',Accept:'application/json'};\n  var buyerObj=null; if(context.crmClientId){ buyerObj={id:context.crmClientId}; }\n  try{ var bs=await fetch(base+'/buyer?filter[buyer_phone]='+encodeURIComponent(phone),{headers:hdr}); if(bs.ok){ var bd=await bs.json(); if(bd.data&&bd.data.length){ buyerObj={id:bd.data[0].id}; } } }catch(e){}\n  if(!buyerObj) buyerObj={full_name:(od.fullName||'Клієнт'), phone:phone};\n  var sku=null; var offers=p.offers||[];\n  for(var i=0;i<offers.length;i++){ var pr=offers[i].properties||[]; var okC=!col||pr.some(function(x){return String(x.value)===String(col);}); var okS=!size||pr.some(function(x){return String(x.value)===String(size);}); if(okC&&okS){ sku=offers[i].sku; break; } }\n  var props=[]; if(size)props.push({name:'Розмір',value:size}); if(col)props.push({name:'Колір',value:col});\n  var payTxt=(method==='cod')?'накладений + 200 передоплата':(method==='full'?'повна передоплата':'—');\n  var prod={ price:(p.price||0), quantity:1, name:(p.name||'Товар'), properties:props }; if(sku)prod.sku=sku;\n  var smap={}; try{smap=JSON.parse(keys.SUPPLIER_MAP||'{}')}catch(e){}\n  var supplier=(p.supplier||'').trim()||(context.supplier||'').trim()||smap[String(p.id)]||smap['cat_'+p.category_id]||smap['default']||'';\n  var shopTag=(keys.SHOP_TAG||'').trim();\n  var body={ source_name:('Instagram'+(shopTag?(' '+shopTag):'')), pipeline_id:1, buyer:buyerObj,\n    manager_comment:'Товар: '+(p.name||'')+' | Розмір: '+size+' | Колір: '+col+' | Оплата: '+payTxt+(supplier?(' | Постачальник: '+supplier):'')+' | Перевірити оплату.',\n    products:[prod],\n    shipping:{ shipping_service:'Нова Пошта', shipping_address_city:(od.city||''), shipping_receive_point:(od.branch||''), recipient_full_name:(od.fullName||''), recipient_phone:phone } };\n  var r=await fetch(base+'/order',{method:'POST',headers:hdr,body:JSON.stringify(body)});\n  var d=await r.json().catch(function(){return{};});\n  if(r.ok && d.id){ try{ await fetch(base+'/order/'+d.id,{method:'PUT',headers:hdr,body:JSON.stringify({status_id:2})}); }catch(e){} return { crmOrderId:d.id, crmClientId:d.client_id, supplier:supplier, orderSku:(sku||'') }; }\n  return { crmOrderError:((d&&d.message)||('HTTP '+r.status)) };\n} catch(e){ return { crmOrderError:e.message }; }",
+          "label": "12.5 Створити замовлення в KeyCRM",
+          "description": "Створює замовлення в KeyCRM (у testMode повертає фейковий TEST-... id, реальний виклик не робить)."
+        },
+        "type": "js",
+        "measured": {
+          "width": 320,
+          "height": 92
+        },
+        "position": {
+          "x": 1080,
+          "y": 6400
+        }
+      },
+      {
+        "id": "n_avail_cond",
+        "data": {
+          "label": "6.5 Є в наявності?",
+          "condition": "context.available === true",
+          "description": "Товар у наявності? TRUE → продовжуємо до допродажу; FALSE → повідомляємо про відсутність."
+        },
+        "type": "condition",
+        "measured": {
+          "width": 220,
+          "height": 128
+        },
+        "position": {
+          "x": 1080,
+          "y": 2600
+        }
+      },
+      {
+        "id": "n_avail_no",
+        "data": {
+          "text": "Ой, саме цей варіант зараз розібрали 😔 Але не засмучуйтесь — підберемо не гірше! Напишіть, будь ласка, який ще колір розглядаєте, і я одразу перевірю наявність ✨",
+          "label": "6.6 Нема в наявності",
+          "variants": [
+            "Ой, саме цей варіант зараз розібрали 😔 Але не засмучуйтесь — підберемо не гірше! Напишіть, будь ласка, який ще колір розглядаєте, і я одразу перевірю наявність ✨",
+            "Ой, цей варіант щойно розкупили 😔 Не хвилюйтесь, підберемо не гірше! Напишіть, який ще колір вам підходить — перевірю наявність ✨",
+            "От халепа, саме цей варіант закінчився 😔 Але без проблем — знайдемо не гірше! Скажіть, будь ласка, інший колір, і я перевірю ✨",
+            "Ой, розібрали якраз цей варіант 😔 Не сумуйте — підберемо чудову альтернативу! Напишіть інший колір, який розглядаєте, перевірю наявність ✨",
+            "Шкода, цього варіанту вже немає 😔 Але не переживайте, знайдемо не гірше! Підкажіть, будь ласка, інший колір — одразу гляну ✨"
+          ],
+          "description": "Повідомлення: обраного варіанту немає в наявності — пропонуємо інший."
+        },
+        "type": "message",
+        "measured": {
+          "width": 320,
+          "height": 108
+        },
+        "position": {
+          "x": 1080,
+          "y": 2800
+        }
+      },
+      {
+        "id": "n_followup_guard",
+        "data": {
+          "code": "var last=(context.flowRuntime&&context.flowRuntime.lastUserTs)||context.lastUserTs||Date.now(); var hoursSince=(Date.now()-last)/3600000; var h=new Date().getHours(); if(hoursSince>=24) return { skipFollowup:true }; if(h<9||h>=20) return { skipFollowup:true }; return { skipFollowup:false };",
+          "label": "15.0 Гейт нагадування (24h / 9-20)",
+          "description": "Гейт нагадування: не пізня ніч, минуло дійсно достатньо часу з останньої активності (9:00-20:00, 24h)."
+        },
+        "type": "js",
+        "measured": {
+          "width": 320,
+          "height": 92
+        },
+        "position": {
+          "x": 1080,
+          "y": 3600
+        }
+      },
+      {
+        "id": "n_followup_cond",
+        "data": {
+          "label": "15.1 Слати нагадування?",
+          "condition": "context.skipFollowup !== true",
+          "description": "Чи ще варто слати нагадування (не оформив, не спливло забагато часу)? TRUE → нагадування; FALSE → тихо завершуємо гілку."
+        },
+        "type": "condition",
+        "measured": {
+          "width": 220,
+          "height": 128
+        },
+        "position": {
+          "x": 720,
+          "y": 3800
+        }
+      },
+      {
+        "id": "n_iban_invoice",
+        "data": {
+          "label": "11. Створити посилання (ibanoplata)",
+          "action": "create_invoice",
+          "amount": "{{context.payAmount}}",
+          "outputVar": "context.ibanPayUrl",
+          "description": "Конектор ibanoplata: генерує посилання на оплату (create_invoice) з orderRef у призначенні платежу.",
+          "connectorType": "ibanoplata",
+          "paymentPurpose": "Оплата за товар {{context.orderRef}}"
+        },
+        "type": "connector",
+        "measured": {
+          "width": 292,
+          "height": 108
+        },
+        "position": {
+          "x": 1080,
+          "y": 4600
+        }
+      },
+      {
+        "id": "n_mono_fetch",
+        "data": {
+          "label": "12.7 Виписка Mono",
+          "action": "get_statement",
+          "outputVar": "context.monoStatement",
+          "description": "Конектор Monobank: тягне виписку ФОП-рахунку за останній період (троттлінг 1 запит/60с, кеш).",
+          "windowHours": "48",
+          "connectorType": "monobank"
+        },
+        "type": "connector",
+        "measured": {
+          "width": 220,
+          "height": 108
+        },
+        "position": {
+          "x": 1080,
+          "y": 5400
+        }
+      },
+      {
+        "id": "n_reconcile",
+        "data": {
+          "code": "var EXPECTED_IBAN = (keys.FOP_IBAN||'').replace(/\\s/g,'');\nvar EXPECTED_CODE = (keys.FOP_CODE||'').replace(/\\D/g,'');\nvar orderRef = String(context.orderRef||'').toUpperCase();\nvar expected = Number(context.payAmount)||0;\nvar stmt = Array.isArray(context.monoStatement)?context.monoStatement:[];\nvar consumed = Array.isArray(context.consumedTxIds)?context.consumedTxIds:[];\nfunction isC(id){ return consumed.indexOf(id)>=0; }\nfunction parseAmount(txt){ if(!txt)return null; var m=String(txt).match(/(\\d[\\d\\s]*[.,]?\\d{0,2})\\s*(?:грн|uah|₴)?/i); if(!m)return null; var n=parseFloat(m[1].replace(/\\s/g,'').replace(',','.')); return isFinite(n)?Math.round(n*100)/100:null; }\nfunction normName(s){ return String(s||'').toLowerCase().replace(/[^0-9a-zа-яіїєґ]+/gi,' ').trim(); }\nfunction nameOverlap(a,b){ var aa=normName(a).split(' ').filter(function(x){return x.length>2;}); var bb=normName(b).split(' ').filter(function(x){return x.length>1;}); if(!aa.length||!bb.length)return false; for(var i=0;i<aa.length;i++){ if(bb.indexOf(aa[i])>=0) return true; } return false; }\n// 1) унікальний збіг за orderRef у призначенні\nfunction matchByRef(){ if(!orderRef)return null; for(var i=0;i<stmt.length;i++){ var t=stmt[i]; if(!isC(t.id) && String(t.comment||'').toUpperCase().indexOf(orderRef)>=0) return t; } return null; }\n// 2) за сумою + розрізнення за ПЛАТНИКОМ/ЧАСОМ (щоб однакові суми не плутались)\nfunction matchByAmount(amount, hints){ hints=hints||{}; if(!amount)return null; var cands=[]; for(var i=0;i<stmt.length;i++){ var t=stmt[i]; if(!isC(t.id) && Math.abs(Number(t.amountUah)-amount)<0.01) cands.push(t); } if(!cands.length)return null;\n  if(hints.payerName){ for(var j=0;j<cands.length;j++){ if(nameOverlap(hints.payerName,(cands[j].counterName||'')+' '+(cands[j].description||''))) return cands[j]; } }\n  if(hints.timeSec){ var best=null,bd=1e18; for(var k=0;k<cands.length;k++){ var d=Math.abs(Number(cands[k].time)-Number(hints.timeSec)); if(d<bd){bd=d;best=cands[k];} } if(best&&bd<=5400) return best; }\n  cands.sort(function(a,b){return Number(b.time)-Number(a.time);}); return cands[0]; }\nvar found = matchByRef();\nvar via = found ? 'mono:ref' : '';\n// Крок 2: лінк-квитанція у тексті (check.monobank.ua / pb.ua/check тощо) — парсимо кодом\nif(!found){\n  var link=(String(context.lastUserMessage||input||'').match(/https?:\\/\\/[^\\s]+/)||[])[0];\n  function linkOk(u){ try{ var h=new URL(u).hostname.toLowerCase(); return ['check.monobank.ua','send.monobank.ua','pay.mono.ua','pb.ua','privatbank.ua','next.privat24.ua','portmone.com.ua','check.gov.ua'].some(function(d){return h===d||h.endsWith('.'+d);}); }catch(e){return false;} }\n  if(link && linkOk(link)){ var ac=new AbortController(); var to=setTimeout(function(){try{ac.abort();}catch(e){}},8000);\n    try{ var r=await fetch(link,{redirect:'follow',signal:ac.signal}); var html=(await r.text()).slice(0,300000); var txt=html.replace(/<[^>]+>/g,' ');\n      var okRec = txt.replace(/\\s/g,'').indexOf(EXPECTED_IBAN)>=0 || txt.replace(/\\D/g,'').indexOf(EXPECTED_CODE)>=0;\n      var amt = parseAmount((txt.match(/(?:Сума|Сумма|Amount)[^\\d]{0,20}(\\d[\\d\\s]*[.,]?\\d{0,2})/i)||[])[1]);\n      var payer=(txt.match(/Платник[^A-Za-zА-Яа-яІЇЄҐіїєґ]{0,15}([A-Za-zА-Яа-яІЇЄҐіїєґ'\\-]{2,}\\s+[A-Za-zА-Яа-яІЇЄҐіїєґ'\\-]{2,}(?:\\s+[A-Za-zА-Яа-яІЇЄҐіїєґ'\\-]{2,})?)/)||[])[1]||'';\n      if(okRec){ found = matchByAmount(amt||expected, { payerName:payer }); if(found) via='mono:link'; }\n    }catch(e){}finally{clearTimeout(to);} }\n}\n// Крок 3: скрін — ШІ-візія (лише коли Mono не знайшов). Останній резерв.\nfunction imgOk(u){ try{ var h=new URL(u).hostname.toLowerCase(); if(h==='api.telegram.org') return true; return ['cdninstagram.com','fbcdn.net','fbsbx.com'].some(function(d){return h===d||h.endsWith('.'+d);}); }catch(e){return false;} }\nif(!found && context.lastReceiptImageUrl && keys.GEMINI_API_KEY && imgOk(context.lastReceiptImageUrl)){\n  var ac2=new AbortController(); var to2=setTimeout(function(){try{ac2.abort();}catch(e){}},10000);\n  try{\n    var ir=await fetch(context.lastReceiptImageUrl,{signal:ac2.signal}); var ab=await ir.arrayBuffer(); if(ab.byteLength>8000000) throw new Error('img too large'); var b64=Buffer.from(ab).toString('base64');\n    var mime=(ir.headers.get('content-type')||'image/jpeg').split(';')[0];\n    var gr=await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key='+encodeURIComponent(keys.GEMINI_API_KEY),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:'Це банківська квитанція про переказ. Поверни ЛИШЕ JSON {\"amount\":число,\"recipientCode\":\"код одержувача\",\"iban\":\"IBAN одержувача\",\"payerName\":\"ПІБ платника\",\"purpose\":\"призначення\"}'},{inline_data:{mime_type:mime,data:b64}}]}]})});\n    var gj=await gr.json(); var t=((((gj.candidates||[])[0]||{}).content||{}).parts||[{}])[0].text||''; var mm=t.match(/\\{[\\s\\S]*\\}/);\n    if(mm){ var f=JSON.parse(mm[0]); var okRec2=String(f.iban||'').replace(/\\s/g,'').indexOf(EXPECTED_IBAN)>=0 || String(f.recipientCode||'').replace(/\\D/g,'').indexOf(EXPECTED_CODE)>=0; var amt2=Number(f.amount)||parseAmount(f.amount); if(okRec2){ found=matchByAmount(amt2||expected, { payerName:f.payerName }); if(found) via='mono:ai'; } }\n  }catch(e){}finally{clearTimeout(to2);}\n}\n// Крок 4: клієнт написав «оплатив» без квитанції → слабкий збіг за сумою (глоб. реєстр не дасть зарахувати двічі)\nif(!found && expected){ found = matchByAmount(expected, {}); if(found) via='mono:amount'; }\nif(found){ consumed.push(found.id); return { payStatus:'confirmed', payVia:via, payTxId:found.id, consumedTxIds:consumed }; }\nreturn { payStatus:'not_found', payVia:'none' };",
+          "label": "12.8 Звірка оплати",
+          "description": "Звіряє оплату: шукає у виписці суму+orderRef у коментарі платника, або суму+ПІБ, або суму-онлі. Захист від подвійного зарахування (_CONSUMED_MONO_TX)."
+        },
+        "type": "js",
+        "measured": {
+          "width": 320,
+          "height": 92
+        },
+        "position": {
+          "x": 1080,
+          "y": 5600
+        }
+      },
+      {
+        "id": "n_pay_status_cond",
+        "data": {
+          "label": "12.9 Оплату знайдено?",
+          "condition": "context.payStatus === 'confirmed'",
+          "description": "Оплату знайдено у виписці? TRUE → підтверджено, видаляємо ibanoplata-посилання; FALSE → сигнал адміну на ручну перевірку."
+        },
+        "type": "condition",
+        "measured": {
+          "width": 220,
+          "height": 128
+        },
+        "position": {
+          "x": 1080,
+          "y": 5800
+        }
+      },
+      {
+        "id": "n_del_invoice",
+        "data": {
+          "label": "12.95 Видалити посилання",
+          "action": "delete_invoice",
+          "invoiceUid": "{{context.ibanInvoiceUid}}",
+          "description": "Видаляє ibanoplata-посилання після підтвердження оплати (звільняє ліміт ~20 активних лінків).",
+          "connectorType": "ibanoplata"
+        },
+        "type": "connector",
+        "measured": {
+          "width": 230,
+          "height": 92
+        },
+        "position": {
+          "x": 1080,
+          "y": 6200
+        }
+      },
+      {
+        "id": "n_pay_notfound_admin",
+        "data": {
+          "label": "12.96 Не знайдено — сигнал",
+          "message": "⚠️ Клієнт каже, що оплатив, але оплату НЕ знайдено у виписці.\nКлієнт: {{user.username}} ({{context.senderName}})\nЗамовлення: {{context.orderRef}} | сума {{context.payAmount}} грн\nТовар: {{context.product.name}} / {{context.recommendedSize}} / {{context.colorChoice.color}}\nПеревір вручну.",
+          "targetKey": "ADMIN_TELEGRAM_ID",
+          "description": "Сигнал у Telegram: клієнт каже що оплатив, у виписці Mono оплату не знайдено — ручна перевірка."
+        },
+        "type": "notifyTg",
+        "measured": {
+          "width": 244,
+          "height": 76
+        },
+        "position": {
+          "x": 1440,
+          "y": 6000
+        }
+      },
+      {
+        "id": "n_pay_notfound_msg",
+        "data": {
+          "text": "Дякуємо! Перевіряємо оплату вручну — це може зайняти трохи часу. Щойно підтвердимо, одразу напишемо і оформимо відправку 🙏",
+          "label": "12.97 Клієнту: перевіряємо",
+          "description": "Клієнту: \"перевіряємо оплату вручну\" (замовлення все одно створюється, як неоплачене)."
+        },
+        "type": "message",
+        "measured": {
+          "width": 320,
+          "height": 108
+        },
+        "position": {
+          "x": 1440,
+          "y": 6200
+        }
+      },
+      {
+        "id": "n_mark_consumed",
+        "data": {
+          "txId": "{{context.payTxId}}",
+          "label": "12.94 Зарахувати транзакцію (антидубль)",
+          "action": "mark_consumed",
+          "description": "Позначає знайдену транзакцію \"спожитою\" (щоб той самий платіж не зарахувався іншій сесії).",
+          "connectorType": "monobank"
+        },
+        "type": "connector",
+        "measured": {
+          "width": 320,
+          "height": 92
+        },
+        "position": {
+          "x": 1080,
+          "y": 6000
+        }
+      },
+      {
+        "id": "n_supplier_cond",
+        "data": {
+          "label": "13.5 Механізм = brewdrop?",
+          "condition": "context.supplierMechanism === 'brewdrop'",
+          "description": "Постачальник = brewdrop.in.ua? TRUE → авто-замовлення через brewdrop; FALSE → перевіряємо easydrop."
+        },
+        "type": "condition",
+        "measured": {
+          "width": 320,
+          "height": 128
+        },
+        "position": {
+          "x": 1440,
+          "y": 7000
+        }
+      },
+      {
+        "id": "n_supplier_order",
+        "data": {
+          "code": "// Дропшип-замовлення brewdrop.in.ua. ДЖЕРЕЛО ІСТИНИ для n_supplier_order (нода була\n// написана напряму в БД раніше, без локального файлу — синхронізовано 2026-08-22\n// перед додаванням фолбек-пошуку артикулу постачальника (CT_1006, див. n_lookup-code.js).\nif(context.testMode) return { supplierOrderResult:'(testMode: brewdrop пропущено)' };\nvar base=(keys.BREWDROP_API_BASE||'https://api.brewdrop.in.ua').replace(/\\/+$/,'');\nvar tok=(keys.BREWDROP_TOKEN||'').trim();\nvar dryRun=String(keys.BREWDROP_DRY_RUN||'1')!=='0';\nif(!tok) return { supplierOrderResult:'❌ BREWDROP_TOKEN не заповнено' };\nvar HDR={ 'Authorization':'Bearer '+tok, 'crossdomain':'true', 'Accept':'application/json', 'Content-Type':'application/json', 'Origin':'https://brewdrop.in.ua' };\nasync function bd(path,opts){ var r=await fetch(base+path,Object.assign({headers:HDR},opts||{})); var j=null; try{ j=await r.json(); }catch(e){} return {status:r.status,json:j}; }\nfunction norm(x){ return String(x||'').toLowerCase().trim(); }\nvar prod=context.product||{}; var od=context.orderData||{};\nvar map={}; try{ map=JSON.parse(keys.BREWDROP_ARTICLE_MAP||'{}'); }catch(e){}\nvar m=map[String(prod.id)]||{};\n// Пріоритет пошуку: 1) ручний override з BREWDROP_ARTICLE_MAP; 2) явний CT_1006\n// (артикул постачальника з CRM, довіряємо напряму, без фолбеку); 3) звичайний\n// CRM-артикул — а якщо НЕ знайдеться, той самий артикул БЕЗ суфіксу кольору\n// (частина постачальників має один артикул на весь товар: «888888-1» → «888888»).\nvar mapArticle=String(m.article||'').trim();\nvar explicitArticle=String(prod.supplierArticle||'').trim();\nvar crmArticle=(prod.article||prod.vendor_code||prod.sku||context.orderSku||((prod.offers&&prod.offers[0]&&prod.offers[0].sku))||'').trim();\nvar articleCandidates;\nif(mapArticle) articleCandidates=[mapArticle];\nelse if(explicitArticle) articleCandidates=[explicitArticle];\nelse { articleCandidates=[crmArticle]; if(/-\\d+$/.test(crmArticle)) articleCandidates.push(crmArticle.replace(/-\\d+$/,'')); }\nvar color=(m.color||(context.colorChoice&&context.colorChoice.color)||'').trim();\nvar size=(context.recommendedSize||'').trim();\nif(!articleCandidates[0]) return { supplierOrderResult:'❌ Немає артикулу brewdrop для товару '+(prod.name||prod.id)+' — заповни BREWDROP_ARTICLE_MAP' };\nvar article='', found=null;\nfor(var aci=0; aci<articleCandidates.length && !found; aci++){\n  article=articleCandidates[aci];\n  var s=await bd('/api/guest/products/?search='+encodeURIComponent(article)+'&per_page=20');\n  var sd=(s.json&&s.json.data)||[];\n  found=sd.find(function(p){return norm(p.vendor_code)===norm(article);})||sd[0];\n}\nif(!found) return { supplierOrderResult:'❌ brewdrop: артикул '+articleCandidates.join(' / ')+' не знайдено' };\nvar d=await bd('/api/guest/products/'+found.product_id);\nvar colors=(((d.json&&(d.json.data||d.json))||{}).remains)||[];\nvar pcsId=null, chosen=null;\nfor(var ci=0;ci<colors.length;ci++){ var c=colors[ci]; var cn=norm(c.color&&c.color.name);\n  if(color && cn!==norm(color) && cn.indexOf(norm(color))<0) continue;\n  var sizes=c.sizes||[];\n  for(var si=0;si<sizes.length;si++){ var sv=sizes[si];\n    if(size && norm(sv.size&&sv.size.name)!==norm(size)) continue;\n    if(Number(sv.remains)>0){ pcsId=sv.product_color_size_id; chosen={color:cn,size:(sv.size&&sv.size.name),remains:sv.remains}; break; } }\n  if(pcsId) break; }\nif(!pcsId) return { supplierOrderResult:'❌ brewdrop: нема в наявності '+article+' / '+color+' / '+size };\nvar cart=await bd('/api/carts',{method:'POST',body:JSON.stringify({product_color_size_id:pcsId,qty:1})});\nif(cart.status>=400) return { supplierOrderResult:'❌ кошик brewdrop: '+JSON.stringify(cart.json).slice(0,200) };\nvar cy=await bd('/api/cities?search='+encodeURIComponent(od.city||'')+'&per_page=5');\nvar cityObj=((cy.json&&cy.json.data)||[])[0]; var brObj=null;\nif(cityObj){ var brs=await bd('/api/branches?city_id='+cityObj.id+'&search='+encodeURIComponent(String(od.branch||''))+'&per_page=25'); var ba=(brs.json&&brs.json.data)||[]; brObj=ba.find(function(b){return String(b.name+' '+b.name_ua).indexOf(String(od.branch||''))>=0;})||ba[0]; }\nvar parts=String(od.fullName||'').split(/\\s+/); var last=parts[0]||'',first=parts[1]||'',middle=parts[2]||null;\nvar payload={ sender_id:Number(keys.BREWDROP_SENDER_ID)||undefined,\n  client_data:{ first_name:first,last_name:last,middle_name:middle,phone:od.phone||'',delivery_id:1,city_id:cityObj&&cityObj.id,branch_id:brObj&&brObj.id },\n  delivery_data:{ delivery_id:1,delivery_pay_person:1 }, pay_type:1, pay_person:1, discount:{type:'%',value:0},\n  sell_price:Number(context.payAmount)||prod.price||undefined, comment:'Замовлення '+(context.orderRef||'') };\nvar summary='🧾 brewdrop '+(dryRun?'(DRY-RUN)':'СТВОРЕНО')+':\\nТовар: '+article+' / '+(chosen&&chosen.color)+' / '+(chosen&&chosen.size)+' (pcsId '+pcsId+', залишок '+(chosen&&chosen.remains)+')\\nОтримувач: '+last+' '+first+' '+(od.phone||'')+'\\nНП: '+((cityObj&&cityObj.name)||od.city)+' / '+((brObj&&brObj.name)||od.branch)+'\\nЦіна продажу: '+payload.sell_price+' | sender_id: '+(payload.sender_id||'—');\nif(dryRun) return { supplierOrderResult:summary+'\\n\\n⚠️ DRY-RUN: НЕ відправлено (BREWDROP_DRY_RUN=1).', supplierOrderPayload:JSON.stringify(payload) };\nvar o=await bd('/api/orders',{method:'POST',body:JSON.stringify(payload)});\nif(o.status>=400) return { supplierOrderResult:'❌ brewdrop orders: '+JSON.stringify(o.json).slice(0,300), supplierOrderPayload:JSON.stringify(payload) };\nvar od2=(o.json&&o.json.data)||{};\nreturn { supplierOrderResult:summary+'\\n✅ ID: '+(od2.id||'?')+(od2.ttn?(' | ТТН: '+od2.ttn):''), supplierOrderId:od2.id||null, supplierTtn:od2.ttn||'' };\n",
+          "label": "13.6 Замовлення постачальнику (brewdrop)",
+          "description": "Автоматичне замовлення постачальнику brewdrop (dry-run під BREWDROP_DRY_RUN)."
+        },
+        "type": "js",
+        "measured": {
+          "width": 320,
+          "height": 92
+        },
+        "position": {
+          "x": 1800,
+          "y": 7200
+        }
+      },
+      {
+        "id": "n_supplier_notify",
+        "data": {
+          "label": "13.7 Результат постачальнику → Telegram",
+          "message": "🏭 Постачальник (замовлення {{context.orderRef}}):\n{{context.supplierOrderResult}}",
+          "targetKey": "ADMIN_TELEGRAM_ID",
+          "description": "Результат замовлення постачальнику → сигнал у Telegram (успіх/помилка/TTN)."
+        },
+        "type": "notifyTg",
+        "measured": {
+          "width": 320,
+          "height": 76
+        },
+        "position": {
+          "x": 2160,
+          "y": 7400
+        }
+      },
+      {
+        "id": "n_upsell2_wait",
+        "data": {
+          "mode": "dialog",
+          "label": "15. Другий допродаж — відповідь",
+          "outputVar": "context.upsell2",
+          "useCatalog": true,
+          "connectorId": "2ec53ba5-144e-463b-9758-c217c4a69b0e",
+          "description": "Другий допродаж — одна репліка після оформлення замовлення (не веде довгий діалог).",
+          "temperature": 0.3,
+          "systemPrompt": "Клієнт щойно оформив замовлення, і ти запропонував додати ще товар за акційною ціною. Це ОДНА відповідь — не веди довгий діалог.\nЯкщо цікавиться товаром — коротко тепло допоможи; якщо відмова — щиро подякуй за замовлення й побажай гарного дня.\nВідповідай ОДНИМ теплим реченням українською. ЗАВЖДИ додай у json_output рівно один JSON: {\"done\": true}. Жодних службових токенів.\nВИНЯТОК: якщо клієнт явно просить живу людину/менеджера — замість цього поверни ТІЛЬКИ json_output {\"handoff\":true} (без done).\n ЗАБОРОНЕНО стверджувати щось про статус оплати (\"підтверджено\", \"оплата пройшла\", \"зарахували\") — ти цього НЕ бачиш. Якщо клієнт пише про оплату/квитанцію/чек — тепло подякуй і скажи, що команда звірить і напише окремо, без слова \"підтверджено\".",
+          "exitCondition": "json_output"
+        },
+        "type": "claude",
+        "measured": {
+          "width": 320,
+          "height": 116
+        },
+        "position": {
+          "x": 1800,
+          "y": 8000
+        }
+      },
+      {
+        "id": "n_final",
+        "data": {
+          "text": "Чудово, замовлення прийняте ✔️\nДякуємо, що обрали {{env.SHOP_TAG}} 🙌 Ми вже беремося за вашу посилку і триматимемо в курсі — номер накладної надішлемо сюди, щойно відправимо 📦\nГарного вам дня та чудового настрою! 🌟",
+          "label": "16. Замовлення прийняте",
+          "variants": [
+            "Чудово, замовлення прийняте ✔️\nДякуємо, що обрали {{env.SHOP_TAG}} 🙌 Ми вже беремося за вашу посилку і триматимемо в курсі — номер накладної надішлемо сюди, щойно відправимо 📦\nГарного вам дня та чудового настрою! 🌟{{context.product.footwearNote}}",
+            "Готово, замовлення прийняте ✔️\nДякуємо, що обрали {{env.SHOP_TAG}} 🙌 Уже беремося за вашу посилку, триматимемо в курсі — ТТН скинемо сюди одразу після відправки 📦\nГарного дня та настрою! 🌟{{context.product.footwearNote}}",
+            "Все, замовлення оформлене ✔️\nДякуємо, що обрали саме {{env.SHOP_TAG}} 🙌 Займаємось вашою посилкою — номер накладної надішлемо, щойно відправимо 📦\nЧудового вам дня! 🌟{{context.product.footwearNote}}",
+            "Замовлення прийняте, дякую ✔️\nЩиро дякуємо, що обрали {{env.SHOP_TAG}} 🙌 Уже готуємо вашу посилку, триматимемо в курсі — ТТН напишемо сюди після відправки 📦\nГарного настрою! 🌟{{context.product.footwearNote}}",
+            "Супер, все прийнято ✔️\nДякуємо, що обрали {{env.SHOP_TAG}} 🙌 Беремося за вашу посилку прямо зараз, номер накладної надішлемо, щойно відправимо 📦\nГарного дня і чудового настрою! 🌟{{context.product.footwearNote}}"
+          ],
+          "description": "Завершальне повідомлення — подяка за замовлення."
+        },
+        "type": "message",
+        "measured": {
+          "width": 320,
+          "height": 108
+        },
+        "position": {
+          "x": 1440,
+          "y": 8200
+        }
+      },
+      {
+        "id": "n_ttn_cond",
+        "data": {
+          "label": "13.8 Є ТТН?",
+          "condition": "context.supplierTtn && String(context.supplierTtn).length > 3",
+          "description": "ТТН (номер накладної) отримано від постачальника? TRUE → повідомляємо клієнту; FALSE → одразу до підтвердження без ТТН."
+        },
+        "type": "condition",
+        "measured": {
+          "width": 320,
+          "height": 128
+        },
+        "position": {
+          "x": 1440,
+          "y": 7600
+        }
+      },
+      {
+        "id": "n_ttn_client",
+        "data": {
+          "text": "Ваша посилка вже їде! 🚚 Номер накладної (ТТН): {{context.supplierTtn}}\nЗа ним зможете відстежити доставку на Новій Пошті 📦 Дякуємо за замовлення 💛",
+          "label": "13.9 ТТН клієнту",
+          "variants": [
+            "Ваша посилка вже їде! 🚚 Номер накладної (ТТН): {{context.supplierTtn}}\nЗа ним зможете відстежити доставку на Новій Пошті 📦 Дякуємо за замовлення 💛",
+            "Ваша посилка в дорозі! 🚚 Номер накладної: {{context.supplierTtn}}\nВідстежити доставку можна на Новій Пошті за цим номером 📦 Дякуємо за замовлення 💛",
+            "Посилку вже відправили! 🚚 ТТН: {{context.supplierTtn}}\nЗа цим номером відстежите доставку в застосунку Нової Пошти 📦 Дякуємо, що обрали нас 💛",
+            "Ваше замовлення вже в дорозі! 🚚 Номер накладної: {{context.supplierTtn}}\nМожете стежити за доставкою на Новій Пошті 📦 Дякуємо за покупку 💛",
+            "Готово, посилка їде до вас! 🚚 ТТН: {{context.supplierTtn}}\nВідстежуйте доставку на Новій Пошті за цим номером 📦 Дякуємо за замовлення 💛"
+          ],
+          "description": "Повідомлення клієнту з номером ТТН для відстеження посилки."
+        },
+        "type": "message",
+        "measured": {
+          "width": 320,
+          "height": 108
+        },
+        "position": {
+          "x": 1440,
+          "y": 7800
+        }
+      },
+      {
+        "id": "n_supplier_cond_ed",
+        "data": {
+          "label": "13.6b Механізм = easydrop (offline-форма)?",
+          "condition": "context.supplierMechanism === 'easydrop_offline'",
+          "description": "Постачальник = easydrop (офлайн-форма)? TRUE → замовлення через форму easydrop; FALSE → перевіряємо easydrop-кошик."
+        },
+        "type": "condition",
+        "measured": {
+          "width": 320,
+          "height": 128
+        },
+        "position": {
+          "x": 1440,
+          "y": 7200
+        }
+      },
+      {
+        "id": "n_supplier_order_ed",
+        "data": {
+          "code": "// Дропшип-замовлення easydrop (каталог → кошик → адреса). Постачальники типу Zaxid_drop.\n// Ланцюг (реверс 2026-08-19): login → /catalog-view/<sup>/<cat>/?search=<артикул>\n//   → POST /change-api action=cart&item&size&qty → /select-address?type=warehouse (форма order-address-form).\n// DRY-RUN за замовчуванням: доходить до кошика, показує дані й прибирає позицію; адресу НЕ відправляє.\nif(context.testMode) return { supplierOrderResult:'(testMode: easydrop-кошик пропущено)' };\nvar base=(keys.EASYDROP_BASE||'https://easydrop.one').replace(/\\/+$/,'');\nvar login=(keys.EASYDROP_LOGIN||'').trim(), pass=(keys.EASYDROP_PASS||'').trim();\nvar dryRun=String(keys.EASYDROP_CART_DRY_RUN||'1')!=='0';\nif(!login||!pass) return { supplierOrderResult:'❌ EASYDROP_LOGIN/PASS не заповнено' };\nvar cfg=context.supplierCfg||{};\nvar supId=String(cfg.catalogId||keys.EASYDROP_CATALOG_ID||'').trim();\nif(!supId) return { supplierOrderResult:'❌ не задано catalogId постачальника у SUPPLIER_CONFIG' };\nvar cats=(cfg.categories||String(keys.EASYDROP_CATEGORIES||'').split(',')).map(function(x){return String(x).trim();}).filter(Boolean);\nif(!cats.length) return { supplierOrderResult:'❌ не задано categories постачальника у SUPPLIER_CONFIG' };\nvar cookies={};\nfunction setCk(res){ try{ var sc=res.headers.getSetCookie?res.headers.getSetCookie():[]; for(var i=0;i<sc.length;i++){ var p=sc[i].split(';')[0]; var q=p.indexOf('='); if(q>0) cookies[p.slice(0,q)]=p.slice(q+1); } }catch(e){} }\nfunction ck(){ return Object.keys(cookies).map(function(k){return k+'='+cookies[k];}).join('; '); }\nfunction tok(h){ var m=String(h||'').match(/name=\"csrfmiddlewaretoken\" value=\"([^\"]+)\"/); return m?m[1]:(cookies['csrftoken']||''); }\nasync function get(p){ return fetch(base+p,{headers:{'Cookie':ck(),'Referer':base+'/'}}); }\nasync function api(body,ref){ return fetch(base+'/change-api',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Cookie':ck(),'Referer':base+(ref||'/'),'Origin':base,'X-Requested-With':'XMLHttpRequest'},body:body}); }\n// 1) логін\nvar r1=await fetch(base+'/login'); setCk(r1); var t1=tok(await r1.text());\nvar r2=await fetch(base+'/login',{method:'POST',redirect:'manual',headers:{'Content-Type':'application/x-www-form-urlencoded','Cookie':ck(),'Referer':base+'/login','Origin':base},body:'csrfmiddlewaretoken='+encodeURIComponent(t1)+'&username='+encodeURIComponent(login)+'&password='+encodeURIComponent(pass)});\nsetCk(r2); var hash=((r2.headers.get('location')||'').match(/hash=(\\d+)/)||[])[1];\nif(hash){ cookies['manager_hash']=hash; cookies['uid']='u-'+hash; }\nif(!cookies['sessionid']) return { supplierOrderResult:'❌ easydrop: логін не вдався', supplierOrderStatus:'error' };\n// 2) знайти товар за артикулом у категоріях постачальника\nvar prod=context.product||{}, od=context.orderData||{};\n// Артикул постачальника (CT_1006, явно заповнений у CRM) — довіряємо йому напряму,\n// без фолбеку. Інакше — CRM-артикул як є, а якщо не знайдеться — той самий артикул БЕЗ\n// суфіксу кольору (частина постачальників має ОДИН артикул на весь товар, не по кольору\n// окремо: наші «888888-1»/«888888-2» → в постачальника просто «888888»).\nvar articleExplicit=String(prod.supplierArticle||'').trim();\nvar articleBase=String(prod.article||prod.sku||context.orderSku||'').trim();\nvar articleCandidates=articleExplicit ? [articleExplicit] : [articleBase];\nif(!articleExplicit && /-\\d+$/.test(articleBase)){ articleCandidates.push(articleBase.replace(/-\\d+$/,'')); }\nif(!articleCandidates[0]) return { supplierOrderResult:'❌ easydrop-кошик: немає артикулу товару', supplierOrderStatus:'error' };\nvar wantSize=String(context.recommendedSize||(context.sizeInput&&context.sizeInput.clothingSize)||'').replace(/[^0-9A-Za-zXL]/g,'');\nvar itemId=null, sizeId=null, sizeLabel='', foundCat='', article='';\nfor(var ari=0; ari<articleCandidates.length && !itemId; ari++){\n  article=articleCandidates[ari];\n  for(var ci=0; ci<cats.length && !itemId; ci++){\n    var page=await (await get('/catalog-view/'+encodeURIComponent(supId)+'/'+encodeURIComponent(cats[ci])+'/?search='+encodeURIComponent(article)+'&item-text=&tags=')).text();\n    var ai=page.indexOf(\"copyText('\"+article+\"')\");\n    if(ai<0) continue;\n    foundCat=cats[ci];\n    var head=page.slice(Math.max(0,ai-6000), ai);\n    var gm=head.match(/showItemImageGallery\\((\\d+)\\)(?![\\s\\S]*showItemImageGallery\\()/);\n    if(!gm) continue;\n    itemId=gm[1];\n    var tail=page.slice(ai, ai+9000), opts=[], m2;\n    var re=new RegExp(\"setSize\\\\('\"+itemId+\"',\\\\s*'(\\\\d+)',\\\\s*'(True|False)'\\\\)[^>]*>\\\\s*([0-9A-Za-zXL.,]+)\",\"g\");\n    while((m2=re.exec(tail))) opts.push({ id:m2[1], avail:m2[2]==='True', label:String(m2[3]).trim() });\n    if(!opts.length){ var re2=new RegExp(\"setSize\\\\('\"+itemId+\"',\\\\s*'(\\\\d+)',\\\\s*'(True|False)'\\\\)\",\"g\"); while((m2=re2.exec(tail))) opts.push({ id:m2[1], avail:m2[2]==='True', label:'' }); }\n    var hit=null;\n    if(wantSize) hit=opts.filter(function(o){ return o.avail && String(o.label).replace(/[^0-9A-Za-zXL]/g,'')===wantSize; })[0];\n    if(!hit) hit=opts.filter(function(o){ return o.avail; })[0];\n    if(hit){ sizeId=hit.id; sizeLabel=hit.label; }\n  }\n}\nif(!itemId||!sizeId) return { supplierOrderResult:'❌ easydrop-кошик: товар «'+articleCandidates.join(' / ')+'»'+(wantSize?(' розмір '+wantSize):'')+' не знайдено у постачальника '+supId, supplierOrderStatus:'error' };\n// 3) у кошик\nvar csrf=cookies['csrftoken']||'';\nvar addRes=await api('action=cart&item='+encodeURIComponent(itemId)+'&size='+encodeURIComponent(sizeId)+'&qty=1&csrfmiddlewaretoken='+encodeURIComponent(csrf), '/catalog-view/'+supId+'/'+foundCat+'/');\nvar addTxt=(await addRes.text()).trim();\nif(addTxt!=='OK') return { supplierOrderResult:'❌ easydrop-кошик: не додалось у кошик ('+addRes.status+' '+addTxt.slice(0,80)+')', supplierOrderStatus:'error' };\n// 4) підсумок + адреса\nvar parts=String(od.fullName||'').split(/\\s+/).filter(Boolean);\nvar last=parts[0]||'', first=parts[1]||'';\nvar np=context.np||{};\nvar addrCity=np.city||od.city||'';\nvar addrWh=np.warehouse||('Відділення №'+(od.branch||''));\nvar summary='🧾 easydrop-кошик '+(dryRun?'(DRY-RUN)':'ОФОРМЛЕНО')+':\\nПостачальник '+supId+' | артикул '+article+' (item '+itemId+') | розмір '+(sizeLabel||wantSize||'—')+'\\nОтримувач: '+last+' '+first+' '+(od.phone||'')+'\\nНП: '+addrCity+', '+addrWh;\nif(dryRun){\n  var cartPage=await (await get('/cart')).text();\n  var lineIds=[], rl=/removeFromCart\\('(\\d+)'\\)/g, mm;\n  while((mm=rl.exec(cartPage))) if(lineIds.indexOf(mm[1])<0) lineIds.push(mm[1]);\n  for(var li=0; li<lineIds.length; li++){ await api('action=cart-remove&item='+lineIds[li]+'&csrfmiddlewaretoken='+encodeURIComponent(csrf), '/cart').catch(function(){}); }\n  return { supplierOrderResult:summary+'\\n⚠️ DRY-RUN: додано в кошик і прибрано; адресу НЕ відправлено (EASYDROP_CART_DRY_RUN=1).', supplierOrderStatus:'dry_run' };\n}\n// Адресні поля мають бути ДОСЛІВНО з автокомпліту easydrop, інакше форма відбивається.\nasync function ac(url){ try{ var r=await get(url); var t=await r.text(); var j=JSON.parse(t); return Array.isArray(j)?j:[]; }catch(e){ return []; } }\nvar cityQ=String(addrCity).replace(/^[мсмт]+\\.\\s*/i,'').split(',')[0].split('|')[0].trim();\nvar cityOpts=await ac('/autocomplete/city/?q='+encodeURIComponent(cityQ));\nvar cityPick=cityOpts.filter(function(x){ return String(x).toLowerCase().indexOf(cityQ.toLowerCase())===0 || /^м\\./i.test(String(x)); })[0]||cityOpts[0]||'';\nvar bnum2=(String(od.branch||'').match(/\\d+/)||[])[0]||'';\nvar whOpts=await ac(\"/autocomplete/department/?q=\"+encodeURIComponent(cityQ+(bnum2?(\" Відділення №\"+bnum2):\"\")));\nif(!whOpts.length) whOpts=await ac(\"/autocomplete/department/?q=\"+encodeURIComponent(cityQ));\nvar whPick=(bnum2?whOpts.filter(function(x){ return new RegExp('№\\\\s*'+bnum2+'(?!\\\\d)').test(String(x)); })[0]:null)||whOpts[0]||'';\nif(!cityPick||!whPick) return { supplierOrderResult:summary+'\\n❌ easydrop: не підібрав місто/відділення в автокомпліті (місто «'+cityQ+'», відділення №'+bnum2+')', supplierOrderStatus:'error', supplierNeedsManual:true };\nvar addrPage=await (await get('/select-address?type=warehouse')).text();\nvar atok=tok(addrPage);\nvar form='csrfmiddlewaretoken='+encodeURIComponent(atok)\n  +'&template_pk=&edit='\n  +'&person_first_name='+encodeURIComponent(first)\n  +'&person_last_name='+encodeURIComponent(last)\n  +'&person_phone='+encodeURIComponent(od.phone||'')\n  +'&settlement_select='+encodeURIComponent(cityPick)\n  +'&settlement_text='+encodeURIComponent(cityPick)\n  +'&warehouse_select='+encodeURIComponent(whPick)\n  +'&warehouse_text='+encodeURIComponent(whPick)\n  +'&is_permanent_client=on';\nsummary+='\\nАдреса easydrop: '+cityPick.trim()+' | '+whPick;\n// Крок 5: адресу передають GET-ом на /order-data (prepareAddress у select_address.js), тоді\n// фінальний POST multipart форми create-order-form з action=create (orderRequest у main.js).\nvar odUrl='/order-data?type=warehouse&'+form;\nvar odRes=await fetch(base+odUrl,{headers:{'Cookie':ck(),'Referer':base+'/select-address?type=warehouse'}});\nsetCk(odRes);\nvar odHtml=await odRes.text();\nif(odRes.status>=400) return { supplierOrderResult:summary+'\\n❌ /order-data HTTP '+odRes.status, supplierOrderStatus:'error', supplierNeedsManual:true };\nvar fm=odHtml.match(/<form[^>]*id=\"order-data-form\"[\\s\\S]*?<\\/form>/i);\nvar fhtml=fm?fm[0]:odHtml;\n// збираємо поля форми як їх віддає сторінка\nvar fd=new FormData();\nvar seen={}, mi;\nvar ire=/<input[^>]*>/g;\nwhile((mi=ire.exec(fhtml))){\n  var tag=mi[0];\n  var nm=(tag.match(/name=\"([^\"]+)\"/)||[])[1]; if(!nm||seen[nm]) continue;\n  var ty=((tag.match(/type=\"([^\"]+)\"/)||[])[1]||'text').toLowerCase();\n  if((ty==='checkbox'||ty==='radio') && !/checked/i.test(tag)) continue;\n  var vl=(tag.match(/value=\"([^\"]*)\"/)||[])[1]||'';\n  fd.append(nm, vl); seen[nm]=1;\n}\nvar sre=/<select[^>]*name=\"([^\"]+)\"[\\s\\S]*?<\\/select>/g, ms;\nwhile((ms=sre.exec(fhtml))){\n  if(seen[ms[1]]) continue;\n  var sel=(ms[0].match(/<option[^>]*selected[^>]*value=\"([^\"]*)\"/)||ms[0].match(/<option[^>]*value=\"([^\"]*)\"/)||[])[1]||'';\n  fd.append(ms[1], sel); seen[ms[1]]=1;\n}\nvar tre=/<textarea[^>]*name=\"([^\"]+)\"[^>]*>([\\s\\S]*?)<\\/textarea>/g, mt;\nwhile((mt=tre.exec(fhtml))){ if(seen[mt[1]]) continue; fd.append(mt[1], mt[2]||''); seen[mt[1]]=1; }\nif(!seen['csrfmiddlewaretoken']) fd.append('csrfmiddlewaretoken', tok(odHtml)||cookies['csrftoken']||'');\n// наші дані замовлення\nfd.set('comment', 'Замовлення '+(context.orderRef||'')+' (бот)');\nif(Number(prod.price)) fd.set('cost', String(Number(prod.price)));\n// форма order-data-form сабмітиться як звичайний multipart-POST (кнопка «Підтвердити»)\nvar fin=await fetch(base+odUrl,{method:'POST',redirect:'manual',headers:{'Cookie':ck(),'Referer':base+odUrl,'Origin':base},body:fd});\nvar floc=fin.headers.get('location')||'';\nvar ftxt=(fin.status>=300&&fin.status<400)?'':(await fin.text()).slice(0,400);\n// Успіх = 302 на список замовлень (звичайний submit форми) або 'orders_redirect' в AJAX-відповіді.\nvar ok=(fin.status>=300&&fin.status<400&&/order/i.test(floc))||/orders_redirect/i.test(ftxt);\nreturn { supplierOrderResult:summary+(ok?('\\n✅ Замовлення СТВОРЕНО в easydrop'+(floc?(' ('+floc+')'):'')):('\\n❌ не створилось (HTTP '+fin.status+' '+floc+'): '+ftxt.replace(/\\s+/g,' ').slice(0,150))), supplierOrderStatus:ok?'created':'error', supplierNeedsManual:!ok, supplierCartItem:itemId };\n",
+          "label": "13.6c Замовлення постачальнику (easydrop)",
+          "description": "Автоматичне замовлення постачальнику easydrop через офлайн-форму (Django login+CSRF+POST), dry-run під EASYDROP_DRY_RUN."
+        },
+        "type": "js",
+        "measured": {
+          "width": 320,
+          "height": 92
+        },
+        "position": {
+          "x": 1800,
+          "y": 7400
+        }
+      },
+      {
+        "id": "n_np_check",
+        "data": {
+          "code": "var key=(keys.NOVAPOSHTA_API_KEY||'').trim();\nvar od=context.orderData||{};\nvar np=Object.assign({tries:0,summary:''}, context.np||{});\nif(!key || !od.city){ np.checked=false; np.summary=''; return { np: np }; }\nnp.tries=(np.tries||0)+1;\nasync function npCall(model,method,props){ var r=await fetch('https://api.novaposhta.ua/v2.0/json/',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({apiKey:key,modelName:model,calledMethod:method,methodProperties:props})}); return await r.json().catch(function(){return{};}); }\nfunction mkSummary(){ var s='📦 Доставка: '+(np.city||od.city)+(np.warehouse?(', '+np.warehouse):''); if(np.warn) s+='\\n⚠️ '+np.warn+' — напишіть, якщо треба поправити'; return s+'\\n'; }\ntry{\n  var s=await npCall('Address','searchSettlements',{CityName:String(od.city),Limit:'20'});\n  var addrs=(s.data&&s.data[0]&&s.data[0].Addresses)||[];\n  if(!addrs.length){ np.checked=true; np.ask=(np.tries<2); np.city=od.city; np.warn='місто «'+od.city+'» не знайдено в Новій Пошті'; np.askMsg='Не знайшла населений пункт «'+od.city+'» у Новій Пошті 🤔 Підкажіть, будь ласка, точну назву міста/села (можна з областю).'; np.summary=mkSummary(); return { np: np }; }\n  // 1) ТОЧНИЙ збіг назви: «Київ» не має перепитуватись лише тому, що є «Київець» тощо.\n  function nrm(x){ return String(x||'').toLowerCase().replace(/[’'`]/g,'').replace(/\\s+/g,' ').trim(); }\n  var q=nrm(od.city);\n  var exact=addrs.filter(function(a){ return nrm(a.MainDescription)===q; });\n  if(exact.length>1){\n    // серед однойменних — місто має пріоритет над селом/смт\n    var cities=exact.filter(function(a){ return /^м\\.|^m\\./i.test(String(a.SettlementTypeCode||'')) || /місто/i.test(String(a.SettlementTypeDescription||'')) || /^м\\.\\s/i.test(String(a.Present||'')); });\n    if(cities.length===1) exact=cities;\n  }\n  if(exact.length===1){ addrs=exact; }\n  else if(exact.length>1){ addrs=exact; }\n  if(addrs.length>1){\n    var reg=''; var mm=String((od.region||'')+' '+od.city).toLowerCase().match(/([а-яіїєґ']{4,})\\s*обл/i); if(mm) reg=mm[1];\n    var narrow=reg?addrs.filter(function(a){return String(a.Present).toLowerCase().indexOf(reg)>=0;}):addrs;\n    if(narrow.length===1){ addrs=narrow; }\n    else {\n      np.checked=true; np.ask=(np.tries<2); np.city=od.city;\n      np.options=addrs.slice(0,6).map(function(a){return a.Present;});\n      np.warn='кілька населених пунктів «'+od.city+'», уточніть область';\n      np.askMsg='Щоб не помилитись із доставкою 🙂 у нас кілька населених пунктів «'+od.city+'». Підкажіть, будь ласка, область (або повну назву з районом).';\n      np.summary=mkSummary(); return { np: np };\n    }\n  }\n  var a=addrs[0]; np.checked=true; np.ask=false; np.city=a.Present; np.cityRef=a.DeliveryCity||''; np.settlementRef=a.Ref||''; np.ref=np.cityRef||np.settlementRef; np.warn=''; np.askMsg='';\n  var bnum=(String(od.branch||'').match(/\\d+/)||[])[0];\n  var wantP=/поштомат|термінал/i.test(String(od.branch||''));\n  if(np.ref){\n    // getWarehouses: для міста — CityRef (DeliveryCity), для села — SettlementRef. Пробуємо обидва.\n    var w=np.cityRef?await npCall('Address','getWarehouses',{CityRef:np.cityRef,Limit:'1000'}):{};\n    if(!((w.data)||[]).length && np.settlementRef) w=await npCall('Address','getWarehouses',{SettlementRef:np.settlementRef,Limit:'1000'});\n    var whs=(w.data)||[]; var hit=null;\n    if(bnum){ hit=whs.filter(function(x){return String(x.Number)===String(bnum)&&(!wantP||x.CategoryOfWarehouse==='Postomat');})[0] || whs.filter(function(x){return String(x.Number)===String(bnum);})[0]; }\n    if(hit){ np.warehouse=hit.Description; np.warehouseRef=hit.Ref; np.warehouseType=hit.CategoryOfWarehouse; }\n    else if(bnum){ np.warehouse='№'+bnum; np.ask=(np.tries<2); np.warn=(wantP?'поштомат':'відділення')+' №'+bnum+' у місті «'+np.city+'» не знайдено'; np.askMsg='У місті «'+np.city+'» не знайшла '+(wantP?'поштомат':'відділення')+' №'+bnum+' 🤔 Перевірте, будь ласка, номер (можна написати «поштомат N» чи «відділення N»).'; }\n    else { np.ask=(np.tries<2); np.warn='не вказано номер відділення/поштомата'; np.askMsg='Підкажіть, будь ласка, номер відділення або поштомата Нової Пошти 🙂'; }\n  }\n  np.summary=mkSummary(); return { np: np };\n}catch(e){ np.checked=false; np.summary=''; np.warn='НП недоступна'; return { np: np }; }",
+          "label": "12.6 Нова Пошта: перевірка адреси",
+          "description": "Нова Пошта API: перевіряє написане місто (з дизамбігуацією за областю) і номер відділення/поштомату."
+        },
+        "type": "js",
+        "measured": {
+          "width": 320,
+          "height": 92
+        },
+        "position": {
+          "x": 720,
+          "y": 5000
+        }
+      },
+      {
+        "id": "n_np_gate",
+        "data": {
+          "label": "12.62 Уточнити область?",
+          "condition": "context.np && context.np.ask === true",
+          "description": "Місто неоднозначне (кілька населених пунктів з такою назвою)? TRUE → уточнюємо область; FALSE → одразу до перевірки оплати."
+        },
+        "type": "condition",
+        "measured": {
+          "width": 223,
+          "height": 128
+        },
+        "position": {
+          "x": 720,
+          "y": 5200
+        }
+      },
+      {
+        "id": "n_np_ask",
+        "data": {
+          "text": "{{context.np.askMsg}}",
+          "label": "12.63 Уточнити адресу",
+          "variants": [],
+          "description": "Просимо клієнта уточнити область/район для однозначного визначення міста доставки."
+        },
+        "type": "message",
+        "measured": {
+          "width": 220,
+          "height": 76
+        },
+        "position": {
+          "x": 720,
+          "y": 5400
+        }
+      },
+      {
+        "id": "n_unknown_msg",
+        "data": {
+          "mode": "single",
+          "label": "1b. Загальний контекст магазину (KB) → запит поста/артикулу",
+          "useKb": false,
+          "connectorId": "2ec53ba5-144e-463b-9758-c217c4a69b0e",
+          "description": "Товар не визначено: тепла шаблонна відповідь (без вигадування наявності товарів!) з проханням скинути пост/рілс/артикул.",
+          "temperature": 0,
+          "systemPrompt": "Ти — {{env.PERSONA_NAME}}, продавчиня {{env.SHOP_TAG}}. Клієнт написав повідомлення, товар ще НЕ визначено.\nПовідомлення клієнта: «{{context.lastUserMessage}}»\n\nТвоє завдання — ЛИШЕ привітатись у тон клієнта (коротко, тепло) і РІВНО ЦЕ повідомити далі, нічого не додаючи від себе про товари:\n«Щоб підказати все точно — наявність, ціну, кольори, розміри — покажіть, будь ласка, конкретний товар: скиньте пост чи рілс з Instagram або назвіть артикул 😊»\n\nСУВОРО ЗАБОРОНЕНО: писати щось про конкретні товари (є/немає, ціни, категорії, асортимент) — ти цього не знаєш, у тебе немає доступу до каталогу.\nДозволено лише: 1) коротке привітання у тон клієнта, 2) фраза вище дослівно або близько до тексту. Без JSON, без службових токенів.",
+          "productUnknownAsk": true
+        },
+        "type": "claude",
+        "position": {
+          "x": 360,
+          "y": 800
+        }
+      },
+      {
+        "id": "n_unknown_admin",
+        "data": {
+          "label": "1c. Сигнал: товар не визначено",
+          "message": "🔔 БОТ НЕ ВИЗНАЧИВ ТОВАР — опрацюйте вручну.\nКлієнт: {{context.senderName}} ({{context.igUsername}})\nОстаннє: {{context.lastUserMessage}}",
+          "targetKey": "ADMIN_TELEGRAM_ID",
+          "description": "Сигнал у Telegram-групу: бот не визначив товар, потрібне ручне опрацювання."
+        },
+        "type": "notifyTg",
+        "position": {
+          "x": 720,
+          "y": 1000
+        }
+      },
+      {
+        "id": "n_unknown_stop",
+        "data": {
+          "code": "return { adminEngaged: true, handoffKind: 'product_unknown' };",
+          "label": "1d. Пауза бота (менеджер)",
+          "description": "Ставить adminEngaged=true, handoffKind=\"product_unknown\" — бот замовкає, але автоматично відновиться, якщо клієнт сам пришле продукт-сигнал (пост/артикул).",
+          "testRestartAfter": true
+        },
+        "type": "js",
+        "position": {
+          "x": 720,
+          "y": 1200
+        }
+      },
+      {
+        "id": "n_has_photo",
+        "data": {
+          "label": "1. Є фото товару?",
+          "condition": "context.product && context.product.photoUrl && String(context.product.photoUrl).length > 5",
+          "description": "Чи є фото товару в KeyCRM? — визначає, чи показувати n_photo перед привітанням."
+        },
+        "type": "condition",
+        "position": {
+          "x": 360,
+          "y": 1200
+        }
+      },
+      {
+        "id": "n_req_manual",
+        "data": {
+          "text": "Або вручну за реквізитами — нижче кожне значення окремо, просто натисніть, щоб скопіювати 👇",
+          "label": "11.1 Або вручну",
+          "variants": [
+            "Або вручну за реквізитами — нижче кожне значення окремо, просто натисніть, щоб скопіювати 👇",
+            "Хочете оплатити вручну? Реквізити нижче — кожне значення окремо, просто натисніть, щоб скопіювати 👇",
+            "Можна й вручну за реквізитами — нижче все окремо, тисніть, щоб скопіювати 👇",
+            "Або оплатіть вручну за реквізитами — нижче кожен рядок окремо, натисніть, щоб скопіювати 👇",
+            "Реквізити для ручної оплати — нижче, кожне значення окремо. Просто торкніться, щоб скопіювати 👇"
+          ],
+          "description": "Пропонує альтернативу — оплата вручну за реквізитами (наступні повідомлення)."
+        },
+        "type": "message",
+        "measured": {
+          "width": 260,
+          "height": 92
+        },
+        "position": {
+          "x": 1440,
+          "y": 5400
+        }
+      },
+      {
+        "id": "n_req_iban_l",
+        "data": {
+          "text": "🏦 IBAN:",
+          "label": "11.2 IBAN (підпис)",
+          "variants": [
+            "🏦 IBAN:",
+            "🏦 Номер IBAN:",
+            "🏦 Реквізит IBAN:",
+            "🏦 IBAN рахунку:",
+            "🏦 Наш IBAN:"
+          ],
+          "description": "Підпис \"IBAN:\" — окреме повідомлення, щоб значення нижче було зручно копіювати."
+        },
+        "type": "message",
+        "measured": {
+          "width": 260,
+          "height": 92
+        },
+        "position": {
+          "x": 1440,
+          "y": 5600
+        }
+      },
+      {
+        "id": "n_req_iban_v",
+        "data": {
+          "text": "{{env.FOP_IBAN}}",
+          "label": "11.3 IBAN (значення)",
+          "variants": [],
+          "description": "Саме значення IBAN одержувача (окремим повідомленням для копіювання)."
+        },
+        "type": "message",
+        "measured": {
+          "width": 260,
+          "height": 92
+        },
+        "position": {
+          "x": 1440,
+          "y": 5800
+        }
+      },
+      {
+        "id": "n_req_code_l",
+        "data": {
+          "text": "🧾 ЄДРПОУ / ІПН одержувача:",
+          "label": "11.4 ЄДРПОУ (підпис)",
+          "variants": [
+            "🧾 ЄДРПОУ / ІПН одержувача:",
+            "🧾 Код ЄДРПОУ / ІПН одержувача:",
+            "🧾 ЄДРПОУ (ІПН) отримувача:",
+            "🧾 Ідентифікаційний код (ЄДРПОУ/ІПН):",
+            "🧾 Наш ЄДРПОУ / ІПН:"
+          ],
+          "description": "Підпис \"ЄДРПОУ/ІПН одержувача:\"."
+        },
+        "type": "message",
+        "measured": {
+          "width": 260,
+          "height": 92
+        },
+        "position": {
+          "x": 1800,
+          "y": 6000
+        }
+      },
+      {
+        "id": "n_req_code_v",
+        "data": {
+          "text": "{{env.FOP_CODE}}",
+          "label": "11.5 ЄДРПОУ (значення)",
+          "variants": [],
+          "description": "Саме значення ЄДРПОУ/ІПН (окремим повідомленням для копіювання)."
+        },
+        "type": "message",
+        "measured": {
+          "width": 260,
+          "height": 92
+        },
+        "position": {
+          "x": 1800,
+          "y": 6200
+        }
+      },
+      {
+        "id": "n_req_ref_l",
+        "data": {
+          "text": "📌 ОБОВʼЯЗКОВО впишіть цей коментар до платежу (інакше не зможемо знайти вашу оплату). Ось коментар — скопіюйте його 👇",
+          "label": "11.6 Коментар (підпис)",
+          "variants": [
+            "📌 ОБОВʼЯЗКОВО впишіть цей коментар до платежу (інакше не зможемо знайти вашу оплату). Ось коментар — скопіюйте його 👇",
+            "📌 Важливо: впишіть саме цей коментар до платежу, інакше оплату складно буде знайти. Скопіюйте його нижче 👇",
+            "📌 Будь ласка, обов'язково вкажіть цей коментар при оплаті (без нього не знайдемо вашу оплату) — ось він, скопіюйте 👇",
+            "📌 Не забудьте вписати цей коментар до платежу — без нього оплату важко відстежити. Копіюйте нижче 👇",
+            "📌 Обов'язково додайте цей коментар до оплати, щоб ми точно її знайшли. Ось він 👇"
+          ],
+          "description": "Підпис + інструкція: ОБОВ'ЯЗКОВО вписати коментар до платежу (інакше оплату не знайдемо)."
+        },
+        "type": "message",
+        "measured": {
+          "width": 260,
+          "height": 92
+        },
+        "position": {
+          "x": 1800,
+          "y": 6800
+        }
+      },
+      {
+        "id": "n_req_ref_v",
+        "data": {
+          "text": "{{context.orderRef}}",
+          "label": "11.7 Коментар (значення)",
+          "variants": [],
+          "description": "Сам код-коментар (orderRef) — окремим повідомленням для копіювання."
+        },
+        "type": "message",
+        "measured": {
+          "width": 260,
+          "height": 92
+        },
+        "position": {
+          "x": 1800,
+          "y": 7000
+        }
+      },
+      {
+        "id": "n_req_sum",
+        "data": {
+          "text": "💰 Сума до сплати: {{context.payAmount}} грн ({{context.payLabel}}).",
+          "label": "11.8 Сума + прохання чека",
+          "variants": [
+            "💰 Сума до сплати: {{context.payAmount}} грн ({{context.payLabel}}).",
+            "💰 До сплати: {{context.payAmount}} грн ({{context.payLabel}}).",
+            "💰 Сума платежу: {{context.payAmount}} грн ({{context.payLabel}}).",
+            "💰 Потрібно сплатити: {{context.payAmount}} грн ({{context.payLabel}}).",
+            "💰 Загальна сума до оплати: {{context.payAmount}} грн ({{context.payLabel}})."
+          ],
+          "description": "Сума до сплати + прохання надіслати чек/скрін або посилання-квитанцію після оплати."
+        },
+        "type": "message",
+        "measured": {
+          "width": 260,
+          "height": 92
+        },
+        "position": {
+          "x": 2160,
+          "y": 7200
+        }
+      },
+      {
+        "id": "n_size_oor",
+        "data": {
+          "label": "3.5 Розмір поза сіткою?",
+          "condition": "context.sizeOutOfRange === true",
+          "description": "Розмір клієнта далеко за межами сітки (>5см зросту / >8кг ваги від крайніх значень)? TRUE → не гарантуємо посадку, кличемо людину."
+        },
+        "type": "condition",
+        "position": {
+          "x": 1440,
+          "y": 2800
+        }
+      },
+      {
+        "id": "n_size_oor_msg",
+        "data": {
+          "text": "Дякую за параметри! 🙏 Щоб точно не помилитись із розміром саме для вас, я покличу менеджера — він підбере ідеальний варіант і одразу напише сюди 💛",
+          "label": "3.6 Поза сіткою → менеджер",
+          "variants": [
+            "Дякую за параметри! 🙏 Щоб точно не помилитись із розміром саме для вас, я покличу менеджера — він підбере ідеальний варіант і одразу напише сюди 💛",
+            "Дякую за параметри! 🙏 Щоб підібрати розмір максимально точно, покличу менеджера — він швидко підкаже ідеальний варіант і напише сюди 💛",
+            "Дякую, що поділились параметрами 🙏 Аби не помилитись із розміром, залучу менеджера — він підбере найкращий варіант і напише прямо сюди 💛",
+            "Дякую за дані! 🙏 Щоб точно вгадати розмір, покличу менеджера — він все підбере і одразу напише вам 💛",
+            "Дякую за параметри 🙏 Тут краще підключити менеджера, щоб точно підібрати розмір — він скоро напише сюди 💛"
+          ],
+          "description": "Повідомлення клієнту: параметри поза стандартною сіткою, підключаємо менеджера для точного підбору."
+        },
+        "type": "message",
+        "position": {
+          "x": 1800,
+          "y": 3000
+        }
+      },
+      {
+        "id": "n_size_oor_admin",
+        "data": {
+          "label": "3.7 Сигнал: розмір поза сіткою",
+          "message": "📏 РОЗМІР ПОЗА СІТКОЮ — потрібен менеджер.\nКлієнт: {{context.senderName}} ({{context.igUsername}})\nТовар: {{context.product.name}}\nПараметри: зріст {{context.sizeInput.height}} см, вага {{context.sizeInput.weight}} кг\nПричина: {{context.sizeOorReason}}",
+          "targetKey": "ADMIN_TELEGRAM_ID",
+          "description": "Сигнал у Telegram: розмір клієнта поза сіткою, потрібна ручна консультація."
+        },
+        "type": "notifyTg",
+        "position": {
+          "x": 1080,
+          "y": 3200
+        }
+      },
+      {
+        "id": "n_size_oor_stop",
+        "data": {
+          "code": "return { adminEngaged: true };",
+          "label": "3.8 Пауза бота",
+          "description": "Пауза бота (adminEngaged=true) — чекаємо, поки менеджер підбере розмір вручну."
+        },
+        "type": "js",
+        "position": {
+          "x": 1080,
+          "y": 3400
+        }
+      },
+      {
+        "id": "n_supplier_route",
+        "data": {
+          "code": "var cfg={}; try{cfg=JSON.parse(keys.SUPPLIER_CONFIG||'{}')}catch(e){}\nvar sup=String(context.supplier||'').trim();\nfunction pick(){ if(!sup) return null; if(cfg[sup]) return cfg[sup]; var lo=sup.toLowerCase(); for(var k in cfg){ if(String(k).toLowerCase()===lo) return cfg[k]; } for(var k2 in cfg){ if(lo.indexOf(String(k2).toLowerCase())>=0) return cfg[k2]; } return null; }\nvar c=pick()||{};\nvar mech=String(c.mechanism||'').trim();\nif(!mech){ var lo2=sup.toLowerCase(); mech = lo2.indexOf('brewdrop')>=0 ? 'brewdrop' : (/easydrop|zahid|zaxid/.test(lo2) ? 'easydrop_offline' : 'manual'); }\n// Комплект: компоненти можуть бути від РІЗНИХ постачальників -> менеджеру йде розкладка\nvar items=(context.product&&context.product.setItems)||[];\nif(context.setMode==='set' && items.length){\n  var br=items.map(function(x){ return '- '+x.name+' (арт. '+x.article+') -> '+(x.supplier||'постачальник не вказаний'); }).join(String.fromCharCode(10));\n  return { supplierMechanism:'manual', supplierCfg:c, supplierSetBreakdown:br };\n}\nreturn { supplierMechanism: mech, supplierCfg: c, supplierSetBreakdown:'' };",
+          "label": "13.4 Механізм постачальника (SUPPLIER_CONFIG)",
+          "description": "Визначає механізм постачання за CT_1003 через SUPPLIER_CONFIG (brewdrop / easydrop_offline / easydrop_cart / manual). Для набору — завжди manual з розкладкою по постачальниках компонентів."
+        },
+        "type": "js",
+        "measured": {
+          "width": 260,
+          "height": 92
+        },
+        "position": {
+          "x": 1440,
+          "y": 6800
+        }
+      },
+      {
+        "id": "n_supplier_manual",
+        "data": {
+          "label": "13.7 Постачальник вручну — сигнал",
+          "message": "📦 ЗАМОВЛЕННЯ ПОТРЕБУЄ РУЧНОГО ОФОРМЛЕННЯ У ПОСТАЧАЛЬНИКА\nПостачальник: {{context.supplier}} (механізм: {{context.supplierMechanism}})\nЗамовлення: {{context.orderRef}} | CRM: {{context.crmOrderId}}\nТовар: {{context.product.name}} | колір {{context.colorChoice.color}}\nКлієнт: {{context.orderData.fullName}}, {{context.orderData.phone}}\nДоставка: {{context.orderData.city}}, {{context.orderData.branch}}\nСклад комплекту:\n{{context.supplierSetBreakdown}}",
+          "targetKey": "ADMIN_TELEGRAM_ID",
+          "description": "Повністю ручне замовлення постачальнику — сигнал менеджеру з усіма даними (включно зі складом набору, якщо це комплект)."
+        },
+        "type": "notifyTg",
+        "measured": {
+          "width": 260,
+          "height": 92
+        },
+        "position": {
+          "x": 2160,
+          "y": 7600
+        }
+      },
+      {
+        "id": "n_supplier_cond_cart",
+        "data": {
+          "label": "13.6c Механізм = easydrop-кошик?",
+          "condition": "context.supplierMechanism === 'easydrop_cart'",
+          "description": "Постачальник = easydrop-кошик (Zaxid_drop)? TRUE → замовлення через дропшип-кошик; FALSE → повністю ручне замовлення менеджером."
+        },
+        "type": "condition",
+        "measured": {
+          "width": 260,
+          "height": 92
+        },
+        "position": {
+          "x": 2520,
+          "y": 7400
+        }
+      },
+      {
+        "id": "n_supplier_order_cart",
+        "data": {
+          "code": "// Дропшип-замовлення easydrop (каталог → кошик → адреса). Постачальники типу Zaxid_drop.\n// Ланцюг (реверс 2026-08-19): login → /catalog-view/<sup>/<cat>/?search=<артикул>\n//   → POST /change-api action=cart&item&size&qty → /select-address?type=warehouse (форма order-address-form).\n// DRY-RUN за замовчуванням: доходить до кошика, показує дані й прибирає позицію; адресу НЕ відправляє.\nif(context.testMode) return { supplierOrderResult:'(testMode: easydrop-кошик пропущено)' };\nvar base=(keys.EASYDROP_BASE||'https://easydrop.one').replace(/\\/+$/,'');\nvar login=(keys.EASYDROP_LOGIN||'').trim(), pass=(keys.EASYDROP_PASS||'').trim();\nvar dryRun=String(keys.EASYDROP_CART_DRY_RUN||'1')!=='0';\nif(!login||!pass) return { supplierOrderResult:'❌ EASYDROP_LOGIN/PASS не заповнено' };\nvar cfg=context.supplierCfg||{};\nvar supId=String(cfg.catalogId||keys.EASYDROP_CATALOG_ID||'').trim();\nif(!supId) return { supplierOrderResult:'❌ не задано catalogId постачальника у SUPPLIER_CONFIG' };\nvar cats=(cfg.categories||String(keys.EASYDROP_CATEGORIES||'').split(',')).map(function(x){return String(x).trim();}).filter(Boolean);\nif(!cats.length) return { supplierOrderResult:'❌ не задано categories постачальника у SUPPLIER_CONFIG' };\nvar cookies={};\nfunction setCk(res){ try{ var sc=res.headers.getSetCookie?res.headers.getSetCookie():[]; for(var i=0;i<sc.length;i++){ var p=sc[i].split(';')[0]; var q=p.indexOf('='); if(q>0) cookies[p.slice(0,q)]=p.slice(q+1); } }catch(e){} }\nfunction ck(){ return Object.keys(cookies).map(function(k){return k+'='+cookies[k];}).join('; '); }\nfunction tok(h){ var m=String(h||'').match(/name=\"csrfmiddlewaretoken\" value=\"([^\"]+)\"/); return m?m[1]:(cookies['csrftoken']||''); }\nasync function get(p){ return fetch(base+p,{headers:{'Cookie':ck(),'Referer':base+'/'}}); }\nasync function api(body,ref){ return fetch(base+'/change-api',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Cookie':ck(),'Referer':base+(ref||'/'),'Origin':base,'X-Requested-With':'XMLHttpRequest'},body:body}); }\n// 1) логін\nvar r1=await fetch(base+'/login'); setCk(r1); var t1=tok(await r1.text());\nvar r2=await fetch(base+'/login',{method:'POST',redirect:'manual',headers:{'Content-Type':'application/x-www-form-urlencoded','Cookie':ck(),'Referer':base+'/login','Origin':base},body:'csrfmiddlewaretoken='+encodeURIComponent(t1)+'&username='+encodeURIComponent(login)+'&password='+encodeURIComponent(pass)});\nsetCk(r2); var hash=((r2.headers.get('location')||'').match(/hash=(\\d+)/)||[])[1];\nif(hash){ cookies['manager_hash']=hash; cookies['uid']='u-'+hash; }\nif(!cookies['sessionid']) return { supplierOrderResult:'❌ easydrop: логін не вдався', supplierOrderStatus:'error' };\n// 2) знайти товар за артикулом у категоріях постачальника\nvar prod=context.product||{}, od=context.orderData||{};\nvar article=String(prod.supplierArticle||prod.article||prod.sku||context.orderSku||'').trim();\nif(!article) return { supplierOrderResult:'❌ easydrop-кошик: немає артикулу товару', supplierOrderStatus:'error' };\nvar wantSize=String(context.recommendedSize||(context.sizeInput&&context.sizeInput.clothingSize)||'').replace(/[^0-9A-Za-zXL]/g,'');\nvar itemId=null, sizeId=null, sizeLabel='', foundCat='';\nfor(var ci=0; ci<cats.length && !itemId; ci++){\n  var page=await (await get('/catalog-view/'+encodeURIComponent(supId)+'/'+encodeURIComponent(cats[ci])+'/?search='+encodeURIComponent(article)+'&item-text=&tags=')).text();\n  var ai=page.indexOf(\"copyText('\"+article+\"')\");\n  if(ai<0) continue;\n  foundCat=cats[ci];\n  var head=page.slice(Math.max(0,ai-6000), ai);\n  var gm=head.match(/showItemImageGallery\\((\\d+)\\)(?![\\s\\S]*showItemImageGallery\\()/);\n  if(!gm) continue;\n  itemId=gm[1];\n  var tail=page.slice(ai, ai+9000), opts=[], m2;\n  var re=new RegExp(\"setSize\\\\('\"+itemId+\"',\\\\s*'(\\\\d+)',\\\\s*'(True|False)'\\\\)[^>]*>\\\\s*([0-9A-Za-zXL.,]+)\",\"g\");\n  while((m2=re.exec(tail))) opts.push({ id:m2[1], avail:m2[2]==='True', label:String(m2[3]).trim() });\n  if(!opts.length){ var re2=new RegExp(\"setSize\\\\('\"+itemId+\"',\\\\s*'(\\\\d+)',\\\\s*'(True|False)'\\\\)\",\"g\"); while((m2=re2.exec(tail))) opts.push({ id:m2[1], avail:m2[2]==='True', label:'' }); }\n  var hit=null;\n  if(wantSize) hit=opts.filter(function(o){ return o.avail && String(o.label).replace(/[^0-9A-Za-zXL]/g,'')===wantSize; })[0];\n  if(!hit) hit=opts.filter(function(o){ return o.avail; })[0];\n  if(hit){ sizeId=hit.id; sizeLabel=hit.label; }\n}\nif(!itemId||!sizeId) return { supplierOrderResult:'❌ easydrop-кошик: товар «'+article+'»'+(wantSize?(' розмір '+wantSize):'')+' не знайдено у постачальника '+supId, supplierOrderStatus:'error' };\n// 3) у кошик\nvar csrf=cookies['csrftoken']||'';\nvar addRes=await api('action=cart&item='+encodeURIComponent(itemId)+'&size='+encodeURIComponent(sizeId)+'&qty=1&csrfmiddlewaretoken='+encodeURIComponent(csrf), '/catalog-view/'+supId+'/'+foundCat+'/');\nvar addTxt=(await addRes.text()).trim();\nif(addTxt!=='OK') return { supplierOrderResult:'❌ easydrop-кошик: не додалось у кошик ('+addRes.status+' '+addTxt.slice(0,80)+')', supplierOrderStatus:'error' };\n// 4) підсумок + адреса\nvar parts=String(od.fullName||'').split(/\\s+/).filter(Boolean);\nvar last=parts[0]||'', first=parts[1]||'';\nvar np=context.np||{};\nvar addrCity=np.city||od.city||'';\nvar addrWh=np.warehouse||('Відділення №'+(od.branch||''));\nvar summary='🧾 easydrop-кошик '+(dryRun?'(DRY-RUN)':'ОФОРМЛЕНО')+':\\nПостачальник '+supId+' | артикул '+article+' (item '+itemId+') | розмір '+(sizeLabel||wantSize||'—')+'\\nОтримувач: '+last+' '+first+' '+(od.phone||'')+'\\nНП: '+addrCity+', '+addrWh;\nif(dryRun){\n  var cartPage=await (await get('/cart')).text();\n  var lineIds=[], rl=/removeFromCart\\('(\\d+)'\\)/g, mm;\n  while((mm=rl.exec(cartPage))) if(lineIds.indexOf(mm[1])<0) lineIds.push(mm[1]);\n  for(var li=0; li<lineIds.length; li++){ await api('action=cart-remove&item='+lineIds[li]+'&csrfmiddlewaretoken='+encodeURIComponent(csrf), '/cart').catch(function(){}); }\n  return { supplierOrderResult:summary+'\\n⚠️ DRY-RUN: додано в кошик і прибрано; адресу НЕ відправлено (EASYDROP_CART_DRY_RUN=1).', supplierOrderStatus:'dry_run' };\n}\n// Адресні поля мають бути ДОСЛІВНО з автокомпліту easydrop, інакше форма відбивається.\nasync function ac(url){ try{ var r=await get(url); var t=await r.text(); var j=JSON.parse(t); return Array.isArray(j)?j:[]; }catch(e){ return []; } }\nvar cityQ=String(addrCity).replace(/^[мсмт]+\\.\\s*/i,'').split(',')[0].split('|')[0].trim();\nvar cityOpts=await ac('/autocomplete/city/?q='+encodeURIComponent(cityQ));\nvar cityPick=cityOpts.filter(function(x){ return String(x).toLowerCase().indexOf(cityQ.toLowerCase())===0 || /^м\\./i.test(String(x)); })[0]||cityOpts[0]||'';\nvar bnum2=(String(od.branch||'').match(/\\d+/)||[])[0]||'';\nvar whOpts=await ac(\"/autocomplete/department/?q=\"+encodeURIComponent(cityQ+(bnum2?(\" Відділення №\"+bnum2):\"\")));\nif(!whOpts.length) whOpts=await ac(\"/autocomplete/department/?q=\"+encodeURIComponent(cityQ));\nvar whPick=(bnum2?whOpts.filter(function(x){ return new RegExp('№\\\\s*'+bnum2+'(?!\\\\d)').test(String(x)); })[0]:null)||whOpts[0]||'';\nif(!cityPick||!whPick) return { supplierOrderResult:summary+'\\n❌ easydrop: не підібрав місто/відділення в автокомпліті (місто «'+cityQ+'», відділення №'+bnum2+')', supplierOrderStatus:'error', supplierNeedsManual:true };\nvar addrPage=await (await get('/select-address?type=warehouse')).text();\nvar atok=tok(addrPage);\nvar form='csrfmiddlewaretoken='+encodeURIComponent(atok)\n  +'&template_pk=&edit='\n  +'&person_first_name='+encodeURIComponent(first)\n  +'&person_last_name='+encodeURIComponent(last)\n  +'&person_phone='+encodeURIComponent(od.phone||'')\n  +'&settlement_select='+encodeURIComponent(cityPick)\n  +'&settlement_text='+encodeURIComponent(cityPick)\n  +'&warehouse_select='+encodeURIComponent(whPick)\n  +'&warehouse_text='+encodeURIComponent(whPick)\n  +'&is_permanent_client=on';\nsummary+='\\nАдреса easydrop: '+cityPick.trim()+' | '+whPick;\n// Крок 5: адресу передають GET-ом на /order-data (prepareAddress у select_address.js), тоді\n// фінальний POST multipart форми create-order-form з action=create (orderRequest у main.js).\nvar odUrl='/order-data?type=warehouse&'+form;\nvar odRes=await fetch(base+odUrl,{headers:{'Cookie':ck(),'Referer':base+'/select-address?type=warehouse'}});\nsetCk(odRes);\nvar odHtml=await odRes.text();\nif(odRes.status>=400) return { supplierOrderResult:summary+'\\n❌ /order-data HTTP '+odRes.status, supplierOrderStatus:'error', supplierNeedsManual:true };\nvar fm=odHtml.match(/<form[^>]*id=\"order-data-form\"[\\s\\S]*?<\\/form>/i);\nvar fhtml=fm?fm[0]:odHtml;\n// збираємо поля форми як їх віддає сторінка\nvar fd=new FormData();\nvar seen={}, mi;\nvar ire=/<input[^>]*>/g;\nwhile((mi=ire.exec(fhtml))){\n  var tag=mi[0];\n  var nm=(tag.match(/name=\"([^\"]+)\"/)||[])[1]; if(!nm||seen[nm]) continue;\n  var ty=((tag.match(/type=\"([^\"]+)\"/)||[])[1]||'text').toLowerCase();\n  if((ty==='checkbox'||ty==='radio') && !/checked/i.test(tag)) continue;\n  var vl=(tag.match(/value=\"([^\"]*)\"/)||[])[1]||'';\n  fd.append(nm, vl); seen[nm]=1;\n}\nvar sre=/<select[^>]*name=\"([^\"]+)\"[\\s\\S]*?<\\/select>/g, ms;\nwhile((ms=sre.exec(fhtml))){\n  if(seen[ms[1]]) continue;\n  var sel=(ms[0].match(/<option[^>]*selected[^>]*value=\"([^\"]*)\"/)||ms[0].match(/<option[^>]*value=\"([^\"]*)\"/)||[])[1]||'';\n  fd.append(ms[1], sel); seen[ms[1]]=1;\n}\nvar tre=/<textarea[^>]*name=\"([^\"]+)\"[^>]*>([\\s\\S]*?)<\\/textarea>/g, mt;\nwhile((mt=tre.exec(fhtml))){ if(seen[mt[1]]) continue; fd.append(mt[1], mt[2]||''); seen[mt[1]]=1; }\nif(!seen['csrfmiddlewaretoken']) fd.append('csrfmiddlewaretoken', tok(odHtml)||cookies['csrftoken']||'');\n// наші дані замовлення\nfd.set('comment', 'Замовлення '+(context.orderRef||'')+' (бот)');\nif(Number(prod.price)) fd.set('cost', String(Number(prod.price)));\n// форма order-data-form сабмітиться як звичайний multipart-POST (кнопка «Підтвердити»)\nvar fin=await fetch(base+odUrl,{method:'POST',redirect:'manual',headers:{'Cookie':ck(),'Referer':base+odUrl,'Origin':base},body:fd});\nvar floc=fin.headers.get('location')||'';\nvar ftxt=(fin.status>=300&&fin.status<400)?'':(await fin.text()).slice(0,400);\n// Успіх = 302 на список замовлень (звичайний submit форми) або 'orders_redirect' в AJAX-відповіді.\nvar ok=(fin.status>=300&&fin.status<400&&/order/i.test(floc))||/orders_redirect/i.test(ftxt);\nreturn { supplierOrderResult:summary+(ok?('\\n✅ Замовлення СТВОРЕНО в easydrop'+(floc?(' ('+floc+')'):'')):('\\n❌ не створилось (HTTP '+fin.status+' '+floc+'): '+ftxt.replace(/\\s+/g,' ').slice(0,150))), supplierOrderStatus:ok?'created':'error', supplierNeedsManual:!ok, supplierCartItem:itemId };",
+          "label": "13.6d Замовлення дропшип-кошиком (easydrop)",
+          "description": "Дропшип-кошик easydrop.one (Zaxid_drop): catalog→cart→точна адреса через autocomplete→оформлення. Dry-run під EASYDROP_CART_DRY_RUN."
+        },
+        "type": "js",
+        "measured": {
+          "width": 260,
+          "height": 92
+        },
+        "position": {
+          "x": 1800,
+          "y": 7600
+        }
+      },
+      {
+        "id": "n_is_set",
+        "data": {
+          "label": "2.0a Це комплект?",
+          "condition": "context.product && context.product.isSet === true",
+          "description": "Це комплект/набір товарів (CT_1005 непорожній)? TRUE → питаємо весь комплект чи окрему позицію; FALSE → звичайна гілка одного товару."
+        },
+        "type": "condition",
+        "position": {
+          "x": 360,
+          "y": 1600
+        }
+      },
+      {
+        "id": "n_set_choice",
+        "data": {
+          "mode": "dialog",
+          "label": "2.0b Комплект чи окрема річ?",
+          "useKb": true,
+          "outputVar": "context.setPick",
+          "useCatalog": true,
+          "connectorId": "2ec53ba5-144e-463b-9758-c217c4a69b0e",
+          "description": "Діалог: клієнт визначається — весь комплект чи окрема позиція з нього. Відповідає на побічні питання (ціна/кольори/склад) з наявних даних, не вигадує. Handoff тільки на явний запит людини або справді позаданих тем.",
+          "temperature": 0.3,
+          "systemPrompt": "Ти — {{env.PERSONA_NAME}}, тепла продавчиня {{env.SHOP_TAG}}. Клієнт цікавиться КОМПЛЕКТОМ: {{context.product.name}} — {{context.product.price}} грн (фіксована ціна за весь набір).\nСклад комплекту: {{context.product.setList}}\nКольори, доступні для цього комплекту: {{context.product.colors}}.\nПовний опис товару (тут ЗАВЖДИ дивись по-товарні ціни окремих позицій, матеріал, гарантію — усе, що вже показали клієнту раніше в чаті):\n{{context.product.desc}}\n\nЗАДАЧА: зʼясувати, клієнт бере ВЕСЬ КОМПЛЕКТ чи ОКРЕМУ ПОЗИЦІЮ з нього.\nЯкщо клієнт задав РОЗМИТЕ питання про ціну (просто \"скільки коштує?\" без деталей) — ПЕРШИМ ділом коротко уточни: яке авто/модель і чи потрібен весь салон чи окремі сидіння, тоді відповідай конкретно. Не вивалюй одразу весь прайс-лист без контексту.\nКоротко назви, що входить у комплект і його ціну, і спитай: «Берете весь комплект чи окрему річ?» 🙂\nЩОЙНО клієнт чітко відповів (весь комплект / конкретна позиція) — одразу в ЦЬОМУ Ж повідомленні віддай json_output (див. нижче). НЕ питай додатково про колір, авто чи інші деталі — це робота НАСТУПНОЇ ноди, не твоя.\nНа питання про склад/ціну (в т.ч. по-товарні ціни з опису вище!)/кольори/матеріал/доставку/гарантію — ЗАВЖДИ коротко відповідай з даних вище, тоді знову м’яко став питання «весь комплект чи окрема річ».\nНа звичайні запитання про ЦЕЙ товар НІКОЛИ не клич менеджера — відповідай з даних вище.\n\nЯКЩО клієнт просить фото товару (\"покажіть фото\", \"скиньте фото\", \"як виглядає наживо\") — у json_output ДОДАЙ поле \"wantsPhoto\":true (окремо, або разом з іншими полями), і в тексті напиши, що зараз надішлеш фото.\nЯКЩО КЛІЄНТ ПРОСИТЬ ЖИВУ ЛЮДИНУ/МЕНЕДЖЕРА (навіть натяком: «хочу з людиною», «покличте оператора», «ви бот?») — одразу поверни json_output {\"handoff\":true}.\nЯКЩО питання СПРАВДІ поза твоїми даними (гарантія на ІНШИЙ товар не з нашого каталогу, доставка за кордон, нестандартна оплата, знижки, претензія, скарга) — поверни json_output {\"handoff\":true}.\n\njson_output (СУВОРО):\n- Весь комплект → рівно {\"setChoice\":\"set\"}\n- Окрема позиція (клієнт назвав, яку саме) → рівно {\"setChoice\":\"item\",\"article\":\"<артикул цієї позиції зі складу вище>\"}\n- Ще не визначився / просто питання (не з переліку вище) — БЕЗ setChoice-json, тільки текст із питанням.\n- ЦЕ ПРАВИЛО ПРО setChoice НЕ СКАСОВУЄ wantsPhoto: якщо клієнт просить фото — ЗАВЖДИ додай {\"wantsPhoto\":true} (навіть якщо про setChoice ще рано, це окреме незалежне поле).\nНе вигадуй позицій, яких немає у складі комплекту.\nЗАВЖДИ закінчуй повідомлення питанням або чітким наступним кроком — ніколи просто похвалою.\nЯкщо клієнт питає про СПОСІБ оплати (передоплата/накладений/скільки зараз платити/\"як платити\") — відповідай РІВНО одним реченням, БЕЗ списку, БЕЗ цифр 1/2, БЕЗ суми комісії: «Оплата гнучка — можна частину зараз і решту при отриманні, або одразу повністю; на наступному кроці зручно оберете 🙂». Саме такою фразою (можеш трохи адаптувати тон, але без списку/цифр/деталей). Деталі (суми, комісію, конкретний вибір) дає ВИКЛЮЧНО наступний крок (n_pay) — якщо повторити їх зараз, клієнту доведеться відповідати на той самий вибір двічі.",
+          "exitCondition": "json_output"
+        },
+        "type": "claude",
+        "position": {
+          "x": 0,
+          "y": 1800
+        }
+      },
+      {
+        "id": "n_set_apply",
+        "data": {
+          "code": "var ch=context.setPick||{}; var p=context.product||{};\nif(String(ch.setChoice)!=='item' || !ch.article) return { setMode:'set' };\nvar it=(p.setItems||[]).filter(function(x){ return String(x.article).toUpperCase()===String(ch.article).toUpperCase(); })[0];\nif(!it) return { setMode:'set' };\n// власні варіації компонента (кольори/розміри/фото) — не успадковуємо від набору\nvar token=(keys.KEYCRM_API_TOKEN||'').trim();\nvar base=(keys.KEYCRM_API_BASE||'https://openapi.keycrm.app/v1').replace(/\\/$/,'');\nvar colors=[], sizes=[], offers=[], img='', imgs=[];\nif(token){\n  try{\n    var ro=await fetch(base+'/offers?filter[product_id]='+encodeURIComponent(it.id)+'&limit=50',{headers:{Authorization:'Bearer '+token,Accept:'application/json'}});\n    if(ro.ok){ var od=await ro.json(); var os=(od&&od.data)||[];\n      for(var i=0;i<os.length;i++){ var pr=os[i].properties||[]; offers.push({sku:os[i].sku,price:os[i].price,quantity:os[i].quantity,properties:pr});\n        for(var j=0;j<pr.length;j++){ var nm=String(pr[j].name||'').toLowerCase();\n          if(nm.indexOf('колір')>=0 && colors.indexOf(pr[j].value)<0) colors.push(pr[j].value);\n          if(nm.indexOf('розмір')>=0 && sizes.indexOf(pr[j].value)<0) sizes.push(pr[j].value); } }\n    }\n  }catch(e){}\n  try{\n    var rp=await fetch(base+'/products/'+encodeURIComponent(it.id),{headers:{Authorization:'Bearer '+token,Accept:'application/json'}});\n    if(rp.ok){ var pd=await rp.json(); if(pd){ if(pd.thumbnail_url) imgs.push(pd.thumbnail_url);\n      var att=pd.attachments_data||[]; for(var a=0;a<att.length;a++){ var uu=(typeof att[a]==='string')?att[a]:(att[a]&&(att[a].url||att[a].src)); if(uu&&imgs.indexOf(uu)<0) imgs.push(uu); }\n      img=imgs[0]||''; } }\n  }catch(e){}\n}\nreturn { setMode:'item', setParent:{ id:p.id, name:p.name, price:p.price },\n  supplier: it.supplier||context.supplier,\n  colorChoice: null,\n  product: Object.assign({}, p, { id:it.id, name:it.name, price:it.price, sku:it.article, article:it.article,\n    supplier:it.supplier||'', isSet:false, setComponents:'', setItems:[], setList:'',\n    colors:colors.join(', '), colorsList:colors, sizes:sizes, offers:offers,\n    isClothing:sizes.length>0, photoUrl:img, imageUrls:imgs.slice(0,5), preColor:'', upsell:'' }) };",
+          "label": "2.0c Застосувати вибір комплекту",
+          "description": "Підміняє context.product на обрану окрему позицію комплекту — підтягує її ВЛАСНІ кольори/розміри/фото з KeyCRM (не успадковує від набору)."
+        },
+        "type": "js",
+        "position": {
+          "x": 0,
+          "y": 2000
+        }
+      },
+      {
+        "id": "n_has_colors",
+        "data": {
+          "label": "4.5 Потрібен вибір кольору?",
+          "condition": "context.product && String(context.product.colors||'').trim().length > 0 && !(context.colorChoice && context.colorChoice.color)",
+          "description": "У товару є кольори для вибору (і ще не обрано)? TRUE → питаємо колір; FALSE (немає кольорів або вже обрано з offer-SKU) → пропускаємо крок."
+        },
+        "type": "condition",
+        "position": {
+          "x": 1080,
+          "y": 2200
+        }
+      },
+      {
+        "id": "n_followup_skip",
+        "data": {
+          "code": "// Гейт заборонив нагадування: пізня година або минуло понад добу.\n// Нічого не пишемо клієнту — просто фіксуємо факт для аналітики.\nreturn { followupSkipped: true, followupSkippedAt: new Date().toISOString() };",
+          "label": "14.1 Нагадування пропущено (ніч / >24год)",
+          "description": "Нагадування пропущено (ніч або минуло >24 год) — просто закриває гілку без дії."
+        },
+        "type": "js",
+        "position": {
+          "x": 1080,
+          "y": 4000
+        }
+      },
+      {
+        "id": "n_req_name_l",
+        "data": {
+          "text": "🏢 Отримувач (ФОП):",
+          "label": "11.45 Назва отримувача (підпис)",
+          "variants": [
+            "🏢 Отримувач (ФОП):",
+            "🏢 Одержувач платежу (ФОП):",
+            "🏢 ФОП-отримувач:",
+            "🏢 Отримувач коштів (ФОП):",
+            "🏢 Назва отримувача:"
+          ],
+          "description": "Підпис \"Отримувач (ФОП):\" — окреме повідомлення для копіювання."
+        },
+        "type": "message",
+        "position": {
+          "x": 1440,
+          "y": 6400
+        }
+      },
+      {
+        "id": "n_req_name_v",
+        "data": {
+          "text": "{{env.FOP_NAME}}",
+          "label": "11.46 Назва отримувача (значення)",
+          "variants": [],
+          "description": "Саме значення назви ФОП-отримувача (окремим повідомленням для копіювання)."
+        },
+        "type": "message",
+        "position": {
+          "x": 1800,
+          "y": 6600
+        }
+      },
+      {
+        "id": "n_collect_route",
+        "data": {
+          "label": "12.1 Просить реквізити вручну?",
+          "condition": "context.orderData && context.orderData.wantsManualReq === true",
+          "description": "TRUE -> показати реквізити вручну окремими повідомленнями (і повернутись у збір адреси). FALSE -> звичайний наступний крок (перевірка Нової Пошти)."
+        },
+        "type": "condition",
+        "position": {
+          "x": 1080,
+          "y": 5200
+        }
+      },
+      {
+        "id": "n_size_photo_cond",
+        "data": {
+          "label": "2.5 Просить розмірну сітку?",
+          "condition": "context.sizeInput && context.sizeInput.wantsSizeChart === true && context.product && context.product.sizeChartUrl",
+          "description": "Клієнт попросив розмірну сітку І вона є для цього товару? TRUE → показати фото; FALSE → одразу рахувати розмір як завжди."
+        },
+        "type": "condition",
+        "measured": {
+          "width": 260,
+          "height": 128
+        },
+        "position": {
+          "x": 1800,
+          "y": 2400
+        }
+      },
+      {
+        "id": "n_size_photo",
+        "data": {
+          "label": "2.6 Фото розмірної сітки",
+          "caption": "",
+          "photoVar": "product.sizeChartUrl",
+          "description": "Відправляє фото розмірної сітки товару (CT_1010) окремим повідомленням."
+        },
+        "type": "sendPhoto",
+        "measured": {
+          "width": 220,
+          "height": 92
+        },
+        "position": {
+          "x": 1800,
+          "y": 2600
+        }
+      },
+      {
+        "id": "n_size_afterphoto_cond",
+        "data": {
+          "label": "2.7 Зріст і вага вже відомі?",
+          "condition": "context.sizeInput && ((context.sizeInput.height && context.sizeInput.weight) || context.sizeInput.clothingSize)",
+          "description": "Клієнт уже дав зріст+вагу (чи наполіг на розмірі) в тому ж повідомленні, що й просив сітку? TRUE → рахувати розмір; FALSE → повернутись і почекати зріст/вагу."
+        },
+        "type": "condition",
+        "measured": {
+          "width": 260,
+          "height": 128
+        },
+        "position": {
+          "x": 1800,
+          "y": 2800
+        }
+      },
+      {
+        "id": "n_signal_check",
+        "data": {
+          "code": "var msg = String(context.lastUserMessage || input || '');\nvar hasPost = !!(context.sharedPost || context.entryAd);\nvar hasPhoto = !!context.lastUserImageUrl;\n// Аудит 2026-08-27: прибрано голий /\\b\\d{4,8}\\b/ — хибно спрацьовував на поштовий\n// індекс/ціну/номер відділення (будь-яке окреме 4-8-значне число), спричиняючи\n// нескінченний цикл reset->ask на звичайних повідомленнях з адресою чи ціною.\nvar hasArticleLike = /(?:артикул|арт\\.?|art|код|sku|#|№)\\s*[:#№.\\-]?\\s*[A-Za-zА-Яа-яІЇЄҐіїєґ]{0,5}\\d{2,8}/i.test(msg)\n  || /\\b[A-Za-z]\\d{3,6}\\b/.test(msg);\nreturn { hasProductSignal: hasPost || hasPhoto || hasArticleLike };",
+          "label": "0.5 Є ознака товару? (легкий чек)",
+          "description": "Дешевий regex-чек БЕЗ звернення до KeyCRM: чи є в повідомленні ознака товару (пересланий пост/рілс, артикул, фото). Якщо ознаки нема — пропускаємо важкий n_lookup і одразу йдемо у гілку \"товар невідомий\" (аудит 2026-08-26)."
+        },
+        "type": "js",
+        "position": {
+          "x": 0,
+          "y": 400
+        }
+      },
+      {
+        "id": "n_signal_cond",
+        "data": {
+          "label": "0.6 Є ознака товару?",
+          "condition": "context.hasProductSignal === true",
+          "description": "TRUE (є пост/артикул/фото) → важкий n_lookup по KeyCRM як і раніше. FALSE (просте привітання/смолток) → одразу у гілку \"товар невідомий\" (n_unknown_msg), без зайвого проходу по каталогу."
+        },
+        "type": "condition",
+        "position": {
+          "x": 0,
+          "y": 600
+        }
+      },
+      {
+        "id": "n_intl_route",
+        "data": {
+          "code": "// Перевірка міжнародної доставки (аудит 2026-08-27, запит користувача).\n// Список країн — funnelKey NOVA_POSHTA_INTL_COUNTRIES, комами; редагується\n// власником без зміни коду. Якщо країна НЕ в списку і НЕ Україна — не\n// вигадуємо, чи Нова Пошта туди возить, кличемо менеджера.\nvar country = (context.paymentInfo && context.paymentInfo.country) || '';\ncountry = String(country).trim();\nvar isUkraine = !country || /україн|ukraine|ukrain/i.test(country);\nif (isUkraine) return { intlStatus: 'domestic' };\nvar list = String(keys.NOVA_POSHTA_INTL_COUNTRIES || '').split(',').map(function(s){ return s.trim().toLowerCase(); }).filter(Boolean);\nvar supported = list.some(function(c){ return c && (country.toLowerCase().indexOf(c) >= 0 || c.indexOf(country.toLowerCase()) >= 0); });\nif (!supported) return { intlStatus: 'unsupported', intlCountry: country };\n// Підтримувана міжнародна доставка — накладеного платежу міжнародно НЕ буває,\n// форсуємо повну передоплату незалежно від того, що клієнт міг обрати раніше.\nvar pi = context.paymentInfo || {};\nreturn { intlStatus: 'supported', intlCountry: country, paymentInfo: Object.assign({}, pi, { method: 'full', country: country }) };",
+          "label": "10.2 Перевірка міжнародної доставки",
+          "description": "Якщо клієнт назвав країну доставки — звіряє з NOVA_POSHTA_INTL_COUNTRIES. Україна/не назвав → domestic (без змін). Підтримується → форсує повну передоплату (накладеного платежу міжнародно не буває). Не підтримується → intlStatus=unsupported, далі хендоф."
+        },
+        "type": "js",
+        "position": {
+          "x": 1080,
+          "y": 3800
+        }
+      },
+      {
+        "id": "n_intl_unsupported_cond",
+        "data": {
+          "label": "10.3 Країна не підтримується?",
+          "condition": "context.intlStatus === 'unsupported'",
+          "description": "TRUE — Нова Пошта (за нашим списком) не возить у цю країну, кличемо менеджера уточнити альтернативу. FALSE — звичайний потік оплати."
+        },
+        "type": "condition",
+        "position": {
+          "x": 1440,
+          "y": 4000
+        }
+      },
+      {
+        "id": "n_intl_unsupported_msg",
+        "data": {
+          "text": "На жаль, за нашими даними Нова Пошта поки не доставляє в {{context.intlCountry}} 🙏 Зараз покличу менеджера — можливо, є альтернативний варіант доставки. Дякую за терпіння!",
+          "label": "10.4 Повідомити про непідтримувану країну"
+        },
+        "type": "message",
+        "position": {
+          "x": 720,
+          "y": 4200
+        }
+      },
+      {
+        "id": "n_intl_unsupported_stop",
+        "data": {
+          "code": "return { adminEngaged: true, handoffReason: 'Міжнародна доставка: країна ' + (context.intlCountry||'') + ' не в списку підтримуваних' };",
+          "label": "10.5 Пауза (менеджер: країна)",
+          "testRestartAfter": true
+        },
+        "type": "js",
+        "position": {
+          "x": 720,
+          "y": 4400
+        }
+      },
+      {
+        "id": "n_skip_payment_cond",
+        "data": {
+          "label": "10.6 Оплата не потрібна (виняток довіри)?",
+          "condition": "context.payAmount === 0",
+          "description": "TRUE — домовились відправити без передоплати (cod_trust), пропускаємо посилання на оплату. FALSE — звичайний потік (ibanoplata)."
+        },
+        "type": "condition",
+        "position": {
+          "x": 1080,
+          "y": 4400
+        }
+      },
+      {
+        "id": "n_trust_confirm_msg",
+        "data": {
+          "text": "Домовились! 🤝 Оформлюємо без передоплати, накладним платежем повністю при отриманні. Дякуємо за довіру — тепер лишились дані для відправки 📦",
+          "label": "10.7 Підтвердження без передоплати"
+        },
+        "type": "message",
+        "position": {
+          "x": 720,
+          "y": 4600
+        }
+      },
+      {
+        "id": "n_recall_cond",
+        "data": {
+          "label": "0.5 Повторний клієнт — є дані з минулого замовлення?",
+          "condition": "context.returningCustomerData && Object.keys(context.returningCustomerData).length > 0",
+          "description": "TRUE → показуємо відомі розмір+доставку і питаємо підтвердити/скоригувати. FALSE → звичайний шлях (новий клієнт)."
+        },
+        "type": "condition",
+        "position": {
+          "x": 360,
+          "y": 1800
+        }
+      },
+      {
+        "id": "n_recall_confirm",
+        "data": {
+          "mode": "dialog",
+          "label": "0.6 Повторний клієнт: підтвердити/скоригувати дані",
+          "outputVar": "recallConfirm",
+          "connectorId": "2ec53ba5-144e-463b-9758-c217c4a69b0e",
+          "description": "Показує зріст/вагу + ПІБ/телефон/місто/відділення з минулого завершеного замовлення, дає підтвердити або скоригувати окремі поля.",
+          "temperature": 0.3,
+          "systemPrompt": "Клієнт УЖЕ замовляв у нас раніше в цій воронці. Радо привітай поверненню (коротко, тепло, доречний емодзі) і одразу покажи, що ми пам'ятаємо його дані:\nЗріст/вага: {{context.returningCustomerData.height}} см / {{context.returningCustomerData.weight}} кг.\nДоставка: {{context.returningCustomerData.fullName}}, {{context.returningCustomerData.phone}}, {{context.returningCustomerData.city}}, відділення {{context.returningCustomerData.branch}}.\n(Якщо якогось поля тут порожньо — просто не згадуй його, не вигадуй.)\nЗапитай: «Оформляємо як минулого разу, чи щось потрібно поправити?»\nПРАВИЛА:\n1. Якщо клієнт підтверджує (так/вірно/як завжди/все ок/погоджуюсь/+) — поверни РІВНО json_output {\"confirmed\":true} без жодного тексту.\n2. Якщо клієнт хоче ЩОСЬ ПОПРАВИТИ і одразу називає нові дані (нову адресу, зріст/вагу тощо) — розпізнай, які САМЕ поля змінились, і поверни json_output з ЛИШЕ зміненими полями серед {\"height\":<см>,\"weight\":<кг>,\"fullName\":\"...\",\"phone\":\"...\",\"city\":\"...\",\"branch\":\"...\"} ПЛЮС \"confirmed\":true, якщо після змін достатньо даних для продовження.\n3. Якщо клієнт сказав ЩО хоче поправити, але не дав нових даних (напр. «адресу треба іншу») — тепло уточни, що саме змінилось, ЗВИЧАЙНИМ ТЕКСТОМ (без JSON), і чекай відповіді.\n4. Якщо клієнт ставить ІНШЕ питання — коротко тепло відповідай з наявних даних, тоді знову запитай «Оформляємо як минулого разу?»\n5. Якщо клієнт ЯВНО хоче живу людину/менеджера — поверни json_output {\"handoff\":true}.\nНе вигадуй товар/колір — про них іде мова окремо, тут лише розмір і доставка.",
+          "exitCondition": "json_output"
+        },
+        "type": "claude",
+        "position": {
+          "x": 360,
+          "y": 2000
+        }
+      },
+      {
+        "id": "n_recall_apply",
+        "data": {
+          "code": "var rc = context.recallConfirm || {};\nvar rd = context.returningCustomerData || {};\nvar si = Object.assign({}, context.sizeInput || {});\nif (rd.height != null && si.height == null) si.height = rd.height;\nif (rd.weight != null && si.weight == null) si.weight = rd.weight;\nif (rc.height != null) si.height = rc.height;\nif (rc.weight != null) si.weight = rc.weight;\nvar od = Object.assign({}, context.orderData || {});\n['fullName','phone','city','branch'].forEach(function(k){\n  if (rd[k] != null && od[k] == null) od[k] = rd[k];\n  if (rc[k] != null) od[k] = rc[k];\n});\nvar ready = !!(od.fullName && od.phone && od.city && od.branch);\nreturn { sizeInput: si, orderData: od, recalledDeliveryReady: ready };",
+          "label": "0.7 Застосувати підтверджені/скориговані дані",
+          "description": "Зливає returningCustomerData + recallConfirm у sizeInput/orderData, ставить recalledDeliveryReady."
+        },
+        "type": "js",
+        "position": {
+          "x": 360,
+          "y": 2200
+        }
+      },
+      {
+        "id": "n_recall_isclothing_cond",
+        "data": {
+          "label": "0.8 Одяг? (для повторного клієнта — пропустити n_size)",
+          "condition": "context.product && context.product.isClothing",
+          "description": "TRUE → n_calc напряму (розмір вже відомий). FALSE → n_has_colors як зазвичай."
+        },
+        "type": "condition",
+        "position": {
+          "x": 720,
+          "y": 2400
+        }
+      },
+      {
+        "id": "n_collect_skip_cond",
+        "data": {
+          "label": "12.05 Доставка вже відома (повторний клієнт)?",
+          "condition": "context.recalledDeliveryReady === true",
+          "description": "TRUE → n_np_check напряму (адресу вже підтверджено на початку). FALSE → n_collect як зазвичай."
+        },
+        "type": "condition",
+        "position": {
+          "x": 720,
+          "y": 4800
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "start_1",
+        "target": "n_route"
+      },
+      {
+        "id": "e2",
+        "source": "n_route",
+        "target": "n_signal_check"
+      },
+      {
+        "id": "e6",
+        "source": "n_size",
+        "target": "n_size_photo_cond"
+      },
+      {
+        "id": "e9",
+        "source": "n_color",
+        "target": "n_avail"
+      },
+      {
+        "id": "e12",
+        "source": "n_upsell_cond",
+        "target": "n_upsell_msg",
+        "sourceHandle": "true"
+      },
+      {
+        "id": "e13",
+        "source": "n_upsell_cond",
+        "target": "n_order_intent",
+        "sourceHandle": "false"
+      },
+      {
+        "id": "e14",
+        "source": "n_upsell_msg",
+        "target": "n_order_intent"
+      },
+      {
+        "id": "e15",
+        "source": "n_order_intent",
+        "target": "n_order_cond"
+      },
+      {
+        "id": "e16",
+        "source": "n_order_cond",
+        "target": "n_pay",
+        "sourceHandle": "true"
+      },
+      {
+        "id": "e17",
+        "source": "n_order_cond",
+        "target": "n_followup_wait",
+        "sourceHandle": "false"
+      },
+      {
+        "id": "e18",
+        "source": "n_pay",
+        "target": "n_pay_collect"
+      },
+      {
+        "id": "e_pc_pa",
+        "source": "n_pay_collect",
+        "target": "n_intl_route"
+      },
+      {
+        "id": "e_cloth_size",
+        "source": "n_is_clothing",
+        "target": "n_size",
+        "sourceHandle": "true"
+      },
+      {
+        "id": "e_av_cond",
+        "source": "n_avail",
+        "target": "n_avail_cond"
+      },
+      {
+        "id": "e_cond_no",
+        "source": "n_avail_cond",
+        "target": "n_avail_no",
+        "sourceHandle": "false"
+      },
+      {
+        "id": "e_fw_guard",
+        "source": "n_followup_wait",
+        "target": "n_followup_guard"
+      },
+      {
+        "id": "e_guard_cond",
+        "source": "n_followup_guard",
+        "target": "n_followup_cond"
+      },
+      {
+        "id": "e_cond_fw",
+        "source": "n_followup_cond",
+        "target": "n_followup_msg",
+        "sourceHandle": "true"
+      },
+      {
+        "id": "e_crm_create",
+        "source": "n_crm_order",
+        "target": "n_create"
+      },
+      {
+        "id": "e_n_have_product_n_unknown_msg_false",
+        "source": "n_have_product",
+        "target": "n_unknown_msg",
+        "sourceHandle": "false"
+      },
+      {
+        "id": "e_n_unknown_msg_n_unknown_admin",
+        "source": "n_unknown_msg",
+        "target": "n_unknown_admin"
+      },
+      {
+        "id": "e_n_unknown_admin_n_unknown_stop",
+        "source": "n_unknown_admin",
+        "target": "n_unknown_stop"
+      },
+      {
+        "id": "e_n_have_product_n_has_photo_true",
+        "source": "n_have_product",
+        "target": "n_has_photo",
+        "sourceHandle": "true"
+      },
+      {
+        "id": "e_n_has_photo_n_photo_true",
+        "source": "n_has_photo",
+        "target": "n_photo",
+        "sourceHandle": "true"
+      },
+      {
+        "id": "e_n_has_photo_n_welcome_false",
+        "source": "n_has_photo",
+        "target": "n_welcome",
+        "sourceHandle": "false"
+      },
+      {
+        "id": "e_n_photo_n_welcome",
+        "source": "n_photo",
+        "target": "n_welcome"
+      },
+      {
+        "id": "e_n_calc_n_size_oor",
+        "source": "n_calc",
+        "target": "n_size_oor"
+      },
+      {
+        "id": "e_n_size_oor_n_size_oor_msg_true",
+        "source": "n_size_oor",
+        "target": "n_size_oor_msg",
+        "sourceHandle": "true"
+      },
+      {
+        "id": "e_n_size_oor_n_size_reply_false",
+        "source": "n_size_oor",
+        "target": "n_size_reply",
+        "sourceHandle": "false"
+      },
+      {
+        "id": "e_n_size_oor_msg_n_size_oor_admin",
+        "source": "n_size_oor_msg",
+        "target": "n_size_oor_admin"
+      },
+      {
+        "id": "e_n_size_oor_admin_n_size_oor_stop",
+        "source": "n_size_oor_admin",
+        "target": "n_size_oor_stop"
+      },
+      {
+        "id": "e_n_lookup_n_have_product",
+        "source": "n_lookup",
+        "target": "n_have_product"
+      },
+      {
+        "id": "e_n_size_reply_n_has_colors",
+        "source": "n_size_reply",
+        "target": "n_has_colors"
+      },
+      {
+        "id": "e_n_is_clothing_n_has_colors_false",
+        "source": "n_is_clothing",
+        "target": "n_has_colors",
+        "sourceHandle": "false"
+      },
+      {
+        "id": "e_n_avail_no_n_has_colors",
+        "source": "n_avail_no",
+        "target": "n_has_colors"
+      },
+      {
+        "id": "e_n_has_colors_n_color_true",
+        "source": "n_has_colors",
+        "target": "n_color",
+        "sourceHandle": "true"
+      },
+      {
+        "id": "e_n_has_colors_n_avail_false",
+        "source": "n_has_colors",
+        "target": "n_avail",
+        "sourceHandle": "false"
+      },
+      {
+        "id": "e_n_followup_cond_n_followup_skip_false",
+        "source": "n_followup_cond",
+        "target": "n_followup_skip",
+        "sourceHandle": "false"
+      },
+      {
+        "id": "e_n_followup_msg_n_order_intent",
+        "source": "n_followup_msg",
+        "target": "n_order_intent"
+      },
+      {
+        "id": "e_n_pay_amount_n_iban_invoice",
+        "source": "n_pay_amount",
+        "target": "n_skip_payment_cond"
+      },
+      {
+        "id": "e_n_iban_invoice_n_requisites",
+        "source": "n_iban_invoice",
+        "target": "n_requisites"
+      },
+      {
+        "id": "e_n_req_manual_n_req_iban_l",
+        "source": "n_req_manual",
+        "target": "n_req_iban_l"
+      },
+      {
+        "id": "e_n_req_iban_l_n_req_iban_v",
+        "source": "n_req_iban_l",
+        "target": "n_req_iban_v"
+      },
+      {
+        "id": "e_n_req_iban_v_n_req_code_l",
+        "source": "n_req_iban_v",
+        "target": "n_req_code_l"
+      },
+      {
+        "id": "e_n_req_code_l_n_req_code_v",
+        "source": "n_req_code_l",
+        "target": "n_req_code_v"
+      },
+      {
+        "id": "e_n_req_ref_l_n_req_ref_v",
+        "source": "n_req_ref_l",
+        "target": "n_req_ref_v"
+      },
+      {
+        "id": "e_n_req_ref_v_n_req_sum",
+        "source": "n_req_ref_v",
+        "target": "n_req_sum"
+      },
+      {
+        "id": "e_n_req_sum_n_collect",
+        "source": "n_req_sum",
+        "target": "n_collect_skip_cond"
+      },
+      {
+        "id": "e_n_np_check_n_np_gate",
+        "source": "n_np_check",
+        "target": "n_np_gate"
+      },
+      {
+        "id": "e_n_np_gate_n_np_ask_true",
+        "source": "n_np_gate",
+        "target": "n_np_ask",
+        "sourceHandle": "true"
+      },
+      {
+        "id": "e_n_np_gate_n_mono_fetch_false",
+        "source": "n_np_gate",
+        "target": "n_mono_fetch",
+        "sourceHandle": "false"
+      },
+      {
+        "id": "e_n_np_ask_n_collect",
+        "source": "n_np_ask",
+        "target": "n_collect_skip_cond"
+      },
+      {
+        "id": "e_n_mono_fetch_n_reconcile",
+        "source": "n_mono_fetch",
+        "target": "n_reconcile"
+      },
+      {
+        "id": "e_n_reconcile_n_pay_status_cond",
+        "source": "n_reconcile",
+        "target": "n_pay_status_cond"
+      },
+      {
+        "id": "e_n_pay_status_cond_n_mark_consumed_true",
+        "source": "n_pay_status_cond",
+        "target": "n_mark_consumed",
+        "sourceHandle": "true"
+      },
+      {
+        "id": "e_n_mark_consumed_n_del_invoice",
+        "source": "n_mark_consumed",
+        "target": "n_del_invoice"
+      },
+      {
+        "id": "e_n_del_invoice_n_crm_order",
+        "source": "n_del_invoice",
+        "target": "n_crm_order"
+      },
+      {
+        "id": "e_n_pay_status_cond_n_pay_notfound_admin_false",
+        "source": "n_pay_status_cond",
+        "target": "n_pay_notfound_admin",
+        "sourceHandle": "false"
+      },
+      {
+        "id": "e_n_pay_notfound_admin_n_pay_notfound_msg",
+        "source": "n_pay_notfound_admin",
+        "target": "n_pay_notfound_msg"
+      },
+      {
+        "id": "e_n_pay_notfound_msg_n_crm_order",
+        "source": "n_pay_notfound_msg",
+        "target": "n_crm_order"
+      },
+      {
+        "id": "e_n_create_n_supplier_route",
+        "source": "n_create",
+        "target": "n_supplier_route"
+      },
+      {
+        "id": "e_n_supplier_route_n_supplier_cond",
+        "source": "n_supplier_route",
+        "target": "n_supplier_cond"
+      },
+      {
+        "id": "e_n_supplier_cond_n_supplier_order_true",
+        "source": "n_supplier_cond",
+        "target": "n_supplier_order",
+        "sourceHandle": "true"
+      },
+      {
+        "id": "e_n_supplier_order_n_supplier_notify",
+        "source": "n_supplier_order",
+        "target": "n_supplier_notify"
+      },
+      {
+        "id": "e_n_supplier_notify_n_ttn_cond",
+        "source": "n_supplier_notify",
+        "target": "n_ttn_cond"
+      },
+      {
+        "id": "e_n_ttn_cond_n_ttn_client_true",
+        "source": "n_ttn_cond",
+        "target": "n_ttn_client",
+        "sourceHandle": "true"
+      },
+      {
+        "id": "e_n_ttn_client_n_confirm",
+        "source": "n_ttn_client",
+        "target": "n_confirm"
+      },
+      {
+        "id": "e_n_ttn_cond_n_confirm_false",
+        "source": "n_ttn_cond",
+        "target": "n_confirm",
+        "sourceHandle": "false"
+      },
+      {
+        "id": "e_n_supplier_cond_n_supplier_cond_ed_false",
+        "source": "n_supplier_cond",
+        "target": "n_supplier_cond_ed",
+        "sourceHandle": "false"
+      },
+      {
+        "id": "e_n_supplier_cond_ed_n_supplier_order_ed_true",
+        "source": "n_supplier_cond_ed",
+        "target": "n_supplier_order_ed",
+        "sourceHandle": "true"
+      },
+      {
+        "id": "e_n_supplier_order_ed_n_supplier_notify",
+        "source": "n_supplier_order_ed",
+        "target": "n_supplier_notify"
+      },
+      {
+        "id": "e_n_supplier_cond_ed_n_supplier_cond_cart_false",
+        "source": "n_supplier_cond_ed",
+        "target": "n_supplier_cond_cart",
+        "sourceHandle": "false"
+      },
+      {
+        "id": "e_n_supplier_cond_cart_n_supplier_order_cart_true",
+        "source": "n_supplier_cond_cart",
+        "target": "n_supplier_order_cart",
+        "sourceHandle": "true"
+      },
+      {
+        "id": "e_n_supplier_order_cart_n_supplier_notify",
+        "source": "n_supplier_order_cart",
+        "target": "n_supplier_notify"
+      },
+      {
+        "id": "e_n_supplier_cond_cart_n_supplier_manual_false",
+        "source": "n_supplier_cond_cart",
+        "target": "n_supplier_manual",
+        "sourceHandle": "false"
+      },
+      {
+        "id": "e_n_supplier_manual_n_confirm",
+        "source": "n_supplier_manual",
+        "target": "n_confirm"
+      },
+      {
+        "id": "e_n_avail_cond_n_upsell_cond_true",
+        "source": "n_avail_cond",
+        "target": "n_upsell_cond",
+        "sourceHandle": "true"
+      },
+      {
+        "id": "e_n_confirm_n_upsell2_wait",
+        "source": "n_confirm",
+        "target": "n_upsell2_wait"
+      },
+      {
+        "id": "e_n_upsell2_wait_n_final",
+        "source": "n_upsell2_wait",
+        "target": "n_final"
+      },
+      {
+        "id": "e_n_final_n_followup_wait",
+        "source": "n_final",
+        "target": "n_followup_wait"
+      },
+      {
+        "id": "e_n_welcome_n_is_set",
+        "source": "n_welcome",
+        "target": "n_is_set"
+      },
+      {
+        "id": "e_n_is_set_n_set_choice_true",
+        "source": "n_is_set",
+        "target": "n_set_choice",
+        "sourceHandle": "true"
+      },
+      {
+        "id": "e_n_is_set_n_is_clothing_false",
+        "source": "n_is_set",
+        "target": "n_recall_cond",
+        "sourceHandle": "false"
+      },
+      {
+        "id": "e_n_set_choice_n_set_apply",
+        "source": "n_set_choice",
+        "target": "n_set_apply"
+      },
+      {
+        "id": "e_n_set_apply_n_is_clothing",
+        "source": "n_set_apply",
+        "target": "n_recall_cond"
+      },
+      {
+        "id": "e_n_requisites_n_collect",
+        "source": "n_requisites",
+        "target": "n_collect_skip_cond"
+      },
+      {
+        "id": "e_n_req_code_v_n_req_name_l",
+        "source": "n_req_code_v",
+        "target": "n_req_name_l"
+      },
+      {
+        "id": "e_n_req_name_l_n_req_name_v",
+        "source": "n_req_name_l",
+        "target": "n_req_name_v"
+      },
+      {
+        "id": "e_n_req_name_v_n_req_ref_l",
+        "source": "n_req_name_v",
+        "target": "n_req_ref_l"
+      },
+      {
+        "id": "e_n_collect_n_collect_route",
+        "source": "n_collect",
+        "target": "n_collect_route"
+      },
+      {
+        "id": "e_n_collect_route_n_req_manual_true",
+        "source": "n_collect_route",
+        "target": "n_req_manual",
+        "sourceHandle": "true"
+      },
+      {
+        "id": "e_n_collect_route_n_np_check_false",
+        "source": "n_collect_route",
+        "target": "n_np_check",
+        "sourceHandle": "false"
+      },
+      {
+        "id": "e19",
+        "source": "n_size_photo_cond",
+        "target": "n_size_photo",
+        "sourceHandle": "true"
+      },
+      {
+        "id": "e20",
+        "source": "n_size_photo_cond",
+        "target": "n_calc",
+        "sourceHandle": "false"
+      },
+      {
+        "id": "e21",
+        "source": "n_size_photo",
+        "target": "n_size_afterphoto_cond"
+      },
+      {
+        "id": "e22",
+        "source": "n_size_afterphoto_cond",
+        "target": "n_calc",
+        "sourceHandle": "true"
+      },
+      {
+        "id": "e23",
+        "source": "n_size_afterphoto_cond",
+        "target": "n_size",
+        "sourceHandle": "false"
+      },
+      {
+        "id": "e_signal_check_cond",
+        "source": "n_signal_check",
+        "target": "n_signal_cond"
+      },
+      {
+        "id": "e_signal_cond_lookup",
+        "source": "n_signal_cond",
+        "target": "n_lookup",
+        "sourceHandle": "true"
+      },
+      {
+        "id": "e_signal_cond_unknown",
+        "source": "n_signal_cond",
+        "target": "n_unknown_msg",
+        "sourceHandle": "false"
+      },
+      {
+        "id": "e_intl_route_cond",
+        "source": "n_intl_route",
+        "target": "n_intl_unsupported_cond"
+      },
+      {
+        "id": "e_intl_cond_true",
+        "source": "n_intl_unsupported_cond",
+        "target": "n_intl_unsupported_msg",
+        "sourceHandle": "true"
+      },
+      {
+        "id": "e_intl_msg_stop",
+        "source": "n_intl_unsupported_msg",
+        "target": "n_intl_unsupported_stop"
+      },
+      {
+        "id": "e_intl_cond_false",
+        "source": "n_intl_unsupported_cond",
+        "target": "n_pay_amount",
+        "sourceHandle": "false"
+      },
+      {
+        "id": "e_skip_pay_true",
+        "source": "n_skip_payment_cond",
+        "target": "n_trust_confirm_msg",
+        "sourceHandle": "true"
+      },
+      {
+        "id": "e_trust_msg_collect",
+        "source": "n_trust_confirm_msg",
+        "target": "n_collect_skip_cond"
+      },
+      {
+        "id": "e_skip_pay_false",
+        "source": "n_skip_payment_cond",
+        "target": "n_iban_invoice",
+        "sourceHandle": "false"
+      },
+      {
+        "id": "e_recall_true",
+        "source": "n_recall_cond",
+        "target": "n_recall_confirm",
+        "sourceHandle": "true"
+      },
+      {
+        "id": "e_recall_false",
+        "source": "n_recall_cond",
+        "target": "n_is_clothing",
+        "sourceHandle": "false"
+      },
+      {
+        "id": "e_recall_confirm_apply",
+        "source": "n_recall_confirm",
+        "target": "n_recall_apply"
+      },
+      {
+        "id": "e_recall_apply_cond",
+        "source": "n_recall_apply",
+        "target": "n_recall_isclothing_cond"
+      },
+      {
+        "id": "e_recall_iscloth_true",
+        "source": "n_recall_isclothing_cond",
+        "target": "n_calc",
+        "sourceHandle": "true"
+      },
+      {
+        "id": "e_recall_iscloth_false",
+        "source": "n_recall_isclothing_cond",
+        "target": "n_has_colors",
+        "sourceHandle": "false"
+      },
+      {
+        "id": "e_collect_skip_true",
+        "source": "n_collect_skip_cond",
+        "target": "n_np_check",
+        "sourceHandle": "true"
+      },
+      {
+        "id": "e_collect_skip_false",
+        "source": "n_collect_skip_cond",
+        "target": "n_collect",
+        "sourceHandle": "false"
+      }
+    ]
+  },
+  "funnelKeys": [
+    {
+      "key": "FOP_CODE",
+      "value": "3560005875",
+      "isSecret": false
+    },
+    {
+      "key": "FOP_NAME",
+      "value": "ФОП Сіразетдінов Олексій Олександрович",
+      "isSecret": false
+    },
+    {
+      "key": "GEMINI_CONNECTOR_ID",
+      "value": "e94f5f54-b19b-4d9c-b8aa-e88bcc4194d1",
+      "isSecret": false
+    },
+    {
+      "key": "BREWDROP_API_BASE",
+      "value": "https://api.brewdrop.in.ua",
+      "isSecret": false
+    },
+    {
+      "key": "MONO_TOKEN",
+      "value": "[SECRET-OMITTED]",
+      "isSecret": true
+    },
+    {
+      "key": "MONO_ACCOUNT_ID",
+      "value": "cCZrhyBm-DTKzeuHKIlR_g",
+      "isSecret": false
+    },
+    {
+      "key": "BREWDROP_ARTICLE_MAP",
+      "value": "{}",
+      "isSecret": false
+    },
+    {
+      "key": "BREWDROP_TOKEN",
+      "value": "[SECRET-OMITTED]",
+      "isSecret": true
+    },
+    {
+      "key": "BREWDROP_SENDER_ID",
+      "value": "",
+      "isSecret": false
+    },
+    {
+      "key": "INSTAGRAM_ACCESS_TOKEN",
+      "value": "[SECRET-OMITTED]",
+      "isSecret": true
+    },
+    {
+      "key": "FUNNEL_CHANNELS",
+      "value": "[\"zernio\"]",
+      "isSecret": false
+    },
+    {
+      "key": "INSTAGRAM_BUSINESS_ID",
+      "value": "17841403143124762",
+      "isSecret": false
+    },
+    {
+      "key": "INSTAGRAM_USERNAME",
+      "value": "REPLACE_ME",
+      "isSecret": false
+    },
+    {
+      "key": "ADMIN_TELEGRAM_ID",
+      "value": "-5327070815",
+      "isSecret": false
+    },
+    {
+      "key": "ZERNIO_API_TOKEN",
+      "value": "[SECRET-OMITTED]",
+      "isSecret": true
+    },
+    {
+      "key": "ZERNIO_ACCOUNT_ID",
+      "value": "6a8860f577555aae0101c150",
+      "isSecret": false
+    },
+    {
+      "key": "ZERNIO_SEND_URL",
+      "value": "https://zernio.com/api/v1/inbox/conversations/{conversationId}/messages",
+      "isSecret": false
+    },
+    {
+      "key": "KEYCRM_API_TOKEN",
+      "value": "[SECRET-OMITTED]",
+      "isSecret": true
+    },
+    {
+      "key": "KEYCRM_API_BASE",
+      "value": "https://openapi.keycrm.app/v1",
+      "isSecret": false
+    },
+    {
+      "key": "FOP_IBAN",
+      "value": "UA703220010000026002310097579",
+      "isSecret": false
+    },
+    {
+      "key": "SIZE_CHART",
+      "value": "{\"S\":{\"height\":[160,175],\"weight\":[55,65]},\"M\":{\"height\":[170,180],\"weight\":[65,75]},\"L\":{\"height\":[175,185],\"weight\":[75,85]},\"XL\":{\"height\":[175,185],\"weight\":[85,100]},\"XXL\":{\"height\":[180,190],\"weight\":[100,110]},\"XXXL\":{\"height\":[180,190],\"weight\":[110,120]}}",
+      "isSecret": false
+    },
+    {
+      "key": "DEFAULT_AD_ID",
+      "value": "",
+      "isSecret": false
+    },
+    {
+      "key": "SHOP_TAG",
+      "value": "goverla_shop",
+      "isSecret": false
+    },
+    {
+      "key": "TELEGRAM_BOT_TOKEN",
+      "value": "8526334607:AAEl3yDKRg-vObpfSUFPVVLfGyWNC8gF_M4",
+      "isSecret": false
+    },
+    {
+      "key": "IBANOPLATA_API_KEY",
+      "value": "[SECRET-OMITTED]",
+      "isSecret": true
+    },
+    {
+      "key": "BREWDROP_DRY_RUN",
+      "value": "0",
+      "isSecret": false
+    },
+    {
+      "key": "SUPPLIER_CONFIG",
+      "value": "{\"brewdrop.in.ua\":{\"mechanism\":\"brewdrop\"},\"zahid_drop\":{\"mechanism\":\"easydrop_cart\",\"catalogId\":\"4658\",\"categories\":[\"17556\",\"3127\",\"3128\",\"7585\",\"8792\"]},\"Zaxid_drop\":{\"mechanism\":\"easydrop_cart\",\"catalogId\":\"4658\",\"categories\":[\"17556\",\"3127\",\"3128\",\"7585\",\"8792\"]},\"по накидках\":{\"mechanism\":\"manual\",\"note\":\"прямий постачальник накидок — оформлення вручну\"}}",
+      "isSecret": false
+    },
+    {
+      "key": "EASYDROP_BASE",
+      "value": "https://easydrop.one",
+      "isSecret": false
+    },
+    {
+      "key": "EASYDROP_LOGIN",
+      "value": "alexsirazetdinov@ukr.net",
+      "isSecret": false
+    },
+    {
+      "key": "EASYDROP_PASS",
+      "value": "[SECRET-OMITTED]",
+      "isSecret": true
+    },
+    {
+      "key": "EASYDROP_SUPPLIER_ID",
+      "value": "",
+      "isSecret": false
+    },
+    {
+      "key": "EASYDROP_DRY_RUN",
+      "value": "0",
+      "isSecret": false
+    },
+    {
+      "key": "EASYDROP_SUPPLIER_NAME",
+      "value": "",
+      "isSecret": false
+    },
+    {
+      "key": "EASYDROP_CART_DRY_RUN",
+      "value": "0",
+      "isSecret": false
+    },
+    {
+      "key": "VECTOR_URL",
+      "value": "http://127.0.0.1:4500",
+      "isSecret": false
+    },
+    {
+      "key": "VECTOR_TOKEN",
+      "value": "[SECRET-OMITTED]",
+      "isSecret": true
+    },
+    {
+      "key": "PERSONA_NAME",
+      "value": "Оля",
+      "isSecret": false
+    },
+    {
+      "key": "GEMINI_API_KEY",
+      "value": "[SECRET-OMITTED]",
+      "isSecret": true
+    },
+    {
+      "key": "NOVAPOSHTA_API_KEY",
+      "value": "[SECRET-OMITTED]",
+      "isSecret": true
+    },
+    {
+      "key": "INSTAGRAM_VERIFY_TOKEN",
+      "value": "[SECRET-OMITTED]",
+      "isSecret": true
+    },
+    {
+      "key": "CLAUDE_CONNECTOR_ID",
+      "value": "bc170003-a4f9-4175-8b5d-d2e30e87af06",
+      "isSecret": false
+    },
+    {
+      "key": "NOVA_POSHTA_INTL_COUNTRIES",
+      "value": "Польща, Чехія, Німеччина, Литва, Латвія, Естонія, Нідерланди, Австрія, Франція, Іспанія, Італія, Велика Британія, Румунія, Молдова, Словаччина, Угорщина, Фінляндія",
+      "isSecret": false
+    }
+  ]
+}

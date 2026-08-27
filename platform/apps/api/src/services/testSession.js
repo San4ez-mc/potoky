@@ -884,7 +884,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
     // n_lookup підхопив НОВИЙ товар. Не чіпаємо сесії з уже підтвердженим замовленням
     // (crmOrderId) і не заважаємо активному хендофу (adminEngaged) — тільки коли бот
     // сам ще консультує.
-    if (ctx.product && ctx.product._source === 'keycrm' && !ctx.adminEngaged && !ctx.crmOrderId && incomingUserMessage) {
+    if (ctx.product && ctx.product._source === 'keycrm' && !ctx.adminEngaged && !ctx.crmOrderId && (incomingUserMessage || incomingImageUrl)) {
         const _extractArticleCandidates = (txt) => {
             const out = [];
             const re1 = /(?:артикул|арт\.?|код|sku|№)\s*[:#№.-]?\s*([A-Za-zА-Яа-я]{0,5}\d{2,8})/gi;
@@ -926,6 +926,16 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
             const _matchedEntryAd = String(ctx.product._matchedEntryAd || '');
             if (_newSharedPostId && _newSharedPostId !== _matchedPostId) _isDifferentProduct = true;
             else if (_newEntryAd && _newEntryAd !== _matchedEntryAd) _isDifferentProduct = true;
+        }
+        // Скріншот товару замість поста/рілса (те саме питання користувача, "чи
+        // скоіншот" теж збиває воронку): на цьому кроці замовлення ще НЕ підтверджене
+        // (crmOrderId нема), тому щойно надіслане фото — майже напевно спроба показати
+        // ІНШИЙ товар, а не квитанція (той самий принцип, що вже діє у ПРІОРІТЕТІ 2.9
+        // n_lookup). Скидаємось на старт і даємо n_lookup самому розпізнати фото через
+        // Gemini vision; якщо не впізнає — чесно попросить пост/артикул, це краще, ніж
+        // застрягла нода плутано питає адресу/розмір по фото невідомо чого.
+        if (!_isDifferentProduct && incomingImageUrl) {
+            _isDifferentProduct = true;
         }
         if (_isDifferentProduct) {
             delete ctx.product;

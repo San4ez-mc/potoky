@@ -93,7 +93,7 @@ const TOOLS = [
     },
     {
         name: 'update_node',
-        description: 'Update data on an existing node in the funnel',
+        description: 'Update data on an existing node in the funnel. To enable test-mode auto-restart on this node, set data.testRestartAfter=true (see add_node description for details) — works on any node type.',
         inputSchema: {
             type: 'object',
             properties: {
@@ -125,7 +125,8 @@ const TOOLS = [
             '• generateDocument — { template, sourceVar, filename, sendToUser } — template: "student_profile"|"business_process"|"cashflow_table"|"pl_table"|"balance_table"\n' +
             '• httpEncode — { sourceVar, outputVar } — Base64-encodes a context variable\n' +
             '• fetchTelegramProfile — {} — silently loads tg_bio and tg_photo_url into context\n' +
-            '• knowledgeBase — { contextKey, blocks: [{id,title,content}] } — smart keyword search; contextKey defaults to "knowledge_base"; place before Claude node; Claude reads via {{context.knowledge_base}} in systemPrompt',
+            '• knowledgeBase — { contextKey, blocks: [{id,title,content}] } — smart keyword search; contextKey defaults to "knowledge_base"; place before Claude node; Claude reads via {{context.knowledge_base}} in systemPrompt\n' +
+            'UNIVERSAL flag (any node type): data.testRestartAfter=true — when the bot is in test mode (bot.settings.testMode, the production/test toggle — separate from session.isTest) and execution reaches this node, the session auto-resets to the start node and the test user gets "⚙️ Воронка перезапущена (тестовий режим)". Place it on nodes where the funnel hands off to a manager / pauses (typically AFTER the customer-facing message and the Telegram notifyTg have already fired), so a tester can immediately start a fresh scenario instead of manually restarting the session.',
         inputSchema: {
             type: 'object',
             properties: {

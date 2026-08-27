@@ -3222,6 +3222,51 @@ ${_baseUrl}/legal/terms — Правила використання`;
     }
     if (pendingTrace) _finalizeTrace(pendingTrace);
 
+    // Тестовий режим — автоматичний рестарт воронки (2026-08-27, запит користувача).
+    // Коли бот у ТЕСТОВОМУ РЕЖИМІ (bot.settings.testMode — перемикач бойовий/тестовий,
+    // окремий від session.isTest) і ОСТАННЯ виконана в цьому кроці нода позначена
+    // data.testRestartAfter===true — сесія одразу скидається на старт, а тестувальнику
+    // йде повідомлення про це. Мітку ставлять НА ноди, де воронка передає діалог
+    // менеджеру/зупиняється (типово — ПІСЛЯ повідомлення клієнту й сповіщення в
+    // Telegram), щоб тестувальник міг одразу почати новий сценарій без ручного
+    // рестарту сесії. Прапорець узагальнений — не hardcoded під конкретну воронку:
+    // ставиться через MCP (update_node, довільне поле в data) або UI-редактор
+    // (чекбокс "🔁 Перезапустити воронку в тестовому режимі" у панелі будь-якої ноди).
+    const _lastVisitedId = runtime.nodesVisited[runtime.nodesVisited.length - 1];
+    const _lastVisitedNode = _lastVisitedId ? nodesById.get(_lastVisitedId) : null;
+    if (session.bot?.settings?.testMode === true && _lastVisitedNode?.data?.testRestartAfter === true) {
+        const _restartMsg = '⚙️ Воронка перезапущена (тестовий режим) — можете почати заново.';
+        await persistAssistantMessage(session.id, _restartMsg, { source: 'test_mode_auto_restart', nodeId: _lastVisitedNode.id });
+        const _startNode = flow.nodes.find((n) => n.type === 'start') || flow.nodes[0];
+        const _resetContext = {
+            ...(ctx.testMode !== undefined ? { testMode: ctx.testMode } : {}),
+            flowRuntime: {
+                currentNodeId: _startNode?.id || null,
+                waitingForUser: false,
+                nodesVisited: [],
+                lastUserMessage: '',
+                dialogHistory: {},
+            },
+        };
+        const _restartedSession = await db.session.update({
+            where: { id: session.id },
+            data: {
+                state: _startNode?.id || 'start',
+                context: _resetContext,
+                isActive: true,
+                completedAt: null,
+                lastActive: new Date(),
+            },
+        });
+        return {
+            session: _restartedSession,
+            botResponse: _restartMsg,
+            flowDriven: true,
+            contextSnapshot: _resetContext,
+            testModeRestarted: true,
+        };
+    }
+
     const completed = !runtime.currentNodeId;
     const state = completed ? 'completed' : runtime.currentNodeId;
     const updatedContext = {

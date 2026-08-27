@@ -13,7 +13,16 @@ function extractArticles(txt){ if(!txt) return []; var s=String(txt); var out=[]
   var seen={},res=[]; for(var i=0;i<out.length;i++){ if(!seen[out[i]]){seen[out[i]]=1;res.push(out[i]);} } return res;
 }
 function matchCT(all,k){ if(!k)return null; for(var i=0;i<all.length;i++){ var cf=all[i].custom_fields||[]; var adv=null; for(var j=0;j<cf.length;j++){ if(cf[j]&&cf[j].uuid===adField)adv=cf[j].value; } if(adv!=null && String(adv).split(/[\s,;]+/).indexOf(String(k))>=0) return all[i]; } return null; }
-function matchArticle(all,art){ if(!art)return null; var A=String(art).toUpperCase().trim(); for(var i=0;i<all.length;i++){ var p=all[i]; if(p.sku&&String(p.sku).toUpperCase().trim()===A)return p; var cf=p.custom_fields||[]; for(var j=0;j<cf.length;j++){ var v=cf[j]&&cf[j].value; if(v==null)continue; if(String(v).toUpperCase().split(/[\s,;]+/).indexOf(A)>=0)return p; } } return null; }
+// Аудит 2026-08-27 (живий кейс: Сіразетдінов писав про "Кофта Ангора", отримав
+// "Кофта Мажор петля"): matchArticle раніше скенував УСІ кастом-поля, включно з
+// CT_1002 ("Допродажі" — товари, які РАЗОМ КУПУЮТЬ з ЦИМ, не ідентифікатори
+// самого товару). Ангора і Мажор мали ОДНАКОВЕ CT_1002="L0056-1, L0056-2"
+// (обидва пропонують ту саму футболку-допродаж) — токен "L0056-1" однаково
+// "знаходив" БУДЬ-ЯКИЙ із двох товарів, залежно від порядку в масиві. Тепер
+// матчимо ЛИШЕ по полях, які РЕАЛЬНО ідентифікують товар: sku, CT_1001 (ad_id),
+// CT_1006 (артикул постачальника). CT_1002/1003/1005/1010/1011/1012 — ніколи.
+var ARTICLE_IDENT_FIELDS={CT_1001:1,CT_1006:1};
+function matchArticle(all,art){ if(!art)return null; var A=String(art).toUpperCase().trim(); for(var i=0;i<all.length;i++){ var p=all[i]; if(p.sku&&String(p.sku).toUpperCase().trim()===A)return p; var cf=p.custom_fields||[]; for(var j=0;j<cf.length;j++){ var f=cf[j]; if(!f||!ARTICLE_IDENT_FIELDS[f.uuid])continue; var v=f.value; if(v==null)continue; if(String(v).toUpperCase().split(/[\s,;]+/).indexOf(A)>=0)return p; } } return null; }
 try{
   var all=[];
   for(var page=1;page<=10;page++){ var r=await fetch(base+'/products?include=customFields&limit=50&page='+page,{headers:hdr()}); if(!r.ok)break; var d=await r.json(); var items=(d&&d.data)||[]; for(var i=0;i<items.length;i++)all.push(items[i]); if(items.length<50)break; }
@@ -217,12 +226,20 @@ try{
   // n_welcome). Обрізаємо такі "службові" рядки (починаються з ℹ️) з публічного desc —
   // сам опис у KeyCRM не займаємо, лише не показуємо цю частину клієнту.
   var __descClean=String(found.description||'').split('\n').filter(function(ln){ return !/^\s*ℹ️/.test(ln); }).join('\n').trim();
-  // descShort — коротка версія для СТАТИЧНОГО вітального повідомлення (n_welcome,
-  // не ШІ-нода): аудит 2026-08-27 — повний опис (усі ✔️-пункти) у вітанні читався
-  // задовго. AI-консультанти (n_size/n_color/n_order_intent) й далі отримують ПОВНИЙ
-  // __descClean — їм потрібні деталі відповідати на питання клієнта.
-  var __descShort=__descClean.split('\n').slice(0,3).join('\n');
-  if(__descShort.length>220) __descShort=__descShort.slice(0,220).replace(/\s+\S*$/,'')+'…';
+  // descShort — коротка версія ДЛЯ n_welcome (не ШІ-нода, статичний текст).
+  // Аудит 2026-08-27 (фідбек по живій сесії): перша спроба (перші 3 рядки опису
+  // "як є") була недостатньо розумною — то обрізала кольори, то тягнула рядок з
+  // ціною, яка й так уже показана окремо в заголовку. Тепер витягуємо ЛИШЕ
+  // найважливіше для швидкого рішення — матеріал і кольори (без рядків з
+  // ціною/розміром — вони вже деінде), об'єднуючи в ОДНЕ речення для {{name}} —
+  // {{price}} грн ({{descShort}}) в n_welcome. AI-консультанти (n_size/n_color/
+  // n_order_intent) й далі отримують ПОВНИЙ __descClean — там потрібні деталі.
+  var __descLines=__descClean.split('\n').map(function(l){return l.trim();}).filter(Boolean);
+  function __pickFact(re){ var l=__descLines.find(function(x){return re.test(x) && !/ціна|₴/i.test(x);}); if(!l) return ''; return l.replace(/^[^\wа-яіїєґ]+/i,'').trim(); }
+  var __facts=[__pickFact(/матеріал|тканин/i), __pickFact(/кольор/i)].filter(Boolean);
+  var __descShort=__facts.join('. ');
+  if(!__descShort) __descShort=__descLines.slice(0,2).join('. ');
+  if(__descShort.length>200) __descShort=__descShort.slice(0,200).replace(/\s+\S*$/,'')+'…';
   var result={ supplier:__sup, product:{ _source:'keycrm', supplier:__sup, setComponents:__set, isSet:!!__set, setItems:setItems, setList:setItems.map(function(x){return x.name+(x.price?(" — "+x.price+" грн"):"")+" [арт. "+x.article+"]";}).join("; "), _matchKey:mk, _via:via, _matchedSharedPostId:__matchedSharedPostId, _matchedEntryAd:__matchedEntryAd, id:found.id, category_id:found.category_id, name:found.name||'Товар', desc:__descClean, descShort:__descShort, price:price, currency:found.currency_code||'UAH', photoUrl:img||'', imageUrls:imgs.slice(0,5), colors:colors.join(', '), colorsList:colors, sizes:sizes, offers:offers, upsell:upsell.join('; '), upsellPhotoUrl:__upsellPhoto, upsellPhotoNote:__upsellPhotoNote, isClothing:__isClothing, supplierArticle:__supArticle, footwearNote:__footwearNote, qtyPrices:{ '2':__qty2?Number(__qty2):null, '3':__qty3?Number(__qty3):null, '4':__qty4?Number(__qty4):null }, qtyPromoText:__qtyPromoText, sizeChartUrl:__sizeChartUrl, aiInfo:__aiInfo, sizeChartNote:__sizeChartNote, sizeChartData:__sizeChartData } };
   // Колір автопідставляємо ТІЛЬКИ якщо клієнт САМ написав артикул (а не з опису поста):
   if(preColor && preFromUser){ result.colorChoice={color:preColor,_pre:true}; }

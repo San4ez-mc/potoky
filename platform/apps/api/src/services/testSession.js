@@ -872,6 +872,57 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
         }
     }
 
+    // Перемикання товару ПОСЕРЕД консультації (не тільки на етапі "товар невідомий").
+    // Аудит 2026-08-27 (реплей реальних діалогів, сесія Сіразетдінова): клієнт вже
+    // отримав консультацію по товару А (лофери 5931), потім переслав пост/рілс з
+    // ІНШИМ товаром Б (бомбер A0165) — жодна з консультаційних діалог-нод (n_color/
+    // n_order_intent/тощо) не вміє повторно викликати n_lookup, тому ШІ або вигадує
+    // альтернативу, або чесно каже "немає в каталозі", хоча товар Б РЕАЛЬНО є.
+    // Генерично (не hardcoded під конкретну воронку): якщо в поточному повідомленні
+    // є артикуло-подібний токен, який НЕ збігається з жодним відомим ідентифікатором
+    // УЖЕ визначеного context.product — це нова спроба, скидаємось на старт, щоб
+    // n_lookup підхопив НОВИЙ товар. Не чіпаємо сесії з уже підтвердженим замовленням
+    // (crmOrderId) і не заважаємо активному хендофу (adminEngaged) — тільки коли бот
+    // сам ще консультує.
+    if (ctx.product && ctx.product._source === 'keycrm' && !ctx.adminEngaged && !ctx.crmOrderId && incomingUserMessage) {
+        const _extractArticleCandidates = (txt) => {
+            const out = [];
+            const re1 = /(?:артикул|арт\.?|код|sku|№)\s*[:#№.-]?\s*([A-Za-zА-Яа-я]{0,5}\d{2,8})/gi;
+            const re2 = /\b([A-Za-z]\d{3,6})\b/g;
+            let m;
+            while ((m = re1.exec(txt))) out.push(m[1].toUpperCase());
+            while ((m = re2.exec(txt))) out.push(m[1].toUpperCase());
+            return out;
+        };
+        const _candidates = _extractArticleCandidates(String(incomingUserMessage));
+        if (_candidates.length) {
+            const _known = new Set();
+            if (ctx.product.supplierArticle) _known.add(String(ctx.product.supplierArticle).toUpperCase());
+            if (ctx.product._matchKey && String(ctx.product._matchKey).startsWith('art_')) {
+                _known.add(String(ctx.product._matchKey).slice(4).toUpperCase());
+            }
+            (Array.isArray(ctx.product.offers) ? ctx.product.offers : []).forEach((o) => {
+                if (o && o.sku) _known.add(String(o.sku).toUpperCase());
+            });
+            const _isDifferentProduct = _candidates.some((c) => !_known.has(c));
+            if (_isDifferentProduct) {
+                delete ctx.product;
+                delete ctx.colorChoice;
+                delete ctx.recommendedSize;
+                delete ctx.sizeInput;
+                delete ctx.sizeOutOfRange;
+                delete ctx.available;
+                delete ctx.orderIntent;
+                const _startNode = flow.nodes.find((n) => n.type === 'start') || flow.nodes[0];
+                if (_startNode) {
+                    runtime.currentNodeId = _startNode.id;
+                    runtime.waitingForUser = false;
+                    runtime.dialogHistory = {};
+                }
+            }
+        }
+    }
+
     // Оператор перехопив діалог (handoff) — бот мовчить, доки прапорець не знято.
     // Це страхує канали, які не мають власного гарду (тести, інші хендлери).
     if (ctx.adminEngaged || ctx.funnelPaused) {

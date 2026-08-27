@@ -101,7 +101,15 @@ try{
   // того ж товару (різні кольори/розміри, напр. "L0056-1, L0056-2" — та сама
   // футболка), і без дедупу findByToken резолвив кожен токен окремо, показуючи
   // клієнту той самий апсейл двічі (аудит 2026-08-26, goverla_shop/Притула).
-  if(scf&&scf.value){ var stoks=String(scf.value).split(/[\s,;]+/); var __seenUp={}; for(var t=0;t<stoks.length&&upsell.length<3;t++){ var pp2=await findByToken(stoks[t]); if(pp2&&pp2.id!==found.id&&!__seenUp[pp2.id]){ __seenUp[pp2.id]=1; upsell.push(upname(pp2)); } } }
+  // __upsellPhoto — фото ПЕРШОГО апсейл-товару (аудит 2026-08-26: клієнт попросив фото
+  // футболки-допродажу, а бот чесно сказав "немає", хоча фото Є в каталозі — просто
+  // apsell раніше ніс лише назву+ціну, без photoUrl. wantsUpsellPhoto в діалог-нодах
+  // (рушій, testSession.js) читає САМЕ це поле).
+  var __upsellPhoto='';
+  if(scf&&scf.value){ var stoks=String(scf.value).split(/[\s,;]+/); var __seenUp={}; for(var t=0;t<stoks.length&&upsell.length<3;t++){ var pp2=await findByToken(stoks[t]); if(pp2&&pp2.id!==found.id&&!__seenUp[pp2.id]){ __seenUp[pp2.id]=1; upsell.push(upname(pp2)); if(!__upsellPhoto){ __upsellPhoto = pp2.thumbnail_url || (((pp2.attachments_data||[])[0])&&((typeof pp2.attachments_data[0]==='string')?pp2.attachments_data[0]:(pp2.attachments_data[0].url||pp2.attachments_data[0].src))) || ''; } } } }
+  var __upsellPhotoNote = __upsellPhoto
+    ? 'Фото товару(-ів) з допродажу Є — якщо клієнт попросить показати, скажи що зараз надішлеш.'
+    : 'Фото товару(-ів) з допродажу поки НЕМА під рукою — якщо клієнт попросить, чесно скажи що зараз немає, запропонуй подивитись каталог.';
   var imgs=[]; if(found.thumbnail_url)imgs.push(found.thumbnail_url); var adx=found.attachments_data||[]; for(var x=0;x<adx.length;x++){ var uu=(typeof adx[x]==='string')?adx[x]:(adx[x]&&(adx[x].url||adx[x].src)); if(uu&&imgs.indexOf(uu)<0)imgs.push(uu); } var img=imgs[0]||'';
   var price=(found.price!=null?found.price:found.min_price);
   function cfVal(u){ var f=(found.custom_fields||[]).find(function(c){return c&&c.uuid===u;}); return f?String(f.value||'').trim():''; }
@@ -170,7 +178,7 @@ try{
   // offer-властивості (яка ще й хибно спрацьовувала на "Розмір кейса" в автотоварах).
   var CLOTHING_CATEGORY_IDS=[1,2,4,5,6,8]; // Бомбери,Футболки,Кофти,Куртки,Костюми,Джинси
   var __isClothing = CLOTHING_CATEGORY_IDS.indexOf(found.category_id)>=0;
-  var result={ supplier:__sup, product:{ _source:'keycrm', supplier:__sup, setComponents:__set, isSet:!!__set, setItems:setItems, setList:setItems.map(function(x){return x.name+(x.price?(" — "+x.price+" грн"):"")+" [арт. "+x.article+"]";}).join("; "), _matchKey:mk, _via:via, id:found.id, category_id:found.category_id, name:found.name||'Товар', desc:found.description||'', price:price, currency:found.currency_code||'UAH', photoUrl:img||'', imageUrls:imgs.slice(0,5), colors:colors.join(', '), colorsList:colors, sizes:sizes, offers:offers, upsell:upsell.join('; '), isClothing:__isClothing, supplierArticle:__supArticle, footwearNote:__footwearNote, qtyPrices:{ '2':__qty2?Number(__qty2):null, '3':__qty3?Number(__qty3):null, '4':__qty4?Number(__qty4):null }, qtyPromoText:__qtyPromoText, sizeChartUrl:__sizeChartUrl, aiInfo:__aiInfo, sizeChartNote:__sizeChartNote } };
+  var result={ supplier:__sup, product:{ _source:'keycrm', supplier:__sup, setComponents:__set, isSet:!!__set, setItems:setItems, setList:setItems.map(function(x){return x.name+(x.price?(" — "+x.price+" грн"):"")+" [арт. "+x.article+"]";}).join("; "), _matchKey:mk, _via:via, id:found.id, category_id:found.category_id, name:found.name||'Товар', desc:found.description||'', price:price, currency:found.currency_code||'UAH', photoUrl:img||'', imageUrls:imgs.slice(0,5), colors:colors.join(', '), colorsList:colors, sizes:sizes, offers:offers, upsell:upsell.join('; '), upsellPhotoUrl:__upsellPhoto, upsellPhotoNote:__upsellPhotoNote, isClothing:__isClothing, supplierArticle:__supArticle, footwearNote:__footwearNote, qtyPrices:{ '2':__qty2?Number(__qty2):null, '3':__qty3?Number(__qty3):null, '4':__qty4?Number(__qty4):null }, qtyPromoText:__qtyPromoText, sizeChartUrl:__sizeChartUrl, aiInfo:__aiInfo, sizeChartNote:__sizeChartNote } };
   // Колір автопідставляємо ТІЛЬКИ якщо клієнт САМ написав артикул (а не з опису поста):
   if(preColor && preFromUser){ result.colorChoice={color:preColor,_pre:true}; }
   if(preColor) result.product.preColor=preColor;

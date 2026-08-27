@@ -1323,6 +1323,12 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                     const otherKeys = Object.keys(exit.parsed).filter((k) => k !== 'wantsPhoto');
                     if (otherKeys.length === 0) exit.done = false;
                 }
+                // Те саме для wantsUpsellPhoto (фото товару з допродажу, не основного) —
+                // окремий, незалежний сигнал, той самий принцип (аудит 2026-08-26).
+                if (exit.parsed && exit.parsed.wantsUpsellPhoto === true) {
+                    const otherKeys = Object.keys(exit.parsed).filter((k) => k !== 'wantsUpsellPhoto');
+                    if (otherKeys.length === 0) exit.done = false;
+                }
 
                 const isJsonExit = String(exitCondition).trim() === 'json_output';
                 // Використовуємо jsonStart (а не exit.done) — інакше форсований wantsPhoto-only
@@ -1350,6 +1356,19 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                         || (ctx.product && ctx.product.photoUrl) || '';
                     if (firstImg && String(firstImg).startsWith('http')) {
                         await persistAssistantMessage(session.id, '', { nodeId: node.id, nodeType: 'photo_on_demand', attachment: { type: 'photo', url: firstImg, caption: '' } });
+                    }
+                }
+
+                // Фото товару з ДОПРОДАЖУ (не основного) — окремий сигнал wantsUpsellPhoto.
+                // Аудит 2026-08-26 (goverla_shop/Притула): клієнт попросив фото футболки з
+                // "часто разом замовляють", а бот чесно сказав "немає", хоча фото Є в
+                // KeyCRM — просто context.product.upsell ніс лише назву+ціну. n_lookup тепер
+                // кладе context.product.upsellPhotoUrl (фото першого апсейл-товару) — рушій
+                // шле його тим самим механізмом, що й основне фото.
+                if (exit.parsed && exit.parsed.wantsUpsellPhoto === true) {
+                    const upImg = (ctx.product && ctx.product.upsellPhotoUrl) || '';
+                    if (upImg && String(upImg).startsWith('http')) {
+                        await persistAssistantMessage(session.id, '', { nodeId: node.id, nodeType: 'photo_on_demand', attachment: { type: 'photo', url: upImg, caption: '' } });
                     }
                 }
 

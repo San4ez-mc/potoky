@@ -97,7 +97,11 @@ try{
     return null;
   }
   var scf=(found.custom_fields||[]).find(function(c){return c&&/супутн|допродаж/i.test(c.name||'');});
-  if(scf&&scf.value){ var stoks=String(scf.value).split(/[\s,;]+/); for(var t=0;t<stoks.length&&upsell.length<3;t++){ var pp2=await findByToken(stoks[t]); if(pp2&&pp2.id!==found.id) upsell.push(upname(pp2)); } }
+  // __seenUp — дедуп за id товару: CT_1002 часто містить кілька offer-sku ОДНОГО й
+  // того ж товару (різні кольори/розміри, напр. "L0056-1, L0056-2" — та сама
+  // футболка), і без дедупу findByToken резолвив кожен токен окремо, показуючи
+  // клієнту той самий апсейл двічі (аудит 2026-08-26, goverla_shop/Притула).
+  if(scf&&scf.value){ var stoks=String(scf.value).split(/[\s,;]+/); var __seenUp={}; for(var t=0;t<stoks.length&&upsell.length<3;t++){ var pp2=await findByToken(stoks[t]); if(pp2&&pp2.id!==found.id&&!__seenUp[pp2.id]){ __seenUp[pp2.id]=1; upsell.push(upname(pp2)); } } }
   var imgs=[]; if(found.thumbnail_url)imgs.push(found.thumbnail_url); var adx=found.attachments_data||[]; for(var x=0;x<adx.length;x++){ var uu=(typeof adx[x]==='string')?adx[x]:(adx[x]&&(adx[x].url||adx[x].src)); if(uu&&imgs.indexOf(uu)<0)imgs.push(uu); } var img=imgs[0]||'';
   var price=(found.price!=null?found.price:found.min_price);
   function cfVal(u){ var f=(found.custom_fields||[]).find(function(c){return c&&c.uuid===u;}); return f?String(f.value||'').trim():''; }

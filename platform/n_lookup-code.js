@@ -211,7 +211,19 @@ try{
   // "новий товар" від "відповідь на поточне питання воронки".
   var __matchedSharedPostId=(context.sharedPost&&context.sharedPost.mediaId)?String(context.sharedPost.mediaId):'';
   var __matchedEntryAd=String(context.entryAd||context.entryAdId||'');
-  var result={ supplier:__sup, product:{ _source:'keycrm', supplier:__sup, setComponents:__set, isSet:!!__set, setItems:setItems, setList:setItems.map(function(x){return x.name+(x.price?(" — "+x.price+" грн"):"")+" [арт. "+x.article+"]";}).join("; "), _matchKey:mk, _via:via, _matchedSharedPostId:__matchedSharedPostId, _matchedEntryAd:__matchedEntryAd, id:found.id, category_id:found.category_id, name:found.name||'Товар', desc:found.description||'', price:price, currency:found.currency_code||'UAH', photoUrl:img||'', imageUrls:imgs.slice(0,5), colors:colors.join(', '), colorsList:colors, sizes:sizes, offers:offers, upsell:upsell.join('; '), upsellPhotoUrl:__upsellPhoto, upsellPhotoNote:__upsellPhotoNote, isClothing:__isClothing, supplierArticle:__supArticle, footwearNote:__footwearNote, qtyPrices:{ '2':__qty2?Number(__qty2):null, '3':__qty3?Number(__qty3):null, '4':__qty4?Number(__qty4):null }, qtyPromoText:__qtyPromoText, sizeChartUrl:__sizeChartUrl, aiInfo:__aiInfo, sizeChartNote:__sizeChartNote, sizeChartData:__sizeChartData } };
+  // Аудит 2026-08-27 (живий тест, Сіразетдінов): опис товару "Кофта Мажор петля" мав
+  // рядок "ℹ️ Інший виріб, ніж..." — внутрішня нотатка адміна в полі опису KeyCRM —
+  // і вона дослівно потрапила клієнту (interpolation {{context.product.desc}} у
+  // n_welcome). Обрізаємо такі "службові" рядки (починаються з ℹ️) з публічного desc —
+  // сам опис у KeyCRM не займаємо, лише не показуємо цю частину клієнту.
+  var __descClean=String(found.description||'').split('\n').filter(function(ln){ return !/^\s*ℹ️/.test(ln); }).join('\n').trim();
+  // descShort — коротка версія для СТАТИЧНОГО вітального повідомлення (n_welcome,
+  // не ШІ-нода): аудит 2026-08-27 — повний опис (усі ✔️-пункти) у вітанні читався
+  // задовго. AI-консультанти (n_size/n_color/n_order_intent) й далі отримують ПОВНИЙ
+  // __descClean — їм потрібні деталі відповідати на питання клієнта.
+  var __descShort=__descClean.split('\n').slice(0,3).join('\n');
+  if(__descShort.length>220) __descShort=__descShort.slice(0,220).replace(/\s+\S*$/,'')+'…';
+  var result={ supplier:__sup, product:{ _source:'keycrm', supplier:__sup, setComponents:__set, isSet:!!__set, setItems:setItems, setList:setItems.map(function(x){return x.name+(x.price?(" — "+x.price+" грн"):"")+" [арт. "+x.article+"]";}).join("; "), _matchKey:mk, _via:via, _matchedSharedPostId:__matchedSharedPostId, _matchedEntryAd:__matchedEntryAd, id:found.id, category_id:found.category_id, name:found.name||'Товар', desc:__descClean, descShort:__descShort, price:price, currency:found.currency_code||'UAH', photoUrl:img||'', imageUrls:imgs.slice(0,5), colors:colors.join(', '), colorsList:colors, sizes:sizes, offers:offers, upsell:upsell.join('; '), upsellPhotoUrl:__upsellPhoto, upsellPhotoNote:__upsellPhotoNote, isClothing:__isClothing, supplierArticle:__supArticle, footwearNote:__footwearNote, qtyPrices:{ '2':__qty2?Number(__qty2):null, '3':__qty3?Number(__qty3):null, '4':__qty4?Number(__qty4):null }, qtyPromoText:__qtyPromoText, sizeChartUrl:__sizeChartUrl, aiInfo:__aiInfo, sizeChartNote:__sizeChartNote, sizeChartData:__sizeChartData } };
   // Колір автопідставляємо ТІЛЬКИ якщо клієнт САМ написав артикул (а не з опису поста):
   if(preColor && preFromUser){ result.colorChoice={color:preColor,_pre:true}; }
   if(preColor) result.product.preColor=preColor;

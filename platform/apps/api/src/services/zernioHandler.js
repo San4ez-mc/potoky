@@ -368,7 +368,7 @@ async function handleCommentReceived(botId, body) {
     const ctxNow = session.context || {};
     if (ctxNow.adminEngaged || ctxNow.funnelPaused) return { ok: true, processed: 1 };
 
-    const flow = await getFlowDefinition(botId);
+    const flow = await db.flowDefinition.findUnique({ where: { botId } });
     const hasCommentFlow = flow && flow.nodes.some((n) => n.id === 'n_comment_entry');
     if (!hasCommentFlow) {
         logger.info('[zernioHandler] n_comment_entry не підключено в цій воронці — коментар лише залоговано', { botId });

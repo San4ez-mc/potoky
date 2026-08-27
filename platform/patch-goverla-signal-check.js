@@ -22,9 +22,11 @@ const APPLY = process.argv.includes('--apply');
 const SIGNAL_CHECK_CODE = `var msg = String(context.lastUserMessage || input || '');
 var hasPost = !!(context.sharedPost || context.entryAd);
 var hasPhoto = !!context.lastUserImageUrl;
+// Аудит 2026-08-27: прибрано голий /\\b\\d{4,8}\\b/ — хибно спрацьовував на поштовий
+// індекс/ціну/номер відділення (будь-яке окреме 4-8-значне число), спричиняючи
+// нескінченний цикл reset->ask на звичайних повідомленнях з адресою чи ціною.
 var hasArticleLike = /(?:артикул|арт\\.?|art|код|sku|#|№)\\s*[:#№.\\-]?\\s*[A-Za-zА-Яа-яІЇЄҐіїєґ]{0,5}\\d{2,8}/i.test(msg)
-  || /\\b[A-Za-z]\\d{3,6}\\b/.test(msg)
-  || /\\b\\d{4,8}\\b/.test(msg);
+  || /\\b[A-Za-z]\\d{3,6}\\b/.test(msg);
 return { hasProductSignal: hasPost || hasPhoto || hasArticleLike };`;
 
 async function main() {

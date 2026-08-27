@@ -849,9 +849,20 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
     const _currentNode = runtime.currentNodeId ? nodesById.get(runtime.currentNodeId) : null;
     const _isProductAskNode = Boolean(_currentNode?.data?.productUnknownAsk);
     if ((ctx.adminEngaged && ctx.handoffKind === 'product_unknown' && !ctx.funnelPaused) || _isProductAskNode) {
+        // Аудит 2026-08-27 (реплей "найскладніших" реальних діалогів goverla_shop):
+        // голий '\b\d{4,8}\b' у попередній версії цього регексу хибно спрацьовував на
+        // ПОШТОВИЙ ІНДЕКС ("08137"), ЦІНУ ("1279 грн"), номер відділення тощо — будь-яке
+        // окреме 4-8-значне число в звичайній розмові. Це скидало currentNodeId на
+        // start_1 на КОЖНЕ таке повідомлення (адреса доставки, ціна, індекс), створюючи
+        // нескінченний цикл "скинули → знову не визначили товар → знову питаємо".
+        // Прибрано: голий номер БЕЗ ключового слова/букви більше не рахується ознакою
+        // товару — тільки явний "артикул/арт/код/sku/№ <число>" або буквено-цифровий
+        // код (A0165). Втрата: клієнт, що назве "5931" без слова "артикул" у відповідь
+        // на паузу, не підхопиться автоматично — прийнятний компроміс проти
+        // хибних спрацювань на кожній адресі/ціні.
         const _hasProductSignal = Boolean(ctx.sharedPost && ctx.sharedPost.caption)
             || Boolean(ctx.entryAd || ctx.entryAdId || ctx.postId)
-            || /(?:артикул|арт\.?|код|sku|№)\s*[:#№.-]?\s*[A-Za-zА-Яа-я]{0,5}\d{2,8}|\b[A-Za-z]\d{3,6}\b|\b\d{4,8}\b/i.test(String(incomingUserMessage || ''));
+            || /(?:артикул|арт\.?|код|sku|№)\s*[:#№.-]?\s*[A-Za-zА-Яа-я]{0,5}\d{2,8}|\b[A-Za-z]\d{3,6}\b/i.test(String(incomingUserMessage || ''));
         if (_hasProductSignal) {
             ctx.adminEngaged = false;
             delete ctx.handoffKind;

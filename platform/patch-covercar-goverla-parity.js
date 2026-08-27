@@ -6,7 +6,7 @@
  *
  *   covercar і goverla_shop сидять на ОДНОМУ акаунті KeyCRM (той самий KEYCRM_API_TOKEN,
  *   спільний каталог товарів) і мають структурно ІДЕНТИЧНІ ноди n_lookup/n_calc/n_size/
- *   n_pay*/n_unknown*/n_size_oor* (covercar явно клонований з goverla_shop — навіть
+ *   n_pay, n_unknown, n_size_oor (covercar явно клонований з goverla_shop — навіть
  *   orderRef-префікс в n_pay_amount досі "GOV", хоча бот називається covercar; це НЕ
  *   зачіпаю цим патчем — окрема косметична дрібниця, не з переліку фіксів, які просили
  *   продублювати).

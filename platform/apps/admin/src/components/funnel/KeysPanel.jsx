@@ -658,8 +658,6 @@ export function KeysPanel({ embedded = false }) {
     }, []);
 
     useEffect(() => {
-        const current = keys.find((item) => item.key === 'CLAUDE_CONNECTOR_ID');
-        if (current?.value) setSelectedConnectorId(String(current.value));
         const openaiCurrent = keys.find((item) => item.key === 'OPENAI_CONNECTOR_ID' || item.key === 'GPT_CONNECTOR_ID');
         if (openaiCurrent?.value) setSelectedOpenAIConnectorId(String(openaiCurrent.value));
         const geminiCurrent = keys.find((item) => item.key === 'GEMINI_CONNECTOR_ID');

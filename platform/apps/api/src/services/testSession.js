@@ -835,7 +835,20 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
     // Бот замовк, бо не визначив товар. Якщо клієнт САМ прислав товар (рілс/пост/реклама
     // або артикул у тексті) — це нова спроба, відновлюємось і шукаємо товар знову.
     // Явне прохання менеджера (handoffKind !== 'product_unknown') так НЕ знімається.
-    if (ctx.adminEngaged && ctx.handoffKind === 'product_unknown' && !ctx.funnelPaused) {
+    //
+    // Аудит 2026-08-27 (goverla_shop, Сіразетдінов): раніше цей чек спрацьовував
+    // ТІЛЬКИ коли ctx.adminEngaged вже true — але "прохання про товар" (ask-нода,
+    // напр. n_unknown_msg, mode:single) саме й з'їдає ПЕРШЕ повідомлення з новим
+    // товаром на повторення канкан-фрази, і лише пауза вмикається ПІСЛЯ неї. Клієнту
+    // доводилось писати артикул ДВІЧІ: раз щоб "розбудити" паузу, ще раз щоб вона
+    // підхопилась. Тепер той самий чек спрацьовує і коли currentNodeId стоїть на
+    // ноді з міткою data.productUnknownAsk===true — незалежно від того, встигла
+    // пауза формально увімкнутись, чи ще ні. Мітка — узагальнений, не hardcoded під
+    // конкретний бот прапорець: будь-яка воронка може позначити ним свою
+    // "запитати про товар" ноду, щоб отримати той самий одноразовий re-check.
+    const _currentNode = runtime.currentNodeId ? nodesById.get(runtime.currentNodeId) : null;
+    const _isProductAskNode = Boolean(_currentNode?.data?.productUnknownAsk);
+    if ((ctx.adminEngaged && ctx.handoffKind === 'product_unknown' && !ctx.funnelPaused) || _isProductAskNode) {
         const _hasProductSignal = Boolean(ctx.sharedPost && ctx.sharedPost.caption)
             || Boolean(ctx.entryAd || ctx.entryAdId || ctx.postId)
             || /(?:артикул|арт\.?|код|sku|№)\s*[:#№.-]?\s*[A-Za-zА-Яа-я]{0,5}\d{2,8}|\b[A-Za-z]\d{3,6}\b|\b\d{4,8}\b/i.test(String(incomingUserMessage || ''));

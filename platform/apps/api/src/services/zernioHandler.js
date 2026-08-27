@@ -329,7 +329,10 @@ async function handleCommentReceived(botId, body) {
     const conv = body.conversation || {};
     const contact = conv.contact || conv.participant || c.from || c.author || {};
     const commentId = c.id || c.commentId || c.cid || null;
-    const mediaId = c.mediaId || c.media_id || c.postId || c.post_id || conv.mediaId || conv.postId || null;
+    // Аудит 2026-08-27 (живий трафік, перші реальні коментарі): реальна форма
+    // Zernio кладе id допису в c.platformPostId, а НЕ mediaId/postId (ті були
+    // здогадкою з фрагментів документації) — c.postId в реальних подіях завжди null.
+    const mediaId = c.platformPostId || c.mediaId || c.media_id || c.postId || c.post_id || conv.mediaId || conv.postId || null;
     const commentText = c.text || c.content || c.message || '';
     const contactId = contact.id || contact.platformId || contact.psid || contact.accountId || null;
     const contactName = contact.name || contact.displayName || contact.username || contact.accountUsername || 'друже';
@@ -337,6 +340,12 @@ async function handleCommentReceived(botId, body) {
 
     const eventId = body.id || `comment_${commentId || contactId || Date.now()}`;
     if (!(await dedup(botId, eventId))) return { ok: true, processed: 0 };
+
+    // Аудит 2026-08-27 (живий трафік): наші ВЛАСНІ реплаї на чужі коментарі (менеджер
+    // відповів вручну в Instagram) теж прилітають як comment.received — Zernio явно
+    // позначає це полем author.isOwnAccount. Без цього гарду бот сприймав власний
+    // акаунт як "клієнта", що міг би призвести до відповіді самому собі.
+    if (contact.isOwnAccount) { return { ok: true, skipped: 'own-account' }; }
 
     if (!commentId || !contactId) {
         logger.warn('[zernioHandler] comment.received без commentId/contactId — RAW', { botId, raw: JSON.stringify(body).slice(0, 1500) });

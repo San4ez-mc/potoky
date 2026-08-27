@@ -485,22 +485,29 @@ router.post('/:id/restart',
         });
         if (!session) throw new NotFoundError('Session', req.params.id);
 
-        // Clear history
-        await db.$transaction([
-            db.message.deleteMany({ where: { sessionId: session.id } }),
-            db.apiCall.deleteMany({ where: { sessionId: session.id } }),
-            db.appError.deleteMany({ where: { sessionId: session.id } }),
-            db.session.update({
-                where: { id: session.id },
-                data: {
-                    state: '',
-                    context: {},
-                    isActive: true,
-                    completedAt: null,
-                    lastActive: new Date(),
-                },
-            }),
-        ]);
+        // Аудит 2026-08-27 (запит користувача): раніше цей ендпоінт ВИДАЛЯВ усю
+        // історію (повідомлення/API-виклики/помилки) — сесія фактично губилась
+        // (ставала непомітною в списках/пошуку без жодного повідомлення). Тепер
+        // історія ЗБЕРІГАЄТЬСЯ — скидається лише логіка воронки (context/state),
+        // і в саму сесію додається технічне повідомлення-мітка про рестарт.
+        await db.message.create({
+            data: {
+                sessionId: session.id,
+                role: 'event',
+                content: '🔄 Сесію перезапущено вручну (адмін-панель) — історія збережена, воронка почала з початку.',
+                metadata: { source: 'admin_restart' },
+            },
+        });
+        await db.session.update({
+            where: { id: session.id },
+            data: {
+                state: '',
+                context: {},
+                isActive: true,
+                completedAt: null,
+                lastActive: new Date(),
+            },
+        });
 
         // Re-run flow from start (like /start was pressed again)
         const { executeFlowStep } = require('../services/testSession');

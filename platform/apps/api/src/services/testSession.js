@@ -3317,6 +3317,12 @@ ${_baseUrl}/legal/terms — Правила використання`;
                 nodesVisited: [],
                 lastUserMessage: '',
                 dialogHistory: {},
+                // Аудит 2026-08-27: лог доставки (вкладка "Ноди" → "Доставка") раніше
+                // стирався щоразу на рестарті — після кожного тестового рестарту
+                // губився слід, чи реально пішло повідомлення. Переносимо в новий
+                // flowRuntime (той самий ліміт/TTL, що й logDelivery, застосується
+                // на наступному записі).
+                deliveryLog: Array.isArray(runtime.deliveryLog) ? runtime.deliveryLog : [],
             },
         };
         const _restartedSession = await db.session.update({

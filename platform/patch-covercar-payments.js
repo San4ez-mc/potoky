@@ -63,7 +63,14 @@ if(!found && context.lastReceiptImageUrl && keys.GEMINI_API_KEY && imgOk(context
   var ac2=new AbortController(); var to2=setTimeout(function(){try{ac2.abort();}catch(e){}},10000);
   try{
     var ir=await fetch(context.lastReceiptImageUrl,{signal:ac2.signal}); var ab=await ir.arrayBuffer(); if(ab.byteLength>8000000) throw new Error('img too large'); var b64=Buffer.from(ab).toString('base64');
-    var mime=(ir.headers.get('content-type')||'image/jpeg').split(';')[0];
+    // Аудит 2026-08-27 (goverla_shop): Telegram file-сервер ЗАВЖДИ віддає photos з
+    // content-type application/octet-stream (навіть коли байти — реальний JPEG).
+    // Довіра цьому заголовку напряму ламає розпізнавання — Gemini повертає HTTP 400
+    // "Unsupported MIME type" мовчки (без throw), квитанція ніколи не звіряється.
+    // imgOk() вище явно дозволяє api.telegram.org, тож цей код так само вразливий,
+    // навіть якщо covercar зараз на Zernio-каналі. NOT yet deployed live — див. чат.
+    var mimeRaw=(ir.headers.get('content-type')||'').split(';')[0];
+    var mime=(!mimeRaw || mimeRaw==='application/octet-stream') ? 'image/jpeg' : mimeRaw;
     var gr=await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key='+encodeURIComponent(keys.GEMINI_API_KEY),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:'Це банківська квитанція про переказ. Поверни ЛИШЕ JSON {"amount":число,"recipientCode":"код одержувача","iban":"IBAN одержувача","payerName":"ПІБ платника","purpose":"призначення"}'},{inline_data:{mime_type:mime,data:b64}}]}]})});
     var gj=await gr.json(); var t=((((gj.candidates||[])[0]||{}).content||{}).parts||[{}])[0].text||''; var mm=t.match(/\\{[\\s\\S]*\\}/);
     if(mm){ var f=JSON.parse(mm[0]); var okRec2=String(f.iban||'').replace(/\\s/g,'').indexOf(EXPECTED_IBAN)>=0 || String(f.recipientCode||'').replace(/\\D/g,'').indexOf(EXPECTED_CODE)>=0; var amt2=Number(f.amount)||parseAmount(f.amount); if(okRec2){ found=matchByAmount(amt2||expected, { payerName:f.payerName }); if(found) via='mono:ai'; } }

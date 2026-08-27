@@ -289,6 +289,10 @@ function ChatBubble({ msg, highlighted, refProp, onDelete, onEdit, user, userPho
     const canDelete = !isUser && !isSystem;
     const hasTgId = Boolean(msg.metadata?.telegramMessageId);
     const isAdminManual = msg.metadata?.source === 'admin_manual';
+    // Zernio синхронізує в БД і повідомлення, які менеджер написав НАПРЯМУ в Instagram
+    // (не через панель адміна) — це не бот і не admin_manual; окремий колір, щоб не
+    // плутати "бот відповів дивно" з "людина сама щось написала в телефоні" (аудит 2026-08-26).
+    const isZernioInbox = msg.metadata?.source === 'zernio_inbox';
     const hasDoc = Boolean(msg.metadata?.hasDoc);
     const status = msg.metadata?.status;
     const reactions = Array.isArray(msg.metadata?.reactions) ? msg.metadata.reactions : [];
@@ -327,10 +331,13 @@ function ChatBubble({ msg, highlighted, refProp, onDelete, onEdit, user, userPho
                         ? 'bg-gray-800/50 text-gray-400 border border-gray-700'
                         : isAdminManual
                             ? 'bg-emerald-800/70 text-white rounded-tr-sm'
-                            : 'bg-brand text-white rounded-tr-sm'
+                            : isZernioInbox
+                                ? 'bg-amber-700/70 text-white rounded-tr-sm'
+                                : 'bg-brand text-white rounded-tr-sm'
             }`}>
                 {isSystem && <div className="text-xs text-gray-500 mb-1 font-mono">system</div>}
-                {isAdminManual && <div className="text-[10px] text-emerald-300/80 mb-1">👤 адмін</div>}
+                {isAdminManual && <div className="text-[10px] text-emerald-300/80 mb-1">👤 адмін (з панелі)</div>}
+                {isZernioInbox && <div className="text-[10px] text-amber-300/80 mb-1">📱 менеджер (напряму в Instagram)</div>}
 
                 {editing ? (
                     <div className="space-y-1.5">

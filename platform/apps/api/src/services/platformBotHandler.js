@@ -407,6 +407,86 @@ async function createNewSession(userId, botId) {
     });
 }
 
+// ---------------------------------------------------------------------------
+// Group chats — opt-in per bot via settings.groupMode, OFF by default.
+//
+//   bot.settings.groupMode = { enabled: true, triggerName: 'Чак' }
+//
+// Bots without this set behave exactly as before this feature existed —
+// group messages fall straight into the ignore branch below, no DB writes.
+// When enabled: every group message is passively logged (so the bot can
+// later be asked "what was discussed"), but the flow only actually RUNS
+// when the message is addressed to the bot — @mention, the trigger name
+// appears in the text, or it's a reply to the bot's own previous message.
+// The whole group shares one ongoing session (keyed by a synthetic User
+// whose telegramId is the group chat's own id — always negative, so it
+// never collides with a real person), so context carries across members.
+// ---------------------------------------------------------------------------
+
+// Bot's own Telegram id/username, needed to recognize @mentions and replies
+// addressed to it. Never changes at runtime — cached per token for the life
+// of the process.
+const _botIdentityCache = new Map(); // token -> { id, username }
+async function getBotIdentity(token) {
+    if (_botIdentityCache.has(token)) return _botIdentityCache.get(token);
+    let identity = { id: null, username: null };
+    try {
+        const res = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+        const data = await res.json();
+        identity = { id: data?.result?.id || null, username: data?.result?.username || null };
+    } catch (err) {
+        logger.warn('[platformBotHandler] getMe failed', { error: err.message });
+    }
+    _botIdentityCache.set(token, identity);
+    return identity;
+}
+
+function displayName(from) {
+    const name = [from?.first_name, from?.last_name].filter(Boolean).join(' ') || from?.title || 'Хтось';
+    return from?.username ? `${name} (@${from.username})` : name;
+}
+
+/**
+ * Reads the opt-in group config off the bot record. Returns null (= ignore
+ * the group entirely) unless explicitly enabled.
+ */
+async function getGroupModeConfig(botId) {
+    const bot = await db.bot.findUnique({ where: { id: botId }, select: { settings: true } }).catch(() => null);
+    const gm = bot?.settings?.groupMode;
+    if (!gm || gm.enabled !== true) return null;
+    return { triggerName: String(gm.triggerName || '').trim() };
+}
+
+/**
+ * True if this group message is addressed to the bot: an @username mention
+ * entity, the configured trigger name appearing anywhere in the text (plain
+ * substring — matches Ukrainian case endings like "Чаку"/"Чака" too), or a
+ * reply to one of the bot's own messages.
+ */
+function isAddressedToBot(message, text, identity, triggerName) {
+    const entities = message.entities || [];
+    if (identity.username) {
+        const handle = '@' + identity.username.toLowerCase();
+        const mentioned = entities.some(e => e.type === 'mention'
+            && text.slice(e.offset, e.offset + e.length).toLowerCase() === handle);
+        if (mentioned) return true;
+    }
+    if (triggerName && text.toLowerCase().includes(triggerName.toLowerCase())) return true;
+    if (identity.id && message.reply_to_message?.from?.id === identity.id) return true;
+    return false;
+}
+
+/**
+ * Persist a group message into the group's ongoing session WITHOUT running
+ * the flow — used for messages that weren't addressed to the bot, so later
+ * (when it IS addressed) the recent-history injection already has context.
+ */
+async function logGroupMessagePassively(groupUserId, botId, taggedText) {
+    let session = await findActiveSession(groupUserId, botId);
+    if (!session) session = await createNewSession(groupUserId, botId);
+    await persistUserMessage(session.id, taggedText);
+}
+
 async function getNewAssistantMessages(sessionId, since) {
     const where = { sessionId, role: 'assistant' };
     if (since) {
@@ -879,13 +959,55 @@ async function _handlePlatformBotUpdateInner(botId, update) {
     }
 
     const chatId = message.chat?.id;
-    const from = message.from;
+    let from = message.from;
     // Use text, or fall back to media caption so "ось фото, додай завтра" works
     let text = message.text || message.caption || '';
 
     if (!from || !chatId) {
         logger.debug('[platformBotHandler] Missing from/chatId, skipping', { botId });
         return;
+    }
+
+    // ── Group chats: opt-in per bot, OFF by default (see helpers above) ──────
+    const chatType = message.chat?.type || 'private';
+    if (chatType === 'group' || chatType === 'supergroup') {
+        const groupMode = await getGroupModeConfig(botId);
+        if (!groupMode) {
+            // Not enabled for this bot — behave as if the update never happened.
+            logger.debug('[platformBotHandler] Group message, groupMode disabled — ignored', { botId, chatId });
+            return;
+        }
+        const gToken = await getBotToken(botId);
+        if (!gToken) return;
+        const identity = await getBotIdentity(gToken);
+        const addressed = isAddressedToBot(message, text, identity, groupMode.triggerName);
+        const tag = `[${displayName(from)}]: `;
+
+        // Group chat id is always negative → never collides with a real user id.
+        // Reusing findOrCreateUser with a synthetic "from" gives the whole group
+        // one shared, continuing session/history — same machinery as a 1:1 chat.
+        const groupFrom = { id: message.chat.id, first_name: message.chat.title || 'Група', last_name: null, username: null };
+        let groupUser;
+        try {
+            groupUser = await findOrCreateUser(groupFrom, botId);
+        } catch (err) {
+            logger.warn('[platformBotHandler] findOrCreateUser (group) failed', { error: err.message });
+            return;
+        }
+
+        if (!addressed) {
+            // Passive: remember what was said, don't reply, don't run the flow.
+            if (text) await logGroupMessagePassively(groupUser.id, botId, tag + text).catch(() => {});
+            return;
+        }
+
+        // Addressed to the bot — fall through into the normal pipeline below,
+        // attributed to the group's shared identity instead of the sender's.
+        // Slash-commands (e.g. /start) are left untagged so the raw-text
+        // parsing further down (startPayload = text.slice('/start'.length))
+        // still lines up correctly.
+        from = groupFrom;
+        if (!text.startsWith('/')) text = tag + text;
     }
 
     const isStart = (message.text || '').startsWith('/start');

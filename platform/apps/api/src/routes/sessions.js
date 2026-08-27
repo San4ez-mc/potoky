@@ -191,14 +191,21 @@ async function sendViaBot(botId, chatId, text, photoBuffer, opts = {}) {
 
     if (token) {
         const apiBase = `https://api.telegram.org/bot${token}`;
-        const FormData = require('form-data');
+        // Аудит 2026-08-27: пакет 'form-data' + нативний fetch (undici, Node 22) на
+        // sendPhoto/sendDocument мовчки повертав 400 з ПОРОЖНІМ тілом — form-data
+        // генерує body як Node-стрім, а undici його не консюмить як multipart без
+        // ручного duplex-налаштування. Знайдено при тестуванні розпізнавання фото
+        // для goverla_shop (інший канал, Zernio, але саме ця функція — спільна для
+        // всіх Telegram-ботів і вручну ручного відправлення фото/документів з
+        // адмінки — тобто це реальний, тихий збій для Telegram-каналів). Замінено
+        // на нативні FormData/Blob (глобальні в Node 18+, fetch-сумісні напряму).
 
         if (docBuffer) {
             const form = new FormData();
             form.append('chat_id', String(chatId));
-            form.append('document', docBuffer, { filename: docName || 'document', contentType: docMimeType || 'application/octet-stream' });
+            form.append('document', new Blob([docBuffer], { type: docMimeType || 'application/octet-stream' }), docName || 'document');
             if (text) form.append('caption', text);
-            const res = await fetch(`${apiBase}/sendDocument`, { method: 'POST', body: form, headers: form.getHeaders() });
+            const res = await fetch(`${apiBase}/sendDocument`, { method: 'POST', body: form });
             if (!res.ok) { const txt = await res.text().catch(() => ''); throw new Error(`ETELEGRAM: ${res.status} ${txt}`); }
             const data = await res.json().catch(() => ({}));
             return data?.result?.message_id || null;
@@ -207,9 +214,9 @@ async function sendViaBot(botId, chatId, text, photoBuffer, opts = {}) {
         if (photoBuffer) {
             const form = new FormData();
             form.append('chat_id', String(chatId));
-            form.append('photo', photoBuffer, { filename: 'photo.jpg', contentType: 'image/jpeg' });
+            form.append('photo', new Blob([photoBuffer], { type: 'image/jpeg' }), 'photo.jpg');
             if (text) form.append('caption', text);
-            const res = await fetch(`${apiBase}/sendPhoto`, { method: 'POST', body: form, headers: form.getHeaders() });
+            const res = await fetch(`${apiBase}/sendPhoto`, { method: 'POST', body: form });
             if (!res.ok) { const txt = await res.text().catch(() => ''); throw new Error(`ETELEGRAM: ${res.status} ${txt}`); }
             const data = await res.json().catch(() => ({}));
             return data?.result?.message_id || null;

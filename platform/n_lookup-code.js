@@ -136,6 +136,16 @@ try{
   var __sizeChartNote=__sizeChartUrl
     ? 'Розмірна сітка для цього товару Є — якщо клієнт попросить, скажи що зараз покажеш.'
     : 'Розмірної сітки для цього товару ПОКИ НЕМА в системі — якщо клієнт попросить, чесно скажи, що зараз немає під рукою, і запропонуй підібрати розмір за зростом і вагою.';
+  // CT_1012 — точні виміри ЦЬОГО товару по кожному розміру (обхват грудей, довжина
+  // рукава тощо), розібрані вручну з фото розмірної сітки. Формат:
+  // {"title","unit","sizes":["S","M",...],"measurements":{"Обхват грудей":[110,116,...]}}
+  // На відміну від CT_1010 (лише посилання на картинку) — це структуровані числа,
+  // якими підбір розміру (n_calc) і консультант (n_size) можуть РЕАЛЬНО оперувати,
+  // а не просто "сітка є/нема". Якщо порожньо/битий JSON — просто немає точних даних,
+  // підбір далі працює по універсальній SIZE_CHART (зріст/вага), як і раніше.
+  var __sizeChartDataRaw=cfVal('CT_1012');
+  var __sizeChartData=null;
+  if(__sizeChartDataRaw){ try{ __sizeChartData=JSON.parse(__sizeChartDataRaw); }catch(e){ __sizeChartData=null; } }
   var __qtyPromoParts=[];
   if(__qty2) __qtyPromoParts.push('2 шт — '+Number(__qty2)+' грн');
   if(__qty3) __qtyPromoParts.push('3 шт — '+Number(__qty3)+' грн');
@@ -185,7 +195,7 @@ try{
   // offer-властивості (яка ще й хибно спрацьовувала на "Розмір кейса" в автотоварах).
   var CLOTHING_CATEGORY_IDS=[1,2,4,5,6,8]; // Бомбери,Футболки,Кофти,Куртки,Костюми,Джинси
   var __isClothing = CLOTHING_CATEGORY_IDS.indexOf(found.category_id)>=0;
-  var result={ supplier:__sup, product:{ _source:'keycrm', supplier:__sup, setComponents:__set, isSet:!!__set, setItems:setItems, setList:setItems.map(function(x){return x.name+(x.price?(" — "+x.price+" грн"):"")+" [арт. "+x.article+"]";}).join("; "), _matchKey:mk, _via:via, id:found.id, category_id:found.category_id, name:found.name||'Товар', desc:found.description||'', price:price, currency:found.currency_code||'UAH', photoUrl:img||'', imageUrls:imgs.slice(0,5), colors:colors.join(', '), colorsList:colors, sizes:sizes, offers:offers, upsell:upsell.join('; '), upsellPhotoUrl:__upsellPhoto, upsellPhotoNote:__upsellPhotoNote, isClothing:__isClothing, supplierArticle:__supArticle, footwearNote:__footwearNote, qtyPrices:{ '2':__qty2?Number(__qty2):null, '3':__qty3?Number(__qty3):null, '4':__qty4?Number(__qty4):null }, qtyPromoText:__qtyPromoText, sizeChartUrl:__sizeChartUrl, aiInfo:__aiInfo, sizeChartNote:__sizeChartNote } };
+  var result={ supplier:__sup, product:{ _source:'keycrm', supplier:__sup, setComponents:__set, isSet:!!__set, setItems:setItems, setList:setItems.map(function(x){return x.name+(x.price?(" — "+x.price+" грн"):"")+" [арт. "+x.article+"]";}).join("; "), _matchKey:mk, _via:via, id:found.id, category_id:found.category_id, name:found.name||'Товар', desc:found.description||'', price:price, currency:found.currency_code||'UAH', photoUrl:img||'', imageUrls:imgs.slice(0,5), colors:colors.join(', '), colorsList:colors, sizes:sizes, offers:offers, upsell:upsell.join('; '), upsellPhotoUrl:__upsellPhoto, upsellPhotoNote:__upsellPhotoNote, isClothing:__isClothing, supplierArticle:__supArticle, footwearNote:__footwearNote, qtyPrices:{ '2':__qty2?Number(__qty2):null, '3':__qty3?Number(__qty3):null, '4':__qty4?Number(__qty4):null }, qtyPromoText:__qtyPromoText, sizeChartUrl:__sizeChartUrl, aiInfo:__aiInfo, sizeChartNote:__sizeChartNote, sizeChartData:__sizeChartData } };
   // Колір автопідставляємо ТІЛЬКИ якщо клієнт САМ написав артикул (а не з опису поста):
   if(preColor && preFromUser){ result.colorChoice={color:preColor,_pre:true}; }
   if(preColor) result.product.preColor=preColor;

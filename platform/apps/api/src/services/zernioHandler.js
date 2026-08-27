@@ -354,71 +354,111 @@ async function handleIncomingMessage(botId, body) {
     const _resumeOnProduct = ctxNow.adminEngaged && ctxNow.handoffKind === 'product_unknown' && !ctxNow.funnelPaused
         && (Boolean(sharedPost && sharedPost.caption) || Boolean(adId)
             || /(?:артикул|арт\.?|код|sku|№)\s*[:#№.-]?\s*[A-Za-zА-Яа-я]{0,5}\d{2,8}|\b[A-Za-z]\d{3,6}\b|\b\d{4,8}\b/i.test(String(text || '')));
+    const inImageUrl = (attachment && attachment.type === 'photo' && attachment.url && String(attachment.url).startsWith('http')) ? attachment.url : null;
     if (!testModeBlocked && ((!ctxNow.adminEngaged && !ctxNow.funnelPaused) || _resumeOnProduct)) {
-        const sinceTime = new Date();
-        const inImageUrl = (attachment && attachment.type === 'photo' && attachment.url && String(attachment.url).startsWith('http')) ? attachment.url : null;
-        try { await executeFlowStep({ sessionId: session.id, incomingUserMessage: text, incomingImageUrl: inImageUrl }); }
-        catch (e) { logger.error('[zernioHandler] flow step failed', { botId, sessionId: session.id, error: e.message }); }
-        const outMsgs = await db.message.findMany({ where: { sessionId: session.id, role: 'assistant', createdAt: { gt: sinceTime } }, orderBy: { createdAt: 'asc' } });
-        for (const om of outMsgs) {
-            const m = om.metadata || {};
-            if (m.hidden) continue;
-            const att = m.attachment;
-            const imgUrl = att && (att.type === 'photo' || att.type === 'image') && att.url && String(att.url).startsWith('http') ? att.url : null;
-            try {
-                if (imgUrl) {
-                    // Усі фото товару з CRM (галерея) поспіль; підпис → текстом.
-                    const _fresh = await db.session.findUnique({ where: { id: session.id }, select: { context: true } }).catch(() => null);
-                    const _gal = (((_fresh && _fresh.context && _fresh.context.product && _fresh.context.product.imageUrls) || [])).filter((u) => u && String(u).startsWith('http'));
-                    // IG приймає до 10 attachment-обʼєктів в одному повідомленні → шлемо АЛЬБОМОМ.
-                    const _maxRow = await db.funnelKey.findFirst({ where: { botId, key: 'PRODUCT_PHOTOS_MAX' }, select: { value: true } }).catch(() => null);
-                    const _max = Math.min(10, Math.max(1, parseInt((_maxRow && _maxRow.value) || '10', 10) || 10));
-                    const _list = (_gal.length ? _gal : [imgUrl]).slice(0, _max);
-                    try {
-                        const _albumId = await sendMetaPhotoAlbum(botId, contactId, _list);
-                        await logDelivery(session.id, botId, 'ig_photo_album', true, null, { nodeId: m.nodeId || null, count: _list.length, messageId: _albumId });
-                    } catch (e) {
-                        logger.warn('[zernioHandler] альбом не пройшов, шлемо по одному: ' + e.message);
-                        await logDelivery(session.id, botId, 'ig_photo_album', false, e.message, { nodeId: m.nodeId || null, count: _list.length });
-                        for (const _g of _list) {
-                            try { await sendMetaPhoto(botId, contactId, _g); await logDelivery(session.id, botId, 'ig_photo', true, null, { nodeId: m.nodeId || null, url: _g }); }
-                            catch (e2) { logger.warn('[zernioHandler] фото: ' + e2.message); await logDelivery(session.id, botId, 'ig_photo', false, e2.message, { nodeId: m.nodeId || null, url: _g }); }
-                        }
+        // Аудит 2026-08-27 (антипатерн A12, реальний кейс Сіразетдінова): рілс/пост і
+        // підпис-текст до нього іноді приходять ДВОМА окремими webhook-подіями за
+        // частки секунди. Кожна раніше одразу й НЕЗАЛЕЖНО викликала executeFlowStep —
+        // перша знаходила товар за підписом, друга (лише текст "Яка ціна?", без
+        // сигналу товару) виконувалась ЯК ОКРЕМИЙ крок і могла дати суперечливу
+        // відповідь. Дебаунс зливає такі близькі повідомлення ОДНІЄЇ сесії в ОДИН
+        // виклик рушія — чекаємо коротке вікно, чи не прийде ще щось майже одразу.
+        scheduleFlowRun(session.id, { botId, contactId, conversationId, contactName, text, imageUrl: inImageUrl });
+    }
+    logger.info('[zernioHandler] Inbound stored', { botId, sessionId: session.id, hasAd: !!adId });
+    return { ok: true, processed: 1 };
+}
+
+// sessionId -> { timer, texts:[], imageUrl, botId, contactId, conversationId, contactName }
+const _pendingFlowRuns = new Map();
+const FLOW_DEBOUNCE_MS = 1200;
+
+function scheduleFlowRun(sessionId, msg) {
+    let entry = _pendingFlowRuns.get(sessionId);
+    if (!entry) {
+        entry = { texts: [], imageUrl: null, botId: msg.botId, contactId: msg.contactId, conversationId: msg.conversationId, contactName: msg.contactName, timer: null };
+        _pendingFlowRuns.set(sessionId, entry);
+    }
+    if (msg.text) entry.texts.push(msg.text);
+    if (msg.imageUrl && !entry.imageUrl) entry.imageUrl = msg.imageUrl;
+    if (msg.contactName) entry.contactName = msg.contactName;
+    if (entry.timer) clearTimeout(entry.timer);
+    entry.timer = setTimeout(() => {
+        _pendingFlowRuns.delete(sessionId);
+        runFlowAndDeliver(sessionId, entry).catch((e) => logger.error('[zernioHandler] debounced flow run failed', { sessionId, error: e.message }));
+    }, FLOW_DEBOUNCE_MS);
+}
+
+async function runFlowAndDeliver(sessionId, entry) {
+    const { botId, contactId, conversationId, contactName } = entry;
+    const mergedText = entry.texts.filter(Boolean).join('\n').trim();
+    const sinceTime = new Date();
+    try { await executeFlowStep({ sessionId, incomingUserMessage: mergedText, incomingImageUrl: entry.imageUrl }); }
+    catch (e) { logger.error('[zernioHandler] flow step failed', { botId, sessionId, error: e.message }); }
+    const outMsgs = await db.message.findMany({ where: { sessionId, role: 'assistant', createdAt: { gt: sinceTime } }, orderBy: { createdAt: 'asc' } });
+    for (const om of outMsgs) {
+        const m = om.metadata || {};
+        if (m.hidden) continue;
+        const att = m.attachment;
+        const imgUrl = att && (att.type === 'photo' || att.type === 'image') && att.url && String(att.url).startsWith('http') ? att.url : null;
+        try {
+            if (imgUrl) {
+                // Усі фото товару з CRM (галерея) поспіль; підпис → текстом.
+                const _fresh = await db.session.findUnique({ where: { id: sessionId }, select: { context: true } }).catch(() => null);
+                const _gal = (((_fresh && _fresh.context && _fresh.context.product && _fresh.context.product.imageUrls) || [])).filter((u) => u && String(u).startsWith('http'));
+                // IG приймає до 10 attachment-обʼєктів в одному повідомленні → шлемо АЛЬБОМОМ.
+                const _maxRow = await db.funnelKey.findFirst({ where: { botId, key: 'PRODUCT_PHOTOS_MAX' }, select: { value: true } }).catch(() => null);
+                const _max = Math.min(10, Math.max(1, parseInt((_maxRow && _maxRow.value) || '10', 10) || 10));
+                const _list = (_gal.length ? _gal : [imgUrl]).slice(0, _max);
+                try {
+                    const _albumId = await sendMetaPhotoAlbum(botId, contactId, _list);
+                    await logDelivery(sessionId, botId, 'ig_photo_album', true, null, { nodeId: m.nodeId || null, count: _list.length, messageId: _albumId });
+                } catch (e) {
+                    logger.warn('[zernioHandler] альбом не пройшов, шлемо по одному: ' + e.message);
+                    await logDelivery(sessionId, botId, 'ig_photo_album', false, e.message, { nodeId: m.nodeId || null, count: _list.length });
+                    for (const _g of _list) {
+                        try { await sendMetaPhoto(botId, contactId, _g); await logDelivery(sessionId, botId, 'ig_photo', true, null, { nodeId: m.nodeId || null, url: _g }); }
+                        catch (e2) { logger.warn('[zernioHandler] фото: ' + e2.message); await logDelivery(sessionId, botId, 'ig_photo', false, e2.message, { nodeId: m.nodeId || null, url: _g }); }
                     }
-                    const cap = att.caption || om.content;
-                    if (cap) {
-                        const zcid = await sendZernioMessage(botId, conversationId, cap);
-                        await logDelivery(session.id, botId, 'zernio', !!zcid, zcid ? null : 'sendZernioMessage не повернув id', { nodeId: m.nodeId || null, text: String(cap).slice(0, 160) });
-                    }
-                } else if (om.content) {
-                    const zid = await sendZernioMessage(botId, conversationId, om.content);
-                    await logDelivery(session.id, botId, 'zernio', !!zid, zid ? null : 'sendZernioMessage не повернув id', { nodeId: m.nodeId || null, text: String(om.content).slice(0, 160) });
-                    if (zid) await db.message.update({ where: { id: om.id }, data: { metadata: { ...m, zernioMessageId: zid, status: 'sent' } } }).catch(() => {});
                 }
-            } catch (e) {
-                // Фолбек: Meta-фото не пройшло → підпис+URL текстом через Zernio.
-                await logDelivery(session.id, botId, imgUrl ? 'ig_photo' : 'zernio', false, e.message, { nodeId: m.nodeId || null });
-                if (imgUrl) { await sendZernioMessage(botId, conversationId, (att.caption || om.content || '') + '\n' + imgUrl).catch(() => {}); }
-                logger.warn('[zernioHandler] доставка: ' + e.message);
+                const cap = att.caption || om.content;
+                if (cap) {
+                    const zcid = await sendZernioMessage(botId, conversationId, cap);
+                    await logDelivery(sessionId, botId, 'zernio', !!zcid, zcid ? null : 'sendZernioMessage не повернув id', { nodeId: m.nodeId || null, text: String(cap).slice(0, 160) });
+                }
+            } else if (om.content) {
+                const zid = await sendZernioMessage(botId, conversationId, om.content);
+                await logDelivery(sessionId, botId, 'zernio', !!zid, zid ? null : 'sendZernioMessage не повернув id', { nodeId: m.nodeId || null, text: String(om.content).slice(0, 160) });
+                if (zid) await db.message.update({ where: { id: om.id }, data: { metadata: { ...m, zernioMessageId: zid, status: 'sent' } } }).catch(() => {});
             }
+        } catch (e) {
+            // Фолбек: Meta-фото не пройшло → підпис+URL текстом через Zernio.
+            await logDelivery(sessionId, botId, imgUrl ? 'ig_photo' : 'zernio', false, e.message, { nodeId: m.nodeId || null });
+            if (imgUrl) { await sendZernioMessage(botId, conversationId, (att.caption || om.content || '') + '\n' + imgUrl).catch(() => {}); }
+            logger.warn('[zernioHandler] доставка: ' + e.message);
         }
     }
     try {
-        const _fr = await db.session.findUnique({ where: { id: session.id }, select: { context: true } });
+        const _fr = await db.session.findUnique({ where: { id: sessionId }, select: { context: true } });
         const _c = (_fr && _fr.context) || {};
         const _prod = _c.product || {};
-        const _hadSignal = adId || (sharedPost && sharedPost.caption);
+        const _hadSignal = _c.entryAdId || (_c.sharedPost && _c.sharedPost.caption);
         if (_prod._via === 'default' && _hadSignal && !_c.unmatchedNotified) {
-            const _reason = adId ? ('ad_id ne zmapleno: ' + adId) : 'post/artykul ne znaydeno v CRM';
-            const _postPart = (sharedPost && sharedPost.caption) ? (' | Post: ' + String(sharedPost.caption).slice(0, 70)) : '';
-            const _msg = 'UVAGA: bot ne vyznachyv tovar, obrobit vruchnu. Klient: ' + (contactName || 'klient') + ' | Prychyna: ' + _reason + _postPart + ' | Povidomlennia: ' + (text || '') + ' | Default: ' + (_prod.name || '');
-            await sendTelegramAlert(botId, _msg, session.id);
-            await db.session.update({ where: { id: session.id }, data: { context: { ..._c, unmatchedNotified: true } } }).catch(() => {});
+            const _reason = _c.entryAdId ? ('ad_id ne zmapleno: ' + _c.entryAdId) : 'post/artykul ne znaydeno v CRM';
+            const _postPart = (_c.sharedPost && _c.sharedPost.caption) ? (' | Post: ' + String(_c.sharedPost.caption).slice(0, 70)) : '';
+            const _msg = 'UVAGA: bot ne vyznachyv tovar, obrobit vruchnu. Klient: ' + (contactName || 'klient') + ' | Prychyna: ' + _reason + _postPart + ' | Povidomlennia: ' + (mergedText || '') + ' | Default: ' + (_prod.name || '');
+            await sendTelegramAlert(botId, _msg, sessionId);
+            await db.session.update({ where: { id: sessionId }, data: { context: { ..._c, unmatchedNotified: true } } }).catch(() => {});
         }
     } catch (e) { logger.warn('[zernioHandler] unmatched notify: ' + e.message); }
-    try { const _fs = await db.session.findUnique({ where: { id: session.id }, select: { context: true } }); const _cc = _fs && _fs.context && _fs.context.crmClientId; if (_cc && (!user.metadata || user.metadata.crmClientId !== _cc)) await db.user.update({ where: { id: user.id }, data: { metadata: { ...(user.metadata || {}), crmClientId: _cc } } }).catch(function(){}); } catch (e) {}
-    logger.info('[zernioHandler] Inbound stored', { botId, sessionId: session.id, hasAd: !!adId });
-    return { ok: true, processed: 1 };
+    try {
+        const _fs = await db.session.findUnique({ where: { id: sessionId }, select: { context: true, userId: true } });
+        const _cc = _fs && _fs.context && _fs.context.crmClientId;
+        if (_cc && _fs.userId) {
+            const _u = await db.user.findUnique({ where: { id: _fs.userId } });
+            if (_u && (!_u.metadata || _u.metadata.crmClientId !== _cc)) await db.user.update({ where: { id: _u.id }, data: { metadata: { ...(_u.metadata || {}), crmClientId: _cc } } }).catch(() => {});
+        }
+    } catch (e) { /* некритично */ }
 }
 
 const EVENT_CONTENT = {

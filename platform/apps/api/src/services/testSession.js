@@ -1529,7 +1529,15 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                 if (exit.parsed && exit.parsed.wantsUpsellPhoto === true) {
                     const upImg = (ctx.product && ctx.product.upsellPhotoUrl) || '';
                     if (upImg && String(upImg).startsWith('http')) {
-                        await persistAssistantMessage(session.id, '', { nodeId: node.id, nodeType: 'photo_on_demand', attachment: { type: 'photo', url: upImg, caption: '' } });
+                        // Аудит 2026-08-28 (живий кейс, goverla_shop: клієнт просив фото
+                        // допродажу-футболки, а отримав альбом ОСНОВНОГО товару — бомбери):
+                        // nodeType навмисно ІНШИЙ ('photo_on_demand_upsell', не 'photo_on_demand'),
+                        // бо zernioHandler.deliver для photo_on_demand підтягує ПОВНУ галерею з
+                        // context.product.imageUrls (це правильно для фото ОСНОВНОГО товару, але
+                        // для апсейла — це фото ІНШОГО товару, галереї якого в контексті взагалі
+                        // нема). Тут nodeType сигналить рушію: НЕ підміняти на галерею, слати
+                        // рівно цей один upImg.
+                        await persistAssistantMessage(session.id, '', { nodeId: node.id, nodeType: 'photo_on_demand_upsell', attachment: { type: 'photo', url: upImg, caption: '' } });
                     }
                 }
 

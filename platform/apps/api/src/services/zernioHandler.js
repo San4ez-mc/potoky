@@ -575,9 +575,16 @@ async function runFlowAndDeliver(sessionId, entry) {
         const imgUrl = att && (att.type === 'photo' || att.type === 'image') && att.url && String(att.url).startsWith('http') ? att.url : null;
         try {
             if (imgUrl) {
-                // Усі фото товару з CRM (галерея) поспіль; підпис → текстом.
-                const _fresh = await db.session.findUnique({ where: { id: sessionId }, select: { context: true } }).catch(() => null);
-                const _gal = (((_fresh && _fresh.context && _fresh.context.product && _fresh.context.product.imageUrls) || [])).filter((u) => u && String(u).startsWith('http'));
+                // Аудит 2026-08-28 (живий кейс, goverla_shop): для фото ДОПРОДАЖУ
+                // (m.nodeType === 'photo_on_demand_upsell') галерея ОСНОВНОГО товару
+                // (context.product.imageUrls) — це фото ІНШОГО товару, підміняти нею
+                // upImg НЕ можна (раніше клієнт, що просив фото футболки-допродажу,
+                // отримував альбом бомберів — фото основного товару). Для будь-якого
+                // іншого фото (sendPhoto-нода, wantsPhoto основного товару) — як і
+                // раніше: усі фото товару з CRM (галерея) поспіль; підпис → текстом.
+                const _isUpsellPhoto = m.nodeType === 'photo_on_demand_upsell';
+                const _fresh = _isUpsellPhoto ? null : await db.session.findUnique({ where: { id: sessionId }, select: { context: true } }).catch(() => null);
+                const _gal = _isUpsellPhoto ? [] : (((_fresh && _fresh.context && _fresh.context.product && _fresh.context.product.imageUrls) || [])).filter((u) => u && String(u).startsWith('http'));
                 // IG приймає до 10 attachment-обʼєктів в одному повідомленні → шлемо АЛЬБОМОМ.
                 const _maxRow = await db.funnelKey.findFirst({ where: { botId, key: 'PRODUCT_PHOTOS_MAX' }, select: { value: true } }).catch(() => null);
                 const _max = Math.min(10, Math.max(1, parseInt((_maxRow && _maxRow.value) || '10', 10) || 10));

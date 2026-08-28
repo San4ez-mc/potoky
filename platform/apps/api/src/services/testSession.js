@@ -400,6 +400,26 @@ function pushDelivery(runtime, channel, ok, error, extra) {
     } catch (_e) { /* лог не має ламати потік */ }
 }
 
+// Аудит 2026-08-28 (живий кейс, goverla_shop): клієнт попросив фото, автовідповідь
+// пообіцяла "зараз надішлю" / "менеджер надішле вручну" — а valid URL фото не було,
+// і БЕЗ цього виклику жодне сповіщення в Telegram не йшло: обіцянка лишалась порожньою.
+// Викликається з обох гілок (основний товар / товар з допродажу), коли надіслати
+// фото автоматично не вдалось — щоб менеджер реально дізнався й надіслав вручну сам.
+async function notifyAdminPhotoMissing(session, ctx, funnelEnv, runtime, whatLabel) {
+    try {
+        const adminId = await getSystemKeyValue('ADMIN_TELEGRAM_ID') || funnelEnv.ADMIN_TELEGRAM_ID;
+        const tok = funnelEnv.TELEGRAM_BOT_TOKEN || '';
+        if (!adminId || !/^\d+:[A-Za-z0-9_-]{20,}$/.test(tok)) {
+            pushDelivery(runtime, 'telegram_notify', false, 'немає ADMIN_TELEGRAM_ID або валідного TELEGRAM_BOT_TOKEN', { reason: 'photo_missing' });
+            return;
+        }
+        const txt = shopPrefix(funnelEnv) + '📸 Клієнт просить фото ' + whatLabel + ' — автоматично надіслати НЕ вдалось (немає фото в CRM).\nБот уже пообіцяв клієнту фото — надішліть, будь ласка, вручну.\nКлієнт: ' + (ctx.senderName || '') + ' (' + (ctx.igUsername || '') + ')\nСесія: ' + session.id;
+        const r = await fetch('https://api.telegram.org/bot' + tok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(adminId), text: txt, parse_mode: 'HTML', disable_web_page_preview: true }) }).catch(() => null);
+        const j = r ? await r.json().catch(() => ({})) : {};
+        pushDelivery(runtime, 'telegram_notify', !!j.ok, j.ok ? null : (j.description || 'fetch failed'), { chatId: String(adminId), reason: 'photo_missing' });
+    } catch (_e) { /* сповіщення не має ламати потік */ }
+}
+
 function normalizeAlternating(messages) {
     const out = [];
     for (const m of (messages || [])) {
@@ -1517,6 +1537,13 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                         || (ctx.product && ctx.product.photoUrl) || '';
                     if (firstImg && String(firstImg).startsWith('http')) {
                         await persistAssistantMessage(session.id, '', { nodeId: node.id, nodeType: 'photo_on_demand', attachment: { type: 'photo', url: firstImg, caption: '' } });
+                    } else {
+                        // Аудит 2026-08-28: якщо фото немає (порожній/битий URL) — модель у
+                        // ТЕКСТІ вже могла пообіцяти клієнту фото ("зараз надішлю") або навіть
+                        // "менеджер надішле вручну" — а без явного сповіщення це порожня
+                        // обіцянка, ніхто нічого не пришле. Сигналимо менеджеру одразу.
+                        pushDelivery(runtime, 'photo_on_demand', false, 'немає валідного product.imageUrls/photoUrl', { nodeId: node.id });
+                        await notifyAdminPhotoMissing(session, ctx, funnelEnv, runtime, 'основного товару');
                     }
                 }
 
@@ -1538,6 +1565,13 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                         // нема). Тут nodeType сигналить рушію: НЕ підміняти на галерею, слати
                         // рівно цей один upImg.
                         await persistAssistantMessage(session.id, '', { nodeId: node.id, nodeType: 'photo_on_demand_upsell', attachment: { type: 'photo', url: upImg, caption: '' } });
+                    } else {
+                        // Аудит 2026-08-28 (живий кейс, goverla_shop): upsellPhotoUrl порожній/
+                        // недоступний — модель у тексті вже пообіцяла клієнту "менеджер
+                        // надішле" (бо так написано в промпті на цей випадок), але без
+                        // сповіщення ЖОДЕН менеджер про це не дізнається. Кличемо явно.
+                        pushDelivery(runtime, 'photo_on_demand_upsell', false, 'немає валідного product.upsellPhotoUrl', { nodeId: node.id });
+                        await notifyAdminPhotoMissing(session, ctx, funnelEnv, runtime, 'товару з допродажу (' + (ctx.product && ctx.product.upsell || '') + ')');
                     }
                 }
 

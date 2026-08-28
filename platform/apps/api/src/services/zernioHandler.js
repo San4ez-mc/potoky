@@ -486,7 +486,21 @@ async function handleIncomingMessage(botId, body) {
     const user = await findOrCreateZernioUser(contactId, botId, contactName);
     patch.lastUserTs = Date.now();
     if (user && user.metadata && user.metadata.crmClientId) patch.crmClientId = user.metadata.crmClientId;
-    const session = await findOrCreateZernioSession(user.id, botId, patch);
+    let session = await findOrCreateZernioSession(user.id, botId, patch);
+
+    // Аудит 2026-08-28 (живий тест): якщо клієнт РАНІШЕ лишав коментар,
+    // context.commentId лишався в сесії НАЗАВЖДИ (findOrCreateZernioSession
+    // мерджить лише non-null поля — не вміє "стерти" старе). Реальна DM-подія —
+    // однозначний сигнал, що клієнт тепер у СПРАВЖНІЙ розмові з відкритим
+    // вікном; без цього чищення n_have_product_gate (див. відповідний патч)
+    // помилково трактував ЦЕЙ DM як "усе ще коментар" і тихо ігнорував його
+    // (adminEngaged без жодного повідомлення), навіть коли клієнт РЕАЛЬНО пише.
+    if (session.context && session.context.commentId) {
+        const _c = { ...session.context };
+        delete _c.commentId; delete _c.commentMediaId; delete _c.commentText;
+        delete _c.commentReplyText; delete _c.commentReplyPosted; delete _c.commentCategory;
+        session = await db.session.update({ where: { id: session.id }, data: { context: _c } });
+    }
 
     await db.message.create({
         data: {

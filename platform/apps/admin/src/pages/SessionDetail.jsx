@@ -254,7 +254,7 @@ function UserAvatar({ user, photoApiUrl }) {
 }
 
 // ─── Event row ──────────────────────────────────────────────────────────────
-// Небалакучі події Zernio (реакції, прочитано, доставлено, дзвінки, коментарі…)
+// Небалакучі події Zernio (реакції, прочитано, доставлено, дзвінки…)
 // показуємо як центрований статус-рядок, а не як бульбашку діалогу.
 function EventRow({ msg }) {
     const failed = msg.metadata?.eventType === 'message.failed';
@@ -270,12 +270,50 @@ function EventRow({ msg }) {
     );
 }
 
-// ─── Delivery status ticks (messenger-style) ────────────────────────────────
-function StatusTicks({ status }) {
-    if (status === 'failed') return <span title="Не доставлено" className="text-red-400">⚠</span>;
-    if (status === 'read') return <span title="Прочитано" className="text-sky-300">✓✓</span>;
-    if (status === 'delivered') return <span title="Доставлено">✓✓</span>;
-    if (status === 'sent') return <span title="Надіслано">✓</span>;
+// ─── Коментар під постом (public, не DM) ────────────────────────────────────
+// Аудит 2026-08-28 (запит користувача): коментар і наша ПУБЛІЧНА відповідь на
+// нього — це НЕ приватне листування, показувати їх звичайними бульбашками чату
+// плутає ("бот написав це в директ?"). Окрема картка з рамкою + іконка допису.
+function CommentCard({ msg }) {
+    const author = msg.metadata?.authorName || '';
+    const text = msg.metadata?.commentText ?? msg.content;
+    return (
+        <div className="flex justify-center my-1.5">
+            <div className="max-w-[85%] rounded-xl border border-fuchsia-800/50 bg-fuchsia-950/20 px-3 py-2">
+                <div className="flex items-center gap-1.5 text-[10px] text-fuchsia-300/80 mb-1">
+                    <span>💬</span><span>Коментар під постом{author ? ` — ${author}` : ''}</span>
+                    <span className="text-fuchsia-500/60 ml-auto">{format(new Date(msg.createdAt), 'HH:mm')}</span>
+                </div>
+                <div className="text-sm text-fuchsia-100 whitespace-pre-wrap break-words">{text}</div>
+            </div>
+        </div>
+    );
+}
+
+function CommentReplyCard({ msg }) {
+    const ok = msg.metadata?.ok !== false;
+    return (
+        <div className="flex justify-center my-1.5">
+            <div className={`max-w-[85%] rounded-xl border px-3 py-2 ${ok ? 'border-fuchsia-800/50 bg-fuchsia-900/20' : 'border-red-900/50 bg-red-950/20'}`}>
+                <div className={`flex items-center gap-1.5 text-[10px] mb-1 ${ok ? 'text-fuchsia-300/80' : 'text-red-300/80'}`}>
+                    <span>↪️</span><span>Наша публічна відповідь на коментар{!ok ? ' — НЕ опубліковано' : ''}</span>
+                    <span className={`ml-auto ${ok ? 'text-fuchsia-500/60' : 'text-red-500/60'}`}>{format(new Date(msg.createdAt), 'HH:mm')}</span>
+                </div>
+                <div className={`text-sm whitespace-pre-wrap break-words ${ok ? 'text-fuchsia-100' : 'text-red-200'}`}>{msg.content}</div>
+                {!ok && msg.metadata?.error && <div className="text-[10px] text-red-400 mt-1">{msg.metadata.error}</div>}
+            </div>
+        </div>
+    );
+}
+
+// ─── Delivery status ticks (messenger-style: 1 галочка — надіслано, 2 — доставлено,
+// 2 яскраві — прочитано; час прочитання/доставки — у title, показується по наведенню) ──
+function StatusTicks({ status, readAt, deliveredAt, failError }) {
+    const fmtTime = (iso) => { try { return format(new Date(iso), 'dd.MM HH:mm:ss'); } catch { return iso; } };
+    if (status === 'failed') return <span title={failError ? `Не доставлено: ${failError}` : 'Не доставлено'} className="text-red-400">⚠</span>;
+    if (status === 'read') return <span title={readAt ? `Прочитано ${fmtTime(readAt)}` : 'Прочитано'} className="text-sky-300">✓✓</span>;
+    if (status === 'delivered') return <span title={deliveredAt ? `Доставлено ${fmtTime(deliveredAt)}` : 'Доставлено'} className="text-white/40">✓✓</span>;
+    if (status === 'sent') return <span title="Надіслано" className="text-white/40">✓</span>;
     return null;
 }
 
@@ -366,7 +404,9 @@ function ChatBubble({ msg, highlighted, refProp, onDelete, onEdit, user, userPho
 
                 <div className={`text-[10px] mt-1.5 flex items-center gap-1 justify-end ${isUser ? 'text-gray-400' : 'text-white/50'}`}>
                     <span>{format(new Date(msg.createdAt), 'HH:mm:ss')}</span>
-                    {!isUser && (status ? <StatusTicks status={status} /> : (hasTgId && <span title="Telegram message_id збережено">✓</span>))}
+                    {!isUser && (status
+                        ? <StatusTicks status={status} readAt={msg.metadata?.readAt} deliveredAt={msg.metadata?.deliveredAt} failError={msg.metadata?.failError} />
+                        : (hasTgId && <span title="Telegram message_id збережено">✓</span>))}
                 </div>
 
                 {/* Реакції — маленька плашка на краю бульбашки (як у месенджерах) */}
@@ -1048,7 +1088,11 @@ export function SessionDetail() {
                     <div className="flex-1 overflow-y-auto p-4">
                         <div className="max-w-2xl mx-auto space-y-3">
                             {messages.map(m => (
-                                m.role === 'event' ? (
+                                m.role === 'event' && m.metadata?.eventType === 'comment.received' ? (
+                                    <CommentCard key={m.id} msg={m} />
+                                ) : m.metadata?.source === 'comment_public_reply' ? (
+                                    <CommentReplyCard key={m.id} msg={m} />
+                                ) : m.role === 'event' ? (
                                     <EventRow key={m.id} msg={m} />
                                 ) : (
                                     <ChatBubble

@@ -389,7 +389,9 @@ async function handleCommentReceived(botId, body) {
     await db.message.create({
         data: {
             sessionId: session.id, role: 'event', content: `💬 Коментар від ${contactName}: ${String(commentText).slice(0, 200)}`,
-            metadata: { source: 'zernio', eventType: 'comment.received', raw: c },
+            // authorName/commentText/commentId структуровано (не лише в готовому content) —
+            // щоб SessionDetail.jsx міг показати коментар окремою карткою, не парсячи рядок.
+            metadata: { source: 'zernio', eventType: 'comment.received', authorName: contactName || '', commentText: String(commentText), commentId: String(commentId), raw: c },
         },
     });
 
@@ -625,13 +627,25 @@ async function runFlowAndDeliver(sessionId, entry) {
             const _frc = await db.session.findUnique({ where: { id: sessionId }, select: { context: true } });
             const _cc2 = (_frc && _frc.context) || {};
             if (_cc2.commentReplyText && !_cc2.commentReplyPosted) {
+                let _rid = null, _rerr = null;
                 try {
-                    const _rid = await postZernioCommentReply(botId, commentId, _cc2.commentReplyText, _cc2.commentMediaId);
+                    _rid = await postZernioCommentReply(botId, commentId, _cc2.commentReplyText, _cc2.commentMediaId);
                     await logDelivery(sessionId, botId, 'zernio_comment_reply', !!_rid, _rid ? null : 'без id відповіді', { commentId, text: String(_cc2.commentReplyText).slice(0, 160) });
                 } catch (e) {
+                    _rerr = e.message;
                     await logDelivery(sessionId, botId, 'zernio_comment_reply', false, e.message, { commentId });
                     logger.warn('[zernioHandler] публічна відповідь на коментар не пройшла: ' + e.message);
                 }
+                // Аудит 2026-08-28 (запит користувача): публічна відповідь на коментар раніше
+                // існувала ЛИШЕ в deliveryLog (вкладка «Ноди») — у чаті сесії її взагалі не
+                // було видно. Тепер зберігаємо як повноцінне повідомлення (окремий source,
+                // щоб SessionDetail.jsx показав її ІНШЕ, ніж звичайну DM-відповідь бота).
+                await db.message.create({
+                    data: {
+                        sessionId, role: 'assistant', content: _cc2.commentReplyText,
+                        metadata: { source: 'comment_public_reply', eventType: 'comment.reply', commentId, ok: !!_rid, ...(_rerr ? { error: _rerr } : {}) },
+                    },
+                }).catch(() => {});
                 await db.session.update({ where: { id: sessionId }, data: { context: { ..._cc2, commentReplyPosted: true } } }).catch(() => {});
             }
         } catch (e) { logger.warn('[zernioHandler] comment reply block: ' + e.message); }
@@ -692,12 +706,28 @@ async function handleSideEvent(botId, event, body) {
             const rank = { sent: 1, delivered: 2, read: 3 };
             // read не «даунгрейдиться» до delivered
             const nextStatus = status === 'failed' ? 'failed' : ((rank[status] || 0) >= (rank[cur.status] || 0) ? status : cur.status);
-            await db.message.update({ where: { id: target.id }, data: { metadata: { ...cur, status: nextStatus, ...(event === 'message.failed' && body.error ? { failError: body.error.message || body.error.title } : {}) } } }).catch(() => {});
+            // Аудит 2026-08-28: галочки (StatusTicks, admin UI) показують ЧАС прочитання/доставки
+            // по наведенню — без timestamp'ів це нічим не наповнити. Пишемо лише на РЕАЛЬНИЙ
+            // перехід (nextStatus !== cur.status), щоб не затирати ранній readAt пізнішим дублем.
+            const now = new Date().toISOString();
+            const stamps = {};
+            if (nextStatus === 'delivered' && cur.status !== 'delivered') stamps.deliveredAt = now;
+            if (nextStatus === 'read' && cur.status !== 'read') stamps.readAt = now;
+            await db.message.update({ where: { id: target.id }, data: { metadata: { ...cur, status: nextStatus, ...stamps, ...(event === 'message.failed' && body.error ? { failError: body.error.message || body.error.title } : {}) } } }).catch(() => {});
             return { ok: true, processed: 1, attachedTo: target.id };
         }
-        // фолбек — рядок-подія
-        await db.message.create({ data: { sessionId: session.id, role: 'event', content: EVENT_CONTENT[event] || event, metadata: { source: 'zernio', eventType: event } } });
-        return { ok: true, processed: 1 };
+        // Аудит 2026-08-28 (скарга користувача: "мітки прочитано незрозуміло, до якого
+        // повідомлення відносяться"): фолбек-бульбашка-подія для delivered/read була НЕ
+        // прив'язана до жодного конкретного повідомлення (типова причина — читання прийшло
+        // раніше, ніж ми встигли дотегнути zernioMessageId на щойно відправлене повідомлення,
+        // класична гонитва). Замість заплутаної окремої бульбашки — тихо пропускаємо: сам
+        // статус на конкретному повідомленні (checkmarks) важливіший за окрему подію, а без
+        // target прив'язати їй нема до чого. message.failed лишаємо — це дія, яку менеджер
+        // має побачити, навіть без прив'язки до конкретного повідомлення.
+        if (event === 'message.failed') {
+            await db.message.create({ data: { sessionId: session.id, role: 'event', content: EVENT_CONTENT[event] || event, metadata: { source: 'zernio', eventType: event } } });
+        }
+        return { ok: true, processed: target ? 1 : 0 };
     }
 
     // ── Реакція → емодзі на повідомленні ──

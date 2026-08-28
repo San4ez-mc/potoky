@@ -373,9 +373,18 @@ function truncateHistory(messages, maxItems = 24) {
 // dialog Claude node with recent cross-node context (e.g. a terse "Так" after a
 // follow-up reminder) so the model doesn't misread the reply in isolation.
 // Назва магазину в кожному сповіщенні (воронка дублюється на різні магазини).
+// Аудит 2026-08-28 (запит власника): (1) пуста лінія між назвою магазину і
+// текстом самого сповіщення — раніше зливались в один рядок; (2) назва
+// магазину — клікабельне посилання на Instagram-профіль (HTML parse_mode,
+// усі виклики shopPrefix нижче тепер явно передають parse_mode:'HTML').
 function shopPrefix(env) {
     const shop = ((env && (env.SHOP_TAG || env.SHOP_NAME)) || '').trim();
-    return shop ? '🏪 ' + shop + '\n' : '';
+    if (!shop) return '';
+    const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const igUser = ((env && env.INSTAGRAM_USERNAME) || '').trim().replace(/^@/, '');
+    const label = '🏪 ' + esc(shop);
+    const linked = igUser ? `<a href="https://instagram.com/${encodeURIComponent(igUser)}">${label}</a>` : label;
+    return linked + '\n\n';
 }
 
 // Лог доставки у runtime (видно у вкладці «Ноди» → «Доставка повідомлень»).
@@ -994,10 +1003,35 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
         return { session, botResponse: null, flowDriven: false, paused: true };
     }
 
+    // Повернення/обмін товару — детермінований детект (аудит 2026-08-28, запит
+    // власника). Раніше "поверн"/"обмін" потрапляли під ЗАГАЛЬНИЙ "хочу менеджера"
+    // хендоф — бот ПОВНІСТЮ зупинявся (adminEngaged), хоча запит на повернення не
+    // повинен блокувати подальшу консультацію (в т.ч. з цим самим клієнтом — може,
+    // він хоче ще щось замовити). Тепер: сповіщаємо менеджера, тепло відповідаємо —
+    // і бот ПРОДОВЖУЄ працювати як звичайно (без return — далі йде звичайна обробка).
+    if (incomingUserMessage && !ctx.returnHandledAt
+        && /поверн(ення|ути|іть)|обмін(яти|яю)?|обмен/i.test(String(incomingUserMessage))) {
+        ctx.returnHandledAt = new Date().toISOString();
+        const retMsg = 'Звичайно, допоможемо! 🙂 Передала ваш запит на повернення/обмін менеджеру — він зв\'яжеться з деталями найближчим часом. Якщо тим часом є ще питання — я тут 💛';
+        await persistAssistantMessage(session.id, retMsg, { source: 'return_keyword' });
+        try {
+            const _env = Object.fromEntries((await db.funnelKey.findMany({ where: { botId: session.botId }, select: { key: true, value: true } })).map((k) => [k.key, k.value]));
+            const _admin = _env.ADMIN_TELEGRAM_ID || '';
+            const _tok = _env.TELEGRAM_BOT_TOKEN || '';
+            if (_admin && /^\d+:[A-Za-z0-9_-]{20,}$/.test(_tok) && !ctx.testMode) {
+                const _txt = shopPrefix(_env) + '↩️ Клієнт просить повернення/обмін товару.\nКлієнт: ' + (ctx.senderName || '') + ' (' + (ctx.igUsername || '') + ')\nПовідомлення: ' + String(incomingUserMessage).slice(0, 160) + '\nСесія: ' + session.id;
+                const _r = await fetch('https://api.telegram.org/bot' + _tok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(_admin), text: _txt, parse_mode: 'HTML', disable_web_page_preview: true }) }).catch(() => null);
+                const _j = _r ? await _r.json().catch(() => ({})) : {};
+                pushDelivery(runtime, 'telegram_notify', !!_j.ok, _j.ok ? null : (_j.description || 'fetch failed'), { chatId: String(_admin), reason: 'return_keyword' });
+            }
+        } catch (_e) { /* сповіщення не має ламати потік */ }
+        // Свідомо БЕЗ return — бот НЕ зупиняється, обробка йде далі як звичайно.
+    }
+
     // Явне прохання живої людини — детермінований детект (не покладаємось лише на LLM).
     // Не спрацьовує, якщо замовлення вже оформлене (там веде інший сценарій).
     if (incomingUserMessage && !ctx.crmOrderId
-        && /менеджер|оператор(?!ськ)|з\s*людин|живою\s*людин|жива\s*людин|людину\s*(покличте|дайте)|ви\s*бот|це\s*бот|справжн(я|ій)\s*людин|поверн|обмін|обмен|\bбрак\b|скарг|жалоб|конфлікт|обман|шахра|не\s*прийшл|не\s*дійшл|не\s*дошл/i.test(String(incomingUserMessage))) {
+        && /менеджер|оператор(?!ськ)|з\s*людин|живою\s*людин|жива\s*людин|людину\s*(покличте|дайте)|ви\s*бот|це\s*бот|справжн(я|ій)\s*людин|\bбрак\b|скарг|жалоб|конфлікт|обман|шахра|не\s*прийшл|не\s*дійшл|не\s*дошл/i.test(String(incomingUserMessage))) {
         ctx.adminEngaged = true;
         ctx.handoffReason = String(incomingUserMessage).slice(0, 160);
         const hoMsg = 'Добре, зараз покличу менеджера 🙂 Незабаром вам відповість жива людина — дякую за терпіння 💛';
@@ -1008,7 +1042,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
             const _tok = _env.TELEGRAM_BOT_TOKEN || '';
             if (_admin && /^\d+:[A-Za-z0-9_-]{20,}$/.test(_tok) && !ctx.testMode) {
                 const _txt = shopPrefix(_env) + '🙋 Клієнт просить живу людину.\nКлієнт: ' + (ctx.senderName || '') + ' (' + (ctx.igUsername || '') + ')\nПовідомлення: ' + String(incomingUserMessage).slice(0, 160) + '\nСесія: ' + session.id;
-                const _r = await fetch('https://api.telegram.org/bot' + _tok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(_admin), text: _txt }) }).catch(() => null);
+                const _r = await fetch('https://api.telegram.org/bot' + _tok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(_admin), text: _txt, parse_mode: 'HTML', disable_web_page_preview: true }) }).catch(() => null);
                 const _j = _r ? await _r.json().catch(() => ({})) : {};
                 pushDelivery(runtime, 'telegram_notify', !!_j.ok, _j.ok ? null : (_j.description || 'fetch failed'), { chatId: String(_admin), reason: 'handoff_keyword' });
             }
@@ -1517,7 +1551,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                             const hoText = shopPrefix(funnelEnv) + '🙋 Бот передав діалог людині (низька впевненість).\nКлієнт: ' + (ctx.senderName || '') + ' (' + (ctx.igUsername || '') + ')\nОстаннє: ' + String(runtime.lastUserMessage || '').slice(0, 160) + '\nСесія: ' + session.id;
                             const hoTok = funnelEnv.TELEGRAM_BOT_TOKEN || '';
                             if (adminId && /^\d+:[A-Za-z0-9_-]{20,}$/.test(hoTok)) {
-                                const _hr = await fetch('https://api.telegram.org/bot' + hoTok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(adminId), text: hoText }) }).catch(() => null);
+                                const _hr = await fetch('https://api.telegram.org/bot' + hoTok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(adminId), text: hoText, parse_mode: 'HTML', disable_web_page_preview: true }) }).catch(() => null);
                                 const _hj = _hr ? await _hr.json().catch(() => ({})) : {};
                                 pushDelivery(runtime, 'telegram_notify', !!_hj.ok, _hj.ok ? null : (_hj.description || 'fetch failed'), { nodeId: node.id, chatId: String(adminId), reason: 'handoff' });
                             } else {
@@ -2558,13 +2592,13 @@ ${sourceContent || '(немає даних)'}
                         const _r = await fetch(`https://api.telegram.org/bot${notifyToken}/sendMessage`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ chat_id: String(adminTelegramId), text: adminMessage }),
+                            body: JSON.stringify({ chat_id: String(adminTelegramId), text: adminMessage, parse_mode: 'HTML', disable_web_page_preview: true }),
                         }).catch((e) => { console.error('[notifyAdmin] fetch error:', e.message); return null; });
                         const _j = _r ? await _r.json().catch(() => ({})) : {};
                         pushDelivery(runtime, 'telegram_notify', !!_j.ok, _j.ok ? null : (_j.description || 'fetch failed'), { nodeId: node.id, chatId: String(adminTelegramId) });
                     } else {
                         // Legacy fallback
-                        await sendMessage(String(adminTelegramId), adminMessage, {}, session.id);
+                        await sendMessage(String(adminTelegramId), adminMessage, { parse_mode: 'HTML' }, session.id);
                     }
                 }
 

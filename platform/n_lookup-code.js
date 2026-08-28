@@ -226,21 +226,18 @@ try{
   // n_welcome). Обрізаємо такі "службові" рядки (починаються з ℹ️) з публічного desc —
   // сам опис у KeyCRM не займаємо, лише не показуємо цю частину клієнту.
   var __descClean=String(found.description||'').split('\n').filter(function(ln){ return !/^\s*ℹ️/.test(ln); }).join('\n').trim();
-  // descShort — коротка версія ДЛЯ n_welcome (не ШІ-нода, статичний текст).
-  // Аудит 2026-08-27 (фідбек по живій сесії): перша спроба (перші 3 рядки опису
-  // "як є") була недостатньо розумною — то обрізала кольори, то тягнула рядок з
-  // ціною, яка й так уже показана окремо в заголовку. Тепер витягуємо ЛИШЕ
-  // найважливіше для швидкого рішення — матеріал і кольори (без рядків з
-  // ціною/розміром — вони вже деінде), об'єднуючи в ОДНЕ речення для {{name}} —
-  // {{price}} грн ({{descShort}}) в n_welcome. AI-консультанти (n_size/n_color/
-  // n_order_intent) й далі отримують ПОВНИЙ __descClean — там потрібні деталі.
-  var __descLines=__descClean.split('\n').map(function(l){return l.trim();}).filter(Boolean);
-  function __pickFact(re){ var l=__descLines.find(function(x){return re.test(x) && !/ціна|₴/i.test(x);}); if(!l) return ''; return l.replace(/^[^\wа-яіїєґ]+/i,'').trim(); }
-  var __facts=[__pickFact(/матеріал|тканин/i), __pickFact(/кольор/i)].filter(Boolean);
-  var __descShort=__facts.join('. ');
-  if(!__descShort) __descShort=__descLines.slice(0,2).join('. ');
-  if(__descShort.length>200) __descShort=__descShort.slice(0,200).replace(/\s+\S*$/,'')+'…';
-  var result={ supplier:__sup, product:{ _source:'keycrm', supplier:__sup, setComponents:__set, isSet:!!__set, setItems:setItems, setList:setItems.map(function(x){return x.name+(x.price?(" — "+x.price+" грн"):"")+" [арт. "+x.article+"]";}).join("; "), _matchKey:mk, _via:via, _matchedSharedPostId:__matchedSharedPostId, _matchedEntryAd:__matchedEntryAd, id:found.id, category_id:found.category_id, name:found.name||'Товар', desc:__descClean, descShort:__descShort, price:price, currency:found.currency_code||'UAH', photoUrl:img||'', imageUrls:imgs.slice(0,5), colors:colors.join(', '), colorsList:colors, sizes:sizes, offers:offers, upsell:upsell.join('; '), upsellPhotoUrl:__upsellPhoto, upsellPhotoNote:__upsellPhotoNote, isClothing:__isClothing, supplierArticle:__supArticle, footwearNote:__footwearNote, qtyPrices:{ '2':__qty2?Number(__qty2):null, '3':__qty3?Number(__qty3):null, '4':__qty4?Number(__qty4):null }, qtyPromoText:__qtyPromoText, sizeChartUrl:__sizeChartUrl, aiInfo:__aiInfo, sizeChartNote:__sizeChartNote, sizeChartData:__sizeChartData } };
+  // Аудит 2026-08-28 (нова конвенція власника): опис товару в KeyCRM ТЕПЕР пишеться
+  // як ГОТОВА до відправки презентація (з ціною/акцією всередині) — бот більше не
+  // урізає/переформульовує її, а надсилає ДОСЛІВНО (n_welcome), лише додаючи
+  // запитання-заклик в кінці. Перше речення презентації — це й є ім'я товару, яке
+  // бачить клієнт (внутрішнє found.name лишається тільки для адмін-нод/пошуку).
+  var __customerName=(__descClean.split('\n')[0]||'').trim() || found.name || 'Товар';
+  var __followUpQuestion = __isClothing
+    ? '👉 Вкажіть, будь ласка, зріст і вагу — підберемо найкращий розмір? 😊'
+    : (found.category_id === 7
+      ? 'Напишіть, будь ласка, який розмір взуття зазвичай носите? 😊'
+      : 'Цікавить? 😊');
+  var result={ supplier:__sup, product:{ _source:'keycrm', supplier:__sup, setComponents:__set, isSet:!!__set, setItems:setItems, setList:setItems.map(function(x){return x.name+(x.price?(" — "+x.price+" грн"):"")+" [арт. "+x.article+"]";}).join("; "), _matchKey:mk, _via:via, _matchedSharedPostId:__matchedSharedPostId, _matchedEntryAd:__matchedEntryAd, id:found.id, category_id:found.category_id, name:found.name||'Товар', customerName:__customerName, desc:__descClean, followUpQuestion:__followUpQuestion, price:price, currency:found.currency_code||'UAH', photoUrl:img||'', imageUrls:imgs.slice(0,5), colors:colors.join(', '), colorsList:colors, sizes:sizes, offers:offers, upsell:upsell.join('; '), upsellPhotoUrl:__upsellPhoto, upsellPhotoNote:__upsellPhotoNote, isClothing:__isClothing, supplierArticle:__supArticle, footwearNote:__footwearNote, qtyPrices:{ '2':__qty2?Number(__qty2):null, '3':__qty3?Number(__qty3):null, '4':__qty4?Number(__qty4):null }, qtyPromoText:__qtyPromoText, sizeChartUrl:__sizeChartUrl, aiInfo:__aiInfo, sizeChartNote:__sizeChartNote, sizeChartData:__sizeChartData } };
   // Колір автопідставляємо ТІЛЬКИ якщо клієнт САМ написав артикул (а не з опису поста):
   if(preColor && preFromUser){ result.colorChoice={color:preColor,_pre:true}; }
   if(preColor) result.product.preColor=preColor;

@@ -39,7 +39,7 @@ async function patchBot(name, botId) {
     const n = flow.nodes.find((x) => x.id === 'n_comment_entry');
     if (!n) { console.log(name, 'ERROR: n_comment_entry not found'); return; }
 
-    if (n.data.code.includes('FALLBACK_HINTS')) { console.log(name, 'ALREADY_APPLIED'); return; }
+    if (n.data.code === NEW_CODE) { console.log(name, 'ALREADY_APPLIED'); return; }
 
     console.log(name, 'буде додано FALLBACK_HINTS у n_comment_entry.');
     if (!APPLY) return;

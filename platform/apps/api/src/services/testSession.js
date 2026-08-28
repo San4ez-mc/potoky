@@ -1028,7 +1028,16 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
     // хендоф — бот ПОВНІСТЮ зупинявся (adminEngaged), хоча запит на повернення не
     // повинен блокувати подальшу консультацію (в т.ч. з цим самим клієнтом — може,
     // він хоче ще щось замовити). Тепер: сповіщаємо менеджера, тепло відповідаємо —
-    // і бот ПРОДОВЖУЄ працювати як звичайно (без return — далі йде звичайна обробка).
+    // і adminEngaged/funnelPaused НЕ виставляємо, тож НАСТУПНЕ повідомлення клієнта
+    // бот обробить як завжди.
+    // Аудит 2026-08-28 (живий тест-прогін): якщо просто "не return" і дати обробці
+    // йти далі — ЦЕ Ж повідомлення потрапляло ЩЕ РАЗ у активну claude-ноду діалогу
+    // (напр. n_order_intent чекав "Так/Ні" на допродаж) — модель бачила
+    // "Хочу повернути товар" як питання поза її зоною і САМА повертала
+    // {"handoff":true}, ставлячи adminEngaged=true — бот усе одно зупинявся,
+    // тільки з двома суперечливими повідомленнями замість одного. Тепер —
+    // явний return одразу після відповіді: цей конкретний хід завершено, але БЕЗ
+    // прапорця паузи, тож бот лишається "живим" для наступного повідомлення.
     if (incomingUserMessage && !ctx.returnHandledAt
         && /поверн(ення|ути|іть)|обмін(яти|яю)?|обмен/i.test(String(incomingUserMessage))) {
         ctx.returnHandledAt = new Date().toISOString();
@@ -1045,7 +1054,8 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                 pushDelivery(runtime, 'telegram_notify', !!_j.ok, _j.ok ? null : (_j.description || 'fetch failed'), { chatId: String(_admin), reason: 'return_keyword' });
             }
         } catch (_e) { /* сповіщення не має ламати потік */ }
-        // Свідомо БЕЗ return — бот НЕ зупиняється, обробка йде далі як звичайно.
+        await db.session.update({ where: { id: session.id }, data: { context: { ...ctx, flowRuntime: runtime } } }).catch(() => {});
+        return { session, botResponse: retMsg, flowDriven: true, handoff: false };
     }
 
     // Явне прохання живої людини — детермінований детект (не покладаємось лише на LLM).

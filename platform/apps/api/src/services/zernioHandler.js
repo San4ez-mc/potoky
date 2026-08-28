@@ -315,6 +315,122 @@ async function handleZernioEvent(botId, body) {
     );
 }
 
+// ── Автоматизації Zernio "на пост" (аудит 2026-08-28) ───────────────────────
+// Замість ОДНІЄЇ catch-all автоматизації зі статичним "напишіть артикул"
+// (Zernio dmMessage — просто рядок, не шаблон/webhook) — окрема автоматизація
+// НА КОЖЕН активний пост (platformPostId), з dmMessage = вже готовий опис
+// САМЕ цього товару (той самий текст, що й n_welcome шле в DM). Товар
+// визначається так само, як у n_lookup: артикул з підпису допису → каталог
+// KeyCRM (sku/CT_1001/CT_1006). Питання власника "як це працюватиме, коли я
+// додам нові товари" — вирішено САМООБСЛУГОВУЮЧО: щойно приходить ПЕРШИЙ
+// коментар під НОВИМ постом (якого ще нема серед platformPostId наявних
+// автоматизацій), ця функція одразу створює автоматизацію для нього тут-таки,
+// без жодного ручного кроку чи окремого cron. Best-effort — помилка тут НЕ
+// має ламати основний потік обробки коментаря (публічна відповідь і т.д.).
+const CLOTHING_CATEGORY_IDS = [1, 2, 4, 5, 6, 8];
+function extractArticleCandidatesForAutomation(txt) {
+    if (!txt) return [];
+    const s = String(txt);
+    const out = [];
+    let m;
+    const re1 = /(?:артикул|арт\.?|art|код|sku|#|№)\s*[:#№.-]?\s*([A-Za-zА-Яа-яІЇЄҐіїєґ]{0,5}\d{2,8})/gi;
+    while ((m = re1.exec(s))) out.push(m[1].toUpperCase());
+    const re2 = /\b([A-Za-z]\d{3,6})\b/g;
+    while ((m = re2.exec(s))) out.push(m[1].toUpperCase());
+    const re3 = /\b(\d{4,8})\b/g;
+    while ((m = re3.exec(s))) out.push(m[1]);
+    return [...new Set(out)];
+}
+function matchArticleInCatalog(all, art) {
+    if (!art) return null;
+    const A = String(art).toUpperCase().trim();
+    for (const p of all) {
+        if (p.sku && String(p.sku).toUpperCase().trim() === A) return p;
+        const cf = p.custom_fields || [];
+        for (const f of cf) {
+            if (!f || (f.uuid !== 'CT_1001' && f.uuid !== 'CT_1006')) continue;
+            if (f.value == null) continue;
+            if (String(f.value).toUpperCase().split(/[\s,;]+/).indexOf(A) >= 0) return p;
+        }
+    }
+    return null;
+}
+function buildAutomationPresentation(p) {
+    const descClean = String(p.description || '').split('\n').filter((ln) => !/^\s*ℹ️/.test(ln)).join('\n').trim();
+    const isClothing = CLOTHING_CATEGORY_IDS.indexOf(p.category_id) >= 0;
+    const followUp = isClothing
+        ? '👉 Вкажіть, будь ласка, зріст і вагу — підберемо найкращий розмір? 😊'
+        : (p.category_id === 7 ? 'Напишіть, будь ласка, який розмір взуття зазвичай носите? 😊' : 'Цікавить? 😊');
+    return 'Вітаю! 👋 Дякуємо за коментар під цим постом 💛\n\n' + descClean + '\n\n' + followUp;
+}
+async function ensurePostAutomation(botId, mediaId, caption) {
+    if (!mediaId || !caption) return;
+    try {
+        const zk = await getZernioKeys(botId);
+        if (!isReal(zk.ZERNIO_API_TOKEN) || !isReal(zk.ZERNIO_ACCOUNT_ID)) return;
+
+        const existR = await fetch('https://zernio.com/api/v1/comment-automations', { headers: { Authorization: 'Bearer ' + zk.ZERNIO_API_TOKEN } });
+        const existD = await existR.json().catch(() => ({}));
+        const already = (existD.automations || []).some((a) => String(a.platformPostId || '') === String(mediaId));
+        if (already) return; // вже є автоматизація для цього поста — нічого робити
+
+        const candidates = extractArticleCandidatesForAutomation(caption).slice(0, 8);
+        if (!candidates.length) { logger.info('[zernioHandler] ensurePostAutomation: у підписі немає артикулу — пропускаю', { botId, mediaId }); return; }
+
+        const tokenRow = await db.funnelKey.findFirst({ where: { botId, key: 'KEYCRM_API_TOKEN' }, select: { value: true } });
+        const baseRow = await db.funnelKey.findFirst({ where: { botId, key: 'KEYCRM_API_BASE' }, select: { value: true } });
+        const token = (tokenRow?.value || '').trim();
+        if (!isReal(token)) return;
+        const base = (baseRow?.value || 'https://openapi.keycrm.app/v1').replace(/\/$/, '');
+
+        const all = [];
+        for (let page = 1; page <= 10; page++) {
+            const r = await fetch(base + '/products?include=customFields&limit=50&page=' + page, { headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' } });
+            if (!r.ok) break;
+            const d = await r.json();
+            const items = (d && d.data) || [];
+            all.push(...items);
+            if (items.length < 50) break;
+        }
+
+        let found = null;
+        for (const c of candidates) { found = matchArticleInCatalog(all, c); if (found) break; }
+        if (!found) { logger.info('[zernioHandler] ensurePostAutomation: артикул із підпису не знайдено в каталозі', { botId, mediaId, candidates }); return; }
+
+        const profR = await fetch('https://zernio.com/api/v1/profiles', { headers: { Authorization: 'Bearer ' + zk.ZERNIO_API_TOKEN } });
+        const profD = await profR.json().catch(() => ({}));
+        const profileId = profD.profiles && profD.profiles[0] && profD.profiles[0]._id;
+        if (!profileId) { logger.warn('[zernioHandler] ensurePostAutomation: не знайдено Zernio profileId', { botId }); return; }
+
+        const body = {
+            profileId,
+            accountId: zk.ZERNIO_ACCOUNT_ID,
+            trigger: 'comment',
+            platformPostId: String(mediaId),
+            postTitle: found.name,
+            name: 'Презентація товару — ' + found.name,
+            keywords: [],
+            matchMode: 'contains',
+            dmMessage: buildAutomationPresentation(found),
+            audience: { followerStatus: 'any', whenUnknown: 'send' },
+            isActive: true,
+        };
+        const cr = await fetch('https://zernio.com/api/v1/comment-automations', {
+            method: 'POST',
+            headers: { Authorization: 'Bearer ' + zk.ZERNIO_API_TOKEN, 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        const cd = await cr.json().catch(() => ({}));
+        if (cr.ok && cd.automation) {
+            logger.info('[zernioHandler] ensurePostAutomation: створено нову автоматизацію на пост', { botId, mediaId, product: found.name, automationId: cd.automation.id });
+        } else {
+            logger.warn('[zernioHandler] ensurePostAutomation: створення не вдалось', { botId, mediaId, status: cr.status, error: JSON.stringify(cd).slice(0, 300) });
+        }
+    } catch (e) {
+        logger.warn('[zernioHandler] ensurePostAutomation error: ' + e.message, { botId, mediaId });
+    }
+}
+
 // Аудит 2026-08-27 (автовідповіді на коментарі, запит користувача): раніше
 // comment.received лише логувався рядком-подією. Тепер — повноцінний вхід у
 // воронку: класифікуємо коментар (нода n_comment_entry) → приватна відповідь у
@@ -372,6 +488,13 @@ async function handleCommentReceived(botId, body) {
                 else if (!mr.ok) logger.warn('[zernioHandler] media caption fetch failed', { botId, mediaId, status: mr.status, error: md?.error?.message });
             }
         } catch (e) { logger.warn('[zernioHandler] media caption fetch error: ' + e.message); }
+    }
+
+    // Best-effort: якщо для ЦЬОГО поста ще нема Zernio-автоматизації "презентація
+    // товару" — створити її прямо зараз (self-service, без ручного кроку при
+    // додаванні нових товарів/постів). Помилка тут НЕ має ламати основний потік.
+    if (mediaId && postCaption) {
+        await ensurePostAutomation(botId, mediaId, postCaption);
     }
 
     const user = await findOrCreateZernioUser(contactId, botId, contactName);

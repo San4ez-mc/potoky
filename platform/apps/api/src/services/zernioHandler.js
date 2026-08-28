@@ -354,6 +354,26 @@ async function handleCommentReceived(botId, body) {
 
     const testModeBlocked = await isBlockedByTestMode(botId, [contactUsername, contactName]);
 
+    // Аудит 2026-08-28 (запит користувача): коментар типу "🔥" не містить артикулу в
+    // ТЕКСТІ САМОГО коментаря — але майже завжди пише його ПІД ПОСТОМ, де артикул є в
+    // ПІДПИСІ (як і при пересиланні поста в DM). Тягнемо підпис допису напряму з Meta
+    // Graph API і подаємо його як звичайний sharedPost.caption — n_lookup вже вміє
+    // шукати артикул саме там (той самий шлях, що й для пересланих постів у DM), без
+    // жодних змін у самому n_lookup.
+    let postCaption = null;
+    if (mediaId) {
+        try {
+            const igKey = await db.funnelKey.findFirst({ where: { botId, key: 'INSTAGRAM_ACCESS_TOKEN' }, select: { value: true } });
+            const igToken = (igKey?.value || '').trim();
+            if (igToken && igToken !== 'REPLACE_ME') {
+                const mr = await fetch(`https://graph.instagram.com/v21.0/${encodeURIComponent(mediaId)}?fields=caption&access_token=${encodeURIComponent(igToken)}`);
+                const md = await mr.json().catch(() => ({}));
+                if (mr.ok && md.caption) postCaption = String(md.caption);
+                else if (!mr.ok) logger.warn('[zernioHandler] media caption fetch failed', { botId, mediaId, status: mr.status, error: md?.error?.message });
+            }
+        } catch (e) { logger.warn('[zernioHandler] media caption fetch error: ' + e.message); }
+    }
+
     const user = await findOrCreateZernioUser(contactId, botId, contactName);
     const patch = {
         psid: String(contactId), senderName: contactName || undefined, igUsername: contactUsername || undefined,
@@ -362,6 +382,7 @@ async function handleCommentReceived(botId, body) {
         // ad_id по CT_1001) — коментар під конкретним постом ідентифікує товар так
         // само, як клік із реклами на цей пост.
         entryAd: mediaId ? String(mediaId) : undefined,
+        ...(postCaption ? { sharedPost: { kind: 'post', mediaId: String(mediaId), caption: postCaption } } : {}),
     };
     const session = await findOrCreateZernioSession(user.id, botId, patch);
 

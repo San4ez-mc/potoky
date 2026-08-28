@@ -947,7 +947,19 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
     // n_lookup підхопив НОВИЙ товар. Не чіпаємо сесії з уже підтвердженим замовленням
     // (crmOrderId) і не заважаємо активному хендофу (adminEngaged) — тільки коли бот
     // сам ще консультує.
-    if (ctx.product && ctx.product._source === 'keycrm' && !ctx.adminEngaged && !ctx.crmOrderId && (incomingUserMessage || incomingImageUrl)) {
+    // Аудит 2026-08-28 (живий кейс, тестер matsukoleksandr — повторний коментар не
+    // отримав публічної відповіді): handleCommentReceived (zernioHandler.js) явно
+    // ставить runtime.currentNodeId='n_comment_entry' ПЕРЕД викликом цього кроку —
+    // але executeFlowStep запускається із incomingUserMessage=ТЕКСТ КОМЕНТАРЯ (та сама
+    // debounce-функція, що й для DM), тож якщо коментар був під ІНШИМ постом, ніж
+    // раніше визначений ctx.product, ЦЯ перевірка бачила "новий товар" і скидала
+    // currentNodeId на start_1 — n_comment_entry так і НЕ запускався, публічна
+    // відповідь не постилась, а замість цього одразу йшов повний DM-каскад
+    // (start->n_route->n_lookup->n_welcome->...), ніби це звичайне повідомлення в
+    // директ. Явний маршрут від виклику (n_comment_entry) МАЄ пріоритет — не
+    // перебиваємо його цією евристикою.
+    if (ctx.product && ctx.product._source === 'keycrm' && !ctx.adminEngaged && !ctx.crmOrderId
+        && runtime.currentNodeId !== 'n_comment_entry' && (incomingUserMessage || incomingImageUrl)) {
         const _extractArticleCandidates = (txt) => {
             const out = [];
             const re1 = /(?:артикул|арт\.?|код|sku|№)\s*[:#№.-]?\s*([A-Za-zА-Яа-я]{0,5}\d{2,8})/gi;

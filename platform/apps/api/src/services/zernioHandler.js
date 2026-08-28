@@ -383,6 +383,17 @@ async function handleCommentReceived(botId, body) {
         // само, як клік із реклами на цей пост.
         entryAd: mediaId ? String(mediaId) : undefined,
         ...(postCaption ? { sharedPost: { kind: 'post', mediaId: String(mediaId), caption: postCaption } } : {}),
+        // Аудит 2026-08-28 (живий кейс, тестер matsukoleksandr — ПОВТОРНИЙ коментар не
+        // отримав публічної відповіді): commentReplyPosted — прапорець, який зернioHandler
+        // САМ ставить у true ПІСЛЯ успішного посту (рядок ~649), а не n_comment_entry.
+        // Патч-мердж findOrCreateZernioSession може лише ДОДАВАТИ/перезаписувати поля, не
+        // очищати — тож без явного скидання тут прапорець від ПОПЕРЕДНЬОГО коментаря
+        // лишався true назавжди, і КОЖЕН НАСТУПНИЙ коментар цього ж клієнта (навіть з
+        // геть іншим текстом) мовчки пропускав публічну відповідь, бо код бачив
+        // "вже опубліковано". commentReplyText НЕ скидаємо явно — n_comment_entry все
+        // одно рахує його заново щоразу, коли реально запускається.
+        commentReplyPosted: false,
+        commentCategory: '',
     };
     const session = await findOrCreateZernioSession(user.id, botId, patch);
 

@@ -77,9 +77,26 @@ try{
         var overlapKW=0; for(var wj=0;wj<pnameWordsKW.length;wj++){ if(capSetKW[pnameWordsKW[wj]])overlapKW++; }
         if(overlapKW>0) scoredKW.push({p:all[pi3], score:overlapKW});
       }
-      scoredKW.sort(function(a,b){return b.score-a.score;});
-      if(scoredKW.length && scoredKW[0].score>=2 && (scoredKW.length<2 || scoredKW[0].score>scoredKW[1].score)){
-        found=scoredKW[0].p; via='keyword:'+scoredKW[0].score; mk='kw_'+scoredKW[0].p.id;
+      // Тай-брейк за ціною (аудит 2026-08-29, живий кейс "Комплект 4 в 1" —
+      // ДВА записи в каталозі з однаковим збігом слів: реальний, з ціною
+      // (set001, 5308 грн) і покинутий чернетковий дубль (set1111, ЦІНА 0).
+      // При рівному рахунку — сортуємо кандидатів з однаковим top-score так,
+      // щоб товар із РЕАЛЬНОЮ ціною (>0) йшов першим; лише якщо й після цього
+      // лишається справжня двозначність (кілька з ціною АБО жоден без ціни) —
+      // чесно НЕ вгадуємо.
+      scoredKW.sort(function(a,b){
+        if(b.score!==a.score) return b.score-a.score;
+        var ap=(a.p.price!=null?a.p.price:a.p.min_price)||0, bp=(b.p.price!=null?b.p.price:b.p.min_price)||0;
+        return (bp>0?1:0)-(ap>0?1:0);
+      });
+      if(scoredKW.length && scoredKW[0].score>=2){
+        var __topScore=scoredKW[0].score;
+        var __topPrice=(scoredKW[0].p.price!=null?scoredKW[0].p.price:scoredKW[0].p.min_price)||0;
+        var __tiedRivals=scoredKW.filter(function(x,xi){ return xi>0 && x.score===__topScore; });
+        var __ambiguous = __tiedRivals.some(function(x){ var xp=(x.p.price!=null?x.p.price:x.p.min_price)||0; return (__topPrice>0)===(xp>0); });
+        if(!__ambiguous){
+          found=scoredKW[0].p; via='keyword:'+__topScore; mk='kw_'+scoredKW[0].p.id;
+        }
       }
     }
   }

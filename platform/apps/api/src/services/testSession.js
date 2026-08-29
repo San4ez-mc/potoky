@@ -1314,7 +1314,6 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
             seq: runtime.nodeTraces.length,
             nodeId: node.id, nodeType: node.type, label: (data && data.label) || '',
             input: _snapData(data),
-            __dbgFlag: ctx.productJustPresented === undefined ? '(unset)' : String(ctx.productJustPresented),
             userInput: String(runtime.lastUserMessage || '').slice(0, 1500),
             tsIso: new Date().toISOString(),
             _before: _snapRoot(ctx), _ts: Date.now(),

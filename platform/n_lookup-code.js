@@ -1,4 +1,13 @@
-if (context.product && context.product._source === 'keycrm' && String(context.product._matchKey) === String(context.entryAd||context.__lk||'')) return {};
+// Аудит 2026-08-29 (живий кейс, matsukoleksandr): цей ранній вихід рятував ЛИШЕ
+// ad_id-збіги (_matchKey === entryAd) — для товару, знайденого по АРТИКУЛУ В ТЕКСТІ
+// (_matchKey="art_XXXX"), entryAd майже завжди порожній/інший, і ця умова НІКОЛИ
+// не спрацьовувала. Наслідок: просте "Вітаб" (без жодного нового сигналу) все одно
+// проходило ПОВНЕ повторне сканування нижче, нічого не знаходило (в тексті "Вітаб"
+// артикулу нема) і падало в fallback() → { product: null } — ЗНИЩУЮЧИ щойно знайдений
+// товар ще ДО того, як n_returning_check (нова нода, після n_lookup) встигав
+// перевірити "чи є свіжий сигнал". hasFreshSignalThisTurn — рахує n_prev_match_snapshot
+// (нова нода ПЕРЕД n_lookup) саме для цього: немає нового сигналу → лишаємо товар як є.
+if (context.product && context.product._source === 'keycrm' && (String(context.product._matchKey) === String(context.entryAd||context.__lk||'') || !context.hasFreshSignalThisTurn)) return {};
 function fallback(){ var cat={}; try{cat=JSON.parse(keys.PRODUCT_CATALOG||'{}')}catch(e){} var p=cat[context.entryAd]; return p ? { product: p } : { product: null, productUnknown: true }; }
 var token=(keys.KEYCRM_API_TOKEN||'').trim();
 var base=(keys.KEYCRM_API_BASE||'https://openapi.keycrm.app/v1').replace(/\/$/,'');

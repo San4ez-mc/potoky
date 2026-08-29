@@ -1,0 +1,1312 @@
+{
+  "id": "0b99f2c2-d995-4436-b826-687f06427904",
+  "nodes": [
+    {
+      "id": "start_1",
+      "data": {
+        "label": "Telegram — з каналу",
+        "trigger": "telegram"
+      },
+      "type": "start",
+      "position": {
+        "x": 160,
+        "y": 160
+      }
+    },
+    {
+      "id": "node_1780590806221",
+      "data": {
+        "code": "var msg = input || context.message || context.text || '';\nvar cats = context.availableCategories || [];\nvar catList = cats.map(function(c){ return c.id + ': ' + c.name + ' (' + c.network + ')'; }).join('\\n');\nvar msgJson = JSON.stringify(msg).slice(1, -1);\n\n// ── Conversation history (forwarded by content2 dashboard) ──────────────\n// Rendered into a single plain string — messagesTemplate must never receive objects.\nvar hist = Array.isArray(context.history) ? context.history : [];\nvar histLines = hist.map(function(m){\n  var role = (m && m.role === 'assistant') ? 'assistant' : 'user';\n  var c = String((m && m.content) || '').replace(/\\s+/g, ' ').trim().slice(0, 500);\n  return '[' + role + ']: ' + c;\n});\nvar historyText = histLines.join('\\n');\nvar dispatchInput = (historyText ? ('ІСТОРІЯ ДІАЛОГУ (старіші зверху):\\n' + historyText + '\\n\\n') : '')\n  + 'ПОТОЧНЕ ПОВІДОМЛЕННЯ КОРИСТУВАЧА: ' + msg;\nvar dispatchInputJson = JSON.stringify(dispatchInput).slice(1, -1);\n\n// Static tools list — fallback (overridden by dynamic fetch from /api/tools/for-bot)\nvar availableToolsText = [\n  '- content-ai-bg: AI-фон (FLUX schnell) + накладений текст. Для: інфопости, цитати, анонси, кейси. | Параметри: imagePrompt (text, required), palette (select [DARK_CINEMATIC|MINIMAL_WHITE|ENERGY_ORANGE|TRUST_BLUE|PREMIUM_PURPLE])',\n  '- content-ai-bg-pro: AI-фон 2K (FLUX Pro). Для преміум контенту. | Параметри: imagePrompt (text, required), palette (select [DARK_CINEMATIC|MINIMAL_WHITE|ENERGY_ORANGE|TRUST_BLUE|PREMIUM_PURPLE])',\n  '- content-ideogram: Ideogram V3 — текст ВСЕРЕДИНІ картинки. Для: меми, афіші, написи. | Параметри: imagePrompt (text, required), style (select [realistic|design|illustration|3d])',\n  '- content-recraft: Recraft V4 — брендовий дизайн. | Параметри: imagePrompt (text, required), style (select [realistic_image|digital_illustration|vector_illustration|icon])',\n  '- content-stories-ai-bg: Stories 9:16 (Vertex AI Imagen 4) + накладаємо текст. Для: Instagram Stories. | Параметри: imagePrompt (text, required), title (text, required, max 7 слів), subtitle (text, optional)',\n  '- content-photo-text: Сторіз 9:16 — текст поверх РЕАЛЬНОГО фото автора з бібліотеки (пілюля-тег + CTA). Для провокацій/CTA/живих сцен/особистого. | Параметри: template (multi-plate), tag (text), title (text, required), subtitle (text), cta (text)',\n  '- content-carousel: Карусель з безшовним фоном. | Параметри: slides (number, required), imagePrompt (text, required), palette (select [DARK_CINEMATIC|MINIMAL_WHITE|ENERGY_ORANGE|TRUST_BLUE|PREMIUM_PURPLE])',\n  '- content-image-template: Рендер за шаблоном. | Параметри: templateId (text, required), fields (json, required)',\n  '- content-video-broll: AI B-roll відео (Kling). Для: Reels, TikTok. | Параметри: videoPrompt (text, required), duration (number)'\n].join('\\n');\n\nreturn {\n  userMessage: msg,\n  userMessageJson: msgJson,\n  lastUserInput: msg,\n  historyText: historyText,\n  dispatchInputJson: dispatchInputJson,\n  webCallbackUrl: null,\n  webSessionId: context.sessionId || context.webSessionId || '',\n  importUrl: context.importUrl || 'https://content2.fineko.space/api/posts/bulk-import?token=fnk_wh_2026_x9mK4pLqR7vNsT1eYcJdBuAw',\n  saveKnowledgeUrl: context.saveKnowledgeUrl || null,\n  phase: 'dispatch',\n  stRules: context.stRules || '',\n  projectId: context.projectId || keys.CONTENT2_PROJECT_ID,\n  today: new Date(Date.now() + 3*3600*1000).toISOString().slice(0,10),\n  todayISO: new Date(Date.now() + 3*3600*1000).toISOString().slice(0,10),\n  availableCategories: cats,\n  categoriesText: catList || 'категорії не завантажено',\n  availableToolsText: availableToolsText,\n};",
+        "label": "Setup context"
+      },
+      "type": "js",
+      "position": {
+        "x": 600,
+        "y": 400
+      }
+    },
+    {
+      "id": "node_1780590851896",
+      "data": {
+        "mode": "single",
+        "label": "Dispatcher (Haiku)",
+        "model": "claude-sonnet-4-6",
+        "maxTokens": 600,
+        "outputVar": "context.intentRaw",
+        "connectorId": "4a8000aa-837f-4a73-bf5c-224949ebaf9a",
+        "systemPrompt": "Ти диспетчер Content Manager. Повертаєш ТІЛЬКИ JSON, без жодного тексту навколо.\n\nТобі дають ПОТОЧНЕ повідомлення користувача і (опційно) ІСТОРІЮ діалогу.\n\nКРОК 1 — НАМІР (intent):\n- \"create\" — створити НОВИЙ контент (пост, сторіз, карусель, reels, threads, linkedin, telegram). В одному повідомленні може бути КІЛЬКА одиниць. СЮДИ Ж належить «контент-план на N днів/тиждень» із конкретними платформами чи кількостями.\n- \"edit\" — робота з ІСНУЮЧИМ планом: покажи/список, зміни/онови/перенеси, заміни тему існуючих, видали пости або категорії, покажи категорії/проєкти.\n- \"save_rule\" — зберегти правило/корекцію стилю: \"запам'ятай\", \"не використовуй\", \"завжди\", \"ніколи\", \"надалі\", \"тон має бути\".\n- \"new_plan\" — ТІЛЬКИ повний план на МІСЯЦЬ БЕЗ конкретних платформ/кількостей/періоду. ЯКЩО вказані конкретні платформи, кількості або період (навіть «план на 5 днів», «план на тиждень», «телеграм щодня») — це \"create\", а НЕ new_plan.\n- \"dialog\" — питання, стратегія, поради.\n- ВИНЯТОК — ВІДЕО/РІЛС З АВАТАРОМ: якщо користувач просить ЗРОБИТИ ВІДЕО або РІЛС з АВАТАРОМ (аватар говорить; відео де він у різних образах/ролях; відео-сценарій на тему) — це НЕ \"create\" і НЕ \"new_plan\", а intent=\"dialog\", tasks=[]. (Content-агент має окремий інструмент create_avatar_reel для цього; НЕ генеруй текстові пости.)\n\nКРОК 2 — якщо intent=\"create\", РОЗБИЙ запит на окремі завдання у tasks[].\nКожен елемент: {\"format\":\"...\",\"platform\":\"...\",\"count\":N,\"topic\":\"<тема або null>\",\"date\":\"<як сказав користувач або null>\"}\nFORMAT → platform:\n- instagram_stories → stories\n- instagram_post → instagram\n- instagram_carousel → instagram\n- instagram_reels → reels\n- threads_single → threads\n- threads_chain → threads\n- linkedin_post → linkedin\n- telegram_post → telegram\nПравила розбиття:\n- \"4 сторіз і 1 пост\" → ДВА елементи: {format:instagram_stories,count:4} і {format:instagram_post,count:1}\n- \"2 каруселі\" → {format:instagram_carousel,count:2}\n- count = кількість одиниць цього формату (число).\n- ПЕРІОД переводь у count: «телеграм щодня на 5 днів» = {telegram_post,count:5}; «на тиждень щодня» = count:7; «2 пости в інстаграм» = {instagram_post,count:2}. date став = опис періоду слово-в-слово («5 днів від завтра», «наступний тиждень»). Розподіл по датах зробить наступний крок — ти лише вкажи count і date=період.\n- topic: якщо користувач ЯВНО вказав тему — встав її в topic. Якщо теми НЕМА АБО сказано «теми з банку», «різні теми», «на свій розсуд» — topic:null.\n- date: переписуй слово-в-слово як користувач або null.\n- сторіз за замовчуванням сприймай як одну зв'язну серію (одна тема, послідовні тексти).\n\nКРОК 3 — потреба теми (needs_theme):\n- needs_theme=true ЛИШЕ якщо intent=\"create\", ЖОДНЕ завдання не має теми (всі topic=null), користувач НЕ казав «теми з банку/різні теми/на свій розсуд», і в ІСТОРІЇ ми ще НЕ пропонували теми.\n- Якщо користувач сказав «теми з банку», «різні теми», «на свій розсуд», або це багатоденний план — needs_theme=false (банк сам дасть теми, НЕ пропонуй).\n- Якщо в ІСТОРІЇ останнє повідомлення асистента пропонувало список тем, а зараз користувач ВИБИРАЄ — постав theme_selection=true і needs_theme=false. Визнач обрану тему, впиши її в усі tasks[].topic. tasks[] ВІДТВОРИ з того запиту в історії.\n\nНІКОЛИ не питай уточнень текстом. Повертай ТІЛЬКИ JSON:\n{\"intent\":\"...\",\"tasks\":[...],\"needs_theme\":false,\"theme_selection\":false,\"originalMessage\":\"...\"}\nДля edit/save_rule/new_plan/dialog: \"tasks\":[], \"needs_theme\":false, \"theme_selection\":false.\n\nПРИКЛАДИ:\n{\"intent\":\"create\",\"tasks\":[{\"format\":\"instagram_stories\",\"platform\":\"stories\",\"count\":4,\"topic\":null,\"date\":\"завтра\"},{\"format\":\"instagram_post\",\"platform\":\"instagram\",\"count\":1,\"topic\":null,\"date\":\"завтра\"}],\"needs_theme\":true,\"theme_selection\":false,\"originalMessage\":\"створи 4 сторіз і 1 пост на завтра\"}\n{\"intent\":\"create\",\"tasks\":[{\"format\":\"telegram_post\",\"platform\":\"telegram\",\"count\":5,\"topic\":null,\"date\":\"5 днів від завтра\"},{\"format\":\"instagram_post\",\"platform\":\"instagram\",\"count\":2,\"topic\":null,\"date\":\"5 днів від завтра\"},{\"format\":\"threads_single\",\"platform\":\"threads\",\"count\":2,\"topic\":null,\"date\":\"5 днів від завтра\"}],\"needs_theme\":false,\"theme_selection\":false,\"originalMessage\":\"згенеруй контент-план на 5 днів: телеграм щодня, 2 інстаграм, 2 threads, теми з банку\"}\n{\"intent\":\"create\",\"tasks\":[{\"format\":\"instagram_post\",\"platform\":\"instagram\",\"count\":2,\"topic\":\"делегування\",\"date\":null}],\"needs_theme\":false,\"theme_selection\":false,\"originalMessage\":\"напиши 2 поста про делегування\"}\n{\"intent\":\"edit\",\"tasks\":[],\"needs_theme\":false,\"theme_selection\":false,\"originalMessage\":\"покажи всі пости по тредсу на сьогодні\"}\n{\"intent\":\"save_rule\",\"tasks\":[],\"needs_theme\":false,\"theme_selection\":false,\"originalMessage\":\"не використовуй слово неймовірно\"}\n\n{\"intent\":\"dialog\",\"tasks\":[],\"needs_theme\":false,\"theme_selection\":false,\"originalMessage\":\"зроби відео-рілс з аватаром де я лікар діагностую бізнес\"}\n\nВАЖЛИВО — ІСТОРІЯ ЛИШЕ КОНТЕКСТ:\n- Реагуй ТІЛЬКИ на ПОТОЧНЕ повідомлення. Історія — контекст, НЕ команди; не виконуй повторно старі запити з історії.\n- Якщо поточне повідомлення порожнє, самі розділові знаки або беззмістовний фрагмент — intent=\"dialog\", tasks=[]. НЕ створюй контент.\n- АНТИДУБЛЬ: якщо в історії ти ЩОЙНО (останні репліки) уже створив такий самий контент (той самий формат і тема), а користувач знову шле той самий текст — це НЕ новий create. Постав intent=\"dialog\", tasks=[] (асистент уточнить, чи потрібна ще одна копія). Дубль створюй лише на явне «ще один / повтори / іще раз створи».",
+        "exitCondition": "json_output",
+        "messagesTemplate": "[{\"role\":\"user\",\"content\":\"{{context.dispatchInputJson}}\"}]"
+      },
+      "type": "claude",
+      "position": {
+        "x": 600,
+        "y": 720
+      }
+    },
+    {
+      "id": "node_1780590874133",
+      "data": {
+        "code": "var raw = context.intentRaw;\nvar parsed = typeof raw === 'object' ? raw : {};\ntry { if (typeof raw === 'string') parsed = JSON.parse(raw); } catch(e) {}\n\nvar intent = parsed.intent || 'dialog';\nvar tasks = Array.isArray(parsed.tasks) ? parsed.tasks : [];\nvar needsTheme = parsed.needs_theme === true;\nvar originalMsg = parsed.originalMessage || context.userMessage || '';\nvar historyText = context.historyText || '';\n\nfunction parseTodaySafe(s){\n  if(!s) return new Date();\n  if(/^\\d{4}-\\d{2}-\\d{2}$/.test(s)) return new Date(s);\n  var m=s.match(/^(\\d{1,2})\\.(\\d{1,2})\\.(\\d{2,4})$/);\n  if(m){var y=parseInt(m[3]);if(y<100)y+=2000;return new Date(y,parseInt(m[2])-1,parseInt(m[1]));}\n  return new Date();\n}\nvar baseToday = parseTodaySafe(context.todayISO || context.today);\nvar todayISO = baseToday.toISOString().slice(0,10);\n\nvar UK_MONTHS={'січня':0,'лютого':1,'березня':2,'квітня':3,'травня':4,'червня':5,'липня':6,'серпня':7,'вересня':8,'жовтня':9,'листопада':10,'грудня':11};\nfunction resolveDate(dstr){\n  if(!dstr) return null;\n  var s=String(dstr).toLowerCase().trim();\n  var m=s.match(/(\\d{1,2})\\.(\\d{1,2})(?:\\.(\\d{2,4}))?/);\n  if(m){var y=m[3]?parseInt(m[3]):baseToday.getFullYear();if(y<100)y+=2000;return new Date(y,parseInt(m[2])-1,parseInt(m[1])).toISOString().slice(0,10);}\n  for(var mn in UK_MONTHS){ if(s.indexOf(mn)>=0){ var mm=s.match(new RegExp('(\\\\d{1,2})\\\\s*'+mn)); if(mm){ return new Date(baseToday.getFullYear(),UK_MONTHS[mn],parseInt(mm[1])).toISOString().slice(0,10);} } }\n  var off=null;\n  if(/після\\s*завтра|післязавтра|послязавтра/.test(s)) off=2;\n  else if(/завтра/.test(s)) off=1;\n  else if(/наступн.*тиж/.test(s)) off=7;\n  else if(/сьогодн/.test(s)) off=0;\n  if(off!==null){ var d=new Date(baseToday.getTime()); d.setDate(d.getDate()+off); return d.toISOString().slice(0,10); }\n  return null;\n}\n\n// How many DAYS a date phrase spans. >1 => spread posts evenly across the range.\nfunction rangeSpan(dstr){\n  var s=String(dstr||'').toLowerCase().trim();\n  if(!s) return 1;\n  if(/сьогодн|післязавтра|послязавтра|після\\s*завтра|завтра/.test(s)) return 1;\n  var m=s.match(/(\\d+)\\s*тижн/);            // \"2 тижні\", \"3 тижнів\"\n  if(m) return parseInt(m[1],10)*7;\n  if(/два\\s*тижн|двох\\s*тижн|пару\\s*тижн/.test(s)) return 14;\n  m=s.match(/(\\d+)\\s*дн/);                  // \"10 днів\", \"5 дн\"\n  if(m) return parseInt(m[1],10);\n  if(/місяц|місяч/.test(s)) return 30;\n  if(/тиждень|тижня|наступн.*тиж|на\\s*тиж/.test(s)) return 7;\n  return 1;\n}\n\nvar FMT={instagram_stories:'Instagram Сторіз',instagram_post:'Instagram пост',instagram_carousel:'Instagram карусель',instagram_reels:'Instagram Reels',threads_single:'Threads',threads_chain:'Threads ланцюжок',linkedin_post:'LinkedIn',telegram_post:'Telegram'};\n\nvar total=0, lines=[], confirmLines=[], resolvedTasks=[], themeFound=null;\nfor(var i=0;i<tasks.length;i++){\n  var t=tasks[i]||{};\n  var fmt=t.format||'instagram_post';\n  var cnt=parseInt(t.count,10)||1;\n  var topic=t.topic||null;\n  if(topic && !themeFound) themeFound=topic;\n  var dISO=resolveDate(t.date) || todayISO;\n  var label=FMT[fmt]||fmt;\n  var isSeq=(fmt==='instagram_stories' && cnt>1);\n  var isCar=(fmt==='instagram_carousel');\n  var seqNote = isSeq ? (' — ОДНА зв\\'язна серія сторіз: послідовний наратив (проблема→рішення→результат). ВІЗУАЛ ОДНАКОВИЙ для всієї серії: та сама палітра, той самий фон/стиль/колорит у funnel_params.imagePrompt (однаковий початок imagePrompt у всіх, змінюється лише акцент). У полі content — короткий підпис реченням, НЕ номер серії') : (isCar ? (' — слайди однією зв\\'язною історією; спільний стиль і ОДНА палітра, безшовний візуал') : '');\n\n  // Spread a multi-count task across consecutive days when the date phrase is a\n  // range (\"2 тижні\", \"10 днів\", \"тиждень\"). Series/carousel stay on one date.\n  var span=rangeSpan(t.date);\n  if(span>1 && cnt>1 && !isSeq && !isCar){\n    var startD=new Date(baseToday.getTime());          // ranges anchor at today\n    var perDay=Math.ceil(cnt/span);\n    var buckets={}, order2=[];\n    for(var k=0;k<cnt;k++){\n      var dayIdx=Math.min(span-1, Math.floor(k/perDay));\n      var dd=new Date(startD.getTime()); dd.setDate(dd.getDate()+dayIdx);\n      var dk=dd.toISOString().slice(0,10);\n      if(buckets[dk]===undefined){buckets[dk]=0; order2.push(dk);}\n      buckets[dk]++;\n    }\n    for(var oi=0;oi<order2.length;oi++){\n      var dk2=order2[oi], c2=buckets[dk2];\n      total+=c2;\n      lines.push(c2+'× '+fmt+' (platform='+(t.platform||'')+'), дата '+dk2+(topic?(', тема: '+topic):''));\n      confirmLines.push('• '+c2+'× '+label+' на '+dk2+(topic?(' — тема: '+topic):''));\n      resolvedTasks.push({format:fmt,platform:t.platform||'',count:c2,date:dk2,topic:topic,sequential:false});\n    }\n  } else {\n    total+=cnt;\n    lines.push(cnt+'× '+fmt+' (platform='+(t.platform||'')+'), дата '+dISO+(topic?(', тема: '+topic):'')+seqNote);\n    confirmLines.push('• '+cnt+'× '+label+' на '+dISO+(topic?(' — тема: '+topic):''));\n    resolvedTasks.push({format:fmt,platform:t.platform||'',count:cnt,date:dISO,topic:topic,sequential:isSeq});\n  }\n}\nif(total===0) total=1;\n\nvar breakdownInline = lines.join(' // ');\nvar taskBreakdownText = lines.join('\\n');\n\n// ── Async month-chunking ─────────────────────────────────────────────────\n// A big plan (e.g. \"місяць, 5/день\") would need ~30 Sonnet calls in one HTTP\n// request → timeout, and nothing imported. Instead we process ONE small chunk\n// per request and self-continue for the rest (node \"Plan self-continue\" at the\n// end fires the next chunk, carrying the remaining tasks). Repeats across chunks\n// are prevented by the topic 14-day cooldown; cohesion by a carried arc line.\nvar CHUNK_MAX = 10; // posts generated per HTTP request (safe ~1-2 batches)\n\n// Continuation request: use the pre-sliced tasks handed to us, skip dispatcher output.\nvar __ovr = null;\ntry { if (context._resolvedTasksOverride) __ovr = JSON.parse(context._resolvedTasksOverride); } catch(e) {}\nif (Array.isArray(__ovr) && __ovr.length) {\n  resolvedTasks = __ovr;\n  intent = 'create'; needsTheme = false;\n  total = 0; lines = []; confirmLines = [];\n  resolvedTasks.forEach(function(r){\n    total += (parseInt(r.count,10)||1);\n    lines.push(r.count+'× '+r.format+' (platform='+(r.platform||'')+'), дата '+r.date+(r.topic?(', тема: '+r.topic):''));\n    confirmLines.push('• '+r.count+'× '+(FMT[r.format]||r.format)+' на '+r.date);\n  });\n  breakdownInline = lines.join(' // ');\n  taskBreakdownText = lines.join('\\n');\n}\n\n// Carry an editorial arc (one-line through-theme) for cohesion across chunks.\nvar planArc = context._planArc || '';\n\n// Split resolvedTasks into THIS chunk (≤ CHUNK_MAX posts) and the remainder.\nvar planContTasks = [];\nif (total > CHUNK_MAX && resolvedTasks.length) {\n  var chunk = [], acc = 0, ri = 0;\n  for (; ri < resolvedTasks.length; ri++) {\n    var rt = resolvedTasks[ri];\n    var rc = parseInt(rt.count,10)||1;\n    if (acc > 0 && acc + rc > CHUNK_MAX) break; // keep whole date-buckets together\n    chunk.push(rt); acc += rc;\n  }\n  if (!chunk.length) { chunk.push(resolvedTasks[0]); ri = 1; acc = parseInt(resolvedTasks[0].count,10)||1; }\n  planContTasks = resolvedTasks.slice(ri);\n  resolvedTasks = chunk;\n  total = acc;\n  lines = []; confirmLines = [];\n  resolvedTasks.forEach(function(r){\n    lines.push(r.count+'× '+r.format+' (platform='+(r.platform||'')+'), дата '+r.date+(r.topic?(', тема: '+r.topic):''));\n    confirmLines.push('• '+r.count+'× '+(FMT[r.format]||r.format)+' на '+r.date);\n  });\n  breakdownInline = lines.join(' // ');\n  taskBreakdownText = lines.join('\\n');\n}\nvar planContJson = JSON.stringify(planContTasks);\nvar planRemaining = planContTasks.reduce(function(a,r){ return a + (parseInt(r.count,10)||1); }, 0);\n\nvar routeIntent;\nif(intent==='create') routeIntent = needsTheme ? 'propose_theme' : 'single_task';\nelse if(intent==='edit') routeIntent='edit_plan';\nelse if(intent==='save_rule') routeIntent='save_rule';\nelse if(intent==='new_plan') routeIntent='new_plan';\nelse routeIntent='dialog';\n\nvar agentInputText;\nif(routeIntent==='propose_theme'){\n  agentInputText='Користувач попросив створити контент, але НЕ вказав тему. Завдання: '+confirmLines.join(' ; ')+'. Зроби: 1) виклич list_posts щоб побачити що вже заплановано і не повторюватись; 2) виклич query_knowledge щоб взяти напрямки, болі ЦА і правила; 3) запропонуй РІВНО 3 конкретні теми (нумерований список, кожна — 1 рядок + чому зайде). НЕ створюй пости. В кінці попроси вибрати номер або написати свою тему.';\n} else {\n  agentInputText=(historyText?('Контекст діалогу:\\n'+historyText+'\\n\\n'):'')+'Запит: '+originalMsg;\n}\nvar agentInputJson=JSON.stringify(agentInputText).slice(1,-1);\n\nvar pl=(total===1)?'ня':((total<5)?'ня':'ь');\nvar confirmText = (Array.isArray(__ovr) && __ovr.length)\n  ? ('⏳ Продовжую план: наступні '+total+' пост(ів)'+(planRemaining>0?(' (ще '+planRemaining+' після цього)'):' — фінальний шматок')+'…')\n  : ('Зрозумів '+total+' завдан'+pl+':\\n'+confirmLines.join('\\n')+(planRemaining>0?('\\n\\n📅 Великий план: почну з '+total+' постів і сам продовжу рештою ('+planRemaining+') у фоні.'):'')+'\\n\\nГенерую контент — зачекай...');\n\nvar batchSize=7;\nvar batchCount=Math.max(1,Math.ceil(total/batchSize));\nvar firstCount=Math.min(total,batchSize);\nvar firstDate=resolvedTasks.length?resolvedTasks[0].date:todayISO;\n\nvar ukNote=' Пиши ВИКЛЮЧНО чистою українською, БЕЗ русизмів (напр. «пише» не «пишет», «що» не «что», «отримати» не «одержати»).';\nvar arcNote = planArc ? (' НАСКРІЗНА ЛІНІЯ МІСЯЦЯ (тримай єдиний стиль і тему в усіх постах): '+planArc) : '';\nvar progressText = batchCount>1\n  ? ('Сьогодні: '+todayISO+'. Батч 1 із '+batchCount+'. Згенеруй перші '+firstCount+' обʼєктів за розкладом: '+breakdownInline+'.'+arcNote+ukNote)\n  : ('Сьогодні: '+todayISO+'. Згенеруй РІВНО '+total+' обʼєктів СУВОРО за цим розкладом (формат/дата/кількість точно): '+breakdownInline+'. Не додавай зайвих постів. Дати точно як вказано, НЕ розкидай по різних днях.'+arcNote+ukNote);\n\nreturn {\n  _planContTasks: planContJson,\n  _planRemaining: planRemaining,\n  _planArc: planArc,\n  _planTgChatId: context.tgChatId || context._planTgChatId || '',\n  _planTgBotToken: context.tgBotToken || context._planTgBotToken || '',\n  intent: routeIntent,\n  needsTheme: needsTheme,\n  intentParams: parsed,\n  lastUserInput: originalMsg,\n  resolvedTasks: JSON.stringify(resolvedTasks),\n  taskBreakdownText: taskBreakdownText,\n  confirmText: confirmText,\n  agentInputJson: agentInputJson,\n  singleFormat: resolvedTasks.length?resolvedTasks[0].format:'instagram_post',\n  singlePlatform: resolvedTasks.length?resolvedTasks[0].platform:'instagram',\n  singlePlatformLabel: 'Контент',\n  singleTopic: themeFound || originalMsg,\n  singleCount: total,\n  singlePlatformsText: resolvedTasks.map(function(r){return r.platform;}).join(', ') || 'instagram',\n  singleDurationDays: 7,\n  singleConstraintsText: 'немає',\n  batchTotalPosts: total,\n  batchSize: batchSize,\n  batchCount: batchCount,\n  batchIndex: 0,\n  batchCurrentCount: firstCount,\n  batchDateFrom: firstDate,\n  batchDoneTopics: 'ще немає',\n  batchProgressText: progressText,\n  stAllPosts: '[]',\n  batchHasMore: false,\n};\n",
+        "label": "Parse Intent"
+      },
+      "type": "js",
+      "position": {
+        "x": 600,
+        "y": 1040
+      }
+    },
+    {
+      "id": "node_1780590888196",
+      "data": {
+        "label": "Route: single_task?",
+        "conditions": [
+          {
+            "id": "0",
+            "label": "→ plan/dialog",
+            "expression": "context.intent !== 'single_task'"
+          },
+          {
+            "id": "1",
+            "label": "→ NLM + generate",
+            "expression": "context.intent === 'single_task'"
+          }
+        ]
+      },
+      "type": "condition",
+      "position": {
+        "x": 600,
+        "y": 1360
+      }
+    },
+    {
+      "id": "node_1780590894409",
+      "data": {
+        "label": "Route: new_plan → msg, решта → agent",
+        "conditions": [
+          {
+            "id": "0",
+            "label": "→ (unused)",
+            "expression": "false"
+          },
+          {
+            "id": "1",
+            "label": "→ (dialog — тепер через агента)",
+            "expression": "false"
+          },
+          {
+            "id": "2",
+            "label": "→ new_plan msg",
+            "expression": "context.intent === 'new_plan'"
+          },
+          {
+            "id": "3",
+            "label": "→ Content Agent (все інше)",
+            "expression": "true"
+          },
+          {
+            "id": "4",
+            "label": "→ (save_rule — тепер через агента)",
+            "expression": "false"
+          }
+        ]
+      },
+      "type": "condition",
+      "position": {
+        "x": 1200,
+        "y": 1360
+      }
+    },
+    {
+      "id": "node_1780590932392",
+      "data": {
+        "mode": "single",
+        "label": "ST: Generate (Sonnet)",
+        "model": "claude-sonnet-4-6",
+        "maxTokens": 16000,
+        "outputVar": "context.stResult",
+        "connectorId": "4f9fbe29-e85a-40dd-93ed-4ed1b5f9fba6",
+        "systemPrompt": "Ти — SMM-копірайтер для @matsukoleksandr. МОВА: ТІЛЬКИ чиста українська, без русизмів. Сьогодні: {{now.date}}\n\nСТАНДАРТ ПИСЬМА (НАЙВИЩИЙ пріоритет — застосовуй до КОЖНОГО тексту, що пишеш чи редагуєш; важливіший за гладкість):\n{{context.writingCore}}\n\nБАЗОВІ ПРАВИЛА (ОБОВ'ЯЗКОВІ ДЛЯ КОЖНОГО ПОСТА):\n{{context.coreRules}}\n\nПЕРСОНИ / ЦА (кому пишемо — тон, болі, тригери, заперечення; звертайся саме до цих людей):\n{{context.personasText}}\n\nСТРАТЕГІЯ (контент-стовпи і баланс цілей — тримайся цих рубрик і пропорцій):\n{{context.strategyText}}\n\nРЕАЛЬНІ КЕЙСИ (доказова база — кейси/цифри БЕРИ ТІЛЬКИ звідси; «можна казати» = дозволені формулювання, не виходь за них, не вигадуй чисел):\n{{context.casesText}}\n\nДОДАТКОВО З БАЗИ ЗНАНЬ (стиль автора і приклади формулювань по темі):\n{{context.stRules}}\n\nБАНК ТЕМ ПРОЄКТУ (бери теми ПЕРЕВАЖНО звідси, по одній на пост; якщо користувач задав конкретну тему — пріоритет їй; розподіляй по різних рубриках, продажні — ~20%):\n{{context.topicsBank}}\n\nПРАВИЛА СОЦМЕРЕЖ (для КОЖНОГО поста застосовуй правила САМЕ тієї мережі, для якої він; тон, довжина, хештеги, посилання):\n{{context.networkRules}}\n\nЩО ПРАЦЮЄ НАЙКРАЩЕ (з реальних результатів реакцій — віддавай перевагу цим елементам, якщо доречно темі):\n{{context.topPatterns}}\n\nФОРМАТИ МЕРЕЖ (для КОЖНОГО поста обери формат зі списку ЙОГО мережі; постав post_type = key формату; для зображень/відео став funnel_params.aspectRatio = aspect цього формату):\n{{context.formatsText}}\n\nСТРУКТУРИ ПОСТІВ (варіюй формати — не роби всі пости однаковими):\n{{context.structuresText}}\n\nПРО ЩО БІЗНЕС — ПРОДУКТИ (контекст для будь-якого поста: болі, які закриваємо, і трансформація):\n{{context.productsText}}\n\nПРОДУКТИ І ЛІД-МАГНІТИ — ЄДИНЕ ДЖЕРЕЛО посилань і кутів для ПРОДАЖНИХ постів (НЕ бери лінки з бази знань чи з голови):\n{{context.leadMagnets}}\nПродажний пост (рубрика sales / заклик до дії): візьми ОДИН лід-магніт звідси — його суть як кут поста, а його ПОСИЛАННЯ як CTA (скопіюй лінк дослівно). threads/telegram: посилання окремим рядком «🔗 <лінк>»; instagram/linkedin: у тексті. Якщо список магнітів порожній — не вигадуй посилань.\n\nУ КОЖНОМУ об'єкті JSON додай поле \"used_topic\" — ТОЧНУ назву теми з банку, яку використав (скопіюй дослівно), або \"\" якщо тема не з банку.\n\nДОСТУПНІ ІНСТРУМЕНТИ ГЕНЕРАЦІЇ (поле funnel_slug):\n{{context.availableToolsText}}\n\nПравила вибору funnel_slug:\n- instagram_post + кейс/результат/провокація → content-ai-bg (palette: DARK_CINEMATIC)\n- instagram_post + освіта/інструкція → content-ai-bg (palette: MINIMAL_WHITE)\n- instagram_carousel → content-carousel (slides: МАСИВ об'єктів {text, subText})\n- instagram_stories → ЗА ЗАМОВЧУВАННЯМ content-photo-text (template=multi-plate, tag, title, cta)\n- instagram_reels → content-ai-bg або content-video-broll\n- threads_* → funnel_slug: null (тільки текст)\n- telegram → funnel_slug: null або content-ai-bg для розгорнутих кейсів\n- linkedin_post → content-ai-bg (palette: TRUST_BLUE)\nЯкщо користувач просить «без зображень» — funnel_slug: null для ВСІХ.\n\nТОЧНА КІЛЬКІСТЬ: якщо юзер просить конкретну кількість — генеруй РІВНО стільки об'єктів.\n\nКОНСТРУКТОР (свідомо збери пост, а не просто напиши) — для КОЖНОГО поста обери й ПОЗНАЧ у JSON:\n- intent: educate|sell|trust|storytelling|entertainment (тримайся розподілу зі СТРАТЕГІЇ).\n- structure: обери key структури зі списку «СТРУКТУРИ ПОСТІВ» нижче, що підходить ПЛАТФОРМІ цього поста (в структурі вказано [мережі: …]) і формату. Пиши текст за її скелетом. НЕ став структуру, якої нема для цієї мережі (напр. carousel/reels — не для threads; коротка думка/питання — тільки threads).\n- hook_type під МЕРЕЖУ: LinkedIn/Telegram -> stat|promise|story; Threads -> provocation|question|pain; Instagram/Reels -> pain|promise|counter.\n- hook: сам перший рядок-гачок (те, що зупиняє скрол).\n- evidence_type: case|example|story якщо є доказ, інакше null. Якщо ставиш case — ОБОВʼЯЗКОВО додай case_title = ТОЧНА назва реального кейса зі списку РЕАЛЬНІ КЕЙСИ (копію дослівно). Вигаданий кейс ЗАБОРОНЕНО: нема реального — став story або example, не case.\n\nФОРМАТИ:\nINSTAGRAM_POST: ГАЧОК→3-5 абз.→CTA→хештеги (4-5 окремим блоком). 300-1500симв.\nINSTAGRAM_CAROUSEL: 4-6 слайдів. funnel_params.slides = масив {text, subText}. content = підпис поста.\nINSTAGRAM_STORIES: дуже коротко, текст на фото. title 3-7 слів + subtitle одне речення. БЕЗ хештегів.\nTHREADS_SINGLE: 150-400симв. Без хештегів. Живий тон.\nTHREADS_SHORT: 30-100симв. Одна гостра думка.\nTHREADS_QUESTION: 20-80симв. Одне питання без крапки.\nTHREADS_CHAIN: 3-5 частин «---», нумерація 1/N.\nLINKEDIN_POST: HOOK→3-4абз.→CTA. 800-2000симв. Хештеги 3-5.\nTELEGRAM: особистий тон «Ви», довжина довільна, 2-4 emoji, без хештегів.\n\nfunnel_params для постів із зображенням:\n- content-ai-bg: { imagePrompt: \"...english...\", palette: \"DARK_CINEMATIC\" }\n- content-photo-text: { template: \"multi-plate\", tag: \"...\", title: \"...\", subtitle: \"...\", cta: \"...\" }\n- content-carousel: { slides: [{\"text\":\"...\",\"subText\":\"...\"}], palette: \"DARK_CINEMATIC\", aspectRatio: \"4:5\" }  [aspectRatio: \"1:1\"=квадратна карусель/для поста у стрічку; \"9:16\"=рілс/сторіз/вертикальна; \"4:5\"=дефолт. Обирай за словами користувача.]\n- text-only: funnel_slug: null, funnel_params: null\n\nВідповідай ТІЛЬКИ JSON-масивом (START WITH [ — навіть якщо пост один):\n[{\"date\":\"YYYY-MM-DD\",\"platform\":\"threads|instagram|stories|reels|linkedin|telegram\",\"content\":\"...\",\"audience\":\"cold|warm1|warm2|hot1|hot2\",\"post_type\":\"post|story|reel|carousel|thread|short|slideshow\",\"funnel_slug\":\"...або null\",\"funnel_params\":{...або null},\"used_topic\":\"...або порожнє\",\"intent\":\"educate|sell|trust|storytelling|entertainment\",\"structure\":\"key структури зі списку, доречний платформі\",\"hook_type\":\"question|provocation|stat|promise|pain|story|counter|listicle\",\"hook\":\"перший рядок-гачок поста\",\"case_title\":\"ТОЧНА назва кейса з get_cases (копію дослівно) якщо evidence_type=case, інакше порожньо\",\"evidence_type\":\"case|example|story|null\",\"status\":\"scheduled\"}]",
+        "exitCondition": "json_output",
+        "messagesTemplate": "[{\"role\":\"user\",\"content\":\"{{context.batchProgressText}}\\nВідповідь — ТІЛЬКИ JSON масив, без жодного іншого тексту.\\n\\nФормат: {{context.singleFormat}}\\nПлатформи: {{context.singlePlatformsText}}\\nПовний період плану (днів): {{context.singleDurationDays}}\\nТема/запит: {{context.singleTopic}}\\nЯвні вимоги користувача: {{context.singleConstraintsText}}\\n\\nВЖЕ ЗГЕНЕРОВАНО В ЦЬОМУ ПЛАНІ (не повторюй теми): {{context.batchDoneTopics}}\"}]"
+      },
+      "type": "claude",
+      "position": {
+        "x": 200,
+        "y": 2000
+      }
+    },
+    {
+      "id": "node_1780590977330",
+      "data": {
+        "url": "{{context.importUrl}}",
+        "body": "{{context.stImportPayload}}",
+        "label": "Save to content2 DB",
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "outputVar": "context.saveResult",
+        "ignoreErrors": true
+      },
+      "type": "httpRequest",
+      "position": {
+        "x": 200,
+        "y": 2600
+      }
+    },
+    {
+      "id": "node_1780590995517",
+      "data": {
+        "mode": "single",
+        "label": "Dialog Agent (Sonnet)",
+        "maxTokens": 1000,
+        "outputVar": "context.dialogResponse",
+        "connectorId": "2ec53ba5-144e-463b-9758-c217c4a69b0e",
+        "systemPrompt": "Ти Content Manager — асистент Олександра Мацука (FINEKO — автоматизація + курс).\nСьогодні: {{now.date}}\n\nФОРМАТ:\n- МОВА: тільки українська, на «ти»\n- БЕЗ markdown: жодних ** **, ###, [], () — тільки чистий текст\n- Коротко і по суті\n\nТи допомагаєш з плануванням контенту, ідеями для постів, стратегією. Відповідай текстом.",
+        "exitCondition": "first_response",
+        "messagesTemplate": "[{\"role\":\"user\",\"content\":\"{{context.userMessageJson}}\"}]"
+      },
+      "type": "claude",
+      "position": {
+        "x": 1400,
+        "y": 1680
+      }
+    },
+    {
+      "id": "node_1780591002750",
+      "data": {
+        "text": "{{context.dialogResponse}}",
+        "label": "Send dialog to chat"
+      },
+      "type": "message",
+      "position": {
+        "x": 1400,
+        "y": 2000
+      }
+    },
+    {
+      "id": "node_1780591011470",
+      "data": {
+        "text": "Повний план на місяць — це багатоетапний процес. Напиши «план на місяць» окремо. Тут можу: пости, сторіз, карусель, reels, Threads, LinkedIn.",
+        "label": "Send plan redirect"
+      },
+      "type": "message",
+      "position": {
+        "x": 1000,
+        "y": 1680
+      }
+    },
+    {
+      "id": "node_1780594213383",
+      "data": {
+        "code": "var raw = context.stRulesRaw;\nvar isGood = typeof raw === 'string' && raw.trim().length > 50;\nreturn {\n  stRules: isGood ? raw.trim() : '',\n  stRulesNeedFallback: !isGood,\n};",
+        "label": "JS: перевірити NLM"
+      },
+      "type": "js",
+      "position": {
+        "x": 200,
+        "y": 1920
+      }
+    },
+    {
+      "id": "node_1780594225821",
+      "data": {
+        "label": "NLM помилка?",
+        "conditions": [
+          {
+            "id": "0",
+            "label": "→ GPT fallback",
+            "expression": "context.stRulesNeedFallback === true"
+          },
+          {
+            "id": "1",
+            "label": "→ generate",
+            "expression": "true"
+          }
+        ]
+      },
+      "type": "condition",
+      "position": {
+        "x": 200,
+        "y": 2160
+      }
+    },
+    {
+      "id": "node_1780594238378",
+      "data": {
+        "url": "https://content2.fineko.space/api/agent-tools?action=query_vector&token=fnk_wh_2026_x9mK4pLqR7vNsT1eYcJdBuAw&projectId={{context.projectId}}",
+        "body": "{\"question\":\"Стиль і голос @matsukoleksandr для {{context.singlePlatform}}: як він пише, його тон, типові хуки, CTA, заборонені слова, структура поста. ПРАВИЛА І ЗАБОРОНИ контенту (що категорично не можна — наприклад вигадані кейси). РЕАЛЬНІ кейси та факти автора, які можна використовувати в постах. Цільова аудиторія. Тема запиту: {{context.singleTopic}}\",\"language\":\"uk\"}",
+        "label": "Вектор: стиль автора (fallback)",
+        "method": "POST",
+        "outputVar": "context.stRulesFallback",
+        "ignoreErrors": true,
+        "responseField": "answer"
+      },
+      "type": "httpRequest",
+      "position": {
+        "x": -240,
+        "y": 2400
+      }
+    },
+    {
+      "id": "node_1780594268915",
+      "data": {
+        "code": "var fallback = context.stRulesFallback || '';\nif (fallback.trim().length > 50) {\n  return { stRules: fallback.trim() };\n}\nreturn {};",
+        "label": "JS: мерж stRules"
+      },
+      "type": "js",
+      "position": {
+        "x": -240,
+        "y": 2640
+      }
+    },
+    {
+      "id": "node_1780602067339",
+      "data": {
+        "code": "var txt = context.dialogResponse || '';\nreturn {\n  webCallbackBody: JSON.stringify({\n    text: txt,\n    sessionId: context.webSessionId || ''\n  })\n};",
+        "label": "JS: encode dialog callback"
+      },
+      "type": "js",
+      "position": {
+        "x": 1400,
+        "y": 1880
+      }
+    },
+    {
+      "id": "node_1780602205131",
+      "data": {
+        "code": "return {\n  webCallbackBody: JSON.stringify({\n    text: 'Повний план на місяць — це багатоетапний процес з підтвердженням і батч-циклом.\\nНапиши «план на місяць» в Telegram-бот.\\nТут можу: пости, сторіз, карусель, reels, Threads, LinkedIn.',\n    sessionId: context.webSessionId || ''\n  })\n};",
+        "label": "JS: encode plan redirect"
+      },
+      "type": "js",
+      "position": {
+        "x": 1000,
+        "y": 1520
+      }
+    },
+    {
+      "id": "node_agent_content_mgr",
+      "data": {
+        "label": "Content Agent",
+        "tools": [
+          {
+            "url": "https://content2.fineko.space/api/agent-tools?action=list_posts&token=fnk_wh_2026_x9mK4pLqR7vNsT1eYcJdBuAw&projectId={{context.projectId}}",
+            "name": "list_posts",
+            "type": "http",
+            "description": "List posts from content plan. Returns number (#N), date, platform, post_type, excerpt, generation_status for each.",
+            "inputSchema": {
+              "type": "object",
+              "required": [],
+              "properties": {
+                "date_to": {
+                  "type": "string",
+                  "description": "End date YYYY-MM-DD"
+                },
+                "platform": {
+                  "type": "string",
+                  "description": "Filter: instagram|threads|stories|reels|linkedin|telegram|tiktok"
+                },
+                "date_from": {
+                  "type": "string",
+                  "description": "Start date YYYY-MM-DD"
+                }
+              }
+            }
+          },
+          {
+            "url": "https://content2.fineko.space/api/agent-tools?action=get_post&token=fnk_wh_2026_x9mK4pLqR7vNsT1eYcJdBuAw&projectId={{context.projectId}}",
+            "name": "get_post",
+            "type": "http",
+            "description": "Get full post content and funnel_params by post number",
+            "inputSchema": {
+              "type": "object",
+              "required": [
+                "number"
+              ],
+              "properties": {
+                "number": {
+                  "type": "string",
+                  "description": "Post number (e.g. 45)"
+                }
+              }
+            }
+          },
+          {
+            "url": "https://content2.fineko.space/api/agent-tools?action=create_post&token=fnk_wh_2026_x9mK4pLqR7vNsT1eYcJdBuAw&projectId={{context.projectId}}&telegramChatId={{context.tgChatId}}&telegramBotToken={{context.tgBotToken}}",
+            "name": "create_post",
+            "type": "http",
+            "description": "Create a new post in the content plan. For stories always pass funnel_slug=content-stories-ai-bg and funnel_params as JSON string.",
+            "inputSchema": {
+              "type": "object",
+              "required": [
+                "date",
+                "platform",
+                "content"
+              ],
+              "properties": {
+                "date": {
+                  "type": "string",
+                  "description": "YYYY-MM-DD"
+                },
+                "hook": {
+                  "type": "string",
+                  "description": "Перший рядок-гачок поста"
+                },
+                "intent": {
+                  "type": "string",
+                  "description": "educate|sell|trust|storytelling|entertainment"
+                },
+                "content": {
+                  "type": "string",
+                  "description": "Full post text (short for stories — max 3 sentences, overlaid on image)"
+                },
+                "audience": {
+                  "type": "string",
+                  "description": "cold|warm1|warm2|hot1|hot2"
+                },
+                "platform": {
+                  "type": "string",
+                  "description": "instagram|threads|stories|reels|linkedin|telegram"
+                },
+                "hook_type": {
+                  "type": "string",
+                  "description": "question|provocation|stat|promise|pain|story|counter|listicle (під мережу)"
+                },
+                "post_type": {
+                  "type": "string",
+                  "description": "post|story|reel|carousel|thread|short|slideshow (єдиний словник форматів)"
+                },
+                "structure": {
+                  "type": "string",
+                  "description": "aida|pas|case|insight|listicle|provocation — пиши текст за цим скелетом"
+                },
+                "case_title": {
+                  "type": "string",
+                  "description": "ТОЧНА назва реального кейса з get_cases, якщо evidence_type=case. Вигаданий кейс заборонено — нема реального, став story."
+                },
+                "funnel_slug": {
+                  "type": "string",
+                  "description": "Image generation funnel: content-stories-ai-bg (Stories 9:16), content-ai-bg (Post AI background), content-ideogram, content-recraft, content-carousel. Omit for text-only."
+                },
+                "image_prompt": {
+                  "type": "string",
+                  "description": "Short AI image description in English (used if no funnel_params.imagePrompt)"
+                },
+                "evidence_type": {
+                  "type": "string",
+                  "description": "case|example|story якщо є доказ"
+                },
+                "funnel_params": {
+                  "type": "string",
+                  "description": "JSON string with funnel params. For content-stories-ai-bg: {\"imagePrompt\":\"vertical portrait background...\",\"title\":\"2-5 words\",\"subtitle\":\"short subtitle or null\"}. For content-ai-bg: {\"imagePrompt\":\"...\",\"palette\":\"DARK_CINEMATIC\"}"
+                }
+              }
+            }
+          },
+          {
+            "url": "https://content2.fineko.space/api/agent-tools?action=edit_post&token=fnk_wh_2026_x9mK4pLqR7vNsT1eYcJdBuAw&projectId={{context.projectId}}",
+            "name": "edit_post",
+            "type": "http",
+            "description": "Edit an existing post by number (text, date, audience, status)",
+            "inputSchema": {
+              "type": "object",
+              "required": [
+                "number"
+              ],
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "description": "New full post text"
+                },
+                "number": {
+                  "type": "string",
+                  "description": "Post number"
+                },
+                "status": {
+                  "type": "string",
+                  "description": "draft|scheduled|published"
+                },
+                "audience": {
+                  "type": "string",
+                  "description": "New audience"
+                },
+                "post_date": {
+                  "type": "string",
+                  "description": "New date YYYY-MM-DD"
+                }
+              }
+            }
+          },
+          {
+            "url": "https://content2.fineko.space/api/agent-tools?action=delete_post&token=fnk_wh_2026_x9mK4pLqR7vNsT1eYcJdBuAw&projectId={{context.projectId}}",
+            "name": "delete_post",
+            "type": "http",
+            "description": "Delete one post by number",
+            "inputSchema": {
+              "type": "object",
+              "required": [
+                "number"
+              ],
+              "properties": {
+                "number": {
+                  "type": "string",
+                  "description": "Post number to delete"
+                }
+              }
+            }
+          },
+          {
+            "url": "https://content2.fineko.space/api/agent-tools?action=delete_posts&token=fnk_wh_2026_x9mK4pLqR7vNsT1eYcJdBuAw&projectId={{context.projectId}}",
+            "name": "delete_posts",
+            "type": "http",
+            "description": "Bulk delete posts: by comma-separated numbers OR by date range + optional platform",
+            "inputSchema": {
+              "type": "object",
+              "required": [],
+              "properties": {
+                "date_to": {
+                  "type": "string",
+                  "description": "End date YYYY-MM-DD"
+                },
+                "numbers": {
+                  "type": "string",
+                  "description": "Comma-separated post numbers, e.g. 12,15,18"
+                },
+                "platform": {
+                  "type": "string",
+                  "description": "Filter platform"
+                },
+                "date_from": {
+                  "type": "string",
+                  "description": "Start date YYYY-MM-DD"
+                }
+              }
+            }
+          },
+          {
+            "url": "https://content2.fineko.space/api/agent-tools?action=regenerate_image&token=fnk_wh_2026_x9mK4pLqR7vNsT1eYcJdBuAw&projectId={{context.projectId}}&telegramChatId={{context.tgChatId}}&telegramBotToken={{context.tgBotToken}}",
+            "name": "regenerate_image",
+            "type": "http",
+            "description": "Re-run image generation for a post. Pass funnel_params as JSON string to override (e.g. {\"palette\":\"TRUST_BLUE\"}) or image_prompt for a new prompt.",
+            "inputSchema": {
+              "type": "object",
+              "required": [
+                "number"
+              ],
+              "properties": {
+                "number": {
+                  "type": "string",
+                  "description": "Post number"
+                },
+                "funnel_slug": {
+                  "type": "string",
+                  "description": "Switch generation funnel"
+                },
+                "image_prompt": {
+                  "type": "string",
+                  "description": "New image prompt"
+                },
+                "funnel_params": {
+                  "type": "string",
+                  "description": "JSON string patch for funnel params, e.g. {\"palette\":\"TRUST_BLUE\"}"
+                }
+              }
+            }
+          },
+          {
+            "url": "https://content2.fineko.space/api/agent-tools?action=list_media&token=fnk_wh_2026_x9mK4pLqR7vNsT1eYcJdBuAw&projectId={{context.projectId}}",
+            "name": "list_media",
+            "type": "http",
+            "description": "List media files (source images) in project storage",
+            "inputSchema": {
+              "type": "object",
+              "required": [],
+              "properties": {}
+            }
+          },
+          {
+            "url": "https://content2.fineko.space/api/agent-tools?action=query_vector&token=fnk_wh_2026_x9mK4pLqR7vNsT1eYcJdBuAw&projectId={{context.projectId}}",
+            "name": "query_knowledge",
+            "type": "http",
+            "description": "Семантичний пошук по базі знань компанії (живий вектор): стиль і голос автора, правила по соцмережах, хуки. Для стилю/формулювань, не для кейсів (кейси — get_cases).",
+            "inputSchema": {
+              "type": "object",
+              "required": [
+                "question"
+              ],
+              "properties": {
+                "language": {
+                  "type": "string",
+                  "description": "Always 'uk'"
+                },
+                "question": {
+                  "type": "string",
+                  "description": "Question in Ukrainian, e.g. 'Правила і заборони для постів LinkedIn + реальні кейси про бізнес-процеси'"
+                }
+              }
+            }
+          },
+          {
+            "url": "https://content2.fineko.space/api/agent-tools?action=query_vector&token=fnk_wh_2026_x9mK4pLqR7vNsT1eYcJdBuAw&projectId={{context.projectId}}",
+            "name": "query_knowledge_backup",
+            "type": "http",
+            "description": "Семантичний пошук по базі знань компанії (живий вектор): стиль і голос автора, правила по соцмережах, хуки. Для стилю/формулювань, не для кейсів (кейси — get_cases).",
+            "inputSchema": {
+              "type": "object",
+              "required": [
+                "question"
+              ],
+              "properties": {
+                "language": {
+                  "type": "string",
+                  "description": "Always 'uk'"
+                },
+                "question": {
+                  "type": "string",
+                  "description": "Question in Ukrainian"
+                }
+              }
+            }
+          },
+          {
+            "url": "https://content2.fineko.space/api/agent-tools?action=save_rule&token=fnk_wh_2026_x9mK4pLqR7vNsT1eYcJdBuAw&projectId={{context.projectId}}",
+            "name": "save_rule",
+            "type": "http",
+            "description": "Save a content rule for THIS project (knowledge_entries on content2). Shown in /knowledge UI, auto-included in every generation. category: style|rule|forbidden|tone|audience|general.",
+            "inputSchema": {
+              "type": "object",
+              "required": [
+                "title",
+                "content"
+              ],
+              "properties": {
+                "title": {
+                  "type": "string",
+                  "description": "Short rule title (up to 60 chars)"
+                },
+                "content": {
+                  "type": "string",
+                  "description": "Full rule text in Ukrainian"
+                },
+                "category": {
+                  "type": "string",
+                  "description": "style|rule|forbidden|tone|audience|general (default rule)"
+                }
+              }
+            }
+          },
+          {
+            "url": "https://content2.fineko.space/api/agent-tools?action=send_media&token=fnk_wh_2026_x9mK4pLqR7vNsT1eYcJdBuAw&projectId={{context.projectId}}&telegramChatId={{context.tgChatId}}&telegramBotToken={{context.tgBotToken}}",
+            "name": "send_media",
+            "type": "http",
+            "description": "Re-send a post already-generated image(s) directly to the Telegram chat. Use when the user asks to resend/show/send the images. Does NOT regenerate.",
+            "inputSchema": {
+              "type": "object",
+              "required": [
+                "number"
+              ],
+              "properties": {
+                "number": {
+                  "type": "string",
+                  "description": "Post number"
+                }
+              }
+            }
+          },
+          {
+            "url": "https://content2.fineko.space/api/agent-tools?action=create_avatar_reel&token=fnk_wh_2026_x9mK4pLqR7vNsT1eYcJdBuAw&projectId={{context.projectId}}&telegramChatId={{context.tgChatId}}&telegramBotToken={{context.tgBotToken}}",
+            "name": "create_avatar_reel",
+            "type": "http",
+            "description": "Створити вертикальне відео-Reel з ШІ-аватаром Олександра за сценарієм. Використовуй КОЛИ користувач просить зробити відео або рілс з аватаром, відео де він у різних образах/ролях, або відео-сценарій на якусь тему. Параметр theme = детальний опис ідеї/сценарію українською (які ролі та образи, у якій послідовності, фінальна метафора). Відео генерується кілька хвилин і само приходить у цей чат разом з обкладинкою.",
+            "inputSchema": {
+              "type": "object",
+              "required": [
+                "theme"
+              ],
+              "properties": {
+                "theme": {
+                  "type": "string",
+                  "description": "Детальний опис сценарію/ідеї відео українською — ролі, образи, послідовність сцен, фінал"
+                }
+              }
+            }
+          },
+          {
+            "url": "https://content2.fineko.space/api/agent-tools?action=get_cases&token=fnk_wh_2026_x9mK4pLqR7vNsT1eYcJdBuAw&projectId={{context.projectId}}",
+            "name": "get_cases",
+            "type": "http",
+            "description": "Канонічні кейси (доказова база). Повертає title, product, niche, problem, solution, metrics (цифри), allowedClaims (дозволені формулювання). БЕРИ кейси і цифри ТІЛЬКИ звідси; не виходь за allowedClaims; не вигадуй.",
+            "inputSchema": {
+              "type": "object",
+              "required": [],
+              "properties": {}
+            }
+          },
+          {
+            "url": "https://content2.fineko.space/api/agent-tools?action=get_personas&token=fnk_wh_2026_x9mK4pLqR7vNsT1eYcJdBuAw&projectId={{context.projectId}}",
+            "name": "get_personas",
+            "type": "http",
+            "description": "Канонічні персони/ЦА: болі, цілі, тригери, заперечення, мова, тон, стоп-слова. Кому і як говоримо.",
+            "inputSchema": {
+              "type": "object",
+              "required": [],
+              "properties": {}
+            }
+          },
+          {
+            "url": "https://content2.fineko.space/api/agent-tools?action=get_products&token=fnk_wh_2026_x9mK4pLqR7vNsT1eYcJdBuAw&projectId={{context.projectId}}",
+            "name": "get_products",
+            "type": "http",
+            "description": "Канонічні продукти: назва, ціна, опис, болі які закриває, аудиторія + лід-магніти з посиланнями. Про що бізнес і джерело CTA.",
+            "inputSchema": {
+              "type": "object",
+              "required": [],
+              "properties": {}
+            }
+          },
+          {
+            "url": "https://content2.fineko.space/api/agent-tools?action=get_strategy&token=fnk_wh_2026_x9mK4pLqR7vNsT1eYcJdBuAw&projectId={{context.projectId}}",
+            "name": "get_strategy",
+            "type": "http",
+            "description": "SMM-стратегія: контент-стовпи (рубрики) і баланс цілей (educate/sell/trust/story/entertain).",
+            "inputSchema": {
+              "type": "object",
+              "required": [],
+              "properties": {}
+            }
+          },
+          {
+            "url": "https://content2.fineko.space/api/agent-tools?action=get_topics&token=fnk_wh_2026_x9mK4pLqR7vNsT1eYcJdBuAw&projectId={{context.projectId}}",
+            "name": "get_topics",
+            "type": "http",
+            "description": "Банк тем по рубриках (ще не використані пріоритетно). Бери теми переважно звідси.",
+            "inputSchema": {
+              "type": "object",
+              "required": [],
+              "properties": {}
+            }
+          },
+          {
+            "url": "https://content2.fineko.space/api/agent-tools?action=check_writing&token=fnk_wh_2026_x9mK4pLqR7vNsT1eYcJdBuAw&projectId={{context.projectId}}",
+            "name": "check_writing",
+            "type": "http",
+            "description": "Детермінований гейт стандарту письма: стоп-слова, щільність тире (макс 1/абзац), підсумкові кліше, привітання на старті. Повертає pass (true/false) і список порушень. Викликай ПЕРЕД кожним create_post і edit_post.",
+            "inputSchema": {
+              "type": "object",
+              "required": [
+                "text"
+              ],
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "description": "Повний текст поста для перевірки"
+                }
+              }
+            }
+          },
+          {
+            "url": "https://content2.fineko.space/api/agent-tools?action=get_structures&token=fnk_wh_2026_x9mK4pLqR7vNsT1eYcJdBuAw&projectId={{context.projectId}}",
+            "name": "get_structures",
+            "type": "http",
+            "description": "Структури постів (скелети) з тегами мереж/форматів/хуків. Передай platform (threads|instagram_posts|linkedin|telegram) щоб отримати лише доречні цій мережі.",
+            "inputSchema": {
+              "type": "object",
+              "required": [],
+              "properties": {
+                "platform": {
+                  "type": "string",
+                  "description": "Фільтр по мережі (опційно)"
+                }
+              }
+            }
+          },
+          {
+            "url": "https://content2.fineko.space/api/agent-tools?action=get_network_rules&token=fnk_wh_2026_x9mK4pLqR7vNsT1eYcJdBuAw&projectId={{context.projectId}}",
+            "name": "get_network_rules",
+            "type": "http",
+            "description": "Правила соцмережі: тон, довжина, хештеги, посилання, алгоритм. Передай platform для однієї мережі.",
+            "inputSchema": {
+              "type": "object",
+              "required": [],
+              "properties": {
+                "platform": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          {
+            "url": "https://content2.fineko.space/api/agent-tools?action=get_formats&token=fnk_wh_2026_x9mK4pLqR7vNsT1eYcJdBuAw&projectId={{context.projectId}}",
+            "name": "get_formats",
+            "type": "http",
+            "description": "Формати мережі: key, дозволені медіа-типи, aspect. Передай platform. Постав post_type=key формату, aspectRatio=aspect.",
+            "inputSchema": {
+              "type": "object",
+              "required": [],
+              "properties": {
+                "platform": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          {
+            "url": "https://content2.fineko.space/api/agent-tools?action=get_top_patterns&token=fnk_wh_2026_x9mK4pLqR7vNsT1eYcJdBuAw&projectId={{context.projectId}}",
+            "name": "get_top_patterns",
+            "type": "http",
+            "description": "Що працює найкраще (з реальних балів реакцій): найкращі hook/structure/intent/evidence, опційно по мережі (platform).",
+            "inputSchema": {
+              "type": "object",
+              "required": [],
+              "properties": {
+                "platform": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        ],
+        "outputVar": "context.agentResult",
+        "connectorId": "2ec53ba5-144e-463b-9758-c217c4a69b0e",
+        "systemPrompt": "Ти — повноцінний агент управління контентом для Олександра Мацука (FINEKO).\nСьогодні: {{now.date}}. Дашборд: https://content2.fineko.space\n\nТи працюєш як універсальний асистент: в одному повідомленні може бути КІЛЬКА запитів — виконуй їх ПОСЛІДОВНО, всі до одного.\n\nФОРМАТ ВИВОДУ ПОСТІВ (КРИТИЧНО — завжди, незалежно генерація це / показ / редагування):\nЩоразу коли ти показуєш, пишеш або редагуєш ПОСТ — виводь ПОВНИЙ текст КОЖНОГО поста окремим code-блоком: рядок ``` перед текстом і рядок ``` після. Кожен пост — свій окремий блок, щоб користувач міг скопіювати його одним дотиком. Номер #N, дату, платформу і підсумок «що зроблено» пиши звичайним текстом ПОЗА блоком. Усередині блоку — лише сам текст поста.\n\nСТАНДАРТ ПИСЬМА (НАЙВИЩИЙ пріоритет — застосовуй до КОЖНОГО тексту, що пишеш чи редагуєш; важливіший за гладкість):\n{{context.writingCore}}\n\nБАЗОВІ ПРАВИЛА КОНТЕНТУ (обов'язкові для будь-якого тексту, що ти пишеш чи редагуєш):\n{{context.coreRules}}\n\nІНСТРУМЕНТИ ДАНИХ:\n- list_posts(date_from?, date_to?, platform?) — список постів (кожен має номер #N)\n- get_post(number) — повний текст поста\n- create_post(date, platform, content, audience?, post_type?, funnel_slug?, funnel_params?, image_prompt?)\n- edit_post(number, text?, post_date?, audience?, status?)\n- delete_post(number) / delete_posts(numbers? або date_from+date_to+platform?)\n- regenerate_image(number, funnel_params?, image_prompt?, funnel_slug?) — funnel_params як JSON-рядок: {\"palette\":\"TRUST_BLUE\"}\n- list_media() — файли в сховищі проєкту\n\nМЕДІА ФУНЕЛІ (передавай у funnel_slug + funnel_params при create_post):\n\nInstagram Stories (platform=stories, post_type=stories):\n  funnel_slug=content-stories-ai-bg\n  funnel_params={\"imagePrompt\":\"<vertical portrait background, english>\",\"title\":\"<2-5 слів заголовку>\",\"subtitle\":\"<коротка підпис або пустий рядок>\"}\n  ВАЖЛИВО: title — максимум 5 слів, subtitle — одне речення або null\n  content — короткий текст поста (1-3 речення), НЕ той що накладається на фото\n\nInstagram пост AI-фон (platform=instagram, post_type=post):\n  funnel_slug=content-ai-bg\n  funnel_params={\"imagePrompt\":\"<scene description in english>\",\"palette\":\"DARK_CINEMATIC\"}\n  Палітри: DARK_CINEMATIC | MINIMAL_WHITE | ENERGY_ORANGE | TRUST_BLUE | PREMIUM_PURPLE\n\nТекстовий пост (без зображення):\n  НЕ передавай funnel_slug (або funnel_slug=text_only)\n\nКАНОНІЧНА БАЗА (структуровані записи — ДЖЕРЕЛО ПРАВДИ для фактів; факти/кейси/продукти/персони бери ТІЛЬКИ звідси):\n- get_cases() — РЕАЛЬНІ кейси: проблема, рішення, цифри і allowedClaims. Кейси/цифри в постах — ТІЛЬКИ звідси, у межах allowedClaims, не вигадуй.\n- get_personas() — персони/ЦА: болі, тригери, заперечення, тон, стоп-слова.\n- get_products() — продукти: опис, ціна, болі які закривають; джерело CTA-посилань для продажних постів.\n- get_strategy() — контент-стовпи і баланс цілей.\n- get_topics() — банк тем по рубриках.\n\nБАЗА ЗНАНЬ (векторний пошук — ЛИШЕ стиль/голос автора і приклади формулювань, НЕ джерело фактів чи кейсів):\n- query_knowledge(question, language='uk') — стиль і голос автора: типові хуки, CTA, приклади фраз, заборонені слова. Факти/кейси/цифри звідси НЕ бери — для них get_cases/get_products/get_personas.\n- query_knowledge_backup(question, language='uk') — резерв, якщо query_knowledge повернув помилку/порожньо\n- save_rule(type='text', title, content) — зберегти правило/корекцію в базу знань («запам'ятай», «не використовуй», «надалі»...). content починай з 'ПРАВИЛО (додано {{now.date}}):'\n- save_rule_backup(type='text', title, content) — одразу після save_rule продублюй те саме\n\nКОЛИ ПИШЕШ АБО ПЕРЕПИСУЄШ ПОСТ:\n1. Базові правила вище — завжди застосовуються.\n2. Потрібен кейс/факт/деталі продукту — виклич get_cases / get_products (канонічна база). Кейси і цифри — ТІЛЬКИ звідти, в межах allowedClaims. НІКОЛИ не вигадуй кейси, цифри, історії. Немає реального — пиши без кейсу. query_knowledge — лише щоб зловити стиль/тон.\n3. Перед редагуванням/видаленням — list_posts щоб знайти номери.\n\nКОНСТРУКТОР: коли створюєш пост (create_post) — ЗАВЖДИ передавай атоми конструктора: intent, structure (aida/pas/case/insight/listicle/provocation), hook_type (під мережу: LinkedIn/Telegram->stat/promise/story, Threads->provocation/question/pain, IG/Reels->pain/promise/counter), hook (перший рядок), evidence_type. Пиши текст ЗА обраною structure. Перед постом можеш глянути get_structures(platform) — доступні структури саме цієї мережі, і get_network_rules(platform) — правила мережі (довжина, хештеги, лінки); structure обирай лише з доречних платформі.\nФОРМАТИ: перед постом можеш глянути get_formats(platform) — доступні формати мережі (key, медіа-типи, aspect). Постав post_type = key формату, а для зображень/відео aspectRatio = aspect формату. Посилання клади за правилом мережі (get_network_rules: коментар/шапка/inline).\nСКОРИНГ: get_top_patterns(platform) підкаже, які hook/structure/intent дають найкращі бали для мережі — враховуй, якщо доречно.\nГЕЙТ ЯКОСТІ (обовʼязково перед КОЖНИМ create_post і edit_post): виклич check_writing з повним текстом поста. Якщо pass=false — перепиши текст за списком порушень і виклич check_writing знову, поки не буде pass=true. Зберігай лише текст, що пройшов гейт.\n\nПРАВИЛА РОБОТИ:\n- Відповідай українською. НЕ використовуй markdown (** **, ##, [], ()) у звичайному тексті — АЛЕ текст кожного поста обгортай у code-блок ``` (див. ФОРМАТ ВИВОДУ ПОСТІВ вище)\n- Завжди показуй номери постів (#N)\n- «цей тиждень» = понеділок–неділя; «сьогодні» = {{now.date}}\n- «тестові пости» = зі словами «тест»/«тестов» або очевидні заглушки — знайди і видали\n- Якщо юзер дає правки (стиль, ЦА, факти) — застосуй до постів через edit_post І збережи через save_rule + save_rule_backup\n- Якщо запит — питання чи стратегія — відповідай як консультант (можеш спиратись на query_knowledge)\n- Після всіх дій — короткий підсумок ЩО зроблено по кожному запиту (з номерами)\n\nЗОБРАЖЕННЯ В ЧАТІ: якщо користувач просить надіслати/скинути/показати картинки поста (напр. «скинь картинки», «покажи зображення») — виклич send_media з номером поста (надішле наявні зображення прямо в чат). НЕ кажи, що не можеш показувати зображення, і НЕ відсилай у дашборд для цього. Дашборд згадуй лише для масштабного перегляду/ручного редагування.\n\nРЕДАГУВАННЯ — ТРИ РЕЖИМИ (чітко розрізняй, що саме просить користувач):\n1) НАПИСАТИ пост — create_post (створити новий пост).\n2) ВІДРЕДАГУВАТИ ТЕКСТ ПОСТА — edit_post(number, text). Змінює ТІЛЬКИ підпис/текст поста у стрічці. НЕ чіпає зображення.\n3) ВІДРЕДАГУВАТИ ЗОБРАЖЕННЯ (текст або вигляд НА картинці) — regenerate_image. Текст на каруселі = funnel_params.slides (масив об'єктів {text, subText}). Формат каруселі — funnel_params.aspectRatio: \"1:1\" (квадрат/пост у стрічку), \"9:16\" (рілс/сторіз/вертикальна), \"4:5\" (дефолт); заголовок/підзаголовок сторіз = funnel_params.title / funnel_params.subtitle; фон чи палітра = imagePrompt / palette.\n\nПРОТОКОЛ редагування зображення — ЗАВЖДИ так:\n- СПОЧАТКУ виклич get_post(number) і подивись ПОТОЧНІ funnel_params (slides, title, subtitle тощо).\n- Зміни ТІЛЬКИ те, що попросив користувач. Решту слайдів і полів скопіюй ДОСЛІВНО, як були.\n- Передай у regenerate_image ПОВНИЙ оновлений funnel_params (масив slides замінюється цілком — якщо передаси лише один слайд, інші зникнуть).\n- НЕ переписуй увесь текст, НЕ змінюй фон/палітру/фото та інші слайди, якщо про це не просили. Роби саме ту точкову правку, яку сформулював користувач, без зайвого «покращення».\n- Якщо користувач каже «зміни текст на картинці / на слайді / у сторіз», «додай слайд», «перепиши слайд N» — це РЕЖИМ 3 (regenerate_image), а НЕ edit_post.\n- Після regenerate_image зображення доставиться в чат автоматично (не кажи йти в дашборд).\n\nЧЕСНІСТЬ ДІЙ — НІКОЛИ не вигадуй результат:\n- Кажи «надіслав», «перегенерував», «зберіг», «створив», «готово» ЛИШЕ якщо реально викликав відповідний інструмент і він повернув успіх. Не викликав інструмент — не кажи, що зробив.\n- Якщо інструмент повернув помилку/порожнечу або зображення ще не готове — чесно скажи це («генерація зображення зараз недоступна», «зображення ще генерується»), а не «готово/надіслано».\n- НЕ вигадуй технічних обмежень («не можу показувати зображення»). Щоб надіслати картинки — виклич send_media.\n- send_media шле тільки вже згенеровані зображення; якщо їх ще нема — так і скажи, не обіцяй «надіслано».\n\n### Інструмент create_avatar_reel (відео з аватаром)\nЯкщо користувач просить ЗРОБИТИ ВІДЕО або РІЛС з аватаром (наприклад «зроби рілс де я лікар діагностую…», «відео в різних образах», «відео-сценарій про…») — виклич інструмент create_avatar_reel, передавши theme з максимально детальним описом сценарію (ролі, образи, послідовність, фінальна метафора, заклик). Не створюй для цього звичайні пости. Після виклику коротко підтверди, що відео генерується і прийде в чат за кілька хвилин.\n\nЛІД-МАГНІТИ І ПОСИЛАННЯ (ЄДИНЕ ДЖЕРЕЛО для продажних постів — не бери лінки з бази знань):\n{{context.leadMagnets}}\nКоли пишеш/редагуєш продажний пост із закликом до дії — бери конкретний лід-магніт звідси: його суть як кут, його посилання як CTA (дослівно). Якщо магнітів нема — не вигадуй лінків.\n\nСТИЛЬ ТВОЇХ ПОВІДОМЛЕНЬ (не тільки постів — як ти сам пишеш у чат): жива людська мова, не робот. Конкретно, по-справі, тепло, на «ти». Без канцеляриту і кліше (без «безумовно», «важливо розуміти», «таким чином», «на сьогоднішній день», «у сучасному світі», «це дозволяє»). Без фінальних міні-лекцій і «отже» в кінці. Чергуй короткі фрази з довшими — не став усе рівно. Одна думка — ясно. Не поясюй очевидне.",
+        "maxIterations": 15,
+        "messagesTemplate": "[{\"role\":\"user\",\"content\":\"{{context.agentInputJson}}\"}]"
+      },
+      "type": "agent",
+      "position": {
+        "x": 2200,
+        "y": 1360
+      }
+    },
+    {
+      "id": "node_agent_encode_1780678764262",
+      "data": {
+        "code": "var txt = context.agentResult || '';\nreturn {\n  webCallbackBody: JSON.stringify({\n    text: txt,\n    sessionId: context.webSessionId || ''\n  })\n};",
+        "label": "Agent: Encode callback"
+      },
+      "type": "js",
+      "position": {
+        "x": 2200,
+        "y": 1800
+      }
+    },
+    {
+      "id": "node_agent_callback_1780678764262",
+      "data": {
+        "text": "{{context.agentResult}}",
+        "label": "Agent: Send callback"
+      },
+      "type": "message",
+      "position": {
+        "x": 2200,
+        "y": 2120
+      }
+    },
+    {
+      "id": "node_1781008575166",
+      "data": {
+        "code": "// Early reply — підтвердження зрозумілих завдань + \"генерую\" (fire-and-forget)\nvar ackText = context.confirmText || '⏳ Прийнято в роботу. Генерую контент — зачекай...';\nif (context.webCallbackUrl) {\n  try {\n    fetch(context.webCallbackUrl, {\n      method: 'POST',\n      headers: { 'Content-Type': 'application/json' },\n      body: JSON.stringify({ text: ackText, sessionId: context.webSessionId || '' })\n    });\n  } catch(e) {}\n}\n\n// Створюємо порожні плейсхолдери в плані відразу → у плані видно «генерується текст» (fire-and-forget)\ntry {\n  if (context.importUrl && context.resolvedTasks) {\n    var phUrl = String(context.importUrl).replace('/api/posts/bulk-import', '/api/webhooks/chat-placeholders');\n    var tasksArr = [];\n    try { tasksArr = JSON.parse(context.resolvedTasks); } catch(e) {}\n    if (Array.isArray(tasksArr) && tasksArr.length) {\n      fetch(phUrl, {\n        method: 'POST',\n        headers: { 'Content-Type': 'application/json' },\n        body: JSON.stringify({ projectId: context.projectId, tasks: tasksArr })\n      });\n    }\n  }\n} catch(e) {}\n\n// today may arrive as DD.MM.YY from dashboard — prefer ISO\nvar todayIso = context.todayISO || context.today || new Date().toISOString().slice(0,10);\nif (!/^\\d{4}-\\d{2}-\\d{2}$/.test(todayIso)) todayIso = new Date().toISOString().slice(0,10);\nvar d = new Date(todayIso);\nd.setDate(d.getDate() - 30);\nvar dateFrom = d.toISOString().slice(0,10);\nreturn { listPostsDateFrom: dateFrom };",
+        "label": "topicHistory: дата 30 днів"
+      },
+      "type": "js",
+      "position": {
+        "x": -400,
+        "y": 1520
+      }
+    },
+    {
+      "id": "node_1781008581114",
+      "data": {
+        "code": "var raw = context.topicHistoryRaw;\nvar posts = [];\nif (Array.isArray(raw)) posts = raw;\nelse if (raw && Array.isArray(raw.posts)) posts = raw.posts;\nelse if (typeof raw === 'string') {\n  try { var pj = JSON.parse(raw); posts = Array.isArray(pj) ? pj : (pj && Array.isArray(pj.posts) ? pj.posts : []); } catch(e) {}\n}\nif (!Array.isArray(posts)) posts = [];\n\nvar meta = posts.slice(-30).map(function(p) {\n  var content = String(p.content || p.text || '').slice(0, 60).replace(/[\\n\\r]/g, ' ');\n  return (p.post_date || p.date || '?') + ' [' + (p.platform || '?') + '/' + (p.post_type || 'post') + '] ' + content;\n});\n\n// single-line join — value is embedded into ST messagesTemplate JSON (no real newlines)\nreturn {\n  topicHistory: meta.length > 0 ? meta.join(' // ') : 'немає попередніх постів'\n};",
+        "label": "topicHistory: parse posts"
+      },
+      "type": "js",
+      "position": {
+        "x": -400,
+        "y": 1920
+      }
+    },
+    {
+      "id": "node_1781008599237",
+      "data": {
+        "url": "https://content2.fineko.space/api/agent-tools?action=list_posts&token=fnk_wh_2026_x9mK4pLqR7vNsT1eYcJdBuAw&projectId={{context.projectId}}&date_from={{context.listPostsDateFrom}}&date_to={{context.todayISO}}",
+        "label": "topicHistory: list_posts (30d)",
+        "method": "GET",
+        "outputVar": "context.topicHistoryRaw",
+        "ignoreErrors": true
+      },
+      "type": "httpRequest",
+      "position": {
+        "x": -400,
+        "y": 1720
+      }
+    },
+    {
+      "id": "node_1781008605948",
+      "data": {
+        "url": "https://content2.fineko.space/api/agent-tools?action=query_vector&token=fnk_wh_2026_x9mK4pLqR7vNsT1eYcJdBuAw&projectId={{context.projectId}}",
+        "body": "{\"question\":\"Стиль і голос @matsukoleksandr для {{context.singlePlatform}}: як він пише, його тон, типові хуки, CTA, заборонені слова, структура поста. ПРАВИЛА І ЗАБОРОНИ контенту (що категорично не можна — наприклад вигадані кейси). РЕАЛЬНІ кейси та факти автора, які можна використовувати в постах. Цільова аудиторія. Тема запиту: {{context.singleTopic}}\",\"language\":\"uk\"}",
+        "label": "Вектор: стиль автора + правила",
+        "method": "POST",
+        "outputVar": "context.stRulesRaw",
+        "ignoreErrors": true,
+        "responseField": "answer"
+      },
+      "type": "httpRequest",
+      "position": {
+        "x": -400,
+        "y": 2120
+      }
+    },
+    {
+      "id": "node_1781121561790",
+      "data": {
+        "code": "var msg = context.userMessage || context.lastUserInput || '';\n\n// Extract a short title (first sentence or up to 60 chars)\nvar title = msg.replace(/^[\\s\\-:]+/, '');\nvar dot = title.indexOf('.');\nvar newline = title.indexOf('\\n');\nvar end = Math.min(\n  dot > 0 ? dot : 9999,\n  newline > 0 ? newline : 9999,\n  60\n);\ntitle = title.slice(0, end).trim();\nif (!title) title = msg.slice(0, 50).trim();\n\n// Full content with context\nvar content = 'ПРАВИЛО (додано ' + (context.today || new Date().toISOString().slice(0,10)) + '):\\n' + msg;\n\nvar nlmBody = JSON.stringify({\n  type: 'text',\n  title: title,\n  content: content\n});\n\nreturn {\n  ruleTitle: title,\n  ruleContent: content,\n  ruleNlmBody: nlmBody,\n};",
+        "label": "save_rule: format"
+      },
+      "type": "js",
+      "position": {
+        "x": 1800,
+        "y": 1520
+      }
+    },
+    {
+      "id": "node_1781121577166",
+      "data": {
+        "url": "https://content2.fineko.space/api/agent-tools?action=save_rule&token=fnk_wh_2026_x9mK4pLqR7vNsT1eYcJdBuAw&projectId={{context.projectId}}",
+        "body": "{{context.ruleNlmBody}}",
+        "label": "save_rule → content2",
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "outputVar": "context.nlmSaveResult",
+        "ignoreErrors": true
+      },
+      "type": "httpRequest",
+      "position": {
+        "x": 1800,
+        "y": 1800
+      }
+    },
+    {
+      "id": "node_1781121603352",
+      "data": {
+        "code": "var ok = context.nlmSaveResult && context.nlmSaveResult.ok !== false;\nvar text = ok\n  ? '✅ Правило збережено в базу знань.\\n\\nБуде враховуватись при наступних генераціях.'\n  : '⚠️ Правило збережено локально (база знань тимчасово недоступна).\\nПовторимся автоматично пізніше.';\nreturn {\n  webCallbackBody: JSON.stringify({\n    text: text,\n    sessionId: context.webSessionId || ''\n  })\n};",
+        "label": "save_rule: encode callback"
+      },
+      "type": "js",
+      "position": {
+        "x": 1800,
+        "y": 2080
+      }
+    },
+    {
+      "id": "node_1781121620199",
+      "data": {
+        "text": "✅ Правило збережено в базу знань. Враховуватиму при наступних генераціях.",
+        "label": "save_rule: send callback"
+      },
+      "type": "message",
+      "position": {
+        "x": 1800,
+        "y": 2360
+      }
+    },
+    {
+      "id": "node_1781266857076",
+      "data": {
+        "code": "var raw = context.stResult;\n\nfunction salvageArray(s) {\n  var out = [];\n  var depth = 0, start = -1, inStr = false, esc = false;\n  for (var i = 0; i < s.length; i++) {\n    var ch = s[i];\n    if (esc) { esc = false; continue; }\n    if (ch === '\\\\') { esc = true; continue; }\n    if (ch === '\"') { inStr = !inStr; continue; }\n    if (inStr) continue;\n    if (ch === '{') { if (depth === 0) start = i; depth++; }\n    else if (ch === '}') {\n      depth--;\n      if (depth === 0 && start >= 0) {\n        try { out.push(JSON.parse(s.slice(start, i + 1))); } catch(e) {}\n        start = -1;\n      }\n    }\n  }\n  return out;\n}\n\n// ── Humanizer (uk-clean) ────────\nvar RU_MAP = {\n  'что':'що','чтобы':'щоб','пишет':'пише','одержати':'отримати','одержав':'отримав',\n  'получити':'отримати','получив':'отримав','слідуючий':'наступний',\n  'на протязі':'протягом','добавити':'додати','добавив':'додав','все рівно':'однаково',\n  'на рахунок':'щодо','не дивлячись на':'попри','міроприємство':'захід','співпадає':'збігається',\n  'касси':'каси','касса':'каса','данні':'дані','неможна':'не можна','більше неможна':'більше не можна'\n};\nfunction cleanUk(str){\n  if(!str || typeof str!=='string') return str;\n  var out=str;\n  Object.keys(RU_MAP).forEach(function(k){\n    var rep=RU_MAP[k];\n    var re=new RegExp('([^\\\\p{L}]|^)('+k+')(?=[^\\\\p{L}]|$)','giu');\n    out=out.replace(re,function(m,pre,word){\n      var r=rep;\n      if(word && word[0]===word[0].toUpperCase() && word[0]!==word[0].toLowerCase()) r=r.charAt(0).toUpperCase()+r.slice(1);\n      return pre+r;\n    });\n  });\n  return out;\n}\nfunction stripSlideLabel(t){ return String(t||'').replace(/^\\s*слайд\\s*\\d+\\s*[:.\\-—]?\\s*/i,'').trim(); }\nfunction cleanPost(p){\n  if(p && typeof p==='object'){\n    if(typeof p.content==='string') p.content=cleanUk(p.content);\n    if(typeof p.caption==='string') p.caption=cleanUk(p.caption);\n    if(p.funnel_params && typeof p.funnel_params==='object'){\n      if(typeof p.funnel_params.title==='string') p.funnel_params.title=cleanUk(p.funnel_params.title);\n      if(typeof p.funnel_params.subtitle==='string') p.funnel_params.subtitle=cleanUk(p.funnel_params.subtitle);\n      if(Array.isArray(p.funnel_params.slides)){\n        p.funnel_params.slides = p.funnel_params.slides.map(function(s){\n          if(s && typeof s==='object'){\n            if(typeof s.text==='string') s.text = cleanUk(stripSlideLabel(s.text));\n            if(typeof s.subText==='string') s.subText = cleanUk(s.subText);\n          }\n          return s;\n        });\n      }\n    }\n    if(Array.isArray(p.slides)){ p.slides=p.slides.map(function(s){ if(s&&typeof s==='object'){ if(typeof s.text==='string')s.text=cleanUk(stripSlideLabel(s.text)); if(typeof s.title==='string')s.title=cleanUk(s.title);} return s;}); }\n  }\n  return p;\n}\n\nvar batch = [];\nif (Array.isArray(raw)) batch = raw;\nelse if (typeof raw === 'string') {\n  var s = raw.replace(/^```json\\s*/i,'').replace(/^```\\s*/i,'').replace(/\\s*```\\s*$/,'').trim();\n  try { batch = JSON.parse(s); } catch(e) { batch = salvageArray(s); }\n  if (!Array.isArray(batch)) batch = [batch];\n} else if (raw && typeof raw === 'object') batch = [raw];\nif (!Array.isArray(batch)) batch = [];\nbatch = batch.filter(function(p){ return p && typeof p === 'object' && (p.content || p.caption || p.slides); });\nbatch = batch.map(cleanPost);\n\nvar all = [];\ntry { all = JSON.parse(context.stAllPosts || '[]'); } catch(e) { all = []; }\nall = all.concat(batch);\n\nvar idx = (context.batchIndex || 0) + 1;\nvar batchCount = context.batchCount || 1;\nvar total = context.batchTotalPosts || all.length;\nvar remaining = total - all.length;\nvar hasMore = remaining > 0 && idx < batchCount && idx < 8 && batch.length > 0;\n\nvar doneTopics = all.map(function(p){\n  return (p.date||'') + ' [' + (p.platform||'') + '] ' + String(p.content||'').slice(0,50).replace(/[\"\\n\\r]/g,' ');\n}).join('; ');\nif (doneTopics.length > 2000) doneTopics = doneTopics.slice(-2000);\n\nvar nextCount = Math.max(1, Math.min(remaining, context.batchSize || 7));\nvar lastDate = all.length ? (all[all.length-1].date || context.batchDateFrom) : context.batchDateFrom;\nvar today = context.today || context.batchDateFrom || new Date().toISOString().slice(0,10);\n\nreturn {\n  stAllPosts: JSON.stringify(all),\n  batchIndex: idx,\n  batchHasMore: hasMore,\n  batchCurrentCount: nextCount,\n  batchDoneTopics: doneTopics || 'ще немає',\n  batchProgressText: hasMore\n    ? ('Сьогодні: ' + today + '. Це батч ' + (idx+1) + ' із ' + batchCount + ' великого плану. Згенеруй РІВНО ' + nextCount + ' наступних пост(ів). Продовжуй розклад після дати ' + lastDate + '.')\n    : '',\n};",
+        "label": "ST: Batch accumulate"
+      },
+      "type": "js",
+      "position": {
+        "x": 200,
+        "y": 2200
+      }
+    },
+    {
+      "id": "node_1781266874660",
+      "data": {
+        "label": "Ще батчі?",
+        "conditions": [
+          {
+            "id": "0",
+            "label": "→ наступний батч",
+            "expression": "context.batchHasMore === true"
+          },
+          {
+            "id": "1",
+            "label": "→ format + save",
+            "expression": "true"
+          }
+        ]
+      },
+      "type": "condition",
+      "position": {
+        "x": 200,
+        "y": 2360
+      }
+    },
+    {
+      "id": "node_1781266905762",
+      "data": {
+        "code": "var posts = [];\ntry { posts = JSON.parse(context.stAllPosts || '[]'); } catch(e) { posts = []; }\nif (!Array.isArray(posts)) posts = [];\n\n// ── LLM-humanizer (Haiku): чиста жива українська, структура незмінна ──\ntry {\n  var aiKey = (typeof keys !== 'undefined' && keys && keys.ANTHROPIC_API_KEY) ? keys.ANTHROPIC_API_KEY : '';\n  if (aiKey && posts.length) {\n    var sysH = 'Ти редактор-коректор українських текстів. Отримуєш JSON-масив постів. ПОВЕРНИ ТОЧНО ТАКИЙ САМИЙ масив (та сама довжина й структура, ті самі ключі), але у ТЕКСТОВИХ полях (content, caption, funnel_params.title, funnel_params.subtitle, funnel_params.slides[].text, funnel_params.slides[].subText) виправ УСІ русизми, кальки та помилки на природну живу українську. Збережи сенс, тон і довжину. НЕ чіпай: date, platform, post_type, funnel_slug, palette, audience, status, image_prompt та imagePrompt (лишай англійською). НЕ додавай і НЕ прибирай пости/слайди, не змінюй кількість і порядок. Поверни ТІЛЬКИ JSON-масив, без пояснень, без markdown.';\n    var rH = await fetch('https://api.anthropic.com/v1/messages', {\n      method: 'POST',\n      headers: { 'x-api-key': aiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },\n      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 16000, system: sysH, messages: [{ role: 'user', content: JSON.stringify(posts) }] })\n    });\n    var jH = await rH.json();\n    var tH = jH && jH.content && jH.content[0] && jH.content[0].text;\n    if (tH) {\n      var sH = String(tH).replace(/^```json\\s*/i,'').replace(/^```\\s*/i,'').replace(/\\s*```\\s*$/,'').trim();\n      var cl = JSON.parse(sH);\n      if (Array.isArray(cl) && cl.length === posts.length) posts = cl;\n    }\n  }\n} catch(e) {}\n\nvar importPosts = posts.map(function(p) {\n  var rawContent = p.content || p.caption || '';\n  if (!rawContent && Array.isArray(p.slides)) {\n    rawContent = p.slides.map(function(s){ return s.text || s.title || ''; }).filter(Boolean).join('\\n---\\n');\n  }\n  var funnelSlug = p.funnel_slug || null;\n  var funnelParams = p.funnel_params || null;\n  var imagePrompt = (funnelParams && (funnelParams.imagePrompt || funnelParams.prompt)) || p.imagePrompt || null;\n\n  return {\n    date: p.date, platform: p.platform,\n    content: rawContent.replace(/\\*\\*/g,'').replace(/#{1,6}\\s/g,''),\n    audience: p.audience || 'cold',\n    post_type: p.post_type || 'post',\n    status: 'scheduled',\n    funnel_slug: funnelSlug,\n    funnel_params: funnelParams,\n    image_prompt: imagePrompt,\n    media_type: funnelSlug ? funnelSlug.replace('content-','').replace(/-/g,'_') : 'text_only',\n    intent: p.intent || null,\n    structure: p.structure || null,\n    hook_type: p.hook_type || null,\n    evidence_type: p.evidence_type || null,\n    hook: p.hook || null,\n  };\n});\n\nvar payload = { projectId: context.projectId||2, posts: importPosts };\nif (context.tgChatId && context.tgBotToken) {\n  payload.deliverTo = { botToken: context.tgBotToken, chatId: context.tgChatId };\n}\n\nreturn {\n  stImportPayload: JSON.stringify(payload),\n  stAllPosts: JSON.stringify(posts),\n  hasPosts: posts.length > 0,\n  stPostsForTrigger: '[]',\n};",
+        "label": "ST: Build import payload"
+      },
+      "type": "js",
+      "position": {
+        "x": 200,
+        "y": 2520
+      }
+    },
+    {
+      "id": "node_1781269102711",
+      "data": {
+        "code": "var posts = [];\ntry { posts = JSON.parse(context.stAllPosts || '[]'); } catch(e) { posts = []; }\nif (!Array.isArray(posts)) posts = [];\n\nvar save = context.saveResult;\nvar parsedSave = typeof save === 'object' ? (save || {}) : {};\ntry { if (typeof save === 'string') parsedSave = JSON.parse(save); } catch(e) {}\nvar inserted = parsedSave.insertedIds || [];\n\n// Шар 2 — детермінований grep-gate для батч-постів (анотація якості в чат; пости вже збережені).\nvar WBANNED = ['безумовно','вкрай важливо','слід зазначити','варто зазначити','важливо розуміти','на сьогоднішній день','у сучасному світі','таким чином','підбиваючи підсумок','ключовий момент','це дозволяє','багатогранний','нюансований','безшовний','розкриємо таємниці','в наш час','кожен з нас'];\nvar WGREET = ['привіт','друзі','доброго дня','сьогодні поговоримо','хочу поділитися'];\nfunction scanW(t) {\n  try {\n    var v = [], low = String(t||'').toLowerCase();\n    for (var a=0;a<WBANNED.length;a++) if (low.indexOf(WBANNED[a])>=0) v.push('стоп-слово «'+WBANNED[a]+'»');\n    var paras = String(t||'').split(/\\n\\s*\\n/);\n    for (var b=0;b<paras.length;b++){ var d=(paras[b].match(/—/g)||[]).length; if(d>1){ v.push(d+' тире в абзаці'); break; } }\n    var st = low.replace(/^\\s+/,'').slice(0,45);\n    for (var c=0;c<WGREET.length;c++) if (st.indexOf(WGREET[c])>=0){ v.push('привітання на старті'); break; }\n    return v;\n  } catch(e){ return []; }\n}\n\nvar FENCE = String.fromCharCode(96, 96, 96);\nvar audienceEmoji = {cold:'🔴',warm1:'🟠',warm2:'🟡',hot1:'🟢',hot2:'🔵'};\nvar today = new Date().toISOString().slice(0,10);\nvar dashUrl = 'https://content2.fineko.space/';\n\nvar lines = [];\nvar flagged = 0;\nposts.forEach(function(p, i) {\n  var ae = audienceEmoji[p.audience] || '⚪';\n  var rawTxt = p.content || p.caption || '';\n  var txt = rawTxt.replace(/\\*\\*/g,'').replace(/#{1,6}\\s/g,'');\n  if (!txt && Array.isArray(p.slides)) {\n    txt = p.slides.map(function(s){ return s.text || s.title || ''; }).filter(Boolean).join('\\n---\\n');\n  }\n  var funnelSlug = p.funnel_slug || null;\n  var label = funnelSlug ? funnelSlug.replace('content-','') : 'text-only';\n  var num = inserted[i] && inserted[i].number != null ? ('#' + inserted[i].number + ' ') : '';\n  lines.push(num + '📅 ' + p.date + ' · ' + p.platform + ' ' + ae + ' [' + (p.post_type||'post') + '] [' + label + ']');\n  lines.push(FENCE);\n  lines.push(txt);\n  lines.push(FENCE);\n  var vio = scanW(txt);\n  if (vio.length) { lines.push('⚠️ якість: ' + vio.join('; ')); flagged++; }\n  lines.push('');\n});\nif (posts.length > 0) {\n  var saved = parsedSave.inserted != null ? parsedSave.inserted : posts.length;\n  lines.push('✅ Збережено ' + saved + ' пост(ів) → ' + dashUrl);\n  if (flagged > 0) lines.push('⚠️ ' + flagged + ' пост(ів) з попередженнями стандарту письма — дивись позначки вище.');\n} else {\n  lines.push('⚠️ Не вдалося згенерувати пости — спробуй переформулювати запит.');\n}\n\nreturn {\n  webResponseText: lines.join('\\n'),\n  webCallbackBody: JSON.stringify({\n    text: lines.join('\\n'),\n    sessionId: context.webSessionId || ''\n  })\n};\n",
+        "label": "ST: Chat text (з номерами)"
+      },
+      "type": "js",
+      "position": {
+        "x": 200,
+        "y": 2760
+      }
+    },
+    {
+      "id": "node_1781269120944",
+      "data": {
+        "text": "{{context.confirmText}}\n\n{{context.webResponseText}}",
+        "label": "Send response to chat"
+      },
+      "type": "message",
+      "position": {
+        "x": 200,
+        "y": 3000
+      }
+    },
+    {
+      "id": "node_load_core_rules",
+      "data": {
+        "url": "https://content2.fineko.space/api/agent-tools?action=get_rules&token=fnk_wh_2026_x9mK4pLqR7vNsT1eYcJdBuAw&projectId={{context.projectId}}",
+        "label": "Load project rules (content2)",
+        "method": "GET",
+        "outputVar": "context.coreRulesRaw",
+        "ignoreErrors": true
+      },
+      "type": "httpRequest",
+      "position": {
+        "x": 160,
+        "y": 560
+      }
+    },
+    {
+      "id": "node_merge_core_rules",
+      "data": {
+        "code": "return (async () => {\n  var raw = context.coreRulesRaw;\n  var parsed = typeof raw === 'object' ? (raw || {}) : {};\n  try { if (typeof raw === 'string') parsed = JSON.parse(raw); } catch(e) {}\n  var rules = (parsed && typeof parsed.rules === 'string') ? parsed.rules.trim() : '';\n  if (rules.length < 100) {\n    rules = 'ЗАБОРОНЕНО: вигадані кейси, цифри, діалоги — тільки реальні факти з бази знань. Не починати з привітань. Один CTA на пост. ЦА: власники бізнесу 5–50 людей (від 7 в команді). Стиль: практик, перша особа, без пафосу, конкретика.';\n  }\n  var base='https://content2.fineko.space/api/agent-tools', tok='fnk_wh_2026_x9mK4pLqR7vNsT1eYcJdBuAw', pid=context.projectId||'';\n  async function grab(action){ try { var r=await fetch(base+'?action='+action+'&token='+tok+'&projectId='+pid); var j=await r.json(); return (j&&j.text)?j.text:''; } catch(e){ return ''; } }\n  var topicsBank=await grab('get_topics');\n  var structuresText=await grab('get_structures');\n  var leadMagnets=await grab('get_lead_magnets');\n  var personasText=await grab('get_personas');\n  var casesText=await grab('get_cases');\n  var strategyText=await grab('get_strategy');\n  var productsText=await grab('get_products');\n  var writingCore=await grab('get_writing_core');\n  var networkRules=await grab('get_network_rules');\n  var formatsText=await grab('get_formats');\n  var topPatterns=await grab('get_top_patterns');\n  if (casesText.length>2600) casesText=casesText.slice(0,2600)+'\\n…(ще кейси — див. базу)';\n  if (!structuresText && !topicsBank && !casesText && !productsText) { throw new Error('KB_UNAVAILABLE: база знань недоступна — генерацію зупинено, щоб не писати з голови'); }\n  return { coreRules: rules, topicsBank: topicsBank, structuresText: structuresText, leadMagnets: leadMagnets, personasText: personasText, casesText: casesText, strategyText: strategyText, productsText: productsText, writingCore: writingCore, networkRules: networkRules, formatsText: formatsText, topPatterns: topPatterns };\n})();",
+        "label": "JS: coreRules + fallback"
+      },
+      "type": "js",
+      "position": {
+        "x": 160,
+        "y": 720
+      }
+    },
+    {
+      "id": "node_1782073677283",
+      "data": {
+        "code": "return (async () => {\n  var posts = [];\n  try { posts = JSON.parse(context.stAllPosts || '[]'); } catch(e){}\n  var titles = [];\n  if (Array.isArray(posts)) posts.forEach(function(p){ if(p && p.used_topic && String(p.used_topic).trim()) titles.push(String(p.used_topic).trim()); });\n  if (titles.length) {\n    try { await fetch('https://content2.fineko.space/api/agent-tools?action=mark_topics_used&token=fnk_wh_2026_x9mK4pLqR7vNsT1eYcJdBuAw&projectId='+encodeURIComponent(context.projectId||''), {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({titles:titles})}); } catch(e){}\n  }\n  return { markedTopics: titles.length };\n})();",
+        "label": "Mark used topics"
+      },
+      "type": "js",
+      "position": {
+        "x": 200,
+        "y": 2700
+      }
+    },
+    {
+      "id": "node_plan_self_continue",
+      "data": {
+        "code": "return (async () => {\n  var remaining = context._planRemaining || 0;\n  var contTasks = context._planContTasks || '[]';\n  var parsed = [];\n  try { parsed = JSON.parse(contTasks); } catch(e) {}\n  if (!remaining || !Array.isArray(parsed) || !parsed.length) return { _planDone: true };\n  var body = {\n    message: 'продовження контент-плану (авто)',\n    _resolvedTasksOverride: contTasks,\n    _planArc: context._planArc || '',\n    today: context.today, todayISO: context.todayISO,\n    projectId: context.projectId,\n    importUrl: context.importUrl,\n    tgChatId: context._planTgChatId || context.tgChatId || '',\n    tgBotToken: context._planTgBotToken || context.tgBotToken || '',\n    history: []\n  };\n  try {\n    await fetch('http://127.0.0.1:3000/webhook/bot/content-manager-v2', {\n      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)\n    });\n  } catch(e) {}\n  return { _planFired: true, _planFiredRemaining: remaining };\n})();",
+        "label": "Plan self-continue (chunk chain)"
+      },
+      "type": "js",
+      "position": {
+        "x": 520,
+        "y": 2700
+      }
+    },
+    {
+      "id": "n_gate_profile",
+      "data": {
+        "url": "{{env.CONTENT2_URL}}/api/webhooks/onboarding-profile",
+        "label": "Гейт: профіль content2",
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-webhook-secret": "{{env.CONTENT2_WEBHOOK_SECRET}}"
+        },
+        "outputVar": "context.profile",
+        "bodyFields": {
+          "projectId": "{{env.CONTENT2_PROJECT_ID}}"
+        },
+        "ignoreErrors": true
+      },
+      "type": "httpRequest",
+      "position": {
+        "x": 80,
+        "y": -220
+      }
+    },
+    {
+      "id": "n_gate_cond",
+      "data": {
+        "label": "Профіль готовий?",
+        "conditions": [
+          {
+            "id": "incomplete",
+            "label": "неповний",
+            "expression": "context.profile && Array.isArray(context.profile.gaps) && context.profile.gaps.some(function(g){return ['founder','product','persona','brand','strategy'].indexOf(g)>=0})"
+          },
+          {
+            "id": "ready",
+            "label": "готовий",
+            "expression": "true"
+          }
+        ]
+      },
+      "type": "condition",
+      "position": {
+        "x": 80,
+        "y": -100
+      }
+    },
+    {
+      "id": "n_gate_redirect",
+      "data": {
+        "text": "👋 Щоб я робив контент саме під твій бізнес — спершу заповнимо бренд-профіль (продукти, аудиторія, тон, кейси, стратегія). Це 5-10 хвилин.\n\nНатисни 👇",
+        "label": "Гейт → онбординг",
+        "buttons": [
+          [
+            {
+              "url": "https://t.me/fineko_content_bot?start=onboard",
+              "text": "📝 Заповнити профіль"
+            }
+          ]
+        ]
+      },
+      "type": "message",
+      "position": {
+        "x": -160,
+        "y": 20
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge_1780591032335",
+      "source": "start_1",
+      "target": "n_gate_profile"
+    },
+    {
+      "id": "edge_1780591043296",
+      "source": "node_1780590806221",
+      "target": "node_load_core_rules"
+    },
+    {
+      "id": "edge_1780591052666",
+      "source": "node_1780590851896",
+      "target": "node_1780590874133"
+    },
+    {
+      "id": "edge_1780591061018",
+      "source": "node_1780590874133",
+      "target": "node_1780590888196"
+    },
+    {
+      "id": "edge_1780591092324",
+      "source": "node_1780590888196",
+      "target": "node_1780590894409"
+    },
+    {
+      "id": "edge_1780591128465",
+      "source": "node_1780590894409",
+      "target": "node_1780591011470"
+    },
+    {
+      "id": "edge_1780591134844",
+      "source": "node_1780590894409",
+      "target": "node_1780590995517"
+    },
+    {
+      "id": "edge_1780594314530",
+      "source": "node_1780594213383",
+      "target": "node_1780594225821"
+    },
+    {
+      "id": "edge_1780594331041",
+      "source": "node_1780594225821",
+      "target": "node_1780594238378"
+    },
+    {
+      "id": "edge_1780594347520",
+      "source": "node_1780594238378",
+      "target": "node_1780594268915"
+    },
+    {
+      "id": "edge_1780594363116",
+      "source": "node_1780594268915",
+      "target": "node_1780590932392"
+    },
+    {
+      "id": "edge_1780594382768",
+      "source": "node_1780594225821",
+      "target": "node_1780590932392"
+    },
+    {
+      "id": "edge_1780602141297",
+      "source": "node_1780602067339",
+      "target": "node_1780591002750"
+    },
+    {
+      "id": "edge_1780602229896",
+      "source": "node_1780590894409",
+      "target": "node_1780602205131"
+    },
+    {
+      "id": "edge_1780602249609",
+      "source": "node_1780602205131",
+      "target": "node_1780591011470"
+    },
+    {
+      "id": "edge_route_to_agent_1780678764262",
+      "source": "node_1780590894409",
+      "target": "node_agent_content_mgr"
+    },
+    {
+      "id": "edge_encode_to_cb_1780678764262",
+      "source": "node_agent_encode_1780678764262",
+      "target": "node_agent_callback_1780678764262"
+    },
+    {
+      "id": "edge_1781008620690",
+      "source": "node_1780590888196",
+      "target": "node_1781008575166"
+    },
+    {
+      "id": "edge_1781008631586",
+      "source": "node_1781008575166",
+      "target": "node_1781008599237"
+    },
+    {
+      "id": "edge_1781008643090",
+      "source": "node_1781008599237",
+      "target": "node_1781008581114"
+    },
+    {
+      "id": "edge_1781008653345",
+      "source": "node_1781008581114",
+      "target": "node_1781008605948"
+    },
+    {
+      "id": "edge_1781008663652",
+      "source": "node_1781008605948",
+      "target": "node_1780594213383"
+    },
+    {
+      "id": "edge_1781121638491",
+      "source": "node_1780590894409",
+      "target": "node_1781121561790"
+    },
+    {
+      "id": "edge_1781121656439",
+      "source": "node_1781121561790",
+      "target": "node_1781121577166"
+    },
+    {
+      "id": "edge_1781121680919",
+      "source": "node_1781121577166",
+      "target": "node_1781121603352"
+    },
+    {
+      "id": "edge_1781121697853",
+      "source": "node_1781121603352",
+      "target": "node_1781121620199"
+    },
+    {
+      "id": "edge_1781266926770",
+      "source": "node_1780590932392",
+      "target": "node_1781266857076"
+    },
+    {
+      "id": "edge_1781266941218",
+      "source": "node_1781266857076",
+      "target": "node_1781266874660"
+    },
+    {
+      "id": "edge_1781266958774",
+      "source": "node_1781266874660",
+      "target": "node_1780590932392"
+    },
+    {
+      "id": "edge_1781266980223",
+      "source": "node_1781266874660",
+      "target": "node_1781266905762"
+    },
+    {
+      "id": "edge_1781266999469",
+      "source": "node_1781266905762",
+      "target": "node_1780590977330"
+    },
+    {
+      "id": "edge_1781269141295",
+      "source": "node_1780590977330",
+      "target": "node_1781269102711"
+    },
+    {
+      "id": "edge_1781269160889",
+      "source": "node_1781269102711",
+      "target": "node_1781269120944"
+    },
+    {
+      "id": "edge_load_rules_1",
+      "source": "node_load_core_rules",
+      "target": "node_merge_core_rules"
+    },
+    {
+      "id": "edge_load_rules_2",
+      "source": "node_merge_core_rules",
+      "target": "node_1780590851896"
+    },
+    {
+      "id": "edge_1782073720693",
+      "source": "node_1781269120944",
+      "target": "node_1782073677283"
+    },
+    {
+      "id": "edge_plan_cont_1782946611717",
+      "source": "node_1782073677283",
+      "target": "node_plan_self_continue"
+    },
+    {
+      "id": "e_gate1",
+      "source": "n_gate_profile",
+      "target": "n_gate_cond"
+    },
+    {
+      "id": "e_gate2",
+      "source": "n_gate_cond",
+      "target": "n_gate_redirect"
+    },
+    {
+      "id": "e_gate3",
+      "source": "n_gate_cond",
+      "target": "node_1780590806221"
+    }
+  ],
+  "viewport": {
+    "x": 0,
+    "y": 0,
+    "zoom": 1
+  }
+}

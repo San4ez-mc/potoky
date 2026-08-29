@@ -407,7 +407,11 @@ function pushDelivery(runtime, channel, ok, error, extra) {
 // фото автоматично не вдалось — щоб менеджер реально дізнався й надіслав вручну сам.
 async function notifyAdminPhotoMissing(session, ctx, funnelEnv, runtime, whatLabel) {
     try {
-        const adminId = await getSystemKeyValue('ADMIN_TELEGRAM_ID') || funnelEnv.ADMIN_TELEGRAM_ID;
+        // Аудит 2026-08-29 (антипатерн A6, живий кейс Сіразетдінова): ключ ВОРОНКИ
+        // (група конкретного магазину) має пріоритет над системним — системний
+        // ADMIN_TELEGRAM_ID часто особистий чат, і бот не може писати юзеру, який
+        // йому не писав першим ("Forbidden: bot can't initiate conversation").
+        const adminId = funnelEnv.ADMIN_TELEGRAM_ID || await getSystemKeyValue('ADMIN_TELEGRAM_ID');
         const tok = funnelEnv.TELEGRAM_BOT_TOKEN || '';
         if (!adminId || !/^\d+:[A-Za-z0-9_-]{20,}$/.test(tok)) {
             pushDelivery(runtime, 'telegram_notify', false, 'немає ADMIN_TELEGRAM_ID або валідного TELEGRAM_BOT_TOKEN', { reason: 'photo_missing' });
@@ -935,6 +939,43 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
         }
     }
 
+    // Загальне відновлення після БУДЬ-ЯКОГО автоматичного хендофу (не лише
+    // product_unknown вище) — аудит 2026-08-29, живий кейс Сіразетдінова.
+    // adminEngaged тут — АВТОМАТИЧНЕ рішення системи (ключове слово / низька
+    // впевненість claude-ноди), а НЕ ручна дія адміна (те — funnelPaused,
+    // окремий прапорець, який ЦЕЙ блок НЕ чіпає — ручна пауза лишається
+    // повною тишею, доки людина сама не увімкне бота назад).
+    // Раніше: якщо клієнта автоматично ескалували (напр. невизначене "Що
+    // далі??"), а сповіщення менеджеру не дійшло (підтверджено: "Forbidden:
+    // bot can't initiate conversation with a user" — окремо виправлено вище)
+    // АБО менеджер просто не встиг відповісти — клієнт лишався в АБСОЛЮТНІЙ
+    // тиші НАЗАВЖДИ: жодне наступне повідомлення (навіть за день) не отримувало
+    // жодної реакції. Тепер: перше ж наступне повідомлення клієнта, поки він
+    // чекає менеджера, — (а) ще раз сповіщає менеджера, що клієнт продовжує
+    // писати, і (б) знімає adminEngaged із ЦЬОГО ходу, щоб уся звичайна
+    // обробка нижче (в т.ч. перемикання товару, n_route тощо) відпрацювала як
+    // для щойно активного клієнта — жодної permanentної мовчанки.
+    if (ctx.adminEngaged && !ctx.funnelPaused && (incomingUserMessage || incomingImageUrl)) {
+        ctx.adminEngaged = false;
+        delete ctx.handoffKind;
+        delete ctx.handoffReason;
+        try {
+            const _admin = funnelEnv.ADMIN_TELEGRAM_ID || await getSystemKeyValue('ADMIN_TELEGRAM_ID');
+            const _tok = funnelEnv.TELEGRAM_BOT_TOKEN || '';
+            if (_admin && /^\d+:[A-Za-z0-9_-]{20,}$/.test(_tok) && !ctx.testMode) {
+                const _txt = shopPrefix(funnelEnv) + '↩️ Клієнт написав ЩЕ РАЗ, поки чекав на менеджера, — бот автоматично відновив роботу (щоб клієнт не лишався в тиші).\nКлієнт: ' + (ctx.senderName || '') + ' (' + (ctx.igUsername || '') + ')\nПовідомлення: ' + String(incomingUserMessage || '[фото]').slice(0, 160) + '\nСесія: ' + session.id;
+                const _r = await fetch('https://api.telegram.org/bot' + _tok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(_admin), text: _txt, parse_mode: 'HTML', disable_web_page_preview: true }) }).catch(() => null);
+                const _j = _r ? await _r.json().catch(() => ({})) : {};
+                pushDelivery(runtime, 'telegram_notify', !!_j.ok, _j.ok ? null : (_j.description || 'fetch failed'), { chatId: String(_admin), reason: 'handoff_auto_resume' });
+            } else {
+                pushDelivery(runtime, 'telegram_notify', false, 'немає ADMIN_TELEGRAM_ID або валідного TELEGRAM_BOT_TOKEN', { reason: 'handoff_auto_resume' });
+            }
+        } catch (_e) { /* сповіщення не має ламати відновлення */ }
+        await persistAssistantMessage(session.id, '⚙️ Перепрошуємо за очікування! Я знову тут і можу продовжити допомагати 🙂', { source: 'handoff_auto_resume' });
+        // Свідомо БЕЗ return — звичайна обробка ЦЬОГО ж повідомлення триває далі
+        // нижче (перемикання товару, n_route тощо), а не чекає ще одного ходу.
+    }
+
     // Перемикання товару ПОСЕРЕД консультації (не тільки на етапі "товар невідомий").
     // Аудит 2026-08-27 (реплей реальних діалогів, сесія Сіразетдінова): клієнт вже
     // отримав консультацію по товару А (лофери 5931), потім переслав пост/рілс з
@@ -1169,6 +1210,17 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
         // Знайдено 2026-08-19: клієнт скинув скрін оплати на кроці n_collect — бот
         // не відповів і не обробив фото взагалі.
         runtime.lastUserMessage = incomingUserMessage || (incomingImageUrl && !incomingFile ? '[фото]' : '');
+        // Аудит 2026-08-29 (живий кейс, covercar_ua/mashadelrey): notifyTg-ноди типу
+        // n_unknown_admin, що йдуть ПІСЛЯ claude-ноди (напр. n_unknown_msg) в тому ж
+        // ході, рендерились з ПОРОЖНІМ "Останнє:" — не через помилку в шаблоні
+        // (шлях {{context.flowRuntime.lastUserMessage}} правильний), а через те, що
+        // claude-ноди СВІДОМО чистять runtime.lastUserMessage='' одразу після того,
+        // як спожили повідомлення (щоб наступна нода того ж ходу не обробила його
+        // ЩЕ РАЗ) — і до notifyTg, що йде третім у каскаді, вже нічого не лишалось.
+        // ctx.lastCustomerMessage — стабільний знімок на ПОЧАТКУ ходу, який НІЯКА
+        // нода далі в каскаді не чистить — саме його треба показувати людям
+        // (сповіщення, адмінка), а не транзиторний runtime.lastUserMessage.
+        ctx.lastCustomerMessage = runtime.lastUserMessage;
         runtime.waitingForUser = false;
         // Вхідний файл кладемо у контекст (як lastUserMessage) — його спожиє нода readFile.
         if (incomingFile) ctx.lastFile = incomingFile;
@@ -1611,8 +1663,13 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                         await persistAssistantMessage(session.id, hoMsg, { nodeId: node.id, nodeType: node.type, source: 'handoff' });
                         lastAssistant = hoMsg;
                         try {
-                            const adminId = await getSystemKeyValue('ADMIN_TELEGRAM_ID') || funnelEnv.ADMIN_TELEGRAM_ID;
-                            const hoText = shopPrefix(funnelEnv) + '🙋 Бот передав діалог людині (низька впевненість).\nКлієнт: ' + (ctx.senderName || '') + ' (' + (ctx.igUsername || '') + ')\nОстаннє: ' + String(runtime.lastUserMessage || '').slice(0, 160) + '\nСесія: ' + session.id;
+                            // Аудит 2026-08-29 (антипатерн A6, живий кейс Сіразетдінова): ключ
+                            // ВОРОНКИ (група конкретного магазину, -5327070815) має пріоритет
+                            // над системним (тут виявився особистий чат 345126254) — інакше
+                            // "Forbidden: bot can't initiate conversation with a user", менеджер
+                            // НІКОЛИ не дізнається про хендоф, а клієнт лишається в тиші назавжди.
+                            const adminId = funnelEnv.ADMIN_TELEGRAM_ID || await getSystemKeyValue('ADMIN_TELEGRAM_ID');
+                            const hoText = shopPrefix(funnelEnv) + '🙋 Бот передав діалог людині (низька впевненість).\nКлієнт: ' + (ctx.senderName || '') + ' (' + (ctx.igUsername || '') + ')\nОстаннє: ' + String(ctx.lastCustomerMessage || runtime.lastUserMessage || '').slice(0, 160) + '\nСесія: ' + session.id;
                             const hoTok = funnelEnv.TELEGRAM_BOT_TOKEN || '';
                             if (adminId && /^\d+:[A-Za-z0-9_-]{20,}$/.test(hoTok)) {
                                 const _hr = await fetch('https://api.telegram.org/bot' + hoTok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(adminId), text: hoText, parse_mode: 'HTML', disable_web_page_preview: true }) }).catch(() => null);

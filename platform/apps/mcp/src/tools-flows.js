@@ -17,6 +17,7 @@ const NODE_TYPES = [
     'js',                   // довільний код; data: { code }. Доступно context,user,session,input,keys,fetch,Buffer,FormData,Blob,crypto; return {} мержиться в context (root!)
     // ── Спілкування ───────────────────────────────────────────────
     'message',              // статичний текст; data: { text, variants:[], buttons:[[{text,url}]], attachmentUrl }. УВАГА: Instagram НЕ показує inline-кнопки — посилання давай текстом
+    // data.setContext (БУДЬ-ЯКА нода, не лише message): { key: value } — виставляє прапорець у context, видимий РІВНО для наступної ноди в цьому ж проході (автоматично скидається перед нодою після неї). Детермінований спосіб сказати "щось щойно сталось" без покладання на здогадку моделі — напр. n_welcome → { productJustPresented: true }, щоб наступна claude-нода НЕ дублювала презентацію товару.
     'claude',               // AI; data: { mode:'dialog'|'single', systemPrompt, exitCondition:'json_output'|'user_confirms'|'keyword:X'|'markdown_output'|'none', outputVar, messagesTemplate, model, temperature, connectorId, useKb }
     'agent',                // AI з інструментами в циклі; data: { systemPrompt, tools, maxIterations, outputVar, dialogMode, finishTool }
     'knowledgeBase',        // пошук по вбудованих блоках; data: { blocks:[{id,title,content}], contextKey }

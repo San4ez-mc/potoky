@@ -1282,8 +1282,23 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
         const node = nodesById.get(runtime.currentNodeId);
         if (!node) break;
 
+        // Аудит 2026-08-30 (дублювання презентації товару, живий кейс oleksii_sirazetdinov,
+        // артикул C0043): одноразові контекстні прапорці, виставлені ПОПЕРЕДНЬОЮ нодою через
+        // data.setContext, живуть РІВНО до кінця обробки ноди, що йде одразу за нею (в межах
+        // цього ж проходу цих циклу) — і чистяться ПЕРЕД будь-якою нодою після. Детермінований
+        // (код, не "здогадка" моделі) спосіб сказати наступній ноді "щось щойно сталось", без
+        // прив'язки до конкретних id нод — генерична можливість для БУДЬ-ЯКОЇ воронки.
+        if (Array.isArray(runtime.__pendingClearFlags) && runtime.__pendingClearFlags.length) {
+            for (const k of runtime.__pendingClearFlags) delete ctx[k];
+            runtime.__pendingClearFlags = [];
+        }
+
         runtime.nodesVisited.push(node.id);
         const data = asObject(node.data);
+        if (data.setContext && typeof data.setContext === 'object' && !Array.isArray(data.setContext)) {
+            for (const [k, v] of Object.entries(data.setContext)) ctx[k] = v;
+            runtime.__pendingClearFlags = Object.keys(data.setContext);
+        }
         // Закриваємо трейс попередньої ноди (діф контексту = її ефект) і починаємо новий.
         if (pendingTrace) _finalizeTrace(pendingTrace);
         pendingTrace = {

@@ -57,17 +57,49 @@ try{
     if(!found){ for(var b=0;b<cc.length&&!found;b++){ var pm=matchArticle(all,cc[b]); if(pm){ found=pm; via='article:'+cc[b]; mk='art_'+cc[b]; } } }
   }
 
+  // ПРІОРИТЕТ 2.5 (аудит 2026-08-29, запит власника): артикулу нема (частина
+  // рекламних постів досі не можна відредагувати — крутяться в кампаніях) —
+  // пробуємо ЗА КЛЮЧОВИМИ СЛОВАМИ підпису проти НАЗВИ товару в каталозі.
+  // Спрацьовує саме для наборів/акційних постів типу "Кофта, джинси, футболка,
+  // лофери" — назва товару в CRM буквально перелічує ті самі слова
+  // ("Комплект 4 в 1 (Кофта Ангора, Джинси, Футболка оверсайз база, Лофери)").
+  // Поріг обережний: мінімум 2 значущих слова-збіги, і найкращий кандидат
+  // ЯВНО кращий за другого — інакше не вгадуємо, краще чесно "не визначив".
+  if(!found && context.sharedPost && context.sharedPost.caption){
+    var STOPWORDS_KW={'та':1,'і':1,'й':1,'на':1,'до':1,'за':1,'від':1,'для':1,'або':1,'це':1,'вже':1,'ще':1,'як':1,'що':1,'по':1,'при':1,'без':1,'між':1};
+    function tokenizeKW(s){ return String(s||'').toLowerCase().replace(/[^\wа-яіїєґ\s]/gi,' ').split(/\s+/).filter(function(w){return w.length>=4 && !STOPWORDS_KW[w];}); }
+    var capWordsKW=tokenizeKW(context.sharedPost.caption);
+    if(capWordsKW.length){
+      var capSetKW={}; for(var wi=0;wi<capWordsKW.length;wi++)capSetKW[capWordsKW[wi]]=1;
+      var scoredKW=[];
+      for(var pi3=0;pi3<all.length;pi3++){
+        var pnameWordsKW=tokenizeKW(all[pi3].name);
+        var overlapKW=0; for(var wj=0;wj<pnameWordsKW.length;wj++){ if(capSetKW[pnameWordsKW[wj]])overlapKW++; }
+        if(overlapKW>0) scoredKW.push({p:all[pi3], score:overlapKW});
+      }
+      scoredKW.sort(function(a,b){return b.score-a.score;});
+      if(scoredKW.length && scoredKW[0].score>=2 && (scoredKW.length<2 || scoredKW[0].score>scoredKW[1].score)){
+        found=scoredKW[0].p; via='keyword:'+scoredKW[0].score; mk='kw_'+scoredKW[0].p.id;
+      }
+    }
+  }
+
   // ПРІОРИТЕТ 3: media_id рілса — опційно (поле в CRM); наразі пропускаємо
 
-  // ПРІОРІТЕТ 2.9: клієнт кинув СКРІН товару замість поста/рілс — ШІ-візія (Gemini)
-  // проти каталогу KeyCRM. На цьому кроці ще немає orderRef/оплати, тож будь-яке
-  // вхідне фото тут — майже напевно спроба показати товар, не квитанція.
-  if(!found && context.lastUserImageUrl && keys.GEMINI_API_KEY){
+  // ПРІОРІТЕТ 2.9 (розширено 2026-08-29): ШІ-візія (Gemini) проти каталогу
+  // KeyCRM — раніше лише для СКРІНУ, який клієнт надіслав напряму
+  // (lastUserImageUrl). Тепер ТАКОЖ пробуємо, якщо клієнт переслав пост/рілс
+  // БЕЗ артикулу і без збігу за ключовими словами (Пріоритет 2.5) —
+  // context.sharedPost.url тоді несе саме фото/обкладинку цього допису.
+  // На цьому кроці ще немає orderRef/оплати, тож будь-яке фото тут —
+  // майже напевно спроба показати товар, не квитанція.
+  var __visionUrl = context.lastUserImageUrl || (!found && context.sharedPost && context.sharedPost.url) || '';
+  if(!found && __visionUrl && keys.GEMINI_API_KEY){
     function imgOk(u){ try{ var h=new URL(u).hostname.toLowerCase(); if(h==='api.telegram.org') return true; return ['cdninstagram.com','fbcdn.net','fbsbx.com','lookaside.fbsbx.com'].some(function(d){return h===d||h.endsWith('.'+d);}); }catch(e){return false;} }
-    if(imgOk(context.lastUserImageUrl)){
+    if(imgOk(__visionUrl)){
       var acp=new AbortController(); var top=setTimeout(function(){try{acp.abort();}catch(e){}},10000);
       try{
-        var irp=await fetch(context.lastUserImageUrl,{signal:acp.signal});
+        var irp=await fetch(__visionUrl,{signal:acp.signal});
         var abp=await irp.arrayBuffer();
         if(abp.byteLength<=8000000){
           var b64p=Buffer.from(abp).toString('base64');
@@ -80,7 +112,7 @@ try{
           var mimepRaw=(irp.headers.get('content-type')||'').split(';')[0];
           var mimep=(!mimepRaw || mimepRaw==='application/octet-stream') ? 'image/jpeg' : mimepRaw;
           var catList=all.map(function(p,i){return i+': '+(p.name||'');}).join('\n').slice(0,6000);
-          var promptp='Це скріншот, який клієнт надіслав замість посту/рілс — ймовірно, товар з нашого магазину. Опиши коротко, що на фото (тип товару, колір, помітний текст/бренд). Потім знайди НАЙБЛИЖЧИЙ відповідник у каталозі нижче (формат: індекс: назва). Якщо жодного релевантного немає — bestMatchIndex null. Поверни ЛИШЕ JSON {"description":"...","bestMatchIndex":число_або_null}.\nКаталог:\n'+catList;
+          var promptp='Це фото (скріншот, або обкладинка допису/рілсу), яке клієнт показав — ймовірно, товар з нашого магазину. Опиши коротко, що на фото (тип товару, колір, помітний текст/бренд). Потім знайди НАЙБЛИЖЧИЙ відповідник у каталозі нижче (формат: індекс: назва). Якщо жодного релевантного немає — bestMatchIndex null. Поверни ЛИШЕ JSON {"description":"...","bestMatchIndex":число_або_null}.\nКаталог:\n'+catList;
           var grp=await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key='+encodeURIComponent(keys.GEMINI_API_KEY),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:promptp},{inline_data:{mime_type:mimep,data:b64p}}]}]})});
           var gjp=await grp.json();
           var tp=((((gjp.candidates||[])[0]||{}).content||{}).parts||[{}])[0].text||'';

@@ -422,7 +422,7 @@ async function notifyAdminPhotoMissing(session, ctx, funnelEnv, runtime, whatLab
             pushDelivery(runtime, 'telegram_notify', false, 'немає ADMIN_TELEGRAM_ID або валідного TELEGRAM_BOT_TOKEN', { reason: 'photo_missing' });
             return;
         }
-        const txt = shopPrefix(funnelEnv) + '📸 Клієнт просить фото ' + whatLabel + ' — автоматично надіслати НЕ вдалось (немає фото в CRM).\nБот уже пообіцяв клієнту фото — надішліть, будь ласка, вручну.\nКлієнт: ' + (ctx.senderName || '') + ' (' + (ctx.igUsername || '') + ')\nСесія: ' + session.id;
+        const txt = shopPrefix(funnelEnv) + '📸 <b>Клієнт просить фото ' + whatLabel + '</b> — автоматично надіслати не вдалось (немає фото в CRM)\n\n⚠️ Бот уже пообіцяв клієнту фото — надішліть, будь ласка, вручну\n\n👤 Клієнт: ' + (ctx.senderName || '') + ' (' + (ctx.igUsername || '') + ')\n🔗 Сесія: ' + session.id;
         const r = await fetch('https://api.telegram.org/bot' + tok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(adminId), text: txt, parse_mode: 'HTML', disable_web_page_preview: true }) }).catch(() => null);
         const j = r ? await r.json().catch(() => ({})) : {};
         pushDelivery(runtime, 'telegram_notify', !!j.ok, j.ok ? null : (j.description || 'fetch failed'), { chatId: String(adminId), reason: 'photo_missing' });
@@ -968,7 +968,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
             const _admin = funnelEnv.ADMIN_TELEGRAM_ID || await getSystemKeyValue('ADMIN_TELEGRAM_ID');
             const _tok = funnelEnv.TELEGRAM_BOT_TOKEN || '';
             if (_admin && /^\d+:[A-Za-z0-9_-]{20,}$/.test(_tok) && !ctx.testMode) {
-                const _txt = shopPrefix(funnelEnv) + '↩️ Клієнт написав ЩЕ РАЗ, поки чекав на менеджера, — бот автоматично відновив роботу (щоб клієнт не лишався в тиші).\nКлієнт: ' + (ctx.senderName || '') + ' (' + (ctx.igUsername || '') + ')\nПовідомлення: ' + String(incomingUserMessage || '[фото]').slice(0, 160) + '\nСесія: ' + session.id;
+                const _txt = shopPrefix(funnelEnv) + '↩️ <b>Клієнт написав ще раз, поки чекав на менеджера</b> — бот автоматично відновив роботу\n\n👤 Клієнт: ' + (ctx.senderName || '') + ' (' + (ctx.igUsername || '') + ')\n💬 Повідомлення: «' + String(incomingUserMessage || '[фото]').slice(0, 160) + '»\n\n🔗 Сесія: ' + session.id;
                 const _r = await fetch('https://api.telegram.org/bot' + _tok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(_admin), text: _txt, parse_mode: 'HTML', disable_web_page_preview: true }) }).catch(() => null);
                 const _j = _r ? await _r.json().catch(() => ({})) : {};
                 pushDelivery(runtime, 'telegram_notify', !!_j.ok, _j.ok ? null : (_j.description || 'fetch failed'), { chatId: String(_admin), reason: 'handoff_auto_resume' });
@@ -1106,7 +1106,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
             const _admin = _env.ADMIN_TELEGRAM_ID || '';
             const _tok = _env.TELEGRAM_BOT_TOKEN || '';
             if (_admin && /^\d+:[A-Za-z0-9_-]{20,}$/.test(_tok) && !ctx.testMode) {
-                const _txt = shopPrefix(_env) + '↩️ Клієнт просить повернення/обмін товару.\nКлієнт: ' + (ctx.senderName || '') + ' (' + (ctx.igUsername || '') + ')\nПовідомлення: ' + String(incomingUserMessage).slice(0, 160) + '\nСесія: ' + session.id;
+                const _txt = shopPrefix(_env) + '↩️ <b>Клієнт просить повернення/обмін товару</b>\n\n👤 Клієнт: ' + (ctx.senderName || '') + ' (' + (ctx.igUsername || '') + ')\n💬 Повідомлення: «' + String(incomingUserMessage).slice(0, 160) + '»\n\n🔗 Сесія: ' + session.id;
                 const _r = await fetch('https://api.telegram.org/bot' + _tok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(_admin), text: _txt, parse_mode: 'HTML', disable_web_page_preview: true }) }).catch(() => null);
                 const _j = _r ? await _r.json().catch(() => ({})) : {};
                 pushDelivery(runtime, 'telegram_notify', !!_j.ok, _j.ok ? null : (_j.description || 'fetch failed'), { chatId: String(_admin), reason: 'return_keyword' });
@@ -1129,7 +1129,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
             const _admin = _env.ADMIN_TELEGRAM_ID || '';
             const _tok = _env.TELEGRAM_BOT_TOKEN || '';
             if (_admin && /^\d+:[A-Za-z0-9_-]{20,}$/.test(_tok) && !ctx.testMode) {
-                const _txt = shopPrefix(_env) + '🙋 Клієнт просить живу людину.\nКлієнт: ' + (ctx.senderName || '') + ' (' + (ctx.igUsername || '') + ')\nПовідомлення: ' + String(incomingUserMessage).slice(0, 160) + '\nСесія: ' + session.id;
+                const _txt = shopPrefix(_env) + '🙋 <b>Клієнт просить живу людину</b>\n\n👤 Клієнт: ' + (ctx.senderName || '') + ' (' + (ctx.igUsername || '') + ')\n💬 Повідомлення: «' + String(incomingUserMessage).slice(0, 160) + '»\n\n🔗 Сесія: ' + session.id;
                 const _r = await fetch('https://api.telegram.org/bot' + _tok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(_admin), text: _txt, parse_mode: 'HTML', disable_web_page_preview: true }) }).catch(() => null);
                 const _j = _r ? await _r.json().catch(() => ({})) : {};
                 pushDelivery(runtime, 'telegram_notify', !!_j.ok, _j.ok ? null : (_j.description || 'fetch failed'), { chatId: String(_admin), reason: 'handoff_keyword' });
@@ -1674,7 +1674,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                             // "Forbidden: bot can't initiate conversation with a user", менеджер
                             // НІКОЛИ не дізнається про хендоф, а клієнт лишається в тиші назавжди.
                             const adminId = funnelEnv.ADMIN_TELEGRAM_ID || await getSystemKeyValue('ADMIN_TELEGRAM_ID');
-                            const hoText = shopPrefix(funnelEnv) + '🙋 Бот передав діалог людині (низька впевненість).\nКлієнт: ' + (ctx.senderName || '') + ' (' + (ctx.igUsername || '') + ')\nОстаннє: ' + String(ctx.lastCustomerMessage || runtime.lastUserMessage || '').slice(0, 160) + '\nСесія: ' + session.id;
+                            const hoText = shopPrefix(funnelEnv) + '🙋 <b>Бот передав діалог людині</b> (низька впевненість)\n\n👤 Клієнт: ' + (ctx.senderName || '') + ' (' + (ctx.igUsername || '') + ')\n💬 Останнє: «' + String(ctx.lastCustomerMessage || runtime.lastUserMessage || '').slice(0, 160) + '»\n\n🔗 Сесія: ' + session.id;
                             const hoTok = funnelEnv.TELEGRAM_BOT_TOKEN || '';
                             if (adminId && /^\d+:[A-Za-z0-9_-]{20,}$/.test(hoTok)) {
                                 const _hr = await fetch('https://api.telegram.org/bot' + hoTok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(adminId), text: hoText, parse_mode: 'HTML', disable_web_page_preview: true }) }).catch(() => null);

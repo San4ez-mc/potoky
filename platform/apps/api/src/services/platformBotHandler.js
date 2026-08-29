@@ -484,7 +484,7 @@ function isAddressedToBot(message, text, identity, triggerName) {
 async function logGroupMessagePassively(groupUserId, botId, taggedText) {
     let session = await findActiveSession(groupUserId, botId);
     if (!session) session = await createNewSession(groupUserId, botId);
-    await persistUserMessage(session.id, taggedText);
+    await persistUserMessage(session.id, taggedText, { source: 'telegram-group-passive' });
 }
 
 async function getNewAssistantMessages(sessionId, since) {
@@ -509,8 +509,11 @@ async function getNewAssistantMessages(sessionId, since) {
  *
  * `fileUrl` сюди НЕ кладемо: телеграмівське посилання на файл містить токен
  * бота, і в історії сесії він став би видимим кожному, хто її відкриє.
+ *
+ * `extraMeta` (напр. { source: 'telegram-group-passive' }) переважає дефолтне
+ * `source` — потрібно, щоб позначити повідомлення групи окремо від приватних.
  */
-async function persistUserMessage(sessionId, content, media) {
+async function persistUserMessage(sessionId, content, media, extraMeta = {}) {
     const text = String(content ?? '').trim();
     const label = media
         ? `[${media.type}${media.fileName ? ` · ${media.fileName}` : ''}${media.transcript ? '' : ' — без розшифровки'}]`
@@ -535,6 +538,7 @@ async function persistUserMessage(sessionId, content, media) {
                         },
                     }),
                     ...(text ? {} : { emptyText: true }),
+                    ...extraMeta,
                 },
             },
         }),
@@ -1239,7 +1243,8 @@ async function _handlePlatformBotUpdateInner(botId, update) {
             return;
         }
 
-        await persistUserMessage(session.id, text, incomingMedia);
+        await persistUserMessage(session.id, text, incomingMedia,
+            chatType !== 'private' ? { source: addressed ? 'telegram-group-addressed' : 'telegram-group-passive' } : {});
 
         // Голосове, яке не вдалось розшифрувати, у воронку не пускаємо.
         //
@@ -1250,7 +1255,10 @@ async function _handlePlatformBotUpdateInner(botId, update) {
         //
         // Тому відповідаємо самі, коротко й чесно, і кажемо власнику: розшифровка
         // зламалась. Клієнт при цьому не лишається без відповіді.
-        if (!text && incomingMedia && (incomingMedia.type === 'voice' || incomingMedia.type === 'audio')) {
+        // Пасивне групове повідомлення — виняток: там навіть цю відповідь
+        // не можна слати, бот має лишатись тихим, поки до нього не звернулись.
+        if (!text && incomingMedia && (incomingMedia.type === 'voice' || incomingMedia.type === 'audio')
+            && (chatType === 'private' || addressed)) {
             const askAgain = 'Не почула голосове — не вдалося його розшифрувати 😔 '
                 + 'Повтори, будь ласка, ще раз голосом або текстом.';
             await db.message.create({
@@ -1303,8 +1311,13 @@ async function _handlePlatformBotUpdateInner(botId, update) {
     // Content-manager bot uses telegramChatId for deliverTo (sends generated content back here)
     // and lastUserMedia to let the agent reuse a sent photo/video as a background.
     // incomingMedia вже витягнуто у Phase 1.5 (з можливою транскрипцією голосу).
-    if (chatId && (session?.context?.telegramChatId !== chatId || incomingMedia)) {
-        const nextCtx = { ...(session.context || {}), telegramChatId: chatId };
+    if (chatId && (session?.context?.telegramChatId !== chatId || session?.context?.chatType !== chatType || incomingMedia)) {
+        const nextCtx = { ...(session.context || {}), telegramChatId: chatId, chatType };
+        // Visible/branchable from the funnel itself (condition node on {{context.chatType}})
+        // instead of being decided invisibly in this file — see fineko-funnel-standard.
+        if (chatType !== 'private') {
+            nextCtx.chatTitle = message.chat?.title || '';
+        }
         if (incomingMedia) {
             nextCtx.lastUserMedia = incomingMedia;
             logger.info('[platformBotHandler] Captured incoming media', {

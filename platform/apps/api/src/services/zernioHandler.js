@@ -355,13 +355,28 @@ function matchArticleInCatalog(all, art) {
     }
     return null;
 }
-function buildAutomationPresentation(p) {
+// Аудит 2026-08-29 (запит користувача, аналіз анти-спаму за 12г): Zernio dmMessage —
+// статичний рядок на ВЕСЬ пост, без підстановки імені — усі, хто коментує ПІД ОДНИМ
+// постом, отримували ДОСЛІВНО ідентичний текст DM. На відміну від публічних
+// відповідей (10 варіантів + ім'я), тут це реальна відмінність. Оскільки Zernio не
+// підтримує per-recipient-шаблони, ротуємо саму АВТОМАТИЗАЦІЮ: кожне вітання —
+// один із кількох варіантів, і щоразу, коли для вже існуючого поста приходить ЩЕ
+// один коментар, PATCH'имо automation на ІНШИЙ варіант вітання (не той, що зараз) —
+// так наступний коментатор під тим самим постом отримає інший текст.
+const AUTOMATION_OPENERS = [
+    'Вітаю! 👋 Дякуємо за коментар під цим постом 💛\n\n',
+    'Доброго дня! 😊 Раді бачити ваш коментар під постом 💙\n\n',
+    'Привіт! 🙌 Дякуємо, що написали під цим постом 💛\n\n',
+    'Вітаємо! 💛 Ось усе про цей товар, як і питали в коментарі 😊\n\n',
+    'Дякуємо за коментар! 🙌 Ось повна інформація про товар 💙\n\n',
+];
+function buildAutomationPresentation(p, opener) {
     const descClean = String(p.description || '').split('\n').filter((ln) => !/^\s*ℹ️/.test(ln)).join('\n').trim();
     const isClothing = CLOTHING_CATEGORY_IDS.indexOf(p.category_id) >= 0;
     const followUp = isClothing
         ? '👉 Вкажіть, будь ласка, зріст і вагу — підберемо найкращий розмір? 😊'
         : (p.category_id === 7 ? 'Напишіть, будь ласка, який розмір взуття зазвичай носите? 😊' : 'Цікавить? 😊');
-    return 'Вітаю! 👋 Дякуємо за коментар під цим постом 💛\n\n' + descClean + '\n\n' + followUp;
+    return (opener || AUTOMATION_OPENERS[0]) + descClean + '\n\n' + followUp;
 }
 async function ensurePostAutomation(botId, mediaId, caption) {
     if (!mediaId || !caption) return;
@@ -371,8 +386,24 @@ async function ensurePostAutomation(botId, mediaId, caption) {
 
         const existR = await fetch('https://zernio.com/api/v1/comment-automations', { headers: { Authorization: 'Bearer ' + zk.ZERNIO_API_TOKEN } });
         const existD = await existR.json().catch(() => ({}));
-        const already = (existD.automations || []).some((a) => String(a.platformPostId || '') === String(mediaId));
-        if (already) return; // вже є автоматизація для цього поста — нічого робити
+        const existing = (existD.automations || []).find((a) => String(a.platformPostId || '') === String(mediaId));
+        if (existing) {
+            // Ротація вітання на КОЖЕН наступний коментар під цим постом (best-effort —
+            // якщо PATCH не вдасться, наступний коментатор просто отримає той самий
+            // текст, що й попередній; не критично).
+            try {
+                const curOpenerIdx = AUTOMATION_OPENERS.findIndex((o) => (existing.dmMessage || '').startsWith(o));
+                const otherIdxs = AUTOMATION_OPENERS.map((_, i) => i).filter((i) => i !== curOpenerIdx);
+                const nextOpener = AUTOMATION_OPENERS[otherIdxs[Math.floor(Math.random() * otherIdxs.length)]];
+                const rest = curOpenerIdx >= 0 ? (existing.dmMessage || '').slice(AUTOMATION_OPENERS[curOpenerIdx].length) : (existing.dmMessage || '');
+                await fetch('https://zernio.com/api/v1/comment-automations/' + existing.id, {
+                    method: 'PATCH',
+                    headers: { Authorization: 'Bearer ' + zk.ZERNIO_API_TOKEN, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ dmMessage: nextOpener + rest }),
+                }).catch(() => {});
+            } catch (_e) { /* ротація — best-effort, не критична */ }
+            return;
+        }
 
         const candidates = extractArticleCandidatesForAutomation(caption).slice(0, 8);
         if (!candidates.length) { logger.info('[zernioHandler] ensurePostAutomation: у підписі немає артикулу — пропускаю', { botId, mediaId }); return; }
@@ -411,7 +442,7 @@ async function ensurePostAutomation(botId, mediaId, caption) {
             name: 'Презентація товару — ' + found.name,
             keywords: [],
             matchMode: 'contains',
-            dmMessage: buildAutomationPresentation(found),
+            dmMessage: buildAutomationPresentation(found, AUTOMATION_OPENERS[Math.floor(Math.random() * AUTOMATION_OPENERS.length)]),
             audience: { followerStatus: 'any', whenUnknown: 'send' },
             isActive: true,
         };

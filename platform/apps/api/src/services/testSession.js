@@ -381,7 +381,12 @@ function shopPrefix(env) {
     const shop = ((env && (env.SHOP_TAG || env.SHOP_NAME)) || '').trim();
     if (!shop) return '';
     const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const igUser = ((env && env.INSTAGRAM_USERNAME) || '').trim().replace(/^@/, '');
+    // Аудит 2026-08-29 (живий кейс, goverla_shop): INSTAGRAM_USERNAME був НЕЗАПОВНЕНИМ
+    // плейсхолдером "REPLACE_ME" — без цієї перевірки посилання виходило
+    // https://instagram.com/REPLACE_ME. Той самий /^\d+:/ patern валідності, що й у
+    // isReal() для інших ключів (тут inline, бо isReal перевіряє токени, не юзернейми).
+    const _rawIgUser = ((env && env.INSTAGRAM_USERNAME) || '').trim().replace(/^@/, '');
+    const igUser = (_rawIgUser && _rawIgUser.toUpperCase() !== 'REPLACE_ME') ? _rawIgUser : '';
     const label = '🏪 ' + esc(shop);
     const linked = igUser ? `<a href="https://instagram.com/${encodeURIComponent(igUser)}">${label}</a>` : label;
     return linked + '\n\n';

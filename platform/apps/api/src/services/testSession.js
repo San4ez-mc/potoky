@@ -1284,13 +1284,21 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
 
         // Аудит 2026-08-30 (дублювання презентації товару, живий кейс oleksii_sirazetdinov,
         // артикул C0043): одноразові контекстні прапорці, виставлені ПОПЕРЕДНЬОЮ нодою через
-        // data.setContext, живуть РІВНО до кінця обробки ноди, що йде одразу за нею (в межах
-        // цього ж проходу цих циклу) — і чистяться ПЕРЕД будь-якою нодою після. Детермінований
-        // (код, не "здогадка" моделі) спосіб сказати наступній ноді "щось щойно сталось", без
-        // прив'язки до конкретних id нод — генерична можливість для БУДЬ-ЯКОЇ воронки.
-        if (Array.isArray(runtime.__pendingClearFlags) && runtime.__pendingClearFlags.length) {
-            for (const k of runtime.__pendingClearFlags) delete ctx[k];
+        // data.setContext, мають лишатись видимими, доки їх реально не прочитає нода, що щось
+        // РОБИТЬ з клієнтом (claude/message/…) — а не згаснути на першій-ліпшій проміжній
+        // condition/js-ноді маршрутизації (звичайна річ між n_welcome і n_size: n_is_set →
+        // n_recall_cond → n_is_clothing). Тому чищення — у ДВІ фази: прапорці переживають
+        // будь-яку кількість "тихих" condition/js-нод, озброюються на клірінг щойно
+        // натрапляють на першу "не тиху" ноду (вона ще встигає їх прочитати), і реально
+        // чистяться на самому початку ноди ПІСЛЯ неї. Детермінований (код, не "здогадка"
+        // моделі) спосіб сказати "щось щойно сталось", без прив'язки до id нод.
+        const SILENT_PASSTHROUGH_TYPES = new Set(['condition', 'js']);
+        if (runtime.__pendingClearArmed) {
+            for (const k of (runtime.__pendingClearFlags || [])) delete ctx[k];
             runtime.__pendingClearFlags = [];
+            runtime.__pendingClearArmed = false;
+        } else if (Array.isArray(runtime.__pendingClearFlags) && runtime.__pendingClearFlags.length && !SILENT_PASSTHROUGH_TYPES.has(node.type)) {
+            runtime.__pendingClearArmed = true;
         }
 
         runtime.nodesVisited.push(node.id);
@@ -1298,6 +1306,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
         if (data.setContext && typeof data.setContext === 'object' && !Array.isArray(data.setContext)) {
             for (const [k, v] of Object.entries(data.setContext)) ctx[k] = v;
             runtime.__pendingClearFlags = Object.keys(data.setContext);
+            runtime.__pendingClearArmed = false;
         }
         // Закриваємо трейс попередньої ноди (діф контексту = її ефект) і починаємо новий.
         if (pendingTrace) _finalizeTrace(pendingTrace);
@@ -1305,6 +1314,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
             seq: runtime.nodeTraces.length,
             nodeId: node.id, nodeType: node.type, label: (data && data.label) || '',
             input: _snapData(data),
+            __dbgFlag: ctx.productJustPresented === undefined ? '(unset)' : String(ctx.productJustPresented),
             userInput: String(runtime.lastUserMessage || '').slice(0, 1500),
             tsIso: new Date().toISOString(),
             _before: _snapRoot(ctx), _ts: Date.now(),

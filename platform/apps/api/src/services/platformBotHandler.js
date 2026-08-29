@@ -779,8 +779,25 @@ const _debounceBuffer = new Map(); // key `${botId}:${chatId}` -> { text, messag
 // (інакше серія повідомлень → гонка → дублі відповідей). key `${botId}:${chatId}`.
 const _chatLocks = new Map();
 
+// Максимальний час очікування одного апдейту в черзі. Без цього один запит, що
+// завис (напр. зовнішній fetch без власного таймауту), блокує ВСІ наступні
+// повідомлення того самого чату назавжди — черга ніколи не звільняється.
+// Урок 2026-08-28: спостерігали саме таке зависання на тестовому chatId, коли
+// перша спроба ніколи не завершилась, а дві наступні чекали позаду неї нескінченно.
+const CHAT_LOCK_TIMEOUT_MS = 90000;
+
+function _withTimeout(promise, ms, label) {
+    let timer;
+    const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`chat-lock timeout after ${ms}ms: ${label}`)), ms);
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 // Обгортка: серіалізує обробку повідомлень одного чату (per botId:chatId), щоб
 // кілька повідомлень підряд не запускали паралельні прогони flow однієї сесії.
+// Черга сама звільняється навіть якщо конкретний апдейт завис — таймаут лише
+// перестає ЧЕКАТИ на нього (сам виклик продовжує виконуватись у фоні).
 async function handlePlatformBotUpdate(botId, update) {
     const chatId = update.message?.chat?.id
         ?? update.edited_message?.chat?.id
@@ -788,10 +805,9 @@ async function handlePlatformBotUpdate(botId, update) {
     if (chatId == null) return _handlePlatformBotUpdateInner(botId, update);
     const key = `${botId}:${chatId}`;
     const prev = _chatLocks.get(key) || Promise.resolve();
-    const runProm = prev.then(
-        () => _handlePlatformBotUpdateInner(botId, update),
-        () => _handlePlatformBotUpdateInner(botId, update),
-    );
+    const run = () => _withTimeout(_handlePlatformBotUpdateInner(botId, update), CHAT_LOCK_TIMEOUT_MS, key)
+        .catch((err) => { logger.error('[platformBotHandler] update processing failed or timed out', { key, error: err.message }); });
+    const runProm = prev.then(run, run);
     _chatLocks.set(key, runProm);
     runProm.finally(() => { if (_chatLocks.get(key) === runProm) _chatLocks.delete(key); }).catch(() => {});
     return runProm;

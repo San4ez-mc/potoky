@@ -89,9 +89,37 @@ function extractCommon(body) {
 }
 
 async function findOrCreateZernioUser(psid, botId, name) {
-    const existing = await db.user.findFirst({ where: { metadata: { path: ['psid'], equals: String(psid) } } });
+    // Аудит 2026-08-30 (живий кейс, сесія covercar_ua cd3f0a27 — контент і артикул
+    // ІНШОГО магазину, goverla_shop A0068, просочився у сесію covercar_ua): раніше
+    // psid матчився ГЛОБАЛЬНО, без botId, — усі боти платформи (обидва в тому ж
+    // projectId, тож projectId теж не рятує) ділили ОДИН user-запис на один psid.
+    // Якщо той самий числовий psid коли-небудь прилітає для ДВОХ різних ботів
+    // (Zernio inbox-sync, квірк Meta ID тощо — причина на боці вендора, поза нашим
+    // контролем) — user, а з ним і сесія/каталог, змішувались між магазинами.
+    // Захист: якщо кандидат-user з таким psid УЖЕ має сесію під ІНШИМ ботом — це
+    // для НАШОЇ мети вже не той самий контакт, заводимо йому окремий user саме під
+    // (psid, botId). Легасі-користувачі без цього конфлікту (переважна більшість —
+    // включно з реальними тестерами) поводяться як раніше, історія не рветься.
+    const candidates = await db.user.findMany({ where: { metadata: { path: ['psid'], equals: String(psid) } } });
+    let existing = candidates.find((u) => u.metadata && u.metadata.zernioBotId === botId) || null;
+    if (!existing) {
+        for (const u of candidates) {
+            if (u.metadata && u.metadata.zernioBotId && u.metadata.zernioBotId !== botId) continue;
+            const crossBotSession = await db.session.findFirst({ where: { userId: u.id, botId: { not: botId } }, select: { id: true, botId: true } });
+            if (!crossBotSession) { existing = u; break; }
+            logger.warn('[zernioHandler] psid вже має сесію під ІНШИМ ботом — не змішую каталоги, заводжу окремого user', {
+                psid: String(psid), botId, otherBotId: crossBotSession.botId, existingUserId: u.id,
+            });
+        }
+    }
     if (existing) {
-        if (name && existing.firstName !== name) await db.user.update({ where: { id: existing.id }, data: { firstName: name } }).catch(() => {});
+        const needsPatch = (name && existing.firstName !== name) || (existing.metadata && existing.metadata.zernioBotId !== botId);
+        if (needsPatch) {
+            await db.user.update({
+                where: { id: existing.id },
+                data: { firstName: name || existing.firstName, metadata: { ...existing.metadata, zernioBotId: botId } },
+            }).catch(() => {});
+        }
         return existing;
     }
     const bot = await db.bot.findUnique({ where: { id: botId }, select: { projectId: true } });
@@ -103,7 +131,7 @@ async function findOrCreateZernioUser(psid, botId, name) {
                     telegramId: tid, firstName: name || 'Instagram',
                     username: 'ig_' + String(psid).replace(/[^0-9a-zA-Z]/g, '').slice(-6),
                     languageCode: 'uk', projectId: bot?.projectId,
-                    metadata: { source: 'zernio', channel: 'zernio', psid: String(psid) },
+                    metadata: { source: 'zernio', channel: 'zernio', psid: String(psid), zernioBotId: botId },
                 },
             });
         } catch (e) { if (e.code === 'P2002') { tid = tid + 1n; continue; } throw e; }

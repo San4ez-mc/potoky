@@ -320,41 +320,108 @@ async function callGemini({ apiKey, systemPrompt, messages, options = {} }) {
 }
 
 // ---------------------------------------------------------------------------
-// Admin alert — коли AI повністю недоступний (клієнт лишиться без відповіді)
+// Admin alert — коли платний сервіс (AI чи інший) відмовляє через баланс/квоту
 // ---------------------------------------------------------------------------
 // Аудит 2026-08-26 (goverla_shop, сесія Сіразетдінова): Claude впав через
 // "credit balance too low" (400), фолбек на Gemini ТЕЖ не відповів у ту мить
 // (транзієнтний збіг — сам конектор при повторній перевірці живий) — клієнт
 // лишився без жодної відповіді на ~13 годин, поки власник магазину випадково
 // не помітив і не відповів вручну напряму в Instagram. Жодного алерту не було.
-// Правило: коли AI-виклик остаточно провалився (нема кому відповісти клієнту) —
-// адмін дізнається одразу через Telegram, а не випадково.
-const _aiOutageAlertCooldown = new Map(); // botId -> timestamp останнього алерту
-const AI_OUTAGE_ALERT_COOLDOWN_MS = 15 * 60 * 1000; // не частіше ніж раз на 15 хв на бота
+// Правило: коли платний виклик остаточно провалився — адмін дізнається одразу
+// через Telegram, а не випадково.
+//
+// Аудит 2026-08-30: перша версія читала ТІЛЬКИ funnelKey.TELEGRAM_BOT_TOKEN
+// (сирий токен) і funnelKey.ADMIN_TELEGRAM_ID — без резолву через
+// TELEGRAM_CONNECTOR_ID і без системного фолбеку. Перевірка на проді: з 14
+// активних ботів, що мали свій ADMIN_TELEGRAM_ID, 8 (57%) використовують
+// TELEGRAM_CONNECTOR_ID замість сирого токена — алерт для них МОВЧКИ не
+// спрацьовував. Ще 51 з 68 активних ботів взагалі не мають ADMIN_TELEGRAM_ID.
+// Правило: резолвити токен так само, як нода notifyAdmin (funnelKey →
+// TELEGRAM_CONNECTOR_ID → savedConnector), і завжди мати системний фолбек
+// (savedConnector system_admin_telegram_id / system_telegram_bot_token) —
+// щоб довільна воронка без жодного власного Telegram-налаштування теж
+// достукувалась до власника.
+const _serviceOutageAlertCooldown = new Map(); // `${botId}:${label}` -> timestamp останнього алерту
+const SERVICE_OUTAGE_ALERT_COOLDOWN_MS = 15 * 60 * 1000; // не частіше ніж раз на 15 хв на бота+сервіс
 
-async function notifyAdminOfAiOutage(sessionId, errorMessage) {
+function normalizeBotToken(value) {
+    return /^\d+:[A-Za-z0-9_-]{20,}$/.test(String(value || '')) ? String(value) : '';
+}
+
+async function getSystemConnectorField(type, field) {
     try {
-        if (!sessionId) return;
-        const session = await db.session.findUnique({ where: { id: sessionId }, select: { botId: true } });
-        const botId = session?.botId;
-        if (!botId) return;
-
-        const last = _aiOutageAlertCooldown.get(botId) || 0;
-        if (Date.now() - last < AI_OUTAGE_ALERT_COOLDOWN_MS) return; // вже сповіщали нещодавно
-        _aiOutageAlertCooldown.set(botId, Date.now());
-
-        const keys = await db.funnelKey.findMany({
-            where: { botId, key: { in: ['ADMIN_TELEGRAM_ID', 'TELEGRAM_BOT_TOKEN'] } },
-            select: { key: true, value: true },
+        const connector = await db.savedConnector.findFirst({
+            where: { type, isActive: true },
+            orderBy: { updatedAt: 'desc' },
+            select: { config: true },
         });
-        const km = keys.reduce((acc, k) => { acc[k.key] = k.value; return acc; }, {});
-        const chatId = km.ADMIN_TELEGRAM_ID || '';
-        const token = km.TELEGRAM_BOT_TOKEN || '';
-        if (!chatId || !token || !/^\d+:[A-Za-z0-9_-]{20,}$/.test(token)) return;
+        return connector?.config?.[field] || '';
+    } catch { return ''; }
+}
 
-        const text = '⚠️ ШІ недоступний — бот НЕ відповідає клієнтам!\n'
+/**
+ * Резолвить, куди й від чийого імені слати адмін-алерт для конкретного бота.
+ * chatId: funnelKey.ADMIN_TELEGRAM_ID → системний конектор system_admin_telegram_id.
+ * token: funnelKey.TELEGRAM_CONNECTOR_ID → funnelKey.TELEGRAM_BOT_TOKEN (сирий) →
+ *        системний конектор system_telegram_bot_token (гарантований фолбек).
+ */
+async function resolveAdminAlertTarget(botId) {
+    let chatId = '';
+    let token = '';
+
+    if (botId) {
+        try {
+            const keys = await db.funnelKey.findMany({
+                where: { botId, key: { in: ['ADMIN_TELEGRAM_ID', 'TELEGRAM_CONNECTOR_ID', 'TELEGRAM_BOT_TOKEN'] } },
+                select: { key: true, value: true },
+            });
+            const km = keys.reduce((acc, k) => { acc[k.key] = k.value; return acc; }, {});
+            chatId = (km.ADMIN_TELEGRAM_ID || '').trim();
+
+            if (km.TELEGRAM_CONNECTOR_ID) {
+                const conn = await db.savedConnector.findUnique({
+                    where: { id: km.TELEGRAM_CONNECTOR_ID },
+                    select: { config: true },
+                }).catch(() => null);
+                token = normalizeBotToken(conn?.config?.token);
+            }
+            if (!token) token = normalizeBotToken(km.TELEGRAM_BOT_TOKEN);
+        } catch { /* ignore, впадемо на системний фолбек нижче */ }
+    }
+
+    if (!chatId) chatId = (await getSystemConnectorField('system_admin_telegram_id', 'value')) || process.env.ADMIN_TELEGRAM_ID || '';
+    if (!token) token = normalizeBotToken(await getSystemConnectorField('system_telegram_bot_token', 'token')) || normalizeBotToken(process.env.TELEGRAM_BOT_TOKEN);
+
+    return { chatId: String(chatId || ''), token: String(token || '') };
+}
+
+/**
+ * Сповіщає адміна в Telegram, коли платний сервіс (Claude, OpenAI, Gemini,
+ * Whisper, будь-який httpRequest до платного API) відмовив — типово через
+ * вичерпаний баланс/квоту. Дедуплікується по боту+сервісу (раз на 15 хв).
+ * Приймає sessionId (типовий випадок — резолвиться botId) АБО одразу botId
+ * напряму (options.botId) — для викликів поза сесією (напр. транскрипція
+ * голосу відбувається до створення/прив'язки сесії).
+ */
+async function notifyAdminOfServiceOutage(sessionId, serviceLabel, errorMessage, options = {}) {
+    try {
+        let botId = options.botId || null;
+        if (!botId && sessionId) {
+            const session = await db.session.findUnique({ where: { id: sessionId }, select: { botId: true } }).catch(() => null);
+            botId = session?.botId || null;
+        }
+
+        const cooldownKey = `${botId || 'no-bot'}:${serviceLabel}`;
+        const last = _serviceOutageAlertCooldown.get(cooldownKey) || 0;
+        if (Date.now() - last < SERVICE_OUTAGE_ALERT_COOLDOWN_MS) return; // вже сповіщали нещодавно
+        _serviceOutageAlertCooldown.set(cooldownKey, Date.now());
+
+        const { chatId, token } = await resolveAdminAlertTarget(botId);
+        if (!chatId || !token) return;
+
+        const text = `⚠️ ${serviceLabel} — можливо, закінчився баланс/квота!\n`
             + `Помилка: ${String(errorMessage || '').slice(0, 400)}\n\n`
-            + 'Перевірте баланс/статус Claude (і резервних провайдерів) якнайшвидше.';
+            + 'Перевірте баланс/статус сервісу якнайшвидше.';
 
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: 'POST',
@@ -362,6 +429,11 @@ async function notifyAdminOfAiOutage(sessionId, errorMessage) {
             body: JSON.stringify({ chat_id: String(chatId), text, disable_web_page_preview: true }),
         }).catch(() => {});
     } catch { /* найгірше — просто не сповістили, не ламаємо основний потік */ }
+}
+
+// Збережено стару назву для існуючих викликів у цьому файлі — Claude-специфічний текст.
+async function notifyAdminOfAiOutage(sessionId, errorMessage) {
+    return notifyAdminOfServiceOutage(sessionId, 'ШІ (Claude) недоступний — бот НЕ відповідає клієнтам', errorMessage);
 }
 
 // ---------------------------------------------------------------------------
@@ -644,4 +716,4 @@ function _sanitizeRequest(body) {
     };
 }
 
-module.exports = { callClaude, resolveFunnelClaudeKey };
+module.exports = { callClaude, resolveFunnelClaudeKey, notifyAdminOfServiceOutage };

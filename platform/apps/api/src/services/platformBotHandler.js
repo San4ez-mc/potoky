@@ -17,6 +17,7 @@ const { db } = require('@platform/db');
 const logger = require('@platform/logger');
 const { executeFlowStep } = require('./testSession');
 const { isBlockedByTestMode } = require('./testModeGate');
+const { notifyAdminOfServiceOutage } = require('@platform/claude');
 
 // ---------------------------------------------------------------------------
 // Telegram API helper (direct HTTP, per-bot token)
@@ -259,9 +260,13 @@ async function resolveOpenAIKey(botId) {
 
 /**
  * Transcribe an audio file (Telegram voice note) via OpenAI Whisper (whisper-1).
- * Returns plain text or null.
+ * Returns plain text or null. `botId` is used only to route an admin alert on
+ * failure (не має власної сесії на цьому етапі — голос ще не перетворився на
+ * повідомлення) і при вичерпаному балансі/квоті OpenAI бот мовчки ковтав
+ * помилку — 2026-08-30: тепер шле сповіщення (system-фолбек гарантує доставку
+ * навіть якщо в цього бота немає власного ADMIN_TELEGRAM_ID).
  */
-async function transcribeAudio(fileUrl, apiKey, language = 'uk') {
+async function transcribeAudio(fileUrl, apiKey, language = 'uk', botId = null) {
     try {
         const fileRes = await fetch(fileUrl);
         if (!fileRes.ok) return null;
@@ -278,12 +283,14 @@ async function transcribeAudio(fileUrl, apiKey, language = 'uk') {
         if (!res.ok) {
             const errTxt = await res.text().catch(() => '');
             logger.warn('[platformBotHandler] Whisper error', { status: res.status, body: errTxt.slice(0, 200) });
+            notifyAdminOfServiceOutage(null, 'OpenAI Whisper (транскрипція голосу)', `HTTP ${res.status}: ${errTxt.slice(0, 300)}`, { botId }).catch(() => {});
             return null;
         }
         const data = await res.json();
         return (data.text || '').trim() || null;
     } catch (err) {
         logger.warn('[platformBotHandler] transcribeAudio failed', { error: err.message });
+        notifyAdminOfServiceOutage(null, 'OpenAI Whisper (транскрипція голосу)', err.message, { botId }).catch(() => {});
         return null;
     }
 }
@@ -892,7 +899,7 @@ async function _handlePlatformBotUpdateInner(botId, update) {
         && incomingMedia.fileUrl && !message.text) {
         const oaiKey = await resolveOpenAIKey(botId);
         if (oaiKey) {
-            const transcript = await transcribeAudio(incomingMedia.fileUrl, oaiKey, 'uk');
+            const transcript = await transcribeAudio(incomingMedia.fileUrl, oaiKey, 'uk', botId);
             if (transcript) {
                 incomingMedia.transcript = transcript;
                 text = text ? `${text}\n${transcript}` : transcript;

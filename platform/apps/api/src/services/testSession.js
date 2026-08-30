@@ -2,7 +2,7 @@
 
 const { db } = require('@platform/db');
 const logger = require('@platform/logger');
-const { callClaude } = require('@platform/claude');
+const { callClaude, notifyAdminOfServiceOutage } = require('@platform/claude');
 const { BOT_REQUIREMENTS } = require('../../../../projects/finance-course/config/prerequisites');
 const { enableTestChat, disableTestChat, consumeTestMessages, sendMessage } = require('@platform/telegram');
 const crypto = require('crypto');
@@ -191,6 +191,18 @@ async function logFlowError({ sessionId, botId, errorType, message, stack, conte
 
 function hostFromUrl(u) {
     try { return new URL(u).host; } catch { return 'http'; }
+}
+
+// Евристика «схоже на вичерпаний баланс/квоту» для довільних httpRequest-нод
+// (fal.ai, ElevenLabs, Replicate, HeyGen, Ideogram тощо — платні сервіси, на
+// які воронка ходить напряму, не через callClaude). 402/403 + типові фрази
+// в тілі відповіді. Не намагається бути точною для кожного провайдера —
+// краще хибне спрацювання раз на 15 хв (дедуп у notifyAdminOfServiceOutage),
+// ніж мовчазний простій воронки без жодного алерту.
+function looksLikeBalanceError(status, bodyText) {
+    if (status === 402) return true;
+    const t = String(bodyText || '').toLowerCase();
+    return /insufficient.{0,20}(balance|credit|fund)|out of credit|credit balance|low balance|balance too low|quota exceeded|exceeded.{0,20}quota|payment required|billing/i.test(t);
 }
 
 function renderTemplate(input, scope) {
@@ -2381,6 +2393,9 @@ ${sourceContent || '(немає даних)'}
                         message: `HTTP ${httpStatus} від ${url}`,
                         context: { nodeId: node.id, nodeLabel: data.label || '', response: truncateStr(responseText, 1000) },
                     });
+                    if (looksLikeBalanceError(httpStatus, responseText)) {
+                        notifyAdminOfServiceOutage(session.id, `Платний сервіс ${hostFromUrl(url)}`, `HTTP ${httpStatus}: ${truncateStr(responseText, 300)}`).catch(() => {});
+                    }
                 }
 
                 if (outputVar) {
@@ -2414,6 +2429,9 @@ ${sourceContent || '(немає даних)'}
                     stack: _error.stack,
                     context: { nodeId: node.id, nodeLabel: data.label || '' },
                 });
+                if (looksLikeBalanceError(null, _error.message)) {
+                    notifyAdminOfServiceOutage(session.id, `Платний сервіс ${hostFromUrl(url)}`, _error.message).catch(() => {});
+                }
             }
 
             runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
@@ -2436,13 +2454,18 @@ ${sourceContent || '(немає даних)'}
                         keys: funnelEnv,
                         __jsResult: undefined,
                     };
+                    // notifyBalanceIssue(serviceLabel, message) — доступний усередині js-ноди
+                    // для прямих fetch-викликів платних API (Gemini vision у n_lookup-code.js
+                    // тощо), які самі ловлять свою помилку і не прокидають її сюди назовні.
+                    const notifyBalanceIssue = (serviceLabel, message) =>
+                        notifyAdminOfServiceOutage(session.id, String(serviceLabel || 'Зовнішній сервіс'), String(message || '')).catch(() => {});
                     // Support async/await in JS nodes (fetch, Buffer, crypto, etc.)
                     // new Function wraps user code in async IIFE so top-level await works
                     const asyncResult = await Promise.race([
                         new Function(
-                            'context','user','session','input','keys','fetch','Buffer','FormData','Blob','console','crypto',
+                            'context','user','session','input','keys','fetch','Buffer','FormData','Blob','console','crypto','notifyBalanceIssue',
                             'return (async function(){"use strict";\n' + code + '\n})();'
-                        )(ctx, sandbox.user, sandbox.session, sandbox.input, sandbox.keys || {}, fetch, Buffer, FormData, Blob, console, require('crypto')),
+                        )(ctx, sandbox.user, sandbox.session, sandbox.input, sandbox.keys || {}, fetch, Buffer, FormData, Blob, console, require('crypto'), notifyBalanceIssue),
                         new Promise((_, rej) => setTimeout(() => rej(new Error('JS node timeout (60s)')), 60000)),
                     ]);
                     if (asyncResult && typeof asyncResult === 'object' && !Array.isArray(asyncResult)) {
@@ -2459,6 +2482,9 @@ ${sourceContent || '(немає даних)'}
                         stack: err.stack,
                         context: { nodeId: node.id, nodeLabel: data.label || '' },
                     });
+                    if (looksLikeBalanceError(null, err.message)) {
+                        notifyAdminOfServiceOutage(session.id, `JS-нода «${data.label || node.id}»`, err.message).catch(() => {});
+                    }
                 }
             }
             runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);

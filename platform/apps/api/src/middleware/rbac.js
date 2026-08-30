@@ -15,6 +15,20 @@ function isSuperadmin(req) {
     return roleOf(req) === 'superadmin';
 }
 
+// «Лише перегляд» приходить із SSO (Access.canEdit) для role='user'. Суперадмін і пароль-резерв
+// завжди можуть редагувати. Відсутність поля в сесії (старі логіни до появи canEdit) → true.
+function canEdit(req) {
+    if (isSuperadmin(req)) return true;
+    return req.session && req.session.canEdit !== false;
+}
+
+function requireCanEdit(req, res, next) {
+    if (!canEdit(req)) {
+        return res.status(403).json({ ok: false, error: { code: 'READ_ONLY', message: 'Доступ лише на перегляд — редагування заборонено' } });
+    }
+    next();
+}
+
 // null = усі проєкти (суперадмін); масив = дозволені; [] = жодного.
 function allowedProjectIds(req) {
     if (isSuperadmin(req)) return null;
@@ -107,6 +121,7 @@ function botProjectScopeWhere(req) { // для сесій: bot.projectId
 module.exports = {
     roleOf, isSuperadmin, allowedProjectIds, requireSuperadmin, isProjectAllowed,
     allowedPageIds, isPageAllowed, requirePage,
+    canEdit, requireCanEdit,
     guardBotParam, guardSessionParam, guardUserParam,
     projectScopeWhere, botProjectScopeWhere,
 };

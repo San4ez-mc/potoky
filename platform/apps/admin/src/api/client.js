@@ -90,7 +90,7 @@ export const api = {
     },
     revealFunnelKey: (botId, key) => req('GET', `/funnels/${botId}/keys/${key}/reveal`),
     getNodeStats: (botId, nodeId, period = '30d') => req('GET', `/funnels/${botId}/nodes/${nodeId}/stats?period=${period}`),
-    getFunnelAnalytics: (botId, period = '30d') => req('GET', `/funnels/${botId}/analytics?period=${period}`),
+    getFunnelAnalytics: (botId, period = '30d', includeTest = false) => req('GET', `/funnels/${botId}/analytics?period=${period}${includeTest ? '&includeTest=true' : ''}`),
     getFunnelsCompare: (period = '30d', projectId = '', includeTest = false) => req('GET', `/funnels/analytics/compare?period=${period}${projectId ? `&projectId=${projectId}` : ''}${includeTest ? '&includeTest=true' : ''}`),
 
     // Channel deep links (persistent per-network links) — reqWithMeta so we keep { channels }
@@ -130,7 +130,7 @@ export const api = {
     getUsers: (page = 0, search = '', realOnly = true) => {
         const params = new URLSearchParams({ page, realOnly: String(realOnly) });
         if (search) params.set('search', search);
-        return req('GET', `/users?${params}`);
+        return reqWithMeta('GET', `/users?${params}`);
     },
     getUser: (id) => req('GET', `/users/${id}`),
     getUserProgress: (id) => req('GET', `/users/${id}/progress`),

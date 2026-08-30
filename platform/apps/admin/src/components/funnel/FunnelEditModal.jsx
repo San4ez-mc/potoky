@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../api/client.js';
 
-export function FunnelEditModal({ isOpen, bot, onClose, onSave, isSaving }) {
+export function FunnelEditModal({ isOpen, bot, onClose, onSave, isSaving, readOnly }) {
     const [form, setForm] = useState({ name: '', description: '', projectId: '', testMode: false, testModeAllowedUsers: '' });
     const [projects, setProjects] = useState([]);
     const [loadingProjects, setLoadingProjects] = useState(false);
@@ -56,6 +56,12 @@ export function FunnelEditModal({ isOpen, bot, onClose, onSave, isSaving }) {
                 </div>
 
                 <form onSubmit={handleSubmit} className="space-y-4 p-5 overflow-y-auto min-h-0">
+                <fieldset disabled={!!readOnly} className="contents border-0 p-0 m-0 min-w-0">
+                    {readOnly && (
+                        <div className="rounded-lg border border-amber-800/50 bg-amber-900/20 px-3 py-2 text-xs text-amber-300">
+                            👁 Лише перегляд — редагування воронки вимкнено для вашого акаунта
+                        </div>
+                    )}
                     <div>
                         <label className="mb-2 block text-sm text-gray-300 font-medium">Назва</label>
                         <input
@@ -164,6 +170,7 @@ export function FunnelEditModal({ isOpen, bot, onClose, onSave, isSaving }) {
                             {isSaving ? 'Збереження...' : 'Зберегти'}
                         </button>
                     </div>
+                </fieldset>
                 </form>
             </div>
         </div>

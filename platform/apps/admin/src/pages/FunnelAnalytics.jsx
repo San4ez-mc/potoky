@@ -42,10 +42,94 @@ function Card({ label, value, sub, color }) {
     );
 }
 
+// «2 дні 4 год», «35 хв» тощо — компактне форматування тривалості для картки
+function formatDuration(ms) {
+    if (ms == null) return '—';
+    const min = Math.round(ms / 60000);
+    if (min < 60) return `${min} хв`;
+    const hours = Math.round(min / 60);
+    if (hours < 24) return `${hours} год`;
+    const days = Math.floor(hours / 24);
+    const remHours = hours % 24;
+    return remHours > 0 ? `${days} дн ${remHours} год` : `${days} дн`;
+}
+
+// Компактний спарклайн-графік нових підписників по тижнях (останні 8 тижнів)
+function WeeklyTrend({ weeks }) {
+    if (!weeks || weeks.length === 0) return null;
+    const max = Math.max(1, ...weeks.map(w => w.count));
+    return (
+        <div className="flex items-end gap-1.5 h-14">
+            {weeks.map(w => {
+                const h = Math.max(2, Math.round((w.count / max) * 100));
+                const label = new Date(w.weekStart).toLocaleDateString('uk-UA', { day: '2-digit', month: '2-digit' });
+                return (
+                    <div key={w.weekStart} className="flex flex-col items-center gap-1 flex-1" title={`тиждень з ${label}: ${w.count}`}>
+                        <div className="w-full bg-brand/60 rounded-sm hover:bg-brand transition-colors" style={{ height: `${h}%` }} />
+                        <span className="text-[9px] text-gray-600">{w.count}</span>
+                    </div>
+                );
+            })}
+        </div>
+    );
+}
+
+// Візуальна воронка (трапеції, що звужуються) — до 8 ключових кроків, взятих рівномірно з flow
+function FunnelChart({ steps }) {
+    if (!steps || steps.length === 0) return null;
+    const W = 100, rowH = 34, pad = 6;
+    const max = steps[0]?.reached || 1;
+    const widthAt = (v) => Math.max(6, (v / max) * (W - pad * 2));
+    const H = rowH * steps.length;
+    return (
+        // aspect-ratio == viewBox ratio → SVG fills full width with no letterboxing and no stretch-distortion
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ aspectRatio: `${W} / ${H}` }}>
+            {steps.map((s, i) => {
+                const wTop = widthAt(s.reached);
+                const wBottom = widthAt(i < steps.length - 1 ? steps[i + 1].reached : s.reached);
+                const y0 = i * rowH, y1 = y0 + rowH - 2;
+                const xTop0 = (W - wTop) / 2, xTop1 = xTop0 + wTop;
+                const xBot0 = (W - wBottom) / 2, xBot1 = xBot0 + wBottom;
+                const pct = i === 0 ? 100 : pctOfTotal(s.reached, max);
+                return (
+                    <g key={s.nodeId || i}>
+                        <polygon
+                            points={`${xTop0},${y0} ${xTop1},${y0} ${xBot1},${y1} ${xBot0},${y1}`}
+                            className={i === 0 ? 'fill-emerald-500/70' : 'fill-brand/60'}
+                        />
+                        <text x={W / 2} y={(y0 + y1) / 2 + 3} textAnchor="middle" fontSize="4.2" className="fill-white" style={{ fontWeight: 600 }}>
+                            {s.reached} · {pct}%
+                        </text>
+                    </g>
+                );
+            })}
+        </svg>
+    );
+}
+
+// Рівномірно бере до `n` точок з масиву, завжди включає перший і останній елемент
+function sampleSteps(arr, n) {
+    if (arr.length <= n) return arr;
+    const result = [arr[0]];
+    const step = (arr.length - 1) / (n - 1);
+    for (let i = 1; i < n - 1; i++) result.push(arr[Math.round(i * step)]);
+    result.push(arr[arr.length - 1]);
+    return result;
+}
+
+// Індивідуальні налаштування аналітики per-воронка (період, з тестами) — щоб не вибирати їх заново щоразу
+function loadSettings(botId) {
+    try { return JSON.parse(localStorage.getItem(`funnelAnalyticsSettings:${botId}`) || '{}'); } catch { return {}; }
+}
+function saveSettings(botId, patch) {
+    try { localStorage.setItem(`funnelAnalyticsSettings:${botId}`, JSON.stringify({ ...loadSettings(botId), ...patch })); } catch { /* ignore */ }
+}
+
 export function FunnelAnalytics() {
     const { botId } = useParams();
     const navigate = useNavigate();
-    const [period, setPeriod] = useState('30d');
+    const [period, setPeriod] = useState(() => loadSettings(botId).period || '30d');
+    const [includeTest, setIncludeTest] = useState(() => loadSettings(botId).includeTest || false);
     const [data, setData] = useState(null);
     const [bot, setBot] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -63,14 +147,17 @@ export function FunnelAnalytics() {
         }).catch(() => {});
     }, [botId]);
 
+    const changePeriod = (p) => { setPeriod(p); saveSettings(botId, { period: p }); };
+    const toggleIncludeTest = () => setIncludeTest(v => { const nv = !v; saveSettings(botId, { includeTest: nv }); return nv; });
+
     useEffect(() => {
         setLoading(true);
         setError('');
-        api.getFunnelAnalytics(botId, period)
+        api.getFunnelAnalytics(botId, period, includeTest)
             .then(r => setData(r?.data ?? r))
             .catch(e => setError(e.message || 'Помилка завантаження'))
             .finally(() => setLoading(false));
-    }, [botId, period, reloadTick]);
+    }, [botId, period, includeTest, reloadTick]);
 
     const toggleNet = (id) => setSelectedNets(prev => prev.includes(id) ? prev.filter(n => n !== id) : [...prev, id]);
     const netMatch = (p) => selectedNets.length === 0 || selectedNets.includes(p || 'other');
@@ -118,16 +205,19 @@ export function FunnelAnalytics() {
                     <h1 className="text-lg font-semibold text-white">Аналітика{bot ? `: ${bot.name}` : ''}</h1>
                     {bot && <div className="text-xs text-gray-500 font-mono">/{bot.slug}</div>}
                 </div>
-                <div className="ml-auto flex gap-1 items-center">
+                <div className="ml-auto flex gap-1 items-center flex-wrap">
                     {PERIOD_OPTIONS.map(o => (
                         <button
                             key={o.value}
-                            onClick={() => setPeriod(o.value)}
+                            onClick={() => changePeriod(o.value)}
                             className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${period === o.value ? 'bg-brand text-white' : 'bg-gray-900 border border-gray-700 text-gray-400 hover:bg-gray-800'}`}
                         >
                             {o.label}
                         </button>
                     ))}
+                    <label className="flex items-center gap-1.5 text-xs text-gray-400 ml-1 cursor-pointer select-none" title="Індивідуальне налаштування — запам'ятовується для цієї воронки">
+                        <input type="checkbox" checked={includeTest} onChange={toggleIncludeTest} /> з тестами
+                    </label>
                     <Link to={`/funnel/${botId}`} className="ml-2 px-3 py-1.5 rounded-lg text-xs text-brand-light border border-gray-700 bg-gray-900 hover:bg-gray-800 transition-colors">
                         Редагувати воронку
                     </Link>
@@ -141,14 +231,40 @@ export function FunnelAnalytics() {
             ) : data && s && (
                 <>
                     {/* Summary */}
-                    <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                         <Card label="Всього сесій" value={s.totalSessions} />
                         <Card label="Є відповідь" value={s.repliedSessions ?? 0} sub={`${s.repliedRate ?? 0}% від сесій`} color="text-sky-400" />
                         <Card label="Активних зараз" value={s.activeSessions} sub={`${pctOfTotal(s.activeSessions, s.totalSessions)}%`} color="text-emerald-400" />
                         <Card label="Завершили" value={s.completedSessions} sub={`конверсія ${s.conversionRate}%`} color="text-brand-light" />
                         <Card label="Відписались" value={s.unsubscribedSessions} sub={`${pctOfTotal(s.unsubscribedSessions, s.totalSessions)}%`} color={s.unsubscribedSessions > 0 ? 'text-red-400' : 'text-white'} />
                         <Card label="Кліків з постів" value={s.trackedClicks} sub="deep-links" />
+                        <Card label="Нових / тиждень" value={s.avgWeeklySubs ?? '—'} sub="середнє за останні повні тижні" color="text-amber-400" />
+                        <Card label="Час проходження" value={formatDuration(s.avgCompletionMs)} sub="середньо від старту до завершення" color="text-violet-400" />
                     </div>
+
+                    {/* Weekly new subscribers trend */}
+                    {data.weeklySubs && data.weeklySubs.length > 1 && (
+                        <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-2">
+                            <div>
+                                <div className="text-sm font-semibold text-white">Нові підписники по тижнях</div>
+                                <div className="text-xs text-gray-500">Останні {data.weeklySubs.length} тижнів, незалежно від обраного періоду вище</div>
+                            </div>
+                            <WeeklyTrend weeks={data.weeklySubs} />
+                        </div>
+                    )}
+
+                    {/* Funnel chart — visual funnel of the flow */}
+                    {flow.length > 1 && (
+                        <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-2">
+                            <div>
+                                <div className="text-sm font-semibold text-white">Воронка</div>
+                                <div className="text-xs text-gray-500">Візуальне звуження від входу до найглибшого кроку{flow.length > 8 ? ' (показано вибрані ключові кроки)' : ''}</div>
+                            </div>
+                            <div className="max-w-md mx-auto">
+                                <FunnelChart steps={sampleSteps(flow, 8)} />
+                            </div>
+                        </div>
+                    )}
 
                     {/* Deep links per network — filter + management */}
                     <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-3">

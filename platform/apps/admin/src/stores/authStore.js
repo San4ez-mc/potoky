@@ -7,6 +7,7 @@ export const useAuthStore = create((set) => ({
     role: 'superadmin',            // superadmin | user
     allowedProjectIds: null,       // null = усі проєкти (суперадмін); масив = дозволені
     allowedPageIds: null,          // null = усі сторінки (суперадмін); масив = додатково дозволені (крім базових)
+    canEdit: true,                 // false = лише перегляд (напр. заборонено редагувати воронку)
 
     checkAuth: async () => {
         try {
@@ -18,6 +19,7 @@ export const useAuthStore = create((set) => ({
                     role: me.role || 'superadmin',
                     allowedProjectIds: me.allowedProjectIds ?? null,
                     allowedPageIds: me.allowedPageIds ?? null,
+                    canEdit: me.canEdit !== false,
                 });
             } else {
                 set({ isAuthenticated: false, isLoading: false });
@@ -31,7 +33,7 @@ export const useAuthStore = create((set) => ({
         await api.login(loginVal, password, rememberMe);
         try {
             const me = await api.getMe();
-            set({ isAuthenticated: true, role: me?.role || 'superadmin', allowedProjectIds: me?.allowedProjectIds ?? null, allowedPageIds: me?.allowedPageIds ?? null });
+            set({ isAuthenticated: true, role: me?.role || 'superadmin', allowedProjectIds: me?.allowedProjectIds ?? null, allowedPageIds: me?.allowedPageIds ?? null, canEdit: me?.canEdit !== false });
         } catch {
             set({ isAuthenticated: true });
         }
@@ -39,6 +41,6 @@ export const useAuthStore = create((set) => ({
 
     logout: async () => {
         await api.logout();
-        set({ isAuthenticated: false, role: 'superadmin', allowedProjectIds: null, allowedPageIds: null });
+        set({ isAuthenticated: false, role: 'superadmin', allowedProjectIds: null, allowedPageIds: null, canEdit: true });
     },
 }));

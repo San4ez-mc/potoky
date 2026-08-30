@@ -2,26 +2,24 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../api/client.js';
 import { format } from 'date-fns';
 import { Link } from 'react-router-dom';
+import { Pager } from '../components/Pager.jsx';
 
 export function Users() {
     const [users, setUsers] = useState([]);
-    const [total, setTotal] = useState(0);
+    const [meta, setMeta] = useState({ total: 0, limit: 50 });
     const [page, setPage] = useState(0);
     const [search, setSearch] = useState('');
     const [searchInput, setSearchInput] = useState('');
     const [realOnly, setRealOnly] = useState(true);
     const [loading, setLoading] = useState(true);
 
-    const LIMIT = 50;
-
     const load = useCallback((p, q, ro) => {
         setLoading(true);
         api.getUsers(p, q, ro)
             .then(res => {
                 const data = res?.data ?? res ?? [];
-                const meta = res?.meta ?? {};
                 setUsers(data);
-                setTotal(meta.total ?? data.length);
+                setMeta(res?.meta ?? { total: data.length, limit: 50 });
             })
             .catch(() => setUsers([]))
             .finally(() => setLoading(false));
@@ -51,7 +49,7 @@ export function Users() {
             <div className="flex items-center justify-between mb-4">
                 <h1 className="text-xl font-semibold text-white">
                     Підписники
-                    {total > 0 && <span className="ml-2 text-sm text-gray-500 font-normal">{total}</span>}
+                    {meta.total > 0 && <span className="ml-2 text-sm text-gray-500 font-normal">{meta.total}</span>}
                 </h1>
                 <button
                     onClick={toggleRealOnly}
@@ -169,23 +167,7 @@ export function Users() {
                 </div>
             )}
 
-            <div className="flex items-center gap-2 mt-4">
-                {page > 0 && (
-                    <button onClick={() => setPage(p => p - 1)} className="px-4 py-2 bg-gray-800 rounded-lg text-gray-300 text-sm">
-                        ← Назад
-                    </button>
-                )}
-                {users.length === LIMIT && (
-                    <button onClick={() => setPage(p => p + 1)} className="px-4 py-2 bg-gray-800 rounded-lg text-gray-300 text-sm">
-                        Далі →
-                    </button>
-                )}
-                {total > 0 && (
-                    <span className="ml-auto text-xs text-gray-500">
-                        {page * LIMIT + 1}–{Math.min((page + 1) * LIMIT, total)} з {total}
-                    </span>
-                )}
-            </div>
+            <Pager page={page} meta={meta} loading={loading} onPageChange={setPage} />
         </div>
     );
 }

@@ -16,7 +16,7 @@ const UPLOADS_DIR = process.env.BOT_FILES_DIR
 
 const router = Router();
 
-const { guardBotParam, allowedProjectIds } = require('../middleware/rbac');
+const { guardBotParam, allowedProjectIds, requireCanEdit } = require('../middleware/rbac');
 router.param('botId', guardBotParam);
 router.use(authMiddleware);
 
@@ -54,6 +54,7 @@ router.get('/:botId',
 
 // PUT /api/funnels/:botId — save flow definition (nodes + edges)
 router.put('/:botId',
+    requireCanEdit,
     validateParams({
         params: z.object({ botId: z.string().uuid() }),
         body: z.object({
@@ -106,6 +107,7 @@ router.get('/:botId/export',
 
 // POST /api/funnels/:botId/import — import funnel from JSON
 router.post('/:botId/import',
+    requireCanEdit,
     validateParams({
         params: z.object({ botId: z.string().uuid() }),
         body: z.object({
@@ -147,6 +149,7 @@ router.get('/:botId/keys',
 
 // PUT /api/funnels/:botId/keys — upsert a key
 router.put('/:botId/keys',
+    requireCanEdit,
     validateParams({
         params: z.object({ botId: z.string().uuid() }),
         body: z.object({
@@ -181,6 +184,7 @@ router.put('/:botId/keys',
 
 // DELETE /api/funnels/:botId/keys/:key
 router.delete('/:botId/keys/:key',
+    requireCanEdit,
     validateParams({
         params: z.object({ botId: z.string().uuid(), key: z.string() }),
     }),
@@ -255,6 +259,7 @@ router.post('/:botId/homework-done',
 
 // POST /api/funnels/:botId/sync-channels — manual re-sync for delivery channels
 router.post('/:botId/sync-channels',
+    requireCanEdit,
     validateParams({ params: z.object({ botId: z.string().uuid() }) }),
     asyncHandler(async (req, res) => {
         const result = await syncChannelsForBot(req.params.botId);
@@ -266,6 +271,7 @@ router.post('/:botId/sync-channels',
 // Опційно body.connectorId → спершу проставляє TELEGRAM_CONNECTOR_ID напряму (не через /keys),
 // щоб не тригерити syncChannelsForBot і не перехопити вебхук у ботів, що ділять кілька воронок.
 router.post('/:botId/refresh-telegram-username',
+    requireCanEdit,
     validateParams({ params: z.object({ botId: z.string().uuid() }) }),
     asyncHandler(async (req, res) => {
         const botId = req.params.botId;
@@ -300,6 +306,7 @@ router.get('/:botId/keys/:key/reveal',
 // POST /api/funnels/:botId/auto-layout — перерахувати grid-позиції всіх нод
 // (кнопка «🧹 Впорядкувати» в редакторі). Той самий алгоритм, що й MCP auto_layout.
 router.post('/:botId/auto-layout',
+    requireCanEdit,
     validateParams({ params: z.object({ botId: z.string().uuid() }) }),
     asyncHandler(async (req, res) => {
         const { botId } = req.params;
@@ -313,6 +320,7 @@ router.post('/:botId/auto-layout',
 );
 
 router.post('/:botId/edges',
+    requireCanEdit,
     validateParams({
         params: z.object({ botId: z.string().uuid() }),
         body: z.object({
@@ -342,6 +350,7 @@ router.post('/:botId/edges',
 
 // PUT /api/funnels/:botId/edges — replace all edges (bulk update)
 router.put('/:botId/edges',
+    requireCanEdit,
     validateParams({
         params: z.object({ botId: z.string().uuid() }),
         body: z.object({
@@ -363,6 +372,7 @@ router.put('/:botId/edges',
 
 // DELETE /api/funnels/:botId/edges/:edgeId — delete edge
 router.delete('/:botId/edges/:edgeId',
+    requireCanEdit,
     validateParams({
         params: z.object({ botId: z.string().uuid(), edgeId: z.string() }),
     }),
@@ -504,19 +514,25 @@ router.get('/:botId/analytics',
         // ── Sessions in period ────────────────────────────────────────────────
         const sessions = await db.session.findMany({
             where: { botId, startedAt: { gte: timeFrom }, ...testFilter },
-            select: { id: true, context: true, state: true, isActive: true },
+            select: { id: true, context: true, state: true, isActive: true, startedAt: true, completedAt: true },
         });
 
         const linkCounts = {};   // _linkSource -> session count
         const nodeReached = {};  // nodeId -> sessions that visited it
         const stuckCounts = {};  // current node -> non-completed sessions sitting there
         let totalSessions = 0, activeSessions = 0, completedSessions = 0, unsubscribedSessions = 0;
+        let completionMsSum = 0, completionMsCount = 0;
 
         for (const s of sessions) {
             totalSessions++;
             if (s.isActive) activeSessions++;
             if (s.state === 'completed') completedSessions++;
             else if (s.state === 'unsubscribed') unsubscribedSessions++;
+
+            if (s.state === 'completed' && s.completedAt && s.startedAt) {
+                completionMsSum += (new Date(s.completedAt) - new Date(s.startedAt));
+                completionMsCount++;
+            }
 
             const ctx = (s.context && typeof s.context === 'object') ? s.context : {};
             const linkSource = ctx._linkSource || 'direct';
@@ -530,6 +546,31 @@ router.get('/:botId/analytics',
                 stuckCounts[rt.currentNodeId] = (stuckCounts[rt.currentNodeId] || 0) + 1;
             }
         }
+        const avgCompletionMs = completionMsCount > 0 ? Math.round(completionMsSum / completionMsCount) : null;
+
+        // ── Нові підписники по тижнях (останні 8 тижнів, незалежно від обраного періоду) ──
+        // Дає тренд для картки «середньо нових підписників/тиждень» — вибірки 24h/7d
+        // самі по собі закороткі, щоб порахувати щотижневе середнє.
+        let weeklySubs = [];
+        try {
+            const weeksBack = 8;
+            const weeksFrom = new Date(Date.now() - weeksBack * 7 * 86400000);
+            const testCond = includeTest === 'true' ? '' : 'AND "isTest" = false';
+            const rows = await db.$queryRawUnsafe(
+                `SELECT date_trunc('week', "startedAt") AS week_start, COUNT(*)::int AS count
+                 FROM sessions WHERE "botId" = $1 AND "startedAt" >= $2::timestamptz ${testCond}
+                 GROUP BY week_start ORDER BY week_start ASC`,
+                botId, weeksFrom.toISOString());
+            weeklySubs = rows.map(r => ({ weekStart: r.week_start, count: Number(r.count) || 0 }));
+        } catch { /* ignore */ }
+        // Середнє — тільки по завершених тижнях (не рахуємо поточний неповний тиждень)
+        const nowWeekStart = new Date();
+        nowWeekStart.setUTCHours(0, 0, 0, 0);
+        nowWeekStart.setUTCDate(nowWeekStart.getUTCDate() - ((nowWeekStart.getUTCDay() + 6) % 7)); // понеділок
+        const fullWeeks = weeklySubs.filter(w => new Date(w.weekStart) < nowWeekStart);
+        const avgWeeklySubs = fullWeeks.length > 0
+            ? Math.round(fullWeeks.reduce((a, w) => a + w.count, 0) / fullWeeks.length)
+            : null;
 
         // Funnel flow in path order, with drop-off between consecutive reached nodes
         const funnelFlow = order
@@ -611,7 +652,10 @@ router.get('/:botId/analytics',
                 otherSessions: Math.max(0, totalSessions - completedSessions - unsubscribedSessions),
                 conversionRate: totalSessions > 0 ? Math.round((completedSessions / totalSessions) * 100) : 0,
                 trackedClicks,
+                avgCompletionMs,
+                avgWeeklySubs,
             },
+            weeklySubs,
             channels,
             postSources,
             linkStats,
@@ -638,7 +682,9 @@ router.get('/analytics/compare', asyncHandler(async (req, res) => {
         _projWhere = { projectId: { in: _allowed } };
     }
     const bots = await db.bot.findMany({
-        where: _projWhere,
+        // Архівовані (isActive=false) воронки в аналітику не потрапляють — те саме визначення
+        // «архівований», що й у списку воронок (Bots.jsx: showArchived фільтрує по isActive).
+        where: { ..._projWhere, isActive: true },
         select: { id: true, name: true, slug: true, isActive: true, project: { select: { id: true, name: true } } },
         orderBy: { createdAt: 'desc' },
     });
@@ -763,6 +809,7 @@ router.post('/:botId/check-prerequisites',
 // POST /api/funnels/:botId/upload-file — upload a static file for a sendFile node
 // Body: { filename: 'name.pdf', data: '<base64>' }
 router.post('/:botId/upload-file',
+    requireCanEdit,
     validateParams({ params: z.object({ botId: z.string().uuid() }) }),
     asyncHandler(async (req, res) => {
         const { botId } = req.params;

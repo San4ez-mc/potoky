@@ -9,7 +9,7 @@ const { NotFoundError } = require('@platform/errors');
 
 const router = Router();
 
-const { guardBotParam } = require('../middleware/rbac');
+const { guardBotParam, requireCanEdit } = require('../middleware/rbac');
 router.param('id', guardBotParam);
 
 const paginationSchema = z.object({
@@ -33,6 +33,7 @@ router.get('/:id',
 
 // PATCH /api/bots/:id — update bot name / description / goal
 router.patch('/:id',
+    requireCanEdit,
     validateParams({
         params: z.object({ id: z.string().uuid() }),
         body: z.object({

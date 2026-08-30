@@ -16,14 +16,14 @@ import { NODE_TYPES } from './NodeTypes.jsx';
 let nodeCounter = Date.now();
 const uid = () => `node_${++nodeCounter}`;
 
-export function FunnelCanvas({ onNodeClick }) {
+export function FunnelCanvas({ onNodeClick, readOnly = false }) {
     const { nodes, edges, viewport, setNodes, setEdges, setViewport, selectNode } = useFunnelStore();
     const { screenToFlowPosition } = useReactFlow();
     const ref = useRef(null);
 
     const onConnect = useCallback(
-        (params) => setEdges((eds) => addEdge({ ...params, animated: true }, eds)),
-        [setEdges]
+        (params) => { if (!readOnly) setEdges((eds) => addEdge({ ...params, animated: true }, eds)); },
+        [setEdges, readOnly]
     );
 
     const onNodeClickCb = useCallback((_, node) => {
@@ -38,6 +38,7 @@ export function FunnelCanvas({ onNodeClick }) {
 
     const onDrop = useCallback((event) => {
         event.preventDefault();
+        if (readOnly) return;
         const type = event.dataTransfer.getData('application/node-type');
         const defaultData = JSON.parse(event.dataTransfer.getData('application/node-data') || '{}');
         if (!type) return;
@@ -45,7 +46,7 @@ export function FunnelCanvas({ onNodeClick }) {
         const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
         const newNode = { id: uid(), type, position, data: { label: type, ...defaultData } };
         setNodes((nds) => [...nds, newNode]);
-    }, [setNodes, screenToFlowPosition]);
+    }, [setNodes, screenToFlowPosition, readOnly]);
 
     const onDragOver = (event) => {
         event.preventDefault();
@@ -67,7 +68,10 @@ export function FunnelCanvas({ onNodeClick }) {
                 onMoveEnd={(_, vp) => setViewport(vp)}
                 fitView
                 fitViewOptions={{ padding: 0.2 }}
-                deleteKeyCode="Delete"
+                nodesDraggable={!readOnly}
+                nodesConnectable={!readOnly}
+                edgesReconnectable={!readOnly}
+                deleteKeyCode={readOnly ? null : 'Delete'}
                 connectionRadius={40}
                 snapToGrid
                 snapGrid={[15, 15]}

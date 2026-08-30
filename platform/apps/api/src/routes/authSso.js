@@ -57,10 +57,11 @@ router.get('/sso/callback', async (req, res) => {
 
         const email = String(data.user.email || '').toLowerCase();
 
-        // Тягнемо доступи (роль + проєкти + сторінки) з SSO для продукту flows.
+        // Тягнемо доступи (роль + проєкти + сторінки + canEdit) з SSO для продукту flows.
         let role = 'none';
         let allowedProjectIds = [];
         let allowedPageIds = [];
+        let canEdit = true;
         try {
             const pr = await fetch(`${SSO_BASE}/oauth/permissions`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -71,6 +72,7 @@ router.get('/sso/callback', async (req, res) => {
                 role = pd.role || 'none';
                 allowedProjectIds = Array.isArray(pd.projectIds) ? pd.projectIds : [];
                 allowedPageIds = Array.isArray(pd.pageIds) ? pd.pageIds : [];
+                canEdit = pd.canEdit !== false;
             }
         } catch (e) { logger.warn('[authSso] permissions fetch failed', { error: e.message }); }
 
@@ -87,6 +89,7 @@ router.get('/sso/callback', async (req, res) => {
         req.session.role = role;
         req.session.allowedProjectIds = role === 'superadmin' ? null : allowedProjectIds; // null = усі
         req.session.allowedPageIds = role === 'superadmin' ? null : allowedPageIds; // null = усі; [] = лише базові сторінки
+        req.session.canEdit = role === 'superadmin' ? true : canEdit; // false = лише перегляд (напр. редактор воронки)
         req.session.ssoUser = { id: data.user.id, email, name: data.user.name || null };
         req.session.cookie.maxAge = 30 * 24 * 60 * 60 * 1000;
         await new Promise((resolve, reject) => req.session.save((e) => (e ? reject(e) : resolve())));
@@ -106,7 +109,8 @@ router.get('/me', (req, res) => {
     const role = req.session.role || 'superadmin';
     const allowedProjectIds = role === 'superadmin' ? null : (req.session.allowedProjectIds || []);
     const allowedPageIds = role === 'superadmin' ? null : (req.session.allowedPageIds || []);
-    res.json({ ok: true, authenticated: true, role, allowedProjectIds, allowedPageIds, user: req.session.ssoUser || { email: 'admin' } });
+    const canEdit = role === 'superadmin' ? true : (req.session.canEdit !== false);
+    res.json({ ok: true, authenticated: true, role, allowedProjectIds, allowedPageIds, canEdit, user: req.session.ssoUser || { email: 'admin' } });
 });
 
 // GET /api/auth/sso/projects — SSO («Компанії») читає список проєктів flows (shared secret = client secret).

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { ReactFlowProvider } from '@xyflow/react';
 import { useFunnelStore } from '../stores/funnelStore.js';
+import { useAuthStore } from '../stores/authStore.js';
 import { FunnelCanvas } from '../components/funnel/FunnelCanvas.jsx';
 import { NodeLibrary } from '../components/funnel/NodeLibrary.jsx';
 import { NodeEditor } from '../components/funnel/NodeEditor.jsx';
@@ -51,6 +52,7 @@ function TopBar({
     isTesting,
     missingKeys,
     missingSystemKeys,
+    readOnly,
 }) {
     const importRef = useRef(null);
 
@@ -80,6 +82,12 @@ function TopBar({
                 <span className="text-sm font-medium text-white truncate" title={bot?.name}>{bot?.name || '…'}</span>
                 <span className="text-xs text-gray-500 font-mono shrink-0">/{bot?.slug}</span>
             </div>
+
+            {readOnly && (
+                <span className="text-xs text-amber-300 bg-amber-900/30 px-2 py-0.5 rounded-full border border-amber-800 shrink-0" title="Ваш акаунт має доступ лише на перегляд цієї воронки">
+                    👁 Лише перегляд
+                </span>
+            )}
 
             {isDirty && (
                 <span className="text-xs text-yellow-400 bg-yellow-900/30 px-2 py-0.5 rounded-full border border-yellow-800 shrink-0">
@@ -115,11 +123,13 @@ function TopBar({
 
                 <button
                     onClick={() => importRef.current?.click()}
-                    className="text-xs px-2.5 py-1 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors shrink-0"
+                    disabled={readOnly}
+                    title={readOnly ? 'Лише перегляд — імпорт вимкнено' : undefined}
+                    className="text-xs px-2.5 py-1 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
                 >
                     📥 Імпорт
                 </button>
-                <input ref={importRef} type="file" accept=".json" onChange={handleImport} className="hidden" />
+                <input ref={importRef} type="file" accept=".json" onChange={handleImport} className="hidden" disabled={readOnly} />
 
                 <button
                     onClick={onExport}
@@ -138,8 +148,8 @@ function TopBar({
 
                 <button
                     onClick={onTidy}
-                    disabled={isTidying}
-                    title="Перерахувати позиції нод по сітці (BFS-рядки + branch-колонки, без перетинів)"
+                    disabled={isTidying || readOnly}
+                    title={readOnly ? 'Лише перегляд — редагування вимкнено' : 'Перерахувати позиції нод по сітці (BFS-рядки + branch-колонки, без перетинів)'}
                     className="text-xs px-2.5 py-1 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
                 >
                     {isTidying ? '⟳ Впорядковую...' : '🧹 Впорядкувати'}
@@ -156,8 +166,9 @@ function TopBar({
 
                 <button
                     onClick={onSave}
-                    disabled={isSaving || !isDirty}
-                    className="text-xs px-2.5 py-1 rounded-lg bg-brand hover:bg-brand-dark disabled:opacity-40 text-white font-medium transition-colors shrink-0"
+                    disabled={isSaving || !isDirty || readOnly}
+                    title={readOnly ? 'Лише перегляд — збереження вимкнено' : undefined}
+                    className="text-xs px-2.5 py-1 rounded-lg bg-brand hover:bg-brand-dark disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium transition-colors shrink-0"
                 >
                     {isSaving ? 'Збереження...' : '💾 Зберегти'}
                 </button>
@@ -170,6 +181,8 @@ export function FunnelEditor() {
     const { botId } = useParams();
     const navigate = useNavigate();
     const { bot, connectors, nodes, isDirty, isSaving, isLoading, error, selectedNode, keys, loadFunnel, saveFunnel, exportFunnel, importFunnel } = useFunnelStore();
+    const canEdit = useAuthStore(s => s.canEdit);
+    const readOnly = !canEdit;
 
     const startNode = nodes.find(n => n.id === 'start');
     const isWebhookBot = startNode?.data?.trigger === 'webhook';
@@ -404,6 +417,7 @@ export function FunnelEditor() {
                     isTesting={isTesting}
                     missingKeys={missingKeys}
                     missingSystemKeys={missingSystemKeys}
+                    readOnly={readOnly}
                 />
                 <div className="relative flex flex-1 overflow-hidden">
                     {!isLeftPanelOpen && (
@@ -437,15 +451,17 @@ export function FunnelEditor() {
                                 </div>
                             </div>
 
+                            <fieldset disabled={readOnly} className="contents">
                             <div className="flex-1 min-h-0">
                                 {activeLeftTab === 'nodes' && <NodeLibrary connectors={connectors} embedded />}
                                 {activeLeftTab === 'keys' && <KeysPanel embedded />}
                                 {activeLeftTab === 'env' && <EnvironmentPanel embedded />}
                             </div>
+                            </fieldset>
                         </div>
                     )}
 
-                    <FunnelCanvas onNodeClick={openRightPanel} />
+                    <FunnelCanvas onNodeClick={openRightPanel} readOnly={readOnly} />
 
                     {isRightPanelOpen && (
                         <div className="absolute inset-y-0 right-0 z-20 w-[320px] max-w-[92vw] bg-gray-950 border-l border-gray-800 flex flex-col overflow-hidden shadow-2xl shadow-black/40 xl:static xl:z-auto xl:w-80 xl:max-w-none xl:shadow-none">
@@ -480,7 +496,9 @@ export function FunnelEditor() {
 
                             <div className="flex-1 min-h-0 overflow-y-auto">
                                 {selectedNode ? (
-                                    <NodeEditor embedded onClose={() => setRightPanelOpen(false)} />
+                                    <fieldset disabled={readOnly} className="contents">
+                                        <NodeEditor embedded onClose={() => setRightPanelOpen(false)} />
+                                    </fieldset>
                                 ) : (
                                     <div className="h-full flex items-center justify-center px-6 text-center">
                                         <div>
@@ -500,6 +518,7 @@ export function FunnelEditor() {
                     onClose={() => setEditModalOpen(false)}
                     onSave={handleSaveEdit}
                     isSaving={isSavingEdit}
+                    readOnly={readOnly}
                 />
 
                 <FunnelTestModal

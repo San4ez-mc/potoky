@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { NETWORKS, netLabel } from '../components/funnel/EnvironmentPanel.jsx';
+import { FunnelGraphView } from '../components/funnel/FunnelGraphView.jsx';
 
 const PERIOD_OPTIONS = [
     { value: '24h', label: '24 години' },
@@ -74,49 +75,6 @@ function WeeklyTrend({ weeks }) {
     );
 }
 
-// Візуальна воронка (трапеції, що звужуються) — до 8 ключових кроків, взятих рівномірно з flow
-function FunnelChart({ steps }) {
-    if (!steps || steps.length === 0) return null;
-    const W = 100, rowH = 34, pad = 6;
-    const max = steps[0]?.reached || 1;
-    const widthAt = (v) => Math.max(6, (v / max) * (W - pad * 2));
-    const H = rowH * steps.length;
-    return (
-        // aspect-ratio == viewBox ratio → SVG fills full width with no letterboxing and no stretch-distortion
-        <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ aspectRatio: `${W} / ${H}` }}>
-            {steps.map((s, i) => {
-                const wTop = widthAt(s.reached);
-                const wBottom = widthAt(i < steps.length - 1 ? steps[i + 1].reached : s.reached);
-                const y0 = i * rowH, y1 = y0 + rowH - 2;
-                const xTop0 = (W - wTop) / 2, xTop1 = xTop0 + wTop;
-                const xBot0 = (W - wBottom) / 2, xBot1 = xBot0 + wBottom;
-                const pct = i === 0 ? 100 : pctOfTotal(s.reached, max);
-                return (
-                    <g key={s.nodeId || i}>
-                        <polygon
-                            points={`${xTop0},${y0} ${xTop1},${y0} ${xBot1},${y1} ${xBot0},${y1}`}
-                            className={i === 0 ? 'fill-emerald-500/70' : 'fill-brand/60'}
-                        />
-                        <text x={W / 2} y={(y0 + y1) / 2 + 3} textAnchor="middle" fontSize="4.2" className="fill-white" style={{ fontWeight: 600 }}>
-                            {s.reached} · {pct}%
-                        </text>
-                    </g>
-                );
-            })}
-        </svg>
-    );
-}
-
-// Рівномірно бере до `n` точок з масиву, завжди включає перший і останній елемент
-function sampleSteps(arr, n) {
-    if (arr.length <= n) return arr;
-    const result = [arr[0]];
-    const step = (arr.length - 1) / (n - 1);
-    for (let i = 1; i < n - 1; i++) result.push(arr[Math.round(i * step)]);
-    result.push(arr[arr.length - 1]);
-    return result;
-}
-
 // Індивідуальні налаштування аналітики per-воронка (період, з тестами) — щоб не вибирати їх заново щоразу
 function loadSettings(botId) {
     try { return JSON.parse(localStorage.getItem(`funnelAnalyticsSettings:${botId}`) || '{}'); } catch { return {}; }
@@ -131,6 +89,7 @@ export function FunnelAnalytics() {
     const [period, setPeriod] = useState(() => loadSettings(botId).period || '30d');
     const [includeTest, setIncludeTest] = useState(() => loadSettings(botId).includeTest || false);
     const [data, setData] = useState(null);
+    const [flowDef, setFlowDef] = useState(null); // {nodes, edges} з позиціями — той самий граф, що в редакторі
     const [bot, setBot] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
@@ -145,6 +104,9 @@ export function FunnelAnalytics() {
             const u = keys.find(k => k.key === 'TELEGRAM_BOT_USERNAME')?.value || '';
             setBotUsername(String(u).replace(/^@/, ''));
         }).catch(() => {});
+        // Ті самі nodes/edges (з позиціями), що редактор — щоб малювати РЕАЛЬНИЙ граф,
+        // а не фейкову лінійну апроксимацію.
+        api.getFunnel(botId).then(r => setFlowDef((r?.data ?? r)?.flow || null)).catch(() => setFlowDef(null));
     }, [botId]);
 
     const changePeriod = (p) => { setPeriod(p); saveSettings(botId, { period: p }); };
@@ -174,9 +136,7 @@ export function FunnelAnalytics() {
     }
 
     const s = data?.summary;
-    const flow = (data?.funnelFlow || []).filter(n => n.reached > 0);
-    const entryCount = flow[0]?.reached || 0;
-    const maxReached = flow[0]?.reached || 1;
+    const reachedById = Object.fromEntries((data?.funnelFlow || []).map(n => [n.nodeId, n]));
 
     const channels = (data?.channels || []).filter(c => netMatch(c.platform));
     const postSources = (data?.postSources || []).filter(p => netMatch(p.platform));
@@ -253,19 +213,6 @@ export function FunnelAnalytics() {
                         </div>
                     )}
 
-                    {/* Funnel chart — visual funnel of the flow */}
-                    {flow.length > 1 && (
-                        <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-2">
-                            <div>
-                                <div className="text-sm font-semibold text-white">Воронка</div>
-                                <div className="text-xs text-gray-500">Візуальне звуження від входу до найглибшого кроку{flow.length > 8 ? ' (показано вибрані ключові кроки)' : ''}</div>
-                            </div>
-                            <div className="max-w-md mx-auto">
-                                <FunnelChart steps={sampleSteps(flow, 8)} />
-                            </div>
-                        </div>
-                    )}
-
                     {/* Deep links per network — filter + management */}
                     <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-3">
                         <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -334,42 +281,19 @@ export function FunnelAnalytics() {
                         )}
                     </div>
 
-                    {/* Funnel flow — drop-off */}
-                    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-3">
+                    {/* Funnel flow — реальний граф (позиції з редактора), не фейковий лінійний список.
+                        Кожна незв'язна гілка (напр. окремий вхід для Instagram-коментарів, який
+                        двигун стартує напряму через currentNodeId) рендериться окремо — так видно,
+                        що це інший сценарій, а не фінальний етап основної воронки. */}
+                    <div className="space-y-2">
                         <div>
                             <div className="text-sm font-semibold text-white">Проходження воронки</div>
-                            <div className="text-xs text-gray-500">Скільки сесій дійшло до кожного кроку. «Далі не пройшли» = зупинились на цьому кроці й не рушили далі (перестали відповідати / ще в процесі) — це НЕ відписка (відписки — окрема картка «Відписались»).</div>
+                            <div className="text-xs text-gray-500">Скільки сесій дійшло до кожної ноди. «⚠ -N%» — великий відтік саме тут (далі не пішли жодним шляхом); «⏹» — кінцева дія сценарію (не відтік).</div>
                         </div>
-                        {flow.length === 0 ? (
-                            <div className="text-xs text-gray-600 py-4 text-center">Немає даних про проходження за цей період</div>
+                        {!flowDef || flowDef.nodes.length === 0 ? (
+                            <div className="text-xs text-gray-600 py-4 text-center bg-gray-900 border border-gray-800 rounded-xl">Немає даних про структуру воронки</div>
                         ) : (
-                            <div className="space-y-0">
-                                {flow.map((n, i) => {
-                                    const convFromEntry = entryCount > 0 ? Math.round((n.reached / entryCount) * 100) : 0;
-                                    const bigDrop = n.dropPct >= 40;
-                                    return (
-                                        <div key={n.nodeId}>
-                                            <div className="flex items-center gap-3 py-1.5">
-                                                <span className="text-sm w-5 text-center shrink-0" title={n.type}>{nodeIcon(n.type)}</span>
-                                                <div className="w-48 shrink-0 min-w-0">
-                                                    <div className="text-xs text-gray-200 truncate" title={n.label}>{n.label}</div>
-                                                    <div className="text-[10px] text-gray-600">{convFromEntry}% від входу</div>
-                                                </div>
-                                                <Bar value={n.reached} max={maxReached} color={i === 0 ? 'bg-emerald-500' : 'bg-brand'} />
-                                                <span className="text-xs font-mono font-semibold text-white w-10 text-right shrink-0">{n.reached}</span>
-                                            </div>
-                                            {i < flow.length - 1 && n.dropAfter > 0 && (
-                                                <div className="flex items-center gap-3 pl-8">
-                                                    <div className="w-48 shrink-0" />
-                                                    <div className={`text-[11px] ${bigDrop ? 'text-red-400 font-medium' : 'text-gray-600'}`}>
-                                                        ↓ далі не пройшли: {n.dropAfter} ({n.dropPct}%) {bigDrop ? '— найбільший відтік' : ''}
-                                                    </div>
-                                                </div>
-                                            )}
-                                        </div>
-                                    );
-                                })}
-                            </div>
+                            <FunnelGraphView nodes={flowDef.nodes} edges={flowDef.edges} reachedById={reachedById} />
                         )}
                     </div>
 

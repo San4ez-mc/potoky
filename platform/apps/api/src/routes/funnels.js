@@ -519,6 +519,7 @@ router.get('/:botId/analytics',
 
         const linkCounts = {};   // _linkSource -> session count
         const nodeReached = {};  // nodeId -> sessions that visited it
+        const reachedAnyChild = {}; // nodeId -> сесій, що з нього пішли далі ХОЧ ЯКИМСЬ реальним ребром
         const stuckCounts = {};  // current node -> non-completed sessions sitting there
         let totalSessions = 0, activeSessions = 0, completedSessions = 0, unsubscribedSessions = 0;
         let completionMsSum = 0, completionMsCount = 0;
@@ -540,7 +541,15 @@ router.get('/:botId/analytics',
 
             const rt = ctx.flowRuntime || {};
             const visited = Array.isArray(rt.nodesVisited) ? new Set(rt.nodesVisited) : new Set();
-            for (const nodeId of visited) nodeReached[nodeId] = (nodeReached[nodeId] || 0) + 1;
+            for (const nodeId of visited) {
+                nodeReached[nodeId] = (nodeReached[nodeId] || 0) + 1;
+                // Реальний вихід «пішов далі» — за фактичними ребрами графа, не за
+                // фейковим лінійним порядком (граф гілкується: наступна нода в
+                // BFS-списку часто НЕ є справжнім наступним кроком цієї сесії).
+                if ((adj[nodeId] || []).some(child => visited.has(child))) {
+                    reachedAnyChild[nodeId] = (reachedAnyChild[nodeId] || 0) + 1;
+                }
+            }
 
             if (s.state !== 'completed' && rt.currentNodeId) {
                 stuckCounts[rt.currentNodeId] = (stuckCounts[rt.currentNodeId] || 0) + 1;
@@ -572,16 +581,28 @@ router.get('/:botId/analytics',
             ? Math.round(fullWeeks.reduce((a, w) => a + w.count, 0) / fullWeeks.length)
             : null;
 
-        // Funnel flow in path order, with drop-off between consecutive reached nodes
+        // Funnel flow in BFS order (лишається для зворотної сумісності зі старими
+        // споживачами; сирі nodes/edges з positions читає фронтенд окремо через
+        // GET /funnels/:botId і будує РЕАЛЬНИЙ граф — тут порядок лише для
+        // списку, а не для інтерпретації «крок N → крок N+1»).
+        // dropAfter/dropPct — за РЕАЛЬНИМИ ребрами (reachedAnyChild), не за
+        // сусіднім елементом фейкового лінійного порядку: інакше розгалуження
+        // (напр. дві альтернативні гілки condition-ноди) виглядає як «майже всі
+        // відвалились», хоча насправді просто пішли іншим шляхом.
         const funnelFlow = order
             .filter(id => nodeMeta[id])
-            .map(id => ({ nodeId: id, label: nodeMeta[id].label, type: nodeMeta[id].type, reached: nodeReached[id] || 0 }));
-        for (let i = 0; i < funnelFlow.length; i++) {
-            let nextReached = 0;
-            for (let j = i + 1; j < funnelFlow.length; j++) { if (funnelFlow[j].reached > 0) { nextReached = funnelFlow[j].reached; break; } }
-            funnelFlow[i].dropAfter = Math.max(0, funnelFlow[i].reached - nextReached);
-            funnelFlow[i].dropPct = funnelFlow[i].reached > 0 ? Math.round((funnelFlow[i].dropAfter / funnelFlow[i].reached) * 100) : 0;
-        }
+            .map(id => {
+                const reached = nodeReached[id] || 0;
+                const wentFurther = reachedAnyChild[id] || 0;
+                const hasChildren = (adj[id] || []).length > 0;
+                const dropAfter = Math.max(0, reached - wentFurther);
+                return {
+                    nodeId: id, label: nodeMeta[id].label, type: nodeMeta[id].type, reached,
+                    dropAfter,
+                    dropPct: reached > 0 ? Math.round((dropAfter / reached) * 100) : 0,
+                    isTerminal: !hasChildren, // немає вихідних ребер узагалі (напр. n_comment_entry) — це не «відтік», а завершення власного міні-сценарію
+                };
+            });
 
         // Where non-completed sessions are sitting right now
         const stuckAt = Object.entries(stuckCounts)

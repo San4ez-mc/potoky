@@ -181,6 +181,28 @@ async function findMessageByZid(sessionId, zernioMessageId, platformMessageId) {
 }
 
 // ── Вихід ──────────────────────────────────────────────────────────────────
+// Аудит 2026-08-30 (розслідування "коментар → DM не дійшов"): sendZernioMessage
+// і postZernioCommentReply писали статус ЛИШЕ в per-сесійний flowRuntime.deliveryLog
+// (logDelivery нижче) — жодного рядка в db.apiCall (таблиця "api_calls", вкладка
+// «API» у сесії й ОСНОВНЕ місце, де за стандартом проєкту мають бути ВСІ зовнішні
+// виклики, §0 Правило 5). Наслідок: неможливо було запитати "покажи всі невдалі
+// DM за останні 5 днів" — SELECT по service='zernio' повертав 0 рядків, хоча
+// реальні виклики (успішні й ні) відбувались щохвилини. Тепер кожен виклик
+// Zernio/Meta Send API логується в api_calls (statusCode, тривалість, сирі
+// requestData/responseData) — окремо від deliveryLog, який лишається для
+// людського перегляду в конкретній сесії.
+async function logZernioApiCall(sessionId, method, requestData, responseData, statusCode, startedAt) {
+    try {
+        await db.apiCall.create({
+            data: {
+                sessionId: sessionId || null, service: 'zernio', method,
+                requestData: requestData || {}, responseData: responseData || {},
+                statusCode: statusCode == null ? null : statusCode, durationMs: Date.now() - startedAt,
+            },
+        });
+    } catch (e) { logger.warn('[zernioHandler] logZernioApiCall failed: ' + e.message); }
+}
+
 async function sendZernioMessage(botId, conversationId, text, opts = {}) {
     const km = await getZernioKeys(botId);
     if (!isReal(km.ZERNIO_API_TOKEN)) throw new Error('ZERNIO_API_TOKEN ще не налаштований у ключах воронки.');
@@ -188,12 +210,14 @@ async function sendZernioMessage(botId, conversationId, text, opts = {}) {
     if (conversationId) {
         const tmpl = km.ZERNIO_SEND_URL || 'https://zernio.com/api/v1/inbox/conversations/{conversationId}/messages';
         const url = tmpl.replace('{conversationId}', encodeURIComponent(conversationId));
+        const _t0 = Date.now();
         const res = await fetch(url, {
             method: 'POST',
             headers: { Authorization: `Bearer ${km.ZERNIO_API_TOKEN}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({ accountId: km.ZERNIO_ACCOUNT_ID, message: String(text || '') }),
         });
         const data = await res.json().catch(() => ({}));
+        await logZernioApiCall(opts.sessionId, 'send_message', { conversationId, text: String(text || '').slice(0, 300) }, data, res.status, _t0);
         if (!res.ok || data.error) {
             const msg = data?.error?.message || data?.message || `HTTP ${res.status}`;
             logger.warn('[zernioHandler] Send error', { botId, status: res.status, error: msg });
@@ -215,12 +239,14 @@ async function sendZernioMessage(botId, conversationId, text, opts = {}) {
         const igKey = await db.funnelKey.findFirst({ where: { botId, key: 'INSTAGRAM_ACCESS_TOKEN' }, select: { value: true } });
         const igToken = (igKey?.value || '').trim();
         if (!igToken || igToken === 'REPLACE_ME') throw new Error('немає INSTAGRAM_ACCESS_TOKEN для приватної відповіді на коментар.');
+        const _t0b = Date.now();
         const res = await fetch(`https://graph.instagram.com/v21.0/me/messages?access_token=${encodeURIComponent(igToken)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ recipient: { comment_id: opts.commentId }, message: { text: String(text || '') } }),
         });
         const data = await res.json().catch(() => ({}));
+        await logZernioApiCall(opts.sessionId, 'private_reply', { commentId: opts.commentId, text: String(text || '').slice(0, 300) }, data, res.status, _t0b);
         if (!res.ok || data.error) {
             const msg = data?.error?.message || `HTTP ${res.status}`;
             logger.warn('[zernioHandler] Private reply (Meta direct) error', { botId, status: res.status, error: msg, commentId: opts.commentId });
@@ -235,18 +261,20 @@ async function sendZernioMessage(botId, conversationId, text, opts = {}) {
 // вище) — підтверджено кількома джерелами документації Zernio: POST на
 // /v1/inbox/comments/{postId} з {accountId, commentId, message}. postId тут —
 // mediaId допису, під яким лишили коментар.
-async function postZernioCommentReply(botId, commentId, text, mediaId) {
+async function postZernioCommentReply(botId, commentId, text, mediaId, sessionId) {
     const km = await getZernioKeys(botId);
     if (!isReal(km.ZERNIO_API_TOKEN)) throw new Error('ZERNIO_API_TOKEN ще не налаштований у ключах воронки.');
     if (!isReal(km.ZERNIO_ACCOUNT_ID)) throw new Error('ZERNIO_ACCOUNT_ID ще не налаштований у ключах воронки.');
     const postSegment = encodeURIComponent(mediaId || commentId);
     const url = `https://zernio.com/api/v1/inbox/comments/${postSegment}`;
+    const _t0c = Date.now();
     const res = await fetch(url, {
         method: 'POST',
         headers: { Authorization: `Bearer ${km.ZERNIO_API_TOKEN}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ accountId: km.ZERNIO_ACCOUNT_ID, commentId, message: String(text || '') }),
     });
     const data = await res.json().catch(() => ({}));
+    await logZernioApiCall(sessionId, 'comment_reply', { commentId, mediaId, text: String(text || '').slice(0, 300) }, data, res.status, _t0c);
     if (!res.ok || data.error) {
         const msg = data?.error?.message || data?.message || `HTTP ${res.status}`;
         logger.warn('[zernioHandler] Comment reply error', { botId, status: res.status, error: msg, commentId });
@@ -757,7 +785,7 @@ function scheduleFlowRun(sessionId, msg) {
 
 async function runFlowAndDeliver(sessionId, entry) {
     const { botId, contactId, conversationId, contactName, commentId } = entry;
-    const sendOpts = commentId ? { commentId } : {};
+    const sendOpts = { sessionId, ...(commentId ? { commentId } : {}) };
     const mergedText = entry.texts.filter(Boolean).join('\n').trim();
     const sinceTime = new Date();
     try { await executeFlowStep({ sessionId, incomingUserMessage: mergedText, incomingImageUrl: entry.imageUrl }); }
@@ -822,7 +850,7 @@ async function runFlowAndDeliver(sessionId, entry) {
             if (_cc2.commentReplyText && !_cc2.commentReplyPosted) {
                 let _rid = null, _rerr = null;
                 try {
-                    _rid = await postZernioCommentReply(botId, commentId, _cc2.commentReplyText, _cc2.commentMediaId);
+                    _rid = await postZernioCommentReply(botId, commentId, _cc2.commentReplyText, _cc2.commentMediaId, sessionId);
                     await logDelivery(sessionId, botId, 'zernio_comment_reply', !!_rid, _rid ? null : 'без id відповіді', { commentId, text: String(_cc2.commentReplyText).slice(0, 160) });
                 } catch (e) {
                     _rerr = e.message;

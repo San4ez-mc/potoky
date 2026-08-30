@@ -275,7 +275,7 @@ router.post('/:id/send',
             let znMsgId = null;
             try {
                 const { sendZernioMessage } = require('../services/zernioHandler');
-                znMsgId = await sendZernioMessage(session.botId, conversationId, text);
+                znMsgId = await sendZernioMessage(session.botId, conversationId, text, { sessionId: session.id });
             } catch (znErr) {
                 return res.status(422).json({ ok: false, error: { message: znErr.message } });
             }

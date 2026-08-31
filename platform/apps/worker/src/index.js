@@ -229,6 +229,19 @@ function parseAfterTime(text) {
     const d = new Date(); d.setHours(h, mm, 0, 0);
     return d.getTime();
 }
+// Аудит 2026-08-31 (запит власника, "розумні нагадування" — виняток №4): клієнт
+// явно відклав рішення БЕЗ конкретного часу ("подумаю", "порадж(усь) з чоловіком/
+// дружиною", "напишу пізніше") — на відміну від "напишу після 18:00" (вже покрито
+// parseAfterTime вище). Детерміновано (regex, НЕ LLM — правило "критичні рішення —
+// в коді", те саме, що вже застосовано для parseAfterTime). Якщо в тексті Є
+// конкретний час — це НЕ vague-відкладення, той шлях уже обробляє parseAfterTime.
+const DEFERRED_DECISION_RE = /(подумаю|подумати|треба\s*подумати|дайте\s*подумати|порад[жя](усь|уся|усь|итись|итися|итись)|порадит(ись|ися)|спитаю\s*(у\s*)?(чолов|дружин|сім[’'ʼ]?ї)|спрошу\s*(у\s*)?(муж|жен)|напишу\s*(пізніше|потім|згодом)|зателефоную\s*(пізніше|потім)|потім\s*напишу|дайте\s*час|потрібен\s*час|дай(те)?\s*подумати)/i;
+function isVagueDeferral(text) {
+    const t = String(text || '');
+    if (!t.trim()) return false;
+    if (parseAfterTime(t)) return false; // конкретний час — інший, вже покритий шлях
+    return DEFERRED_DECISION_RE.test(t);
+}
 async function sendZernioReminder(botId, conversationId, text) {
     const rows = await db.funnelKey.findMany({ where: { botId, key: { in: ['ZERNIO_API_TOKEN', 'ZERNIO_SEND_URL', 'ZERNIO_ACCOUNT_ID'] } }, select: { key: true, value: true } });
     const km = Object.fromEntries(rows.map((k) => [k.key, (k.value || '').trim()]));
@@ -258,9 +271,20 @@ async function checkZernioReminders() {
                 const ctx = (typeof s.context === 'object' ? s.context : JSON.parse(s.context || '{}')) || {};
                 const rt = ctx.flowRuntime || {};
                 if (!rt.waitingForUser) continue;
-                if (ctx.adminEngaged || ctx.funnelPaused || ctx.crmOrderId || (ctx.orderData && ctx.orderData.fullName)) continue;
+                // Аудит 2026-08-31 (запит власника, 4 винятки для "розумних нагадувань"):
+                // 1) sizeOutOfRange — клієнт поза сіткою розмірів, вже виставляється
+                //    n_calc/n_size_oor ланцюжком (testSession.js) — немає сенсу нагадувати
+                //    про товар, який ми самі ще не можемо запропонувати.
+                // 2) colorUnavailable — клієнт хотів колір, якого нема (нове поле, рушій
+                //    промотує з exit.parsed.colorUnavailable будь-якої claude dialog-ноди).
+                // 3) crmOrderId/orderData — вже було, замовлення оформлено.
+                if (ctx.adminEngaged || ctx.funnelPaused || ctx.crmOrderId || (ctx.orderData && ctx.orderData.fullName)
+                    || ctx.sizeOutOfRange || ctx.colorUnavailable) continue;
                 const rem = ctx.reminders || { count: 0, lastAt: 0 };
                 if (rem.count >= 3) continue;
+                // 4) клієнт явно відклав рішення без конкретного часу ("подумаю" тощо) —
+                // довша пауза (24г) перед НАСТУПНИМ нагадуванням, а не звичайні 10хв/120хв.
+                if (rem.deferUntil && now < rem.deferUntil) continue;
 
                 const node = rt.currentNodeId || '';
                 const ageMin = (now - new Date(s.lastActive).getTime()) / 60000;
@@ -281,10 +305,19 @@ async function checkZernioReminders() {
                 const after = parseAfterTime(lastUser && lastUser.content);
                 if (after && now < after + 30 * 60 * 1000) continue;
 
+                // Виняток №4: явне відкладення БЕЗ конкретного часу ("подумаю", "порадж(усь)
+                // з чоловіком/дружиною", "напишу пізніше") — НЕ шлемо нагадування ЦЬОГО разу,
+                // а ставимо довшу паузу (24г) перед НАСТУПНОЮ спробою замість звичайних 10хв/120хв.
+                if (isVagueDeferral(lastUser && lastUser.content)) {
+                    await db.session.update({ where: { id: s.id }, data: { context: { ...ctx, reminders: { ...rem, deferUntil: now + 24 * 60 * 60 * 1000 } } } }).catch(() => {});
+                    logger.info('[zernio-reminder] vague deferral detected — pausing 24h', { sessionId: s.id, node });
+                    continue;
+                }
+
                 const text = REMINDER_STAGE_TEXT[node] || 'Ми на звʼязку 🙂 Якщо є питання — просто напишіть, допоможу.';
                 const ok = await sendZernioReminder(s.botId, ctx.conversationId, text);
                 if (ok) {
-                    await db.session.update({ where: { id: s.id }, data: { context: { ...ctx, reminders: { count: rem.count + 1, lastAt: now, stage: node } } } }).catch(() => {});
+                    await db.session.update({ where: { id: s.id }, data: { context: { ...ctx, reminders: { ...rem, count: rem.count + 1, lastAt: now, stage: node } } } }).catch(() => {});
                     logger.info('[zernio-reminder] sent', { sessionId: s.id, node, status, ageMin: Math.round(ageMin), n: rem.count + 1 });
                 }
             } catch (e) { logger.warn('[zernio-reminder] session error', { sessionId: s.id, error: e.message }); }

@@ -1729,6 +1729,19 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                         setByPath(ctx, outputPath, exit.parsed !== null ? exit.parsed : responseText);
                     }
 
+                    // Аудит 2026-08-31 (запит власника, "розумні нагадування" — виняток
+                    // "нема потрібного кольору"): той самий патерн, що вже є для
+                    // exit.parsed.handoff вище — УНІВЕРСАЛЬНО (не лише n_color, будь-яка
+                    // claude dialog-нода) промотуємо colorUnavailable/color на РІВЕНЬ
+                    // context root, а не лише всередину outputVar (напр. context.colorChoice).
+                    // checkZernioReminders (worker) читає САМЕ context.colorUnavailable —
+                    // без цього прапорець був би похований у context.colorChoice.colorUnavailable,
+                    // недосяжний без знання конкретного outputVar кожної ноди.
+                    if (exit.parsed && typeof exit.parsed === 'object') {
+                        if (exit.parsed.colorUnavailable === true) ctx.colorUnavailable = true;
+                        else if (exit.parsed.color) ctx.colorUnavailable = false;
+                    }
+
                     // For user_confirms: flag for finalization on next iteration
                     if (isUserConfirmExit) {
                         const outputPath = data.outputVar ? String(data.outputVar).replace(/^context\./, '') : '';

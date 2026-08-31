@@ -14,7 +14,7 @@ const crypto = require('crypto');
 const { db } = require('@platform/db');
 const logger = require('@platform/logger');
 const { executeFlowStep } = require('./testSession');
-const { isBlockedByTestMode } = require('./testModeGate');
+const { isBlockedByTestMode, isTestModeOn } = require('./testModeGate');
 
 async function getZernioKeys(botId) {
     const keys = await db.funnelKey.findMany({
@@ -580,8 +580,24 @@ async function handleCommentReceived(botId, body) {
     // Best-effort: якщо для ЦЬОГО поста ще нема Zernio-автоматизації "презентація
     // товару" — створити її прямо зараз (self-service, без ручного кроку при
     // додаванні нових товарів/постів). Помилка тут НЕ має ламати основний потік.
+    //
+    // Аудит 2026-08-31 (запит власника, живий аудит коментарів): ensurePostAutomation
+    // створює автоматизацію НА СТОРОНІ ZERNIO (trigger:'comment', audience:'any',
+    // isActive:true) — вона потім триггериться і шле DM САМА, повністю в обхід нашого
+    // testMode-гейту (той існує лише в НАШОМУ коді, isBlockedByTestMode тут ще не
+    // перевірявся). Підтверджено живими логами Zernio: 19 з 41 реальних (НЕ з
+    // allowlist) коментаторів отримали "status":"sent" — повний опис товару й ціну —
+    // хоча testMode=true мав тримати бота мовчазним для всіх, крім 3 тестерів.
+    // Власник ЯВНО вирішив: testMode = повна тиша для реальних клієнтів. Поки він
+    // увімкнений — НЕ створюємо і НЕ ротуємо жодної Zernio-автоматизації (вона не вміє
+    // фільтрувати по нашому allowlist, тільки по followerStatus). Коли власник вимкне
+    // testMode — усе почне створюватись і ротуватись як і раніше, без жодних змін.
     if (mediaId && postCaption) {
-        await ensurePostAutomation(botId, mediaId, postCaption);
+        if (await isTestModeOn(botId)) {
+            logger.info('[zernioHandler] ensurePostAutomation пропущено — testMode увімкнено', { botId, mediaId });
+        } else {
+            await ensurePostAutomation(botId, mediaId, postCaption);
+        }
     }
 
     const user = await findOrCreateZernioUser(contactId, botId, contactName);

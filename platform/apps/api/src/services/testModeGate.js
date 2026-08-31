@@ -27,4 +27,18 @@ async function isBlockedByTestMode(botId, identifiers) {
     return !ids.some((id) => allowedSet.has(id));
 }
 
-module.exports = { isBlockedByTestMode };
+/**
+ * Чи увімкнено testMode для бота, незалежно від конкретного клієнта. Використовуй
+ * там, де рішення НЕ прив'язане до одного отримувача (напр. чи створювати/тримати
+ * активною зовнішню авто-відповідь на РІВНІ ПЛАТФОРМИ — Zernio comment-automation
+ * триггериться на БУДЬ-ЯКОГО коментатора, "audience: any", без прив'язки до нашого
+ * allowlist) — там per-user testModeBlocked(identifiers) не підходить, бо перевіряти
+ * нема кого одного конкретного.
+ */
+async function isTestModeOn(botId) {
+    if (!botId) return false;
+    const bot = await db.bot.findUnique({ where: { id: botId }, select: { settings: true } }).catch(() => null);
+    return !!(bot && bot.settings && bot.settings.testMode);
+}
+
+module.exports = { isBlockedByTestMode, isTestModeOn };

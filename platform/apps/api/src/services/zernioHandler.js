@@ -88,6 +88,17 @@ function extractCommon(body) {
     return { conv, contact, msg, conversationId, contactId, contactName, contactUsername };
 }
 
+// Кеш INSTAGRAM_USERNAME per botId — уникнути зайвого SELECT на КОЖЕН вхідний
+// webhook (гарячий шлях, викликається на кожне message.received).
+const _igUsernameCache = new Map();
+async function getOwnInstagramUsername(botId) {
+    if (_igUsernameCache.has(botId)) return _igUsernameCache.get(botId);
+    const row = await db.funnelKey.findFirst({ where: { botId, key: 'INSTAGRAM_USERNAME' }, select: { value: true } }).catch(() => null);
+    const v = String((row && row.value) || '').trim().toLowerCase();
+    _igUsernameCache.set(botId, v);
+    return v;
+}
+
 async function findOrCreateZernioUser(psid, botId, name) {
     // Аудит 2026-08-30 (живий кейс, сесія covercar_ua cd3f0a27 — контент і артикул
     // ІНШОГО магазину, goverla_shop A0068, просочився у сесію covercar_ua): раніше
@@ -666,8 +677,28 @@ async function dedup(botId, id) {
 }
 
 async function handleIncomingMessage(botId, body) {
-    const { msg, conversationId, contactId, contactName, contactUsername } = extractCommon(body);
+    const { conv, contact, msg, conversationId, contactId, contactName, contactUsername } = extractCommon(body);
     if (msg.direction && msg.direction === 'outgoing') return { ok: true, skipped: 'outgoing' };
+    // Аудит 2026-08-31 (запит власника, живий кейс "однакове питання надіслано ДВІЧІ
+    // поспіль"): Zernio comment-automation (dmMessage, trigger:'comment' —
+    // ensurePostAutomation) шле DM ЯК ОКРЕМЕ повідомлення в ту саму розмову. Zernio
+    // потім реплікує це ЖОДНИМ direction:'outgoing' — той самий webhook message.received,
+    // що й для реальних вхідних, летить і на ВЛАСНЕ повідомлення бізнес-акаунту.
+    // handleCommentReceived вже мав гард contact.isOwnAccount (Meta явно позначає
+    // власний акаунт) — тут його НЕ було: наш рушій сприймав ВЛАСНИЙ DM-текст
+    // автоматизації як НОВЕ повідомлення КЛІЄНТА, заново матчив товар і надсилав
+    // ЩЕ ОДНУ, майже ідентичну презентацію в ТУ Ж розмову — звідси видиме "клієнт
+    // отримав однакове питання двічі". Живий доказ: сесія cd3f0a27 (contactUsername
+    // = "goverla_shop", senderName = власний бізнес-опис акаунту) — раніше вже
+    // виявлено як крос-бот витік (psid без botId), причина сплутування ТА САМА.
+    if (contact.isOwnAccount) return { ok: true, skipped: 'own-account' };
+    if (contactUsername) {
+        const ownUsername = await getOwnInstagramUsername(botId);
+        if (ownUsername && String(contactUsername).trim().toLowerCase() === ownUsername) {
+            logger.info('[zernioHandler] message.received від власного IG-акаунту — пропускаю (echo автоматизації)', { botId, contactUsername });
+            return { ok: true, skipped: 'own-account-username' };
+        }
+    }
     if (!contactId || !conversationId) {
         logger.warn('[zernioHandler] message.received без contactId/conversationId — RAW', { botId, raw: JSON.stringify(body).slice(0, 1200) });
         return { ok: true, skipped: 'no-ids' };
@@ -758,13 +789,25 @@ async function handleIncomingMessage(botId, body) {
     // спрацьовує однаково для всіх каналів (раніше тут був окремий дубль-regex, який
     // міг розійтися з движковим). Адаптер лише транспортує: викликає крок і доставляє
     // повідомлення, які движок вже сам поклав у БД (включно з handoff-відповіддю).
-    // Бот замовк лише тому, що не визначив товар? Якщо клієнт САМ прислав товар
-    // (рілс/пост/реклама або артикул) — це нова спроба: рушій зніме прапорець і знайде товар.
-    const _resumeOnProduct = ctxNow.adminEngaged && ctxNow.handoffKind === 'product_unknown' && !ctxNow.funnelPaused
-        && (Boolean(sharedPost && sharedPost.caption) || Boolean(adId)
-            || /(?:артикул|арт\.?|код|sku|№)\s*[:#№.-]?\s*[A-Za-zА-Яа-я]{0,5}\d{2,8}|\b[A-Za-z]\d{3,6}\b|\b\d{4,8}\b/i.test(String(text || '')));
+    //
+    // Аудит 2026-08-31 (запит власника, живі кейси "Добрий день ігнорується" /
+    // "не відповідає взагалі після пересланих рілсів"): раніше тут стояв ВУЗЬКИЙ гейт
+    // (_resumeOnProduct) — пропускав повідомлення до движка ТІЛЬКИ якщо
+    // ctxNow.handoffKind === 'product_unknown' І в повідомленні є явна ознака товару.
+    // Але движок (testSession.js, "Загальне відновлення після БУДЬ-ЯКОГО автоматичного
+    // хендофу") вже вміє коректно й ЗАГАЛЬНО auto-resume-ити adminEngaged НЕЗАЛЕЖНО
+    // від handoffKind — просто на будь-яке наступне повідомлення клієнта (не лише з
+    // сигналом товару). Через цей вузький гейт-дублікат в адаптері рушій НІКОЛИ не
+    // отримував шансу відпрацювати для handoff-ів БЕЗ handoffKind='product_unknown'
+    // (напр. n_size_oor_stop ставить adminEngaged=true взагалі без handoffKind) —
+    // клієнт лишався в АБСОЛЮТНІЙ тиші назавжди, навіть коли пересилав рілси з
+    // артикулами чи писав "Добрий день" після завершеного діалогу. Правило "критичні
+    // рішення — в движку, адаптер — тонкий" (Корінь 8 стандарту воронок): прибрано
+    // дубль-логіку тут, лишається тільки funnelPaused (РУЧНА пауза адміна — і ТІЛЬКИ
+    // вона має тримати бота мовчазним; adminEngaged — автоматичне рішення системи,
+    // resume на нього рушій робить сам).
     const inImageUrl = (attachment && attachment.type === 'photo' && attachment.url && String(attachment.url).startsWith('http')) ? attachment.url : null;
-    if (!testModeBlocked && ((!ctxNow.adminEngaged && !ctxNow.funnelPaused) || _resumeOnProduct)) {
+    if (!testModeBlocked && !ctxNow.funnelPaused) {
         // Аудит 2026-08-27 (антипатерн A12, реальний кейс Сіразетдінова): рілс/пост і
         // підпис-текст до нього іноді приходять ДВОМА окремими webhook-подіями за
         // частки секунди. Кожна раніше одразу й НЕЗАЛЕЖНО викликала executeFlowStep —

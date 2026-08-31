@@ -422,6 +422,137 @@ function matchArticleInCatalog(all, art) {
     }
     return null;
 }
+
+// ── Матчинг без явного артикулу (аудит 2026-08-31, запит власника) ─────────
+// Перенесено з n_lookup-ноди (Priority 2.5 / Priority 2.9 живого коду n_lookup,
+// підтверджено МСР `get_funnel` — локальний n_lookup-code.js у репо був
+// застарілий, без category-фільтра й без поля `confident`). Той самий поріг і
+// та сама логіка тай-брейку — навмисно не переізобретено.
+
+// РІВЕНЬ 2: keyword-overlap підпису проти назви товару. Поріг: мінімум 2
+// значущих слова-збіги, і найкращий кандидат ЯВНО кращий за другого (інакше —
+// тай-брейк за ціною: товар з price>0 виграє в товару з price=0; якщо
+// двозначність лишається — чесно "не визначив").
+const KEYWORD_STOPWORDS = { та: 1, і: 1, й: 1, на: 1, до: 1, за: 1, від: 1, для: 1, або: 1, це: 1, вже: 1, ще: 1, як: 1, що: 1, по: 1, при: 1, без: 1, між: 1 };
+function tokenizeCaptionWords(s) {
+    return String(s || '').toLowerCase().replace(/[^\wа-яіїєґ\s]/gi, ' ').split(/\s+/).filter((w) => w.length >= 4 && !KEYWORD_STOPWORDS[w]);
+}
+function matchByKeywordOverlap(all, caption) {
+    const capWords = tokenizeCaptionWords(caption);
+    if (!capWords.length) return null;
+    const capSet = new Set(capWords);
+    const scored = [];
+    for (const p of all) {
+        const nameWords = tokenizeCaptionWords(p.name);
+        let overlap = 0;
+        for (const w of nameWords) if (capSet.has(w)) overlap++;
+        if (overlap > 0) scored.push({ p, score: overlap });
+    }
+    if (!scored.length) return null;
+    scored.sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        const ap = (a.p.price != null ? a.p.price : a.p.min_price) || 0;
+        const bp = (b.p.price != null ? b.p.price : b.p.min_price) || 0;
+        return (bp > 0 ? 1 : 0) - (ap > 0 ? 1 : 0);
+    });
+    if (scored[0].score < 2) return null;
+    const topScore = scored[0].score;
+    const topPrice = (scored[0].p.price != null ? scored[0].p.price : scored[0].p.min_price) || 0;
+    const tiedRivals = scored.filter((x, i) => i > 0 && x.score === topScore);
+    const ambiguous = tiedRivals.some((x) => {
+        const xp = (x.p.price != null ? x.p.price : x.p.min_price) || 0;
+        return (topPrice > 0) === (xp > 0);
+    });
+    if (ambiguous) return null;
+    return { product: scored[0].p, score: topScore };
+}
+
+// РІВЕНЬ 3: ШІ-візія (Gemini) проти обкладинки допису/рілсу. Вимагає
+// `confident:true` у відповіді моделі — інакше НЕ вважається збігом (той самий
+// захист, що вніс patch-lookup-remove-default-and-vision-confidence.js у
+// n_lookup: "найближчий" заохочував модель завжди щось вигадати).
+function isTrustedImageHost(u) {
+    try {
+        const h = new URL(u).hostname.toLowerCase();
+        if (h === 'api.telegram.org') return true;
+        return ['cdninstagram.com', 'fbcdn.net', 'fbsbx.com', 'lookaside.fbsbx.com'].some((d) => h === d || h.endsWith('.' + d));
+    } catch (_e) { return false; }
+}
+async function matchByVision(all, imageUrl, geminiApiKey) {
+    if (!imageUrl || !geminiApiKey || !isTrustedImageHost(imageUrl)) return null;
+    const ac = new AbortController();
+    const to = setTimeout(() => { try { ac.abort(); } catch (_e) { /* noop */ } }, 10000);
+    try {
+        const ir = await fetch(imageUrl, { signal: ac.signal });
+        const ab = await ir.arrayBuffer();
+        if (ab.byteLength > 8000000) return null;
+        const b64 = Buffer.from(ab).toString('base64');
+        // Telegram file-сервер віддає photos з application/octet-stream навіть коли
+        // байти — реальний JPEG; Gemini на цей MIME мовчки відповідає 400.
+        const mimeRaw = (ir.headers.get('content-type') || '').split(';')[0];
+        const mime = (!mimeRaw || mimeRaw === 'application/octet-stream') ? 'image/jpeg' : mimeRaw;
+        const catList = all.map((p, i) => i + ': ' + (p.name || '')).join('\n').slice(0, 6000);
+        const prompt = 'Це обкладинка допису/рілсу в Instagram — ймовірно, товар з нашого магазину. '
+            + 'Опиши коротко, що на фото (тип товару, колір, помітний текст/бренд). Потім перевір, чи Є в '
+            + 'каталозі нижче (формат: індекс: назва) ТОЧНО ЦЕЙ САМИЙ товар — не просто схожий за категорією '
+            + 'чи кольором, а саме він. Якщо не впевнений на 100%, що це той самий товар — bestMatchIndex '
+            + 'завжди null, це нормальний очікуваний результат, краще чесно "не визначив", ніж вгадати '
+            + 'найближчий. Поверни ЛИШЕ JSON {"description":"...","confident":true_або_false,"bestMatchIndex":число_або_null}.\n'
+            + 'Каталог:\n' + catList;
+        const gr = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + encodeURIComponent(geminiApiKey), {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mime, data: b64 } }] }] }),
+        });
+        const gj = await gr.json();
+        const t = ((((gj.candidates || [])[0] || {}).content || {}).parts || [{}])[0].text || '';
+        const mm = t.match(/\{[\s\S]*\}/);
+        if (!mm) return null;
+        const fp = JSON.parse(mm[0]);
+        if (fp.confident === true && fp.bestMatchIndex != null && all[fp.bestMatchIndex]) {
+            return { product: all[fp.bestMatchIndex], description: fp.description || '' };
+        }
+        return null;
+    } catch (_e) {
+        return null;
+    } finally {
+        clearTimeout(to);
+    }
+}
+// Обкладинка посту/рілсу за mediaId — caption у handleCommentReceived вже
+// тягнеться з Meta Graph API, але БЕЗ картинки. Для reels media_url веде на
+// відео (.mp4) — vision потребує саме thumbnail_url; для звичайного посту
+// media_url вже є статичним фото.
+async function getPostImageUrl(botId, mediaId) {
+    try {
+        const igKey = await db.funnelKey.findFirst({ where: { botId, key: 'INSTAGRAM_ACCESS_TOKEN' }, select: { value: true } });
+        const igToken = (igKey?.value || '').trim();
+        if (!igToken || igToken === 'REPLACE_ME') return null;
+        const mr = await fetch(`https://graph.instagram.com/v21.0/${encodeURIComponent(mediaId)}?fields=media_type,media_url,thumbnail_url&access_token=${encodeURIComponent(igToken)}`);
+        const md = await mr.json().catch(() => ({}));
+        if (!mr.ok) { logger.warn('[zernioHandler] media image fetch failed', { botId, mediaId, status: mr.status, error: md?.error?.message }); return null; }
+        if (String(md.media_type || '').toUpperCase() === 'VIDEO') return md.thumbnail_url || null;
+        return md.media_url || md.thumbnail_url || null;
+    } catch (e) {
+        logger.warn('[zernioHandler] media image fetch error: ' + e.message, { botId, mediaId });
+        return null;
+    }
+}
+// Аудит-слід для КОЖНОГО рівня матчингу (щоб було видно у вкладці «API», який
+// саме рівень спрацював чи не спрацював) — той самий патерн service:'zernio',
+// що logZernioApiCall вище.
+async function logAutomationMatchAttempt(botId, mediaId, level, found, extra = {}) {
+    try {
+        await db.apiCall.create({
+            data: {
+                sessionId: null, service: 'zernio', method: 'ensure_automation_match_' + level,
+                requestData: { botId, mediaId, level, ...(extra.request || {}) },
+                responseData: { found: !!found, productId: found ? found.id : null, productName: found ? found.name : null, ...(extra.response || {}) },
+                statusCode: found ? 200 : 204,
+                durationMs: 0,
+            },
+        });
+    } catch (e) { logger.warn('[zernioHandler] logAutomationMatchAttempt failed: ' + e.message); }
+}
 // Аудит 2026-08-29 (запит користувача, аналіз анти-спаму за 12г): Zernio dmMessage —
 // статичний рядок на ВЕСЬ пост, без підстановки імені — усі, хто коментує ПІД ОДНИМ
 // постом, отримували ДОСЛІВНО ідентичний текст DM. На відміну від публічних
@@ -472,16 +603,22 @@ async function ensurePostAutomation(botId, mediaId, caption) {
             return;
         }
 
+        // Аудит 2026-08-31 (запит власника, живий аудит 41 коментатора): раніше тут
+        // був ранній вихід, якщо в підписі взагалі нема артикулу — 19 з 41
+        // коментаторів не отримали DM саме через це (рекламні пости, які не можна
+        // відредагувати). Каталог тепер завжди тягнемо, а РІВЕНЬ матчингу (артикул →
+        // keyword-overlap → vision) вибирається нижче — перенесено з n_lookup.
         const candidates = extractArticleCandidatesForAutomation(caption).slice(0, 8);
-        if (!candidates.length) { logger.info('[zernioHandler] ensurePostAutomation: у підписі немає артикулу — пропускаю', { botId, mediaId }); return; }
 
         const tokenRow = await db.funnelKey.findFirst({ where: { botId, key: 'KEYCRM_API_TOKEN' }, select: { value: true } });
         const baseRow = await db.funnelKey.findFirst({ where: { botId, key: 'KEYCRM_API_BASE' }, select: { value: true } });
+        const catIncRow = await db.funnelKey.findFirst({ where: { botId, key: 'KEYCRM_CATEGORY_INCLUDE' }, select: { value: true } });
+        const catExcRow = await db.funnelKey.findFirst({ where: { botId, key: 'KEYCRM_CATEGORY_EXCLUDE' }, select: { value: true } });
         const token = (tokenRow?.value || '').trim();
         if (!isReal(token)) return;
         const base = (baseRow?.value || 'https://openapi.keycrm.app/v1').replace(/\/$/, '');
 
-        const all = [];
+        let all = [];
         for (let page = 1; page <= 10; page++) {
             const r = await fetch(base + '/products?include=customFields&limit=50&page=' + page, { headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' } });
             if (!r.ok) break;
@@ -490,10 +627,46 @@ async function ensurePostAutomation(botId, mediaId, caption) {
             all.push(...items);
             if (items.length < 50) break;
         }
+        // goverla_shop і covercar_ua діляться ОДНИМ KEYCRM_API_TOKEN (спільний
+        // каталог) — той самий фільтр, що вже стоїть у n_lookup (аудит 2026-08-30),
+        // інакше keyword/vision-рівні нижче можуть підставити товар ІНШОГО магазину.
+        const catInc = String(catIncRow?.value || '').split(',').map((s) => s.trim()).filter(Boolean);
+        const catExc = String(catExcRow?.value || '').split(',').map((s) => s.trim()).filter(Boolean);
+        if (catInc.length) all = all.filter((p) => catInc.indexOf(String(p.category_id)) >= 0);
+        if (catExc.length) all = all.filter((p) => catExc.indexOf(String(p.category_id)) < 0);
 
+        // РІВЕНЬ 1: артикул у підписі (як і раніше).
         let found = null;
-        for (const c of candidates) { found = matchArticleInCatalog(all, c); if (found) break; }
-        if (!found) { logger.info('[zernioHandler] ensurePostAutomation: артикул із підпису не знайдено в каталозі', { botId, mediaId, candidates }); return; }
+        if (candidates.length) {
+            for (const c of candidates) { found = matchArticleInCatalog(all, c); if (found) break; }
+        }
+        await logAutomationMatchAttempt(botId, mediaId, 'article', found, { request: { candidates } });
+
+        // РІВЕНЬ 2: keyword-overlap підпису проти назв товарів каталогу.
+        if (!found) {
+            const kw = matchByKeywordOverlap(all, caption);
+            if (kw) found = kw.product;
+            await logAutomationMatchAttempt(botId, mediaId, 'keyword', found, { response: { score: kw ? kw.score : null } });
+        }
+
+        // РІВЕНЬ 3: ШІ-візія по обкладинці посту/рілсу (Gemini), лише якщо перші
+        // два рівні нічого не дали і в ключах воронки є GEMINI_API_KEY.
+        if (!found) {
+            const geminiRow = await db.funnelKey.findFirst({ where: { botId, key: 'GEMINI_API_KEY' }, select: { value: true } });
+            const geminiKey = (geminiRow?.value || '').trim();
+            if (isReal(geminiKey)) {
+                const imageUrl = await getPostImageUrl(botId, mediaId);
+                if (imageUrl) {
+                    const vis = await matchByVision(all, imageUrl, geminiKey);
+                    if (vis) found = vis.product;
+                    await logAutomationMatchAttempt(botId, mediaId, 'vision', found, { request: { imageUrl }, response: { description: vis ? vis.description : null } });
+                } else {
+                    logger.info('[zernioHandler] ensurePostAutomation: vision пропущено — не вдалось дістати URL обкладинки', { botId, mediaId });
+                }
+            }
+        }
+
+        if (!found) { logger.info('[zernioHandler] ensurePostAutomation: жоден рівень матчингу (артикул/keyword/vision) не знайшов товар — автоматизацію не створюю', { botId, mediaId, candidates }); return; }
 
         const profR = await fetch('https://zernio.com/api/v1/profiles', { headers: { Authorization: 'Bearer ' + zk.ZERNIO_API_TOKEN } });
         const profD = await profR.json().catch(() => ({}));

@@ -1243,5 +1243,8 @@ async function handleSideEvent(botId, event, body) {
     return { ok: true, processed: 1 };
 }
 
-module.exports = { handleZernioEvent, sendZernioMessage };
+// ensurePostAutomation експортовано для живого тестування (напр. живий кейс
+// mediaId без артикулу) і майбутніх регресійних тестів — не викликається поза
+// handleCommentReceived у нормальному потоці.
+module.exports = { handleZernioEvent, sendZernioMessage, ensurePostAutomation };
 

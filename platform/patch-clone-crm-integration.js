@@ -125,9 +125,13 @@ async function patchBot(name, cfg) {
     const nOrderIntent = flow.nodes.find((n) => n.id === 'n_order_intent');
     if (!nLookup || !nCrmOrder || !nSupplierRoute || !nSize || !nCalc || !nIsClothing || !nOrderIntent) { console.log(name, 'ERROR: якась з нод n_lookup/n_crm_order/n_supplier_route/n_size/n_calc/n_is_clothing/n_order_intent не знайдена'); return; }
 
-    const lookupDone = (nLookup.data.code || '').includes('keys.CRM_API_KEY');
-    const orderDone = (nCrmOrder.data.code || '').includes('buyers/find-or-create');
-    const routeDone = (nSupplierRoute.data.code || '').includes('supplierInfo');
+    // Точна рівність, а не .includes(маркер) — файли неодноразово редагувались ПІСЛЯ
+    // першого --apply (upsellItems, Priority 0 тощо); .includes() тихо пропускав повторний
+    // запис новішого вмісту, бо маркер лишався той самий. Урок з живого 10-сценарного
+    // прогону (сценарій 8 — upsellItems був відсутній у вже застосованій ноді).
+    const lookupDone = (nLookup.data.code || '') === LOOKUP_CODE;
+    const orderDone = (nCrmOrder.data.code || '') === CRM_ORDER_CODE;
+    const routeDone = (nSupplierRoute.data.code || '') === SUPPLIER_ROUTE_CODE;
     const sizeDone = (nSize.data.systemPrompt || '').includes('categoryParamsPrompt');
     const calcDone = (nCalc.data.code || '').includes('sizeAskedFor');
     const isClothingDone = (nIsClothing.data.condition || '').includes('sizeAskedFor');

@@ -297,7 +297,31 @@ try {
     ? '👉 Зараз підберемо для вас ідеальний варіант 😊'
     : 'Цікавить? 😊';
 
+  // Рекомендація власника (озвучена під час роботи над цим ТЗ): один структурований
+  // об'єкт стану діалогу замість розкиданих окремих прапорців — щоб діалогові ноди мали
+  // компактну ситуативну картину. Заведено тут як конвенцію (n_lookup — природне єдине
+  // місце запису, бо саме тут стає відомим товар/категорія на цьому ході): dialogState
+  // (структура, для майбутніх нод) + dialogStateText (готовий КОРОТКИЙ текстовий рядок,
+  // без сирого JSON — навчений уроком CLAUDE.md §15.7 про 429 від занадто великого
+  // контексту в claude-ноді). ВАЖЛИВО: це ДОПОВНЕННЯ (м'який контекст для моделі), а НЕ
+  // єдиний захист від дублів — жорсткі гейти (чи вже питали розмір тощо) лишаються
+  // детермінованими в коді/умовах (sizeAskedFor + n_is_clothing, як вище), бо модель
+  // може прочитати навіть повний прапорець неправильно (це вже було з productJustPresented).
+  // ⚠️ Повністю НЕ пропагувалось у решту 50+ нод флоу (n_color/n_collect/n_order_intent
+  // тощо) — це свідомо залишено як TODO/рекомендація власнику в фінальному звіті, а не
+  // мовчки недороблено: пріоритет цієї сесії — 10-діалоговий живий прогін (нижче).
+  var dialogState = {
+    productPresented: !!context.productJustPresented,
+    productId: found.id, productName: __customerName,
+    knownColor: (context.colorChoice && context.colorChoice.color) || preColor || '',
+    knownSize: context.recommendedSize || preSize || '',
+    sizeAsked: context.sizeAskedFor === found.categoryId,
+    orderStatus: context.crmOrderId ? ('створено #' + context.crmOrderId) : (context.orderData ? 'збираємо адресу' : 'ще не оформлено')
+  };
+  var dialogStateText = 'Товар у розмові: ' + dialogState.productName + (dialogState.knownColor ? (', колір ' + dialogState.knownColor) : '') + (dialogState.knownSize ? (', розмір/параметр ' + dialogState.knownSize) : '') + '. Презентація щойно показана: ' + (dialogState.productPresented ? 'так' : 'ні') + '. Розмір/параметри вже питали цього товару: ' + (dialogState.sizeAsked ? 'так' : 'ні') + '. Замовлення: ' + dialogState.orderStatus + '.';
+
   var result = {
+    dialogState: dialogState, dialogStateText: dialogStateText,
     supplier: (found.supplier && found.supplier.name) || '',
     product: {
       _source: 'crm', supplier: (found.supplier && found.supplier.name) || '', supplierId: (found.supplier && found.supplier.id) || '',

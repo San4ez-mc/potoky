@@ -1,6 +1,7 @@
 'use strict';
 /*
- * Патч ЧОТИРЬОХ ботів (goverla_shop, covercar_ua + 2 CRM-клони).
+ * Патч ДВОХ живих ботів (goverla_shop, covercar_ua) — НЕ клонів "→ Fineko CRM",
+ * див. пояснення біля BOTS нижче.
  *
  * ДОПОВНЕННЯ ПОВЕРХ Проблеми 1 (запит власника, 2026-09-02): попередній фікс
  * прибрав дубль-питання, ЗАРАЗ ЖЕ прибравши сам АСК із 2 з 3 шляхів (n_lookup
@@ -44,9 +45,16 @@
  */
 const { db } = require('@platform/db');
 
+// НАВМИСНО без 2 клонів "→ Fineko CRM" (fcdee415/a2d5ba79): паралельна сесія
+// (перевірено git log, 2026-09-02) вже переписала n_lookup/n_calc/n_is_clothing
+// на клонах під нову CRM і додала СВІЙ спільний прапорець sizeAskedFor (keyed by
+// categoryId, n_calc/n_is_clothing) — окреме, вже завершене рішення ТІЄЇ Ж
+// концептуальної задачі, спеціально під клони. Застосування ЦЬОГО патча (інший
+// прапорець, інші ноди: n_welcome/n_size) до клонів конфліктувало б з їхнім
+// дизайном, а не доповнювало його. Живі боти (goverla/covercar) цією міграцією
+// НЕ зачіпаються (підтверджено в їхньому ж коміті) — патчимо тільки їх.
 const BOTS = {
     goverla: '5bdb3e38-1936-416f-b1f0-8f1125583193', covercar: 'cc03657f-9e72-46e5-a16d-88826e70c2ee',
-    goverlaCrmClone: 'fcdee415-bef2-4a74-a650-e6e4b5a12322', covercarCrmClone: 'a2d5ba79-f87b-48f2-8301-56292cdf3972',
 };
 const APPLY = process.argv.includes('--apply');
 

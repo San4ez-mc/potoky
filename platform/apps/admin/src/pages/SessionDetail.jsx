@@ -943,7 +943,7 @@ export function SessionDetail() {
     });
 
     const restartChat = async () => {
-        if (!window.confirm('Перезапустити чат? Вся історія буде очищена і бот запуститься з початку.')) return;
+        if (!window.confirm('Перезапустити воронку? Історія переписки збережеться — скинеться лише стан/контекст воронки, і бот почне з початку.')) return;
         setRestarting(true);
         setSendError('');
         try {

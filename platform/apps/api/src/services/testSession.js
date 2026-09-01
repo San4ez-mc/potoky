@@ -441,17 +441,57 @@ async function notifyAdminPhotoMissing(session, ctx, funnelEnv, runtime, whatLab
     } catch (_e) { /* сповіщення не має ламати потік */ }
 }
 
+// Аудит 2026-09-02 (Проблема 5, покращення): клієнт practically ЗАВЖДИ пересилає
+// посилання на ВЛАСНИЙ пост/рілс магазину — тож ПЕРШ НІЖ будь-який скрапінг,
+// пробуємо офіційний Instagram Graph API (той самий INSTAGRAM_ACCESS_TOKEN/
+// INSTAGRAM_BUSINESS_ID, що вже є в funnelKey кожного бота): тягнемо ВЛАСНІ медіа
+// акаунта (з пагінацією через paging.next) і шукаємо, чиє permalink містить той
+// самий shortcode з лінка клієнта. Якщо знайдено — маємо caption+media_url НАПРЯМУ
+// з офіційного API, БЕЗ жодного HTTP-запиту на сам instagram.com (жодного
+// скрапінгу, жодної залежності від того, чи Instagram сьогодні віддає
+// login-стіну). Ліміт 10 сторінок (500 медіа) — той самий паттерн, що вже
+// використовує n_lookup для пагінації каталогу KeyCRM. Найновіші медіа йдуть
+// першими (Graph API default order) — типовий рекламний пост/рілс знайдеться
+// рано, тож зазвичай 1 запит без пагінації.
+async function resolveInstagramMediaViaGraphAPI(shortcode, igBusinessId, accessToken) {
+    if (!shortcode || !igBusinessId || !accessToken) return null;
+    try {
+        let url = 'https://graph.facebook.com/v18.0/' + encodeURIComponent(igBusinessId)
+            + '/media?fields=id,caption,permalink,media_url,thumbnail_url,media_type&limit=50&access_token=' + encodeURIComponent(accessToken);
+        for (let page = 0; page < 10 && url; page++) {
+            const r = await fetch(url);
+            if (!r.ok) break;
+            const j = await r.json().catch(() => ({}));
+            const items = Array.isArray(j.data) ? j.data : [];
+            for (const it of items) {
+                if (it && it.permalink && String(it.permalink).indexOf(shortcode) >= 0) {
+                    const isVideo = String(it.media_type || '').toUpperCase() === 'VIDEO';
+                    const imgUrl = isVideo ? (it.thumbnail_url || it.media_url || '') : (it.media_url || it.thumbnail_url || '');
+                    return { caption: it.caption || null, url: imgUrl || null };
+                }
+            }
+            url = (j.paging && j.paging.next) || null;
+        }
+        return null;
+    } catch (_e) {
+        return null;
+    }
+}
+
 // Аудит 2026-09-01 (Проблема 5, живий кейс): клієнт кидає СИРИЙ текстовий лінк
 // instagram.com/reel|p|tv/<code> (звичайний текст, НЕ пересланий пост-attachment).
 // Instagram Graph oEmbed вимагає окремого дозволу від Meta ("oEmbed Read"), якого в
 // нас немає (перевірено: без токена ендпоінт віддає лише порожній embed-віджет без
 // прямого URL картинки/підпису) — але ПУБЛІЧНА html-сторінка посту/рілса (без
 // авторизації) містить <meta property="og:image"> з реальним прев'ю на
-// cdninstagram.com. Підтверджено живим запитом із продакшн-сервера. Повертає URL
-// картинки (уже в тому самому форматі, що й sharedPost.url для СПРАВЖНЬОГО
-// пересланого поста, host — у тому ж allowlist, що й Gemini vision у n_lookup) або
-// null, якщо не вдалось (мережа/логін-стіна/немає og:image) — best-effort, ніколи
-// не кидає.
+// cdninstagram.com. Підтверджено живим запитом із продакшн-сервера — але Instagram
+// НЕПОСЛІДОВНО віддає login-стіну замість цього прев'ю (rate-limit/fingerprint по
+// IP, підтверджено: 1 успіх, потім кілька невдач поспіль з тієї самої точки).
+// Тому це ТІЛЬКИ резервний шлях (Пріоритет 2) — Graph API вище (Пріоритет 1)
+// покриває переважну більшість реальних кейсів (власний пост магазину) надійно.
+// Повертає URL картинки (уже в тому самому форматі, що й sharedPost.url для
+// СПРАВЖНЬОГО пересланого поста, host — у тому ж allowlist, що й Gemini vision у
+// n_lookup) або null, якщо не вдалось — best-effort, ніколи не кидає.
 async function resolveInstagramLinkPreview(kind, shortcode) {
     if (!shortcode) return null;
     const path = kind === 'reel' ? 'reel' : 'p';
@@ -993,9 +1033,31 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
         if (_igm) {
             _hasRawIgLink = true;
             try {
-                const _resolvedImg = await resolveInstagramLinkPreview(_igm[1], _igm[2]);
-                if (_resolvedImg) {
-                    ctx.sharedPost = { kind: _igm[1] === 'reel' ? 'reel' : 'post', mediaId: _igm[2], caption: null, url: _resolvedImg, _fromRawLink: true };
+                // Пріоритет 1 (аудит 2026-09-02): офіційний Graph API — власні медіа
+                // магазину, без жодного скрапінгу. funnelEnv тут ще НЕ побудований
+                // (рахується нижче за ходом функції) — читаємо ці 2 ключі напряму,
+                // окремим легким запитом (той самий підхід, що вже є в
+                // handleCommentReceived, zernioHandler.js).
+                const _igKeyRows = await db.funnelKey.findMany({
+                    where: { botId: session.botId, key: { in: ['INSTAGRAM_ACCESS_TOKEN', 'INSTAGRAM_BUSINESS_ID'] } },
+                    select: { key: true, value: true },
+                }).catch(() => []);
+                const _igKeys = Object.fromEntries((_igKeyRows || []).map((k) => [k.key, k.value]));
+                const _igToken = (_igKeys.INSTAGRAM_ACCESS_TOKEN || '').trim();
+                const _igBiz = (_igKeys.INSTAGRAM_BUSINESS_ID || '').trim();
+                let _graphHit = null;
+                if (_igToken && _igToken !== 'REPLACE_ME' && _igBiz && _igBiz !== 'REPLACE_ME') {
+                    _graphHit = await resolveInstagramMediaViaGraphAPI(_igm[2], _igBiz, _igToken);
+                }
+                if (_graphHit && _graphHit.url) {
+                    ctx.sharedPost = { kind: _igm[1] === 'reel' ? 'reel' : 'post', mediaId: _igm[2], caption: _graphHit.caption || null, url: _graphHit.url, _fromRawLink: true, _via: 'graph_api' };
+                } else {
+                    // Пріоритет 2: og:image скрапінг (чуже медіа, або Graph API не знайшов
+                    // серед власних — не наш пост, або медіа старше вікна пагінації).
+                    const _resolvedImg = await resolveInstagramLinkPreview(_igm[1], _igm[2]);
+                    if (_resolvedImg) {
+                        ctx.sharedPost = { kind: _igm[1] === 'reel' ? 'reel' : 'post', mediaId: _igm[2], caption: null, url: _resolvedImg, _fromRawLink: true, _via: 'scrape' };
+                    }
                 }
             } catch (_e) { /* best-effort — сирий лінк не має ламати обробку повідомлення */ }
         }

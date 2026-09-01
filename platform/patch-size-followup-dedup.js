@@ -41,7 +41,14 @@
  */
 const { db } = require('@platform/db');
 
-const BOTS = { goverla: '5bdb3e38-1936-416f-b1f0-8f1125583193', covercar: 'cc03657f-9e72-46e5-a16d-88826e70c2ee' };
+const BOTS = {
+    goverla: '5bdb3e38-1936-416f-b1f0-8f1125583193', covercar: 'cc03657f-9e72-46e5-a16d-88826e70c2ee',
+    // Клони "→ Fineko CRM" (2026-09-01) — станом на застосування ЩЕ на KeyCRM (готується
+    // міграція, не почата в коді нод), тому ті самі анкори чинні. Якщо колись зʼявиться
+    // WARNING "анкор не знайдено" саме для цих двох — це означає, що n_lookup/n_calc/тощо
+    // вже переписали під нову CRM, патч треба пропустити для них і НЕ форсувати.
+    goverlaCrmClone: 'fcdee415-bef2-4a74-a650-e6e4b5a12322', covercarCrmClone: 'a2d5ba79-f87b-48f2-8301-56292cdf3972',
+};
 const APPLY = process.argv.includes('--apply');
 
 const OLD = "'👉 Вкажіть, будь ласка, зріст і вагу — підберемо найкращий розмір? 😊'";

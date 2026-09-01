@@ -13,7 +13,10 @@
  */
 const { db } = require('@platform/db');
 
-const BOTS = { goverla: '5bdb3e38-1936-416f-b1f0-8f1125583193', covercar: 'cc03657f-9e72-46e5-a16d-88826e70c2ee' };
+const BOTS = {
+    goverla: '5bdb3e38-1936-416f-b1f0-8f1125583193', covercar: 'cc03657f-9e72-46e5-a16d-88826e70c2ee',
+    goverlaCrmClone: 'fcdee415-bef2-4a74-a650-e6e4b5a12322', covercarCrmClone: 'a2d5ba79-f87b-48f2-8301-56292cdf3972',
+};
 const APPLY = process.argv.includes('--apply');
 
 const OLD = 'Коротко назви, що входить у комплект і його ціну, і спитай: «Берете весь комплект чи окрему річ?» 🙂';

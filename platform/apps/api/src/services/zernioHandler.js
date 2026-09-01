@@ -571,8 +571,15 @@ const AUTOMATION_OPENERS = [
 function buildAutomationPresentation(p, opener) {
     const descClean = String(p.description || '').split('\n').filter((ln) => !/^\s*ℹ️/.test(ln)).join('\n').trim();
     const isClothing = CLOTHING_CATEGORY_IDS.indexOf(p.category_id) >= 0;
+    // Аудит 2026-09-01 (Проблема 1, третій прояв того самого класу): це Zernio-
+    // автоматизація — DM надсилається САМИМ Zernio, зовні від нашого пайплайну, коли
+    // клієнт коментує пост. Але подальше повідомлення клієнта в тому ж DM все одно
+    // йде через n_route→n_lookup→n_welcome→n_size (handleCommentReceived), і n_size
+    // САМ питає зріст/вагу на своєму першому ході — той самий дубль, що вже виправлено
+    // в n_lookup.followUpQuestion (patch-size-followup-dedup.js). Тут — той самий
+    // текст, той самий фікс: не питати зріст/вагу тут дослівно (n_size питає їх сам).
     const followUp = isClothing
-        ? '👉 Вкажіть, будь ласка, зріст і вагу — підберемо найкращий розмір? 😊'
+        ? '👉 Зараз підберемо для вас ідеальний розмір 😊'
         : (p.category_id === 7 ? 'Напишіть, будь ласка, який розмір взуття зазвичай носите? 😊' : 'Цікавить? 😊');
     return (opener || AUTOMATION_OPENERS[0]) + descClean + '\n\n' + followUp;
 }
@@ -1269,8 +1276,9 @@ async function handleSideEvent(botId, event, body) {
     return { ok: true, processed: 1 };
 }
 
-// ensurePostAutomation експортовано для живого тестування (напр. живий кейс
-// mediaId без артикулу) і майбутніх регресійних тестів — не викликається поза
-// handleCommentReceived у нормальному потоці.
-module.exports = { handleZernioEvent, sendZernioMessage, ensurePostAutomation };
+// ensurePostAutomation/scheduleFlowRun експортовано для живого тестування (напр.
+// живий кейс mediaId без артикулу; Проблема Д — race condition у серіалізації
+// runFlowAndDeliver) і майбутніх регресійних тестів — не викликаються поза
+// handleZernioEvent у нормальному потоці.
+module.exports = { handleZernioEvent, sendZernioMessage, ensurePostAutomation, scheduleFlowRun };
 

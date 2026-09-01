@@ -1171,7 +1171,11 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
     // (start->n_route->n_lookup->n_welcome->...), ніби це звичайне повідомлення в
     // директ. Явний маршрут від виклику (n_comment_entry) МАЄ пріоритет — не
     // перебиваємо його цією евристикою.
-    if (ctx.product && ctx.product._source === 'keycrm' && !ctx.adminEngaged && !ctx.crmOrderId
+    // Аудит 2026-09-02 (CRM-клони goverla/covercar): цю евристику писали, коли єдиним
+    // джерелом товару був KeyCRM (_source==='keycrm'). Нова СРМ віддає _source==='crm' —
+    // без цього уточнення "клієнт назвав інший товар" мовчки НЕ спрацьовувало на клонах,
+    // товар залишався "застряглим" на першому визначеному.
+    if (ctx.product && (ctx.product._source === 'keycrm' || ctx.product._source === 'crm') && !ctx.adminEngaged && !ctx.crmOrderId
         && runtime.currentNodeId !== 'n_comment_entry' && (incomingUserMessage || incomingImageUrl)) {
         const _extractArticleCandidates = (txt) => {
             const out = [];

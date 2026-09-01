@@ -479,6 +479,27 @@ async function resolveInstagramLinkPreview(kind, shortcode) {
     }
 }
 
+// Аудит 2026-09-01 (Проблема В, живий кейс: ibanoplata create_invoice віддав 403,
+// context.ibanPayUrl лишився порожнім — а НАСТУПНЕ статичне повідомлення (n_requisites)
+// все одно казало "оплатіть за посиланням... 👇" з порожнім рядком замість лінка,
+// клієнт: "Не бачу посилання"). Той самий системний принцип, що й notifyAdminPhotoMissing
+// (не обіцяти те, чого немає / централізована ескалація при порожньому значенні), просто
+// для платіжного посилання, а не фото.
+async function notifyAdminPaymentLinkMissing(session, ctx, funnelEnv, runtime, whatLabel) {
+    try {
+        const adminId = funnelEnv.ADMIN_TELEGRAM_ID || await getSystemKeyValue('ADMIN_TELEGRAM_ID');
+        const tok = funnelEnv.TELEGRAM_BOT_TOKEN || '';
+        if (!adminId || !/^\d+:[A-Za-z0-9_-]{20,}$/.test(tok)) {
+            pushDelivery(runtime, 'telegram_notify', false, 'немає ADMIN_TELEGRAM_ID або валідного TELEGRAM_BOT_TOKEN', { reason: 'payment_link_missing' });
+            return;
+        }
+        const txt = shopPrefix(funnelEnv) + '💳 <b>Не вдалось згенерувати ' + whatLabel + '</b> — клієнту наступним кроком обіцяно посилання, якого немає\n\n⚠️ Надішліть, будь ласка, реквізити/посилання вручну\n\n👤 Клієнт: ' + (ctx.senderName || '') + ' (' + (ctx.igUsername || '') + ')\n🔗 Сесія: ' + session.id;
+        const r = await fetch('https://api.telegram.org/bot' + tok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(adminId), text: txt, parse_mode: 'HTML', disable_web_page_preview: true }) }).catch(() => null);
+        const j = r ? await r.json().catch(() => ({})) : {};
+        pushDelivery(runtime, 'telegram_notify', !!j.ok, j.ok ? null : (j.description || 'fetch failed'), { chatId: String(adminId), reason: 'payment_link_missing' });
+    } catch (_e) { /* сповіщення не має ламати потік */ }
+}
+
 function normalizeAlternating(messages) {
     const out = [];
     for (const m of (messages || [])) {
@@ -1132,7 +1153,19 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
         // n_lookup). Скидаємось на старт і даємо n_lookup самому розпізнати фото через
         // Gemini vision; якщо не впізнає — чесно попросить пост/артикул, це краще, ніж
         // застрягла нода плутано питає адресу/розмір по фото невідомо чого.
-        if (!_isDifferentProduct && incomingImageUrl) {
+        //
+        // Проблема Г (аудит 2026-09-01, живий кейс): це припущення НЕПРАВИЛЬНЕ, щойно
+        // клієнт вже в процесі оформлення — orderRef (і, як наслідок, reqisites/
+        // ibanPayUrl) виставляється у n_iban_invoice РАНІШЕ, ніж crmOrderId (той
+        // з'являється лише ПІСЛЯ підтвердженої оплати). Клієнт, який отримав реквізити
+        // й номер платежу та надсилає СКРІНШОТ КВИТАНЦІЇ, потрапляв саме в це вікно
+        // (crmOrderId ще нема, orderRef вже є) — фото трактувалось як "новий товар",
+        // весь контекст замовлення стирався, і бот скидав до "який товар вас цікавить?"
+        // повністю втрачаючи активне замовлення. orderRef — надійніший сигнал "клієнт
+        // вже в чекауті" (виставляється одразу при переході до оплати), тому фото на
+        // цьому етапі більше НЕ трактуємо як новий товар — його підхопить звірка оплати
+        // (n_reconcile: context.lastReceiptImageUrl → Gemini vision квитанції).
+        if (!_isDifferentProduct && incomingImageUrl && !ctx.orderRef) {
             _isDifferentProduct = true;
         }
         if (_isDifferentProduct) {
@@ -1149,6 +1182,22 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                 runtime.waitingForUser = false;
                 runtime.dialogHistory = {};
             }
+        }
+    }
+
+    // Проблема Г (аудит 2026-09-01, живий кейс, доповнення до фіксу вище): клієнт міг
+    // надіслати квитанцію, коли виконання вже "застрягло" десь ПІСЛЯ n_requisites
+    // (напр. чекає уточнення адреси), а не точно на кроці звірки оплати. Той самий
+    // патерн, що вже є для "перемикання товару" й "автовідновлення після хендофу" —
+    // явно перенаправляємо на n_mono_fetch, щоб звірка оплати (n_reconcile: Gemini
+    // vision квитанції за context.lastReceiptImageUrl) реально відпрацювала для
+    // ЦЬОГО фото, а не загубилась у консультаційній ноді, яка про квитанції нічого
+    // не знає (звідси "Вибачте, я не можу переглядати фото... Який товар цікавить?").
+    if (incomingImageUrl && ctx.orderRef && !ctx.crmOrderId && !ctx.adminEngaged && !ctx.funnelPaused) {
+        const _monoNode = flow.nodes.find((n) => n.id === 'n_mono_fetch');
+        if (_monoNode && runtime.currentNodeId !== 'n_mono_fetch' && runtime.currentNodeId !== 'n_reconcile') {
+            runtime.currentNodeId = 'n_mono_fetch';
+            runtime.waitingForUser = false;
         }
     }
 
@@ -3224,6 +3273,16 @@ ${_baseUrl}/legal/terms — Правила використання`;
                         ctx.ibanPayUrl = payUrl;
                         ctx.ibanInvoiceUid = ibJson.ibanInvoiceUid || '';
                         if (outputVar) setByPath(ctx, outputVar, payUrl);
+                    } else {
+                        // Проблема В (аудит 2026-09-01): без цього наступна статична нода
+                        // (n_requisites) все одно каже клієнту "оплатіть за посиланням 👇" з
+                        // ПОРОЖНІМ рядком замість лінка ("Не бачу посилання" — живий кейс).
+                        // ctx.ibanPayUrl тут — НЕ справжній URL, а чесна фраза-заглушка САМЕ
+                        // в тому місці шаблону, де мав бути лінк, щоб повідомлення НЕ виглядало
+                        // порожнім/зламаним, поки менеджер (сповіщений нижче) не надішле вручну.
+                        ctx.ibanPayUrl = '(посилання ще генерується — за хвилину надішлемо окремо, або просто напишіть — одразу скинемо реквізити вручну)';
+                        pushDelivery(runtime, 'ibanoplata_create_invoice', false, ibJson.errorMessage || ('HTTP ' + ibStatus), { nodeId: node.id });
+                        notifyAdminPaymentLinkMissing(session, ctx, funnelEnv, runtime, 'посилання на оплату (ibanoplata)').catch(() => {});
                     }
                     db.apiCall.create({ data: {
                         sessionId: session.id, service: 'ibanoplata', method: 'create_invoice',

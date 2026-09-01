@@ -998,6 +998,26 @@ async function handleIncomingMessage(botId, body) {
 const _pendingFlowRuns = new Map();
 const FLOW_DEBOUNCE_MS = 1200;
 
+// Проблема Д (аудит 2026-09-01, живий кейс F0029 — фото+презентація надіслані
+// повторно кілька разів поспіль): дебаунс вище зливає повідомлення, що прийшли
+// В МЕЖАХ 1200мс одне від одного, в ОДИН виклик — але НЕ захищає від ДВОХ
+// РІЗНИХ debounce-циклів для ТІЄЇ САМОЇ сесії, коли пауза між ними БІЛЬША за
+// 1200мс, але МЕНША за час, який реально займає runFlowAndDeliver (KeyCRM +
+// Claude + Gemini vision — 2-3с). Підтверджено живим трейсом: клієнт переслав
+// рілс (t=0), через 2.3с написав "Прийняв рішення..." — debounce №1 вже
+// СТАРТУВАВ (спрацював через 1.2с) і виконувався, коли прийшло друге
+// повідомлення; воно створило НОВИЙ debounce-запис (старий вже видалений з
+// _pendingFlowRuns після старту таймера) і за своїм ТАЙМЕРОМ стартувало
+// runFlowAndDeliver #2 ще ДО того, як #1 встиг дописати runtime.currentNodeId
+// у БД — обидва прочитали сесію ще на start_1 і НЕЗАЛЕЖНО прогнали
+// start→n_route→n_lookup→n_welcome, звідси видиме подвійне фото+презентація.
+// Фікс: чергу виконання runFlowAndDeliver СЕРІАЛІЗУЄМО по sessionId (проміс-
+// ланцюжок у пам'яті процесу — platform-api працює в одному fork, не кластері,
+// тож цього достатньо, без розподіленого Redis-локу) — другий виклик ЧЕКАЄ,
+// поки перший повністю завершиться (включно з записом у БД), перш ніж читати
+// сесію заново.
+const _sessionRunQueue = new Map();
+
 function scheduleFlowRun(sessionId, msg) {
     let entry = _pendingFlowRuns.get(sessionId);
     if (!entry) {
@@ -1011,7 +1031,13 @@ function scheduleFlowRun(sessionId, msg) {
     if (entry.timer) clearTimeout(entry.timer);
     entry.timer = setTimeout(() => {
         _pendingFlowRuns.delete(sessionId);
-        runFlowAndDeliver(sessionId, entry).catch((e) => logger.error('[zernioHandler] debounced flow run failed', { sessionId, error: e.message }));
+        const prevInQueue = _sessionRunQueue.get(sessionId) || Promise.resolve();
+        const thisRun = prevInQueue
+            .catch(() => {}) // попередній запуск міг впасти — не блокуємо чергу його помилкою
+            .then(() => runFlowAndDeliver(sessionId, entry))
+            .catch((e) => logger.error('[zernioHandler] debounced flow run failed', { sessionId, error: e.message }));
+        _sessionRunQueue.set(sessionId, thisRun);
+        thisRun.finally(() => { if (_sessionRunQueue.get(sessionId) === thisRun) _sessionRunQueue.delete(sessionId); });
     }, FLOW_DEBOUNCE_MS);
 }
 

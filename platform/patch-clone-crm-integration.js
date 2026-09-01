@@ -102,6 +102,15 @@ const CALC_RETURNS = [
 const IS_CLOTHING_OLD = 'context.product && context.product.isClothing';
 const IS_CLOTHING_NEW = 'context.product && context.product.isClothing && context.sizeAskedFor !== context.product.categoryId';
 
+// Допродаж — тест-пункт 5 власника ("клієнт ОБИРАЄ ДОПРОДАЖ — перевір що коректно
+// додається до замовлення") виявив прогалину і в СТАРІЙ (KeyCRM) версії теж: допродаж
+// був лише текстовою пропозицією, без структурованого поля, тож n_crm_order НІКОЛИ не
+// додавав його другою позицією. Мінімальне точкове доповнення n_order_intent — тепер
+// json_output може нести addUpsell:true, яке n_crm_order-crm-code.js вже вміє прочитати
+// (upsellItems[0], попередній комміт).
+const ORDER_INTENT_OLD = 'Це НЕ фото основного товару — не плутай з ready/color.';
+const ORDER_INTENT_NEW = ORDER_INTENT_OLD + ' ЯКЩО клієнт ЯВНО погодився ДОДАТИ запропонований допродаж до замовлення ("так, додайте", "беру і футболку", "давайте обидва", "додайте це теж") — до того самого json_output (разом з ready:yes, якщо згода на оформлення теж вже прозвучала) додай ще поле "addUpsell":true. Якщо клієнт НЕ погоджувався на допродаж, ще не відповів на пропозицію, або відмовився — НЕ додавай це поле.';
+
 async function patchBot(name, cfg) {
     const { botId, crmApiKey } = cfg;
     const flow = await db.flowDefinition.findUnique({ where: { botId } });
@@ -113,7 +122,8 @@ async function patchBot(name, cfg) {
     const nSize = flow.nodes.find((n) => n.id === 'n_size');
     const nCalc = flow.nodes.find((n) => n.id === 'n_calc');
     const nIsClothing = flow.nodes.find((n) => n.id === 'n_is_clothing');
-    if (!nLookup || !nCrmOrder || !nSupplierRoute || !nSize || !nCalc || !nIsClothing) { console.log(name, 'ERROR: якась з нод n_lookup/n_crm_order/n_supplier_route/n_size/n_calc/n_is_clothing не знайдена'); return; }
+    const nOrderIntent = flow.nodes.find((n) => n.id === 'n_order_intent');
+    if (!nLookup || !nCrmOrder || !nSupplierRoute || !nSize || !nCalc || !nIsClothing || !nOrderIntent) { console.log(name, 'ERROR: якась з нод n_lookup/n_crm_order/n_supplier_route/n_size/n_calc/n_is_clothing/n_order_intent не знайдена'); return; }
 
     const lookupDone = (nLookup.data.code || '').includes('keys.CRM_API_KEY');
     const orderDone = (nCrmOrder.data.code || '').includes('buyers/find-or-create');
@@ -121,6 +131,7 @@ async function patchBot(name, cfg) {
     const sizeDone = (nSize.data.systemPrompt || '').includes('categoryParamsPrompt');
     const calcDone = (nCalc.data.code || '').includes('sizeAskedFor');
     const isClothingDone = (nIsClothing.data.condition || '').includes('sizeAskedFor');
+    const orderIntentDone = (nOrderIntent.data.systemPrompt || '').includes('addUpsell');
 
     console.log(name, {
         n_lookup: lookupDone ? 'ALREADY_APPLIED' : 'WILL_PATCH',
@@ -129,6 +140,7 @@ async function patchBot(name, cfg) {
         n_size: sizeDone ? 'ALREADY_APPLIED' : 'WILL_PATCH',
         n_calc_sizeAskedFor: calcDone ? 'ALREADY_APPLIED' : 'WILL_PATCH',
         n_is_clothing_sizeAskedFor: isClothingDone ? 'ALREADY_APPLIED' : 'WILL_PATCH',
+        n_order_intent_addUpsell: orderIntentDone ? 'ALREADY_APPLIED' : 'WILL_PATCH',
     });
     if (!calcDone) {
         for (const r of CALC_RETURNS) { if (!(nCalc.data.code || '').includes(r.old)) console.log(name, 'WARNING: n_calc — анкор не знайдено:', r.old.slice(0, 60) + '...'); }
@@ -151,6 +163,9 @@ async function patchBot(name, cfg) {
         }
         if (n.id === 'n_is_clothing' && !isClothingDone && (n.data.condition || '') === IS_CLOTHING_OLD) {
             return { ...n, data: { ...n.data, condition: IS_CLOTHING_NEW } };
+        }
+        if (n.id === 'n_order_intent' && !orderIntentDone && (n.data.systemPrompt || '').includes(ORDER_INTENT_OLD)) {
+            return { ...n, data: { ...n.data, systemPrompt: n.data.systemPrompt.split(ORDER_INTENT_OLD).join(ORDER_INTENT_NEW) } };
         }
         return n;
     });

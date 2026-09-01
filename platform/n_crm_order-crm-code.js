@@ -48,12 +48,20 @@ try {
   var shopTag = (keys.SHOP_TAG || '').trim();
 
   var item = { productId: p.id || null, offerId: offerId, name: (p.customerName || p.name || 'Товар'), price: (p.price || 0), quantity: 1, properties: propsOut.length ? propsOut : null, isUpsell: false };
+  var items = [item];
+  // Допродаж: клієнт погодився в n_order_intent (json_output {"addUpsell":true}) — додаємо
+  // ДРУГОЮ позицією замовлення (структуровано, isUpsell:true), а не лише текстом у коментарі.
+  var upItems = (p.upsellItems || []);
+  if (context.orderIntent && context.orderIntent.addUpsell && upItems.length) {
+    var up0 = upItems[0];
+    items.push({ productId: up0.id || null, offerId: null, name: up0.name || 'Допродаж', price: up0.price || 0, quantity: 1, properties: null, isUpsell: true });
+  }
   var body = {
     buyerId: buyerId,
     sourceName: 'Instagram' + (shopTag ? (' ' + shopTag) : ''),
-    managerComment: 'Товар: ' + (p.customerName || p.name || '') + ' | Розмір: ' + size + ' | Колір: ' + col + ' | Оплата: ' + payTxt + (supplierName ? (' | Постачальник: ' + supplierName) : '') + ' | Перевірити оплату.',
+    managerComment: 'Товар: ' + (p.customerName || p.name || '') + ' | Розмір: ' + size + ' | Колір: ' + col + ' | Оплата: ' + payTxt + (supplierName ? (' | Постачальник: ' + supplierName) : '') + (items.length > 1 ? (' | + допродаж: ' + items[1].name) : '') + ' | Перевірити оплату.',
     shipping: { shippingService: 'Нова Пошта', city: (od.city || ''), branch: (od.branch || ''), recipientFullName: (od.fullName || ''), recipientPhone: phone },
-    items: [item]
+    items: items
   };
 
   var r = await fetch(base + '/orders', { method: 'POST', headers: hdr, body: JSON.stringify(body) });

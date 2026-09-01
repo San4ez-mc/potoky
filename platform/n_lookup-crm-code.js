@@ -214,13 +214,16 @@ try {
   }
 
   // ── upsell (companionProductIds — вже прямі id, без CT_1002-парсингу) ──
-  var upsell = [], __upsellPhoto = '';
+  // upsellItems — структуровані {id,name,price}, потрібні n_crm_order, щоб реально
+  // ДОДАТИ погоджений допродаж другою позицією в замовлення (не лише згадати текстом).
+  var upsell = [], upsellItems = [], __upsellPhoto = '';
   function upname(prod) { var up = Number(prod.price) || 0; return (prod.displayName || prod.name) + (up ? (' — ' + up + ' грн') : ''); }
   var compIds = Array.isArray(found.companionProductIds) ? found.companionProductIds : [];
   for (var ui = 0; ui < compIds.length && upsell.length < 3; ui++) {
     var cprod = all.filter(function (x) { return String(x.id) === String(compIds[ui]) && String(x.id) !== String(found.id); })[0];
     if (!cprod) continue;
     upsell.push(upname(cprod));
+    upsellItems.push({ id: cprod.id, name: (cprod.displayName || cprod.name), price: Number(cprod.price) || 0 });
     if (!__upsellPhoto) { __upsellPhoto = resolveUrl(cprod.thumbnailUrl || (cprod.images || [])[0] || ''); }
   }
   var __upsellPhotoNote = __upsellPhoto
@@ -332,7 +335,7 @@ try {
       name: found.name || 'Товар', customerName: __customerName, desc: __descClean, followUpQuestion: __followUpQuestion,
       price: price, currency: 'UAH', photoUrl: img, imageUrls: imgs.slice(0, 5),
       colors: colors.join(', '), colorsList: colors, sizes: sizes, offers: offers,
-      upsell: upsell.join('; '), upsellPhotoUrl: __upsellPhoto, upsellPhotoNote: __upsellPhotoNote,
+      upsell: upsell.join('; '), upsellItems: upsellItems, upsellPhotoUrl: __upsellPhoto, upsellPhotoNote: __upsellPhotoNote,
       isClothing: __isClothing, supplierArticle: found.supplierArticle || '', footwearNote: __footwearNote,
       qtyPrices: __qtyPrices, qtyPromoText: __qtyPromoText,
       sizeChartUrl: __sizeChartUrl, aiInfo: __aiInfo, sizeChartNote: __sizeChartNote, sizeChartData: __sizeChartData,

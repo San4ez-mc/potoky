@@ -487,6 +487,34 @@ async function logGroupMessagePassively(groupUserId, botId, taggedText) {
     await persistUserMessage(session.id, taggedText, { source: 'telegram-group-passive' });
 }
 
+/**
+ * Best-effort archive of EVERY group message (passive or addressed) into an
+ * external Google Doc — separate from the DB history above, for a
+ * human-readable running transcript. Opt-in via two funnelKeys; does nothing
+ * (silently) until both are set, so it never affects bots that don't use it.
+ *   GDOC_APPEND_URL — deployed Google Apps Script Web App URL
+ *   GDOC_APPEND_KEY — shared secret the script checks (its own Script Property)
+ * The script owns per-chat doc creation/lookup — this side just POSTs the line.
+ */
+async function appendToGroupDoc(botId, chat, taggedText) {
+    const keys = await db.funnelKey.findMany({
+        where: { botId, key: { in: ['GDOC_APPEND_URL', 'GDOC_APPEND_KEY'] } },
+        select: { key: true, value: true },
+    }).catch(() => []);
+    const km = Object.fromEntries(keys.map(k => [k.key, k.value]));
+    if (!km.GDOC_APPEND_URL || !km.GDOC_APPEND_KEY) return; // not configured — skip quietly
+    try {
+        await fetch(km.GDOC_APPEND_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ apiKey: km.GDOC_APPEND_KEY, chatId: chat.id, chatTitle: chat.title || '', text: taggedText }),
+            signal: AbortSignal.timeout(15000),
+        });
+    } catch (err) {
+        logger.warn('[platformBotHandler] appendToGroupDoc failed', { error: err.message });
+    }
+}
+
 async function getNewAssistantMessages(sessionId, since) {
     const where = { sessionId, role: 'assistant' };
     if (since) {
@@ -983,9 +1011,26 @@ async function _handlePlatformBotUpdateInner(botId, update) {
         }
         const gToken = await getBotToken(botId);
         if (!gToken) return;
+
+        // Voice/audio in a passive (non-addressed) message would otherwise carry
+        // no text at all — reuse the SAME Whisper path already used below for
+        // addressed messages (Phase 1.5), just run early so passive logging and
+        // the Google Doc archive get real text too, not silence.
+        if (!text) {
+            const media = await extractIncomingMedia(message, gToken).catch(() => null);
+            if (media && (media.type === 'voice' || media.type === 'audio') && media.fileUrl) {
+                const oaiKey = await resolveOpenAIKey(botId);
+                if (oaiKey) {
+                    const transcript = await transcribeAudio(media.fileUrl, oaiKey, 'uk');
+                    if (transcript) text = transcript;
+                }
+            }
+        }
+
         const identity = await getBotIdentity(gToken);
         const addressed = isAddressedToBot(message, text, identity, groupMode.triggerName);
         const tag = `[${displayName(from)}]: `;
+        const taggedText = text ? tag + text : '';
 
         // Group chat id is always negative → never collides with a real user id.
         // Reusing findOrCreateUser with a synthetic "from" gives the whole group
@@ -999,9 +1044,13 @@ async function _handlePlatformBotUpdateInner(botId, update) {
             return;
         }
 
+        // Full transcript archive (Google Doc) — every message, addressed or not.
+        // No-ops until GDOC_APPEND_URL/KEY are configured for this bot.
+        if (taggedText) appendToGroupDoc(botId, message.chat, taggedText).catch(() => {});
+
         if (!addressed) {
             // Passive: remember what was said, don't reply, don't run the flow.
-            if (text) await logGroupMessagePassively(groupUser.id, botId, tag + text).catch(() => {});
+            if (taggedText) await logGroupMessagePassively(groupUser.id, botId, taggedText).catch(() => {});
             return;
         }
 
@@ -1011,7 +1060,7 @@ async function _handlePlatformBotUpdateInner(botId, update) {
         // parsing further down (startPayload = text.slice('/start'.length))
         // still lines up correctly.
         from = groupFrom;
-        if (!text.startsWith('/')) text = tag + text;
+        if (!text.startsWith('/')) text = taggedText;
     }
 
     const isStart = (message.text || '').startsWith('/start');

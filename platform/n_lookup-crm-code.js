@@ -2,7 +2,13 @@
 // Джерело даних: GET {CRM_API_BASE}/products (+ /suppliers, /categories) з Bearer CRM_API_KEY
 // (per-bot funnelKey, tenant.apiKey нової CRM — окремий на goverla_shop і covercar_ua).
 //
-// Пріоритети матчингу — ТІ САМІ, що в n_lookup-code.js (KeyCRM), просто джерело даних інше:
+// Пріоритети матчингу — ТІ САМІ, що в n_lookup-code.js (KeyCRM), просто джерело даних інше,
+// ПЛЮС новий найвищий пріоритет 0 (вимога власника, механізм уже готовий у CRM):
+//   0) РУЧНА прив'язка Ad.externalId → Ad.productId (CRM, сторінка «Рекламні витрати»,
+//      inline-редагування — рядки без товару підсвічені). externalId = mediaId БУДЬ-ЯКОГО
+//      поста/рілса чи ad_id платної реклами, не лише платних кампаній. Це пряме рішення
+//      власника, надійніше за будь-яке автоматичне вгадування нижче — якщо збіг є, решту
+//      пріоритетів НЕ пробуємо.
 //   1) ad_id/post_id — тепер це просто product.adMatchTokens[] (масив, а не CT_1001-кастомполе).
 //   2) Артикул з тексту клієнта / підпису поста / adTitle — проти product.sku,
 //      product.supplierArticle, offer.sku (той самий підхід, що matchArticle+offer-SKU
@@ -78,16 +84,37 @@ function offerPreColorSize(all, art) {
 }
 
 try {
-  var pr = await fetch(base + '/products?take=300', { headers: hdr() });
+  var __apiCalls = await Promise.all([
+    fetch(base + '/products?take=300', { headers: hdr() }),
+    fetch(base + '/ads?take=300', { headers: hdr() })
+  ]);
+  var pr = __apiCalls[0], adsR = __apiCalls[1];
   if (!pr.ok) return fallback('CRM /products HTTP ' + pr.status);
   var pd = await pr.json();
   var all = (pd && pd.data) || [];
   if (!all.length) return fallback('Каталог CRM порожній');
+  var adsList = [];
+  if (adsR && adsR.ok) { try { var adsJ = await adsR.json(); adsList = (adsJ && adsJ.data) || []; } catch (e) { } }
 
   var found = null, via = '', mk = '', preColor = '', preSize = '', preFromUser = false;
 
-  // ПРІОРИТЕТ 1: ad_id/post_id
-  if (context.entryAd) { found = matchByAdToken(all, String(context.entryAd)); if (found) { via = 'ad_id'; mk = String(context.entryAd); } }
+  // ПРІОРИТЕТ 0 (найвищий — прямо за вимогою власника): РУЧНА прив'язка Ad.externalId →
+  // Ad.productId у CRM (сторінка «Рекламні витрати», inline-редагування — рядки без товару
+  // підсвічені). externalId — mediaId БУДЬ-ЯКОГО поста/рілса чи ad_id платної реклами, не лише
+  // платних кампаній. Це пряме рішення власника — надійніше за будь-яке автоматичне вгадування
+  // нижче (артикул/keyword/vision), тож якщо знайдено — ЖОДНОГО іншого матчингу далі не робимо.
+  var __adExternalId = String(context.entryAd || (context.sharedPost && context.sharedPost.mediaId) || '').trim();
+  if (__adExternalId && adsList.length) {
+    var __adHit = adsList.filter(function (a) { return String(a.externalId || '').trim() === __adExternalId && a.productId; })[0];
+    if (__adHit) {
+      var __byAdProd = all.filter(function (x) { return String(x.id) === String(__adHit.productId); })[0];
+      if (__byAdProd) { found = __byAdProd; via = 'ad_manual_link'; mk = 'adlink_' + __adExternalId; }
+    }
+  }
+
+  // ПРІОРИТЕТ 1: ad_id/post_id — авто-теги на товарі (adMatchTokens), коли ручної прив'язки
+  // в Ad (Пріоритет 0) для цього mediaId ще нема.
+  if (!found && context.entryAd) { found = matchByAdToken(all, String(context.entryAd)); if (found) { via = 'ad_id'; mk = String(context.entryAd); } }
 
   // ПРІОРИТЕТ 2: артикул (з тексту клієнта / підпису поста / adTitle)
   if (!found) {
@@ -263,8 +290,11 @@ try {
   var __rawFirstLine = (__descClean.split('\n')[0] || '').trim();
   var __looksLikeHeading = /:$/.test(__rawFirstLine) || /^(в\s*наявност|наявніст|кольор|розмір|ціна\b|акці)/i.test(__rawFirstLine) || __rawFirstLine.length < 4;
   var __customerName = found.customerName || (!__looksLikeHeading && __rawFirstLine) || found.name || 'Товар';
+  // Аудит 2026-09-01 (patch-size-followup-dedup.js, вже застосований на клонах): followUpQuestion
+  // НЕ дублює конкретне питання (n_size сама питає, з динамічними параметрами §3 ТЗ) —
+  // лише нейтральний перехід, інакше клієнт бачить питання двічі поспіль.
   var __followUpQuestion = __isClothing
-    ? '👉 Вкажіть, будь ласка, дані для підбору розміру — підберемо найкращий варіант? 😊'
+    ? '👉 Зараз підберемо для вас ідеальний варіант 😊'
     : 'Цікавить? 😊';
 
   var result = {

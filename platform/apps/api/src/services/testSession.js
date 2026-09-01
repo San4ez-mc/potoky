@@ -441,6 +441,44 @@ async function notifyAdminPhotoMissing(session, ctx, funnelEnv, runtime, whatLab
     } catch (_e) { /* сповіщення не має ламати потік */ }
 }
 
+// Аудит 2026-09-01 (Проблема 5, живий кейс): клієнт кидає СИРИЙ текстовий лінк
+// instagram.com/reel|p|tv/<code> (звичайний текст, НЕ пересланий пост-attachment).
+// Instagram Graph oEmbed вимагає окремого дозволу від Meta ("oEmbed Read"), якого в
+// нас немає (перевірено: без токена ендпоінт віддає лише порожній embed-віджет без
+// прямого URL картинки/підпису) — але ПУБЛІЧНА html-сторінка посту/рілса (без
+// авторизації) містить <meta property="og:image"> з реальним прев'ю на
+// cdninstagram.com. Підтверджено живим запитом із продакшн-сервера. Повертає URL
+// картинки (уже в тому самому форматі, що й sharedPost.url для СПРАВЖНЬОГО
+// пересланого поста, host — у тому ж allowlist, що й Gemini vision у n_lookup) або
+// null, якщо не вдалось (мережа/логін-стіна/немає og:image) — best-effort, ніколи
+// не кидає.
+async function resolveInstagramLinkPreview(kind, shortcode) {
+    if (!shortcode) return null;
+    const path = kind === 'reel' ? 'reel' : 'p';
+    const url = 'https://www.instagram.com/' + path + '/' + encodeURIComponent(shortcode) + '/';
+    const ac = new AbortController();
+    const to = setTimeout(() => { try { ac.abort(); } catch (_e) { /* noop */ } }, 8000);
+    try {
+        const r = await fetch(url, {
+            signal: ac.signal,
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36' },
+        });
+        if (!r.ok) return null;
+        const html = await r.text();
+        const m = html.match(/<meta property="og:image" content="([^"]+)"/i);
+        if (!m) return null;
+        const imgUrl = m[1].replace(/&amp;/g, '&');
+        const h = new URL(imgUrl).hostname.toLowerCase();
+        const allowed = ['cdninstagram.com', 'fbcdn.net', 'fbsbx.com'];
+        if (!allowed.some((d) => h === d || h.endsWith('.' + d))) return null;
+        return imgUrl;
+    } catch (_e) {
+        return null;
+    } finally {
+        clearTimeout(to);
+    }
+}
+
 function normalizeAlternating(messages) {
     const out = [];
     for (const m of (messages || [])) {
@@ -916,6 +954,32 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
         } catch (_e) { /* recall — не критично для замовлення, тихо ігноруємо помилку */ }
     }
 
+    // Аудит 2026-09-01 (Проблема 5, живий кейс): клієнт кидає СИРИЙ текстовий лінк
+    // на instagram.com/reel|p/... (звичайний текст, не пересланий пост-attachment).
+    // Ні n_signal_check/n_prev_match_snapshot (нодовий regex "є ознака товару"), ні
+    // "перемикання товару посеред консультації" нижче не бачили сирий URL як сигнал
+    // — сесія лишалась застряглою в поточній консультаційній claude-ноді, яка
+    // імпровізувала без жодних даних (звідси суперечливе "не можу відкрити, але вже
+    // сканую" і вгадування зі старого товару в контексті). Резолвимо ДО всіх
+    // перевірок нижче: якщо в тексті є сирий IG-лінк — витягуємо og:image з
+    // публічної сторінки поста (без токена) і кладемо як звичайний ctx.sharedPost —
+    // той самий формат, що й для СПРАВЖНЬОГО пересланого поста (zernioHandler.js),
+    // тож увесь подальший конвеєр (n_signal_check → n_lookup Gemini vision →
+    // "перемикання товару" нижче, яке звіряє sharedPost.mediaId) працює БЕЗ ЗМІН.
+    let _hasRawIgLink = false;
+    if (incomingUserMessage) {
+        const _igm = String(incomingUserMessage).match(/instagram\.com\/(reel|p|tv)\/([A-Za-z0-9_-]+)/i);
+        if (_igm) {
+            _hasRawIgLink = true;
+            try {
+                const _resolvedImg = await resolveInstagramLinkPreview(_igm[1], _igm[2]);
+                if (_resolvedImg) {
+                    ctx.sharedPost = { kind: _igm[1] === 'reel' ? 'reel' : 'post', mediaId: _igm[2], caption: null, url: _resolvedImg, _fromRawLink: true };
+                }
+            } catch (_e) { /* best-effort — сирий лінк не має ламати обробку повідомлення */ }
+        }
+    }
+
     // Бот замовк, бо не визначив товар. Якщо клієнт САМ прислав товар (рілс/пост/реклама
     // або артикул у тексті) — це нова спроба, відновлюємось і шукаємо товар знову.
     // Явне прохання менеджера (handoffKind !== 'product_unknown') так НЕ знімається.
@@ -946,6 +1010,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
         // хибних спрацювань на кожній адресі/ціні.
         const _hasProductSignal = Boolean(ctx.sharedPost && ctx.sharedPost.caption)
             || Boolean(ctx.entryAd || ctx.entryAdId || ctx.postId)
+            || _hasRawIgLink
             || /(?:артикул|арт\.?|код|sku|№)\s*[:#№.-]?\s*[A-Za-zА-Яа-я]{0,5}\d{2,8}|\b[A-Za-z]\d{3,6}\b/i.test(String(incomingUserMessage || ''));
         if (_hasProductSignal) {
             ctx.adminEngaged = false;
@@ -1644,12 +1709,39 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                 // {"wantsPhoto":true} у json_output (разом з іншими полями або окремо),
                 // рушій бере готові context.product.imageUrls і шле як окреме повідомлення
                 // з attachments — той самий формат, що й sendPhoto-нода/zernioHandler альбом.
+                // Прапорець: чи вже оброблено фото-обіцянку ЦЬОГО ходу структурованим
+                // сигналом (wantsPhoto/wantsUpsellPhoto нижче) — використовується
+                // генеричним текстовим safety-net'ом (Проблема 4) далі, щоб не слати
+                // ДРУГЕ сповіщення менеджеру за той самий хід.
+                let photoPromiseHandledThisTurn = false;
                 if (exit.parsed && exit.parsed.wantsPhoto === true) {
-                    // zernioHandler сам підтягує ПОВНУ галерею з context.product.imageUrls і
-                    // шле альбомом — тут достатньо позначити attachment ОДНИМ фото (той самий
-                    // формат, що й у sendPhoto-ноді), решту логіки альбому він добере сам.
-                    const firstImg = (ctx.product && Array.isArray(ctx.product.imageUrls) && ctx.product.imageUrls[0])
-                        || (ctx.product && ctx.product.photoUrl) || '';
+                    photoPromiseHandledThisTurn = true;
+                    // Аудит 2026-09-01 (Проблема 3, живий кейс: клієнт у наборі питав фото
+                    // КОНКРЕТНОГО компонента — лоферів 5931/5934 — отримав колаж ЦІЛОГО
+                    // набору): якщо модель (n_set_choice) розпізнала, про яку САМЕ позицію
+                    // складу йдеться, вона додає photoArticle поруч з wantsPhoto — тоді
+                    // беремо ВЛАСНІ фото цього компонента з product.setItems (n_lookup тепер
+                    // підтягує їх з KeyCRM разом з рештою даних набору), а НЕ фото цілого
+                    // набору. Якщо компонент знайдено, але власних фото в нього нема —
+                    // ЧЕСНО ескалюємо (не підміняємо помилковим фото набору-колажу).
+                    const _photoArticle = exit.parsed.photoArticle ? String(exit.parsed.photoArticle).toUpperCase().trim() : '';
+                    let firstImg = '';
+                    let _photoLabel = 'основного товару';
+                    if (_photoArticle && ctx.product && Array.isArray(ctx.product.setItems)) {
+                        const _comp = ctx.product.setItems.find((it) => it && String(it.article || '').toUpperCase().trim() === _photoArticle);
+                        if (_comp) {
+                            firstImg = (Array.isArray(_comp.imageUrls) && _comp.imageUrls[0]) || _comp.photoUrl || '';
+                            _photoLabel = 'позиції набору «' + (_comp.name || _photoArticle) + '» (арт. ' + _photoArticle + ')';
+                        } else {
+                            _photoLabel = 'позиції набору (арт. ' + _photoArticle + ')';
+                        }
+                    } else {
+                        // zernioHandler сам підтягує ПОВНУ галерею з context.product.imageUrls і
+                        // шле альбомом — тут достатньо позначити attachment ОДНИМ фото (той самий
+                        // формат, що й у sendPhoto-ноді), решту логіки альбому він добере сам.
+                        firstImg = (ctx.product && Array.isArray(ctx.product.imageUrls) && ctx.product.imageUrls[0])
+                            || (ctx.product && ctx.product.photoUrl) || '';
+                    }
                     if (firstImg && String(firstImg).startsWith('http')) {
                         await persistAssistantMessage(session.id, '', { nodeId: node.id, nodeType: 'photo_on_demand', attachment: { type: 'photo', url: firstImg, caption: '' } });
                     } else {
@@ -1658,7 +1750,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                         // "менеджер надішле вручну" — а без явного сповіщення це порожня
                         // обіцянка, ніхто нічого не пришле. Сигналимо менеджеру одразу.
                         pushDelivery(runtime, 'photo_on_demand', false, 'немає валідного product.imageUrls/photoUrl', { nodeId: node.id });
-                        await notifyAdminPhotoMissing(session, ctx, funnelEnv, runtime, 'основного товару');
+                        await notifyAdminPhotoMissing(session, ctx, funnelEnv, runtime, _photoLabel);
                     }
                 }
 
@@ -1669,6 +1761,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                 // кладе context.product.upsellPhotoUrl (фото першого апсейл-товару) — рушій
                 // шле його тим самим механізмом, що й основне фото.
                 if (exit.parsed && exit.parsed.wantsUpsellPhoto === true) {
+                    photoPromiseHandledThisTurn = true;
                     const upImg = (ctx.product && ctx.product.upsellPhotoUrl) || '';
                     if (upImg && String(upImg).startsWith('http')) {
                         // Аудит 2026-08-28 (живий кейс, goverla_shop: клієнт просив фото
@@ -1687,6 +1780,31 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                         // сповіщення ЖОДЕН менеджер про це не дізнається. Кличемо явно.
                         pushDelivery(runtime, 'photo_on_demand_upsell', false, 'немає валідного product.upsellPhotoUrl', { nodeId: node.id });
                         await notifyAdminPhotoMissing(session, ctx, funnelEnv, runtime, 'товару з допродажу (' + (ctx.product && ctx.product.upsell || '') + ')');
+                    }
+                }
+
+                // Централізований текстовий safety-net (Проблема 4, аудит 2026-09-01,
+                // живий кейс: клієнт просив фото графітової кофти — модель відповіла
+                // "зараз надішлю фото графітової кофти" ЗВИЧАЙНИМ ТЕКСТОМ, без
+                // wantsPhoto/wantsUpsellPhoto у json_output — жодне фото не пішло, і
+                // жодне сповіщення менеджеру теж, бо структурованого сигналу не було
+                // взагалі). Попередні точкові фікси (wantsPhoto/wantsUpsellPhoto вище)
+                // покривають лише ходи, де МОДЕЛЬ слухняно виставила прапорець — а вона
+                // не завжди це робить, особливо коли питання не про "фото товару"
+                // загалом, а про фото КОНКРЕТНОГО кольору/варіанта, якого в даних
+                // просто нема (промпт-нода описує це вільним текстом, без формального
+                // поля). Це УНІВЕРСАЛЬНИЙ регекс-детектор поверх ВИДИМОГО тексту БУДЬ-
+                // ЯКОЇ claude dialog-ноди (не лише n_color) — якщо модель пообіцяла
+                // надіслати фото/сітку словами, а жоден із офіційних сигналів вище
+                // цього ходу не спрацював (ні успішно, ні з власною ескалацією) —
+                // ескалюємо так само, як і порожній URL. Клієнт не має чекати обіцянку,
+                // яка ніколи не прийде, без жодного сповіщення людині.
+                if (!photoPromiseHandledThisTurn && visibleAssistantText) {
+                    const _promiseNeg = /(не\s+можу|немає|нема\b|поки\s+не|не\s+вийде|не\s+буде|немож)[^.!?\n]{0,40}(фото|сітк|таблиц)|(фото|сітк|таблиц)[^.!?\n]{0,40}(немає|нема\b|не\s+можу|не\s+вийде)/i;
+                    const _promisePos = /(надішл\w*|надсила\w*|скин\w*|вишл\w*|відправ\w*|прийшл\w*|скид\w*)[^.!?\n]{0,25}(фото|сітк|таблиц)|(фото|сітк|таблиц)[^.!?\n]{0,25}(вже\s+в\s+дороз\w*|вже\s+йде|прийде|надсил\w*|скоро|летит\w*|летить)/i;
+                    if (_promisePos.test(visibleAssistantText) && !_promiseNeg.test(visibleAssistantText)) {
+                        pushDelivery(runtime, 'photo_promise_text_only', false, 'модель пообіцяла фото/сітку текстом без wantsPhoto/wantsUpsellPhoto сигналу', { nodeId: node.id });
+                        await notifyAdminPhotoMissing(session, ctx, funnelEnv, runtime, 'обіцяного текстом (без технічного сигналу — перевір, що саме мав на увазі клієнт)');
                     }
                 }
 
@@ -2537,9 +2655,20 @@ ${sourceContent || '(немає даних)'}
                     if (caption) {
                         lastAssistant = caption;
                     }
+                } else {
+                    // Аудит 2026-09-01 (Проблема 4, централізація): детермінований sendPhoto-
+                    // вузол мовчки пропускав крок, коли photoVar порожній/невалідний — клієнт
+                    // не бачив ЖОДНОГО повідомлення про це (нода просто немов не існувала), і
+                    // менеджер теж ніколи не дізнавався. Той самий принцип, що вже діє для
+                    // wantsPhoto/wantsUpsellPhoto (claude-ноди): порожній URL — це не "нічого
+                    // не сталось", а "обіцянку виконати не вдалось", і ЦЕ завжди має падати в
+                    // ескалацію менеджеру.
+                    pushDelivery(runtime, 'sendPhoto', false, 'немає валідного ' + photoVar, { nodeId: node.id });
+                    await notifyAdminPhotoMissing(session, ctx, funnelEnv, runtime, 'з ноди «' + (data.label || node.id) + '»');
                 }
             } catch (_error) {
-                // Silently skip on error
+                pushDelivery(runtime, 'sendPhoto', false, 'помилка: ' + (_error && _error.message || String(_error)), { nodeId: node.id });
+                await notifyAdminPhotoMissing(session, ctx, funnelEnv, runtime, 'з ноди «' + (data.label || node.id) + '» (технічна помилка)').catch(() => {});
             }
 
             runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);

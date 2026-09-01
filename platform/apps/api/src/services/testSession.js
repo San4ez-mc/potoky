@@ -1436,6 +1436,20 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
         // нода далі в каскаді не чистить — саме його треба показувати людям
         // (сповіщення, адмінка), а не транзиторний runtime.lastUserMessage.
         ctx.lastCustomerMessage = runtime.lastUserMessage;
+        // Аудит 2026-09-02 (Проблема 5, доповнення — живий тест виявив): якщо в
+        // повідомленні був сирий IG-лінк (_hasRawIgLink вище), товар уже міг бути
+        // ПРАВИЛЬНО визначений системою через sharedPost/Graph API — але сам URL і
+        // далі лишається в runtime.lastUserMessage, і консультаційна claude-нода
+        // (n_set_choice/n_color/тощо), побачивши його, імпровізує "я не можу
+        // відкрити посилання на Instagram" навіть КОЛИ товар щойно правильно
+        // показано в тому ж ході — суперечливо, збиває клієнта. Замінюємо САМ URL
+        // на нейтральний плейсхолдер у runtime.lastUserMessage (те, що бачать
+        // claude-ноди) — решта повідомлення (реальне питання клієнта) лишається
+        // незмінною. ctx.lastCustomerMessage (сповіщення/адмінка, вже зафіксовано
+        // рядком вище) — БЕЗ змін, показує оригінал.
+        if (_hasRawIgLink) {
+            runtime.lastUserMessage = runtime.lastUserMessage.replace(/https?:\/\/(www\.)?instagram\.com\/\S+/gi, '[посилання на товар]');
+        }
         runtime.waitingForUser = false;
         // Вхідний файл кладемо у контекст (як lastUserMessage) — його спожиє нода readFile.
         if (incomingFile) ctx.lastFile = incomingFile;

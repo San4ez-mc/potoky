@@ -1276,7 +1276,22 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
             take: 16,
             select: { role: true, content: true, metadata: true },
         });
-        conversationWindow = recentRows.reverse()
+        const chronological = recentRows.reverse();
+        // Аудит 2026-08-31 (живий кейс власника: "сесію перезапускав, але підтягнулась
+        // інфа із попередніх повідомлень"): admin_restart/test_mode_auto_restart свідомо
+        // скидають лише context/state, а НЕ саму історію повідомлень (історія зберігається
+        // навмисно — див. sessions.js /restart). Але це вікно раніше тягнуло останні 16
+        // повідомлень БЕЗ огляду на такий скид — тому claude-нода все одно бачила "Ви вже
+        // обрали Футболка..." з ДО рестарту й продовжувала той діалог, ніби нічого не було.
+        // Шукаємо ОСТАННІЙ маркер рестарту в цьому ж вікні — і відрізаємо все, що ДО нього.
+        const RESET_MARKERS = new Set(['admin_restart', 'test_mode_auto_restart']);
+        let resetIdx = -1;
+        for (let i = chronological.length - 1; i >= 0; i--) {
+            const src = chronological[i].metadata && chronological[i].metadata.source;
+            if (RESET_MARKERS.has(src)) { resetIdx = i; break; }
+        }
+        const afterReset = resetIdx >= 0 ? chronological.slice(resetIdx + 1) : chronological;
+        conversationWindow = afterReset
             .filter((m) => (m.role === 'user' || m.role === 'assistant') && m.content && !(m.metadata && m.metadata.hidden))
             .map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content).slice(0, 1200) }));
     } catch (_e) { conversationWindow = []; }

@@ -1418,7 +1418,10 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
             // URL), а не з runtime.lastUserMessage. Живий тест підтвердив: без цього
             // n_set_choice все одно бачив сирий instagram.com/... лінк і імпровізував
             // "не можу відкрити" навіть коли товар уже правильно визначено вище.
-            .map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content).replace(/https?:\/\/(www\.)?instagram\.com\/\S+/gi, '[посилання на товар]').slice(0, 1200) }));
+            // Другий живий тест: заміна на "[посилання на товар]" НЕ допомогла — саме
+            // СЛОВО "посилання" й далі наводило модель на "не можу відкрити посилання".
+            // Прибираємо URL ЦІЛКОМ (порожній рядок), без жодного слова про "лінк".
+            .map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content).replace(/https?:\/\/(www\.)?instagram\.com\/\S+/gi, '').replace(/\s{2,}/g, ' ').trim().slice(0, 1200) }));
     } catch (_e) { conversationWindow = []; }
 
     if (!runtime.currentNodeId) {
@@ -1453,9 +1456,12 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
         // на нейтральний плейсхолдер у runtime.lastUserMessage (те, що бачать
         // claude-ноди) — решта повідомлення (реальне питання клієнта) лишається
         // незмінною. ctx.lastCustomerMessage (сповіщення/адмінка, вже зафіксовано
-        // рядком вище) — БЕЗ змін, показує оригінал.
+        // рядком вище) — БЕЗ змін, показує оригінал. Живий тест: плейсхолдер
+        // "[посилання на товар]" НЕ допоміг — саме слово "посилання" й далі
+        // наводило модель на "не можу відкрити посилання". Прибираємо URL
+        // ЦІЛКОМ (порожній рядок), без жодного слова про "лінк".
         if (_hasRawIgLink) {
-            runtime.lastUserMessage = runtime.lastUserMessage.replace(/https?:\/\/(www\.)?instagram\.com\/\S+/gi, '[посилання на товар]');
+            runtime.lastUserMessage = runtime.lastUserMessage.replace(/https?:\/\/(www\.)?instagram\.com\/\S+/gi, '').replace(/\s{2,}/g, ' ').trim();
         }
         runtime.waitingForUser = false;
         // Вхідний файл кладемо у контекст (як lastUserMessage) — його спожиє нода readFile.

@@ -39,6 +39,7 @@ const NODE_TYPES = [
     'wait_payment',         // блокує до вебхука WayForPay; data: { timeoutHours }
     'fbEvent',              // Facebook CAPI; data: { eventName, value, currency }; ключі FB_PIXEL_ID + FB_CAPI_TOKEN
     'fetchTelegramProfile', // тихо кладе context.tg_bio, context.tg_photo_url; data: {}
+    'funnelStage',          // ⭐ контрольна точка для графіка-воронки в CRM; data: { stageName, stageOrder }; ключі CRM_API_URL+CRM_API_KEY. Довільна назва/порядок — задає автор ЦІЄЇ воронки (в різних воронках етапи різні). Best-effort, не блокує виконання.
     // ── Легасі (є у старих воронках) ──────────────────────────────
     'tag',
     'abtest',

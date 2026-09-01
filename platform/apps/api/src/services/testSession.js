@@ -3042,6 +3042,35 @@ ${sourceContent || '(немає даних)'}
             continue;
         }
 
+        if (node.type === 'funnelStage') {
+            // Контрольна точка воронки — ЧИСТО для аналітики конверсії (звідки будується
+            // графік-воронка на дашборді CRM). Назва/порядок довільні — задає автор воронки,
+            // бо в різних воронках етапи різні. Best-effort: ніколи не блокує і не спиняє
+            // виконання, немає ключів → тихо пропускає (як fbEvent вище).
+            try {
+                const stageName = renderTemplate(String(data.stageName || data.label || ''), scope).trim();
+                const crmApiUrl = String(scope.env?.CRM_API_URL || '').trim();
+                const crmApiKey = String(scope.env?.CRM_API_KEY || '').trim();
+                if (stageName && crmApiUrl && crmApiKey) {
+                    const botRow = await db.bot.findUnique({ where: { id: session.botId }, select: { slug: true } }).catch(() => null);
+                    await fetch(`${crmApiUrl}/api/funnel-events`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${crmApiKey}` },
+                        body: JSON.stringify({
+                            funnelSlug: botRow?.slug || session.botId,
+                            sessionId: session.id,
+                            stageName,
+                            stageOrder: Number(data.stageOrder) || 0,
+                        }),
+                    }).catch((e) => console.warn('[funnelStage] CRM best-effort fail:', e.message));
+                }
+            } catch (e) {
+                console.warn('[funnelStage] best-effort fail:', e.message);
+            }
+            runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
+            continue;
+        }
+
         if (node.type === 'connector') {
             const connectorType = data.connectorType || '';
             const action = data.action || '';

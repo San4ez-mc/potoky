@@ -448,6 +448,13 @@ export const FetchTelegramProfileNode = memo(({ id, selected, data }) => (
     </BaseNode>
 ));
 
+// ─── Funnel Stage Node (контрольна точка для аналітики-воронки в CRM) ──────────
+export const FunnelStageNode = memo(({ id, selected, data }) => (
+    <BaseNode id={id} selected={selected} color="bg-indigo-700" icon="🎯" label={data.label || 'Етап воронки'} description={data.description}>
+        {data.stageName && <div className="text-indigo-300 text-[11px]">#{data.stageOrder ?? 0} · {data.stageName}</div>}
+    </BaseNode>
+));
+
 // ─── HTTP Request Node ─────────────────────────────────────────────────────────
 export const HttpRequestNode = memo(({ id, selected, data }) => (
     <BaseNode id={id} selected={selected} color="bg-teal-700" icon="🌐" label={data.label || 'HTTP запит'} description={data.description}>
@@ -524,6 +531,7 @@ export const NODE_TYPES = {
     fbEvent: NotifyAdminNode, // #305 FB CAPI — рендеримо як action-ноду
     knowledgeBase: KnowledgeBaseNode,
     agent: AgentNode,
+    funnelStage: FunnelStageNode,
 };
 
 // ─── Node palette items (for drag sidebar) ────────────────────────────────────
@@ -598,6 +606,9 @@ export const NODE_PALETTE = [
     { type: 'knowledgeBase', icon: '📚', label: 'База знань', color: 'border-amber-800', group: 'ШІ',
         description: 'Зберігає блоки знань (FAQ, кейси, заперечення тощо). Виконує розумний пошук за запитом і вставляє результат у context для Claude.',
         defaultData: { label: 'База знань', contextKey: 'knowledge_base', blocks: [] } },
+    { type: 'funnelStage', icon: '🎯', label: 'Етап воронки', color: 'border-indigo-700', group: 'Аналітика',
+        description: 'Контрольна точка для графіка-воронки в CRM (звідки будується конверсія по етапах). Назва/порядок — довільні, задає автор ЦІЄЇ воронки. Потрібні ключі CRM_API_URL + CRM_API_KEY. Best-effort — не блокує виконання.',
+        defaultData: { label: 'Етап воронки', stageName: '', stageOrder: 1 } },
     { type: 'wait', icon: '⏳', label: 'Очікування', color: 'border-gray-600', group: 'Очікування',
         description: 'Затримка виконання: через N хвилин/годин або до конкретного часу',
         defaultData: { label: 'Очікування', duration: 5, unit: 'minutes', waitType: 'duration' } },

@@ -456,7 +456,14 @@ async function notifyAdminPhotoMissing(session, ctx, funnelEnv, runtime, whatLab
 async function resolveInstagramMediaViaGraphAPI(shortcode, igBusinessId, accessToken) {
     if (!shortcode || !igBusinessId || !accessToken) return null;
     try {
-        let url = 'https://graph.facebook.com/v18.0/' + encodeURIComponent(igBusinessId)
+        // Аудит 2026-09-02 (живий тест): токен у funnelKey має префікс "IGAA" — це
+        // ІНСТАГРАМ-ТОКЕН з flow'у "Instagram API with Instagram Login" (прямий
+        // бізнес-логін у сам Instagram, не через привʼязану Facebook-сторінку). Такі
+        // токени ФІЗИЧНО НЕ ПРАЦЮЮТЬ на graph.facebook.com (перевірено: HTTP 400
+        // "Cannot parse access token" на ОБОХ ботах, однаково) — обов'язково
+        // graph.instagram.com. Підтверджено живим запитом: HTTP 200 з реальними
+        // медіа на цьому хості для обох акаунтів.
+        let url = 'https://graph.instagram.com/v18.0/' + encodeURIComponent(igBusinessId)
             + '/media?fields=id,caption,permalink,media_url,thumbnail_url,media_type&limit=50&access_token=' + encodeURIComponent(accessToken);
         for (let page = 0; page < 10 && url; page++) {
             const r = await fetch(url);

@@ -76,6 +76,31 @@ const NEW_SIZE_PROMPT = `Ти — {{env.PERSONA_NAME}}, жива тепла пр
 - Якщо клієнт просить розмірну сітку/таблицю розмірів ("скиньте сітку", "є розмірна таблиця?") — {{context.product.sizeChartNote}} Якщо сітка Є і ти обіцяєш показати — обов'язково додай у json_output поле "wantsSizeChart":true (можна разом з іншими полями в тому самому json_output). Якщо сітки НЕМА — просто чесно скажи це текстом, wantsSizeChart НЕ додавай.
 - Не вигадуй товарів/кольорів/параметрів, яких нема вище.`;
 
+// Побажання координатора (додано під час роботи, ДО фіксації n_size): один спільний
+// прапорець "чи вже питали розмір/параметри для ЦІЄЇ категорії товару в цій сесії" —
+// замість ad-hoc перевірок у кожному місці. Ставиться в n_calc (єдине місце, куди
+// стікаються ВСІ шляхи виходу з n_size — exact-measurement/oor/звичайний), звіряється
+// в n_is_clothing (єдина умова, що вирішує "питати чи ні"). Прив'язка саме до
+// categoryId (не просто true/false) — щоб повторний захід з ІНШИМ товаром іншої
+// категорії (інші requiredParams) знову спитав актуальні параметри, а не мовчки
+// пропустив крок через застарілий прапорець від попереднього товару в тій самій сесії.
+const CALC_RETURNS = [
+    {
+        old: "return { recommendedSize: exactSize, sizeOutOfRange: false, sizeMatchedBy: 'exact_measurement', sizeColorFollowup: __sizeColorFollowup };",
+        new: "return { recommendedSize: exactSize, sizeOutOfRange: false, sizeMatchedBy: 'exact_measurement', sizeColorFollowup: __sizeColorFollowup, sizeAskedFor: (context.product && context.product.categoryId) || true };",
+    },
+    {
+        old: "return { sizeOutOfRange: true, sizeOorReason: (oorH?('зріст '+h+' см поза сіткою ('+hMin+'-'+hMax+')'):'') + (oorH&&oorW?'; ':'') + (oorW?('вага '+w+' кг поза сіткою ('+wMin+'-'+wMax+')'):''), recommendedSize: size || '' };",
+        new: "return { sizeOutOfRange: true, sizeOorReason: (oorH?('зріст '+h+' см поза сіткою ('+hMin+'-'+hMax+')'):'') + (oorH&&oorW?'; ':'') + (oorW?('вага '+w+' кг поза сіткою ('+wMin+'-'+wMax+')'):''), recommendedSize: size || '', sizeAskedFor: (context.product && context.product.categoryId) || true };",
+    },
+    {
+        old: 'return { recommendedSize: size, sizeOutOfRange: false, sizeColorFollowup: __sizeColorFollowup };',
+        new: "return { recommendedSize: size, sizeOutOfRange: false, sizeColorFollowup: __sizeColorFollowup, sizeAskedFor: (context.product && context.product.categoryId) || true };",
+    },
+];
+const IS_CLOTHING_OLD = 'context.product && context.product.isClothing';
+const IS_CLOTHING_NEW = 'context.product && context.product.isClothing && context.sizeAskedFor !== context.product.categoryId';
+
 async function patchBot(name, cfg) {
     const { botId, crmApiKey } = cfg;
     const flow = await db.flowDefinition.findUnique({ where: { botId } });
@@ -85,19 +110,31 @@ async function patchBot(name, cfg) {
     const nCrmOrder = flow.nodes.find((n) => n.id === 'n_crm_order');
     const nSupplierRoute = flow.nodes.find((n) => n.id === 'n_supplier_route');
     const nSize = flow.nodes.find((n) => n.id === 'n_size');
-    if (!nLookup || !nCrmOrder || !nSupplierRoute || !nSize) { console.log(name, 'ERROR: якась з нод n_lookup/n_crm_order/n_supplier_route/n_size не знайдена'); return; }
+    const nCalc = flow.nodes.find((n) => n.id === 'n_calc');
+    const nIsClothing = flow.nodes.find((n) => n.id === 'n_is_clothing');
+    if (!nLookup || !nCrmOrder || !nSupplierRoute || !nSize || !nCalc || !nIsClothing) { console.log(name, 'ERROR: якась з нод n_lookup/n_crm_order/n_supplier_route/n_size/n_calc/n_is_clothing не знайдена'); return; }
 
     const lookupDone = (nLookup.data.code || '').includes('keys.CRM_API_KEY');
     const orderDone = (nCrmOrder.data.code || '').includes('buyers/find-or-create');
     const routeDone = (nSupplierRoute.data.code || '').includes('supplierInfo');
     const sizeDone = (nSize.data.systemPrompt || '').includes('categoryParamsPrompt');
+    const calcDone = (nCalc.data.code || '').includes('sizeAskedFor');
+    const isClothingDone = (nIsClothing.data.condition || '').includes('sizeAskedFor');
 
     console.log(name, {
         n_lookup: lookupDone ? 'ALREADY_APPLIED' : 'WILL_PATCH',
         n_crm_order: orderDone ? 'ALREADY_APPLIED' : 'WILL_PATCH',
         n_supplier_route: routeDone ? 'ALREADY_APPLIED' : 'WILL_PATCH',
         n_size: sizeDone ? 'ALREADY_APPLIED' : 'WILL_PATCH',
+        n_calc_sizeAskedFor: calcDone ? 'ALREADY_APPLIED' : 'WILL_PATCH',
+        n_is_clothing_sizeAskedFor: isClothingDone ? 'ALREADY_APPLIED' : 'WILL_PATCH',
     });
+    if (!calcDone) {
+        for (const r of CALC_RETURNS) { if (!(nCalc.data.code || '').includes(r.old)) console.log(name, 'WARNING: n_calc — анкор не знайдено:', r.old.slice(0, 60) + '...'); }
+    }
+    if (!isClothingDone && (nIsClothing.data.condition || '') !== IS_CLOTHING_OLD) {
+        console.log(name, 'WARNING: n_is_clothing — умова відрізняється від очікуваного анкора, пропускаю (перевір вручну). Поточна:', nIsClothing.data.condition);
+    }
 
     if (!APPLY) return;
 
@@ -106,6 +143,14 @@ async function patchBot(name, cfg) {
         if (n.id === 'n_crm_order' && !orderDone) return { ...n, data: { ...n.data, code: CRM_ORDER_CODE } };
         if (n.id === 'n_supplier_route' && !routeDone) return { ...n, data: { ...n.data, code: SUPPLIER_ROUTE_CODE } };
         if (n.id === 'n_size' && !sizeDone) return { ...n, data: { ...n.data, systemPrompt: NEW_SIZE_PROMPT } };
+        if (n.id === 'n_calc' && !calcDone) {
+            let code = n.data.code || '';
+            for (const r of CALC_RETURNS) { if (code.includes(r.old)) code = code.split(r.old).join(r.new); }
+            return { ...n, data: { ...n.data, code } };
+        }
+        if (n.id === 'n_is_clothing' && !isClothingDone && (n.data.condition || '') === IS_CLOTHING_OLD) {
+            return { ...n, data: { ...n.data, condition: IS_CLOTHING_NEW } };
+        }
         return n;
     });
     await db.flowDefinition.update({ where: { botId }, data: { nodes } });

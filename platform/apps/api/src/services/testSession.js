@@ -1411,7 +1411,14 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
         const afterReset = resetIdx >= 0 ? chronological.slice(resetIdx + 1) : chronological;
         conversationWindow = afterReset
             .filter((m) => (m.role === 'user' || m.role === 'assistant') && m.content && !(m.metadata && m.metadata.hidden))
-            .map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content).slice(0, 1200) }));
+            // Аудит 2026-09-02 (Проблема 5, доповнення): raw-лінк-стрипінг на
+            // runtime.lastUserMessage (вище) НЕ покриває цей шлях — claude-ноди на
+            // СВОЄМУ першому вході (без dialogHistory[node.id]) підхоплюють історію
+            // САМЕ звідси (з БД, де повідомлення клієнта збережено з ОРИГІНАЛЬНИМ
+            // URL), а не з runtime.lastUserMessage. Живий тест підтвердив: без цього
+            // n_set_choice все одно бачив сирий instagram.com/... лінк і імпровізував
+            // "не можу відкрити" навіть коли товар уже правильно визначено вище.
+            .map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content).replace(/https?:\/\/(www\.)?instagram\.com\/\S+/gi, '[посилання на товар]').slice(0, 1200) }));
     } catch (_e) { conversationWindow = []; }
 
     if (!runtime.currentNodeId) {

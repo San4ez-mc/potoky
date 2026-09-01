@@ -2533,7 +2533,15 @@ ${sourceContent || '(немає даних)'}
                     try {
                         const parsed = JSON.parse(responseText);
                         const value = data.responseField ? getByPath(parsed, data.responseField) : parsed;
-                        console.log(`[httpRequest] responseField=${data.responseField} value=${JSON.stringify(value)}`);
+                        // ФІКС (2026-09-01): раніше логувався ПОВНИЙ value через JSON.stringify —
+                        // для великих полів (напр. base64-картинка з slide-builder, 5-7MB рядок)
+                        // це один синхронний console.log на кілька мегабайт, який відчутно
+                        // затримує єдиний Node-процес двигуна; за цей час generation-watchdog
+                        // встигав позначити пост "failed" ще до того, як цей-таки успішний рендер
+                        // доходив до callback'а. Логуємо тільки прев'ю.
+                        const _valStr = typeof value === 'string' ? value : JSON.stringify(value);
+                        const _valPreview = _valStr && _valStr.length > 200 ? _valStr.slice(0, 200) + `...(${_valStr.length} chars total)` : _valStr;
+                        console.log(`[httpRequest] responseField=${data.responseField} value=${_valPreview}`);
                         if (value !== undefined) setByPath(ctx, outputVar, value);
                     } catch {
                         setByPath(ctx, outputVar, responseText);

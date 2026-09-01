@@ -1802,6 +1802,20 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                 if (exit.parsed && typeof exit.parsed === 'object' && !Array.isArray(exit.parsed) && Object.keys(exit.parsed).length === 0) {
                     exit.done = false;
                 }
+                // Аудит 2026-09-02 (Проблема 1, доповнення sizeAsked-прапорця): та сама
+                // проблема, лише замість {} модель іноді вигадує json з УСІМА полями
+                // null/порожніми (напр. {"height":null,"weight":null}), коли насправді
+                // реальних даних клієнта ще нема — живий тест підтвердив: n_calc після
+                // такого json спокійно домальовує розмір "M" за фолбеком, хоча клієнт
+                // ЖОДНОГО разу не назвав ні зросту, ні ваги. Узагальнюємо перевірку
+                // вище: об'єкт, де ВСІ значення null/undefined/порожній рядок — так само
+                // не несе сигналу, як і {}.
+                if (exit.parsed && typeof exit.parsed === 'object' && !Array.isArray(exit.parsed) && exit.done) {
+                    const _vals = Object.values(exit.parsed);
+                    if (_vals.length > 0 && _vals.every((v) => v === null || v === undefined || v === '')) {
+                        exit.done = false;
+                    }
+                }
 
                 // Якщо json_output містить ЛИШЕ wantsPhoto (клієнт просто попросив фото,
                 // жодного реального рішення типу setChoice/color не назвав) — це НЕ привід

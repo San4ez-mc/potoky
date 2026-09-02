@@ -1888,8 +1888,18 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                 // Якщо json_output містить ЛИШЕ wantsPhoto (клієнт просто попросив фото,
                 // жодного реального рішення типу setChoice/color не назвав) — це НЕ привід
                 // просувати воронку далі. Інакше клієнт випадково "вибирає" щось, чого не казав.
+                // Аудит 2026-09-03 (живий регресійний тест, n_set_choice): photoArticle —
+                // МЕТАДАНІ про те, ЯКЕ САМЕ фото показати (яку позицію набору), а не окреме
+                // "рішення" клієнта — раніше воно НЕ виключалось з otherKeys, тож комбінація
+                // {"wantsPhoto":true,"photoArticle":"5934"} (точно те, що промпт n_set_choice
+                // сам і просить повертати на прохання фото конкретного компонента) хибно
+                // трактувалась як "клієнт щось вирішив" → exit.done лишався true → нода
+                // просувала воронку далі з ПОРОЖНІМ/невизначеним setPick → n_set_apply
+                // мовчки дефолтив на setMode:'set' (нібито клієнт узяв ВЕСЬ комплект),
+                // хоча він лише попросив фото. Виключаємо photoArticle з тих самих причин,
+                // що й wantsPhoto.
                 if (exit.parsed && exit.parsed.wantsPhoto === true) {
-                    const otherKeys = Object.keys(exit.parsed).filter((k) => k !== 'wantsPhoto');
+                    const otherKeys = Object.keys(exit.parsed).filter((k) => k !== 'wantsPhoto' && k !== 'photoArticle');
                     if (otherKeys.length === 0) exit.done = false;
                 }
                 // Те саме для wantsUpsellPhoto (фото товару з допродажу, не основного) —

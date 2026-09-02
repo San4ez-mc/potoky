@@ -3204,11 +3204,15 @@ ${sourceContent || '(немає даних)'}
             // виконання, немає ключів → тихо пропускає (як fbEvent вище).
             try {
                 const stageName = renderTemplate(String(data.stageName || data.label || ''), scope).trim();
-                const crmApiUrl = String(scope.env?.CRM_API_URL || '').trim();
+                // CRM_API_URL (голий origin, старе очікування) або CRM_API_BASE (вже з /api,
+                // конвенція з n_crm_order/n_ttn_sync_crm — 2026-09-02) — приймаємо обидва,
+                // нормалізуємо так, щоб не здвоїти "/api" у фінальному шляху.
+                const rawBase = String(scope.env?.CRM_API_URL || scope.env?.CRM_API_BASE || '').trim().replace(/\/$/, '');
+                const crmApiUrl = rawBase && !rawBase.endsWith('/api') ? `${rawBase}/api` : rawBase;
                 const crmApiKey = String(scope.env?.CRM_API_KEY || '').trim();
                 if (stageName && crmApiUrl && crmApiKey) {
                     const botRow = await db.bot.findUnique({ where: { id: session.botId }, select: { slug: true } }).catch(() => null);
-                    const fsRes = await fetch(`${crmApiUrl}/api/funnel-events`, {
+                    const fsRes = await fetch(`${crmApiUrl}/funnel-events`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${crmApiKey}` },
                         body: JSON.stringify({

@@ -323,8 +323,41 @@ try {
   };
   var dialogStateText = 'Товар у розмові: ' + dialogState.productName + (dialogState.knownColor ? (', колір ' + dialogState.knownColor) : '') + (dialogState.knownSize ? (', розмір/параметр ' + dialogState.knownSize) : '') + '. Презентація щойно показана: ' + (dialogState.productPresented ? 'так' : 'ні') + '. Розмір/параметри вже питали цього товару: ' + (dialogState.sizeAsked ? 'так' : 'ні') + '. Замовлення: ' + dialogState.orderStatus + '.';
 
+  // Завдання «памʼять вимірів клієнта» (Buyer.knownMeasurements, нова CRM): впізнаємо
+  // покупця РАНІШЕ, ніж дізнаємось телефон — Instagram дає igUsername із першого дотику,
+  // а phone стає відомим лише на кроці оформлення (n_crm_order). Спрацьовує ЛИШЕ якщо
+  // товар потребує підбору розміру (categoryParams непорожній) і в CRM вже є Buyer з
+  // УСІМА потрібними параметрами САМЕ ЦІЄЇ категорії — інакше мовчки нічого не готуємо
+  // (n_size питає як завжди). Ключі knownMeasurements — ТІ САМІ назви, що
+  // categoryParams[].name (жодного фаззі-мапінгу, той самий формат що Category.requiredParams).
+  // Це ДОПОВНЕННЯ (готує компактний текст для промпту n_size) — саме підтвердження і
+  // рішення "довіряти клієнту чи ні" лишається за моделлю в n_size, не мовчазна підстановка тут.
+  var knownMeasurementsText = '';
+  var __earlyBuyerId = '';
+  if (categoryParams.length) {
+    var __idIg = String(context.igUsername || '').trim();
+    var __idPhone = String((context.orderData && context.orderData.phone) || '').replace(/[^0-9]/g, '');
+    if (__idIg || __idPhone) {
+      try {
+        var __lookupQs = (__idIg ? ('igUsername=' + encodeURIComponent(__idIg)) : '') + (__idPhone ? ((__idIg ? '&' : '') + 'phone=' + encodeURIComponent(__idPhone)) : '');
+        var __blr = await fetch(base + '/buyers/lookup?' + __lookupQs, { headers: hdr() });
+        if (__blr.ok) {
+          var __blj = await __blr.json().catch(function () { return {}; });
+          var __buyer = (__blj && __blj.ok) ? __blj.data : null;
+          if (__buyer && __buyer.id) {
+            __earlyBuyerId = __buyer.id;
+            var __km = __buyer.knownMeasurements || {};
+            var __allKnown = categoryParams.every(function (p) { return __km[p.name] !== undefined && __km[p.name] !== null && String(__km[p.name]).trim() !== ''; });
+            if (__allKnown) knownMeasurementsText = categoryParams.map(function (p) { return p.name + ': ' + __km[p.name]; }).join(', ');
+          }
+        }
+      } catch (e) { /* best-effort, не блокуємо підбір товару */ }
+    }
+  }
+
   var result = {
     dialogState: dialogState, dialogStateText: dialogStateText,
+    knownMeasurementsText: knownMeasurementsText,
     supplier: (found.supplier && found.supplier.name) || '',
     product: {
       _source: 'crm', supplier: (found.supplier && found.supplier.name) || '', supplierId: (found.supplier && found.supplier.id) || '',
@@ -346,5 +379,6 @@ try {
   if (preColor && preFromUser) { result.colorChoice = { color: preColor, _pre: true }; }
   if (preColor) result.product.preColor = preColor;
   if (preSize) { result.product.preSize = preSize; }
+  if (__earlyBuyerId && !context.crmClientId) result.crmClientId = __earlyBuyerId;
   return result;
 } catch (e) { return fallback('EXCEPTION: ' + e.message); }

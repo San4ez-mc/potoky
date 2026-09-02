@@ -1699,10 +1699,17 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                             systemPrompt += '\n\n=== БАЗА ЗНАНЬ (FAQ/скрипти — використай, якщо доречно до питання клієнта) ===\n'
                                 + hits.map((h) => '• ' + String(h.content || '').slice(0, 500)).join('\n')
                                 + '\nЯкщо у клієнта нестандартне питання чи заперечення — відповідай СПИРАЮЧИСЬ на цю базу. Якщо потрібної інформації тут НЕМА і ти не впевнений у відповіді — НЕ вигадуй: додай у json_output {"handoff": true}.';
+                        } else if (!vr.ok) {
+                            // Аудит 2026-09-02 (сповіщення про недоступні зовнішні сервіси): вектор-база
+                            // недоступна — не блокуємо діалог (промпт вище й так каже моделі не вигадувати
+                            // і кликати handoff при непевності), лише сигналізуємо адміну best-effort.
+                            notifyAdminOfServiceOutage(session.id, 'База знань (вектор-пошук FAQ)', 'HTTP ' + vr.status).catch(() => {});
                         }
                         db.apiCall.create({ data: { sessionId: session.id, service: 'vector', method: 'search', requestData: { query: String(runtime.lastUserMessage).slice(0, 120) }, responseData: { count: hits.length }, statusCode: vr.status, durationMs: null } }).catch(() => {});
                     }
-                } catch (_kbErr) { /* KB best-effort */ }
+                } catch (_kbErr) {
+                    notifyAdminOfServiceOutage(session.id, 'База знань (вектор-пошук FAQ)', _kbErr.message).catch(() => {});
+                }
             }
             // Каталог: якщо нода з useCatalog — клієнт міг спитати про ІНШИЙ товар,
             // не той, що вже "заблокований" у context.product (напр. запитав про
@@ -1748,10 +1755,19 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                             } else {
                                 systemPrompt += '\n\n=== КАТАЛОГ: за запитом клієнта нічого релевантного не знайдено ===\nЧесно скажи клієнту, що не знайшов точного відповідника, і попроси уточнити або скинути пост/артикул. НІКОЛИ не кажи "немає каталогу під рукою" і не вигадуй товари.';
                             }
+                            if (!r.ok) {
+                                // Best-effort: інструкція вище вже каже моделі чесно визнати "не бачу
+                                // відповідника" замість вигадки — недоступність KeyCRM тут не блокує
+                                // діалог, лише сигналізує адміну (окремо від n_lookup — там повний
+                                // хендоф уже є для головного пошуку товару).
+                                notifyAdminOfServiceOutage(session.id, 'KeyCRM (уточнення товару в діалозі)', 'HTTP ' + r.status).catch(() => {});
+                            }
                             db.apiCall.create({ data: { sessionId: session.id, service: 'keycrm', method: 'catalog_search', requestData: { query: String(runtime.lastUserMessage).slice(0, 120) }, responseData: { count: scored.length }, statusCode: r.status, durationMs: null } }).catch(() => {});
                         }
                     }
-                } catch (_catErr) { /* catalog search best-effort */ }
+                } catch (_catErr) {
+                    notifyAdminOfServiceOutage(session.id, 'KeyCRM (уточнення товару в діалозі)', _catErr.message).catch(() => {});
+                }
             }
             let messages;
 
@@ -3022,6 +3038,9 @@ ${sourceContent || '(немає даних)'}
                 }
             } catch (tgError) {
                 console.warn('[fetchTelegramProfile] Error (non-fatal):', tgError.message);
+                // Best-effort збагачення (бонусне поле tg_bio/tg_photo_url, є fallback —
+                // просто лишається порожнім) — сповіщаємо адміна, але не блокуємо діалог.
+                notifyAdminOfServiceOutage(session.id, 'Telegram API (профіль клієнта — bio/фото)', tgError.message).catch(() => {});
             }
 
             runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
@@ -3159,11 +3178,19 @@ ${sourceContent || '(немає даних)'}
                         }],
                         ...(data.testEventCode ? { test_event_code: String(data.testEventCode) } : {}),
                     };
-                    await fetch(`https://graph.facebook.com/v21.0/${pixelId}/events?access_token=${encodeURIComponent(token)}`, {
+                    const fbRes = await fetch(`https://graph.facebook.com/v21.0/${pixelId}/events?access_token=${encodeURIComponent(token)}`, {
                         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
                     });
+                    if (!fbRes.ok) {
+                        const fbErrText = await fbRes.text().catch(() => '');
+                        console.warn('[fbEvent] CAPI non-ok:', fbRes.status, fbErrText.slice(0, 200));
+                        // Чисто аналітика (конверсії для реклами) — не впливає на клієнта, тому
+                        // лише сповіщаємо адміна best-effort (з дедупом), без зупинки діалогу.
+                        notifyAdminOfServiceOutage(session.id, 'Meta CAPI (аналітика конверсій)', `HTTP ${fbRes.status}: ${fbErrText.slice(0, 200)}`).catch(() => {});
+                    }
                 } catch (e) {
                     console.warn('[fbEvent] CAPI best-effort fail:', e.message);
+                    notifyAdminOfServiceOutage(session.id, 'Meta CAPI (аналітика конверсій)', e.message).catch(() => {});
                 }
             }
             runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
@@ -3181,7 +3208,7 @@ ${sourceContent || '(немає даних)'}
                 const crmApiKey = String(scope.env?.CRM_API_KEY || '').trim();
                 if (stageName && crmApiUrl && crmApiKey) {
                     const botRow = await db.bot.findUnique({ where: { id: session.botId }, select: { slug: true } }).catch(() => null);
-                    await fetch(`${crmApiUrl}/api/funnel-events`, {
+                    const fsRes = await fetch(`${crmApiUrl}/api/funnel-events`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${crmApiKey}` },
                         body: JSON.stringify({
@@ -3190,7 +3217,10 @@ ${sourceContent || '(немає даних)'}
                             stageName,
                             stageOrder: Number(data.stageOrder) || 0,
                         }),
-                    }).catch((e) => console.warn('[funnelStage] CRM best-effort fail:', e.message));
+                    }).catch((e) => { console.warn('[funnelStage] CRM best-effort fail:', e.message); notifyAdminOfServiceOutage(session.id, 'CRM funnel-events (аналітика етапів воронки)', e.message).catch(() => {}); return null; });
+                    if (fsRes && !fsRes.ok) {
+                        notifyAdminOfServiceOutage(session.id, 'CRM funnel-events (аналітика етапів воронки)', `HTTP ${fsRes.status}`).catch(() => {});
+                    }
                 }
             } catch (e) {
                 console.warn('[funnelStage] best-effort fail:', e.message);

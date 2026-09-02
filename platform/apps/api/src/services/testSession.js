@@ -3426,6 +3426,15 @@ ${_baseUrl}/legal/terms — Правила використання`;
                         ctx.ibanPayUrl = '(посилання ще генерується — за хвилину надішлемо окремо, або просто напишіть — одразу скинемо реквізити вручну)';
                         pushDelivery(runtime, 'ibanoplata_create_invoice', false, ibJson.errorMessage || ('HTTP ' + ibStatus), { nodeId: node.id });
                         notifyAdminPaymentLinkMissing(session, ctx, funnelEnv, runtime, 'посилання на оплату (ibanoplata)').catch(() => {});
+                        // Аудит 2026-09-02 (запит власника): раніше бот ПРОДОВЖУВАВ діалог із
+                        // фразою-заглушкою замість лінка — клієнт міг далі писати, поки менеджер
+                        // ще не бачив сповіщення. Тепер це справжній handoff (як і решта хендофів
+                        // у двигуні): adminEngaged=true зупиняє бота на цьому кроці, а вже наявний
+                        // "Загальне відновлення після БУДЬ-ЯКОГО хендофу" (нижче в executeFlowStep)
+                        // сам підхопить розмову, щойно клієнт напише знову — не новий механізм,
+                        // той самий, що вже працює для size_oor/"хочу менеджера" тощо.
+                        ctx.adminEngaged = true;
+                        ctx.handoffReason = 'payment_link_missing';
                     }
                     db.apiCall.create({ data: {
                         sessionId: session.id, service: 'ibanoplata', method: 'create_invoice',

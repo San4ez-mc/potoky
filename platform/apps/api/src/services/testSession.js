@@ -1146,6 +1146,30 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
         await persistAssistantMessage(session.id, '⚙️ Перепрошуємо за очікування! Я знову тут і можу продовжити допомагати 🙂', { source: 'handoff_auto_resume' });
         // Свідомо БЕЗ return — звичайна обробка ЦЬОГО ж повідомлення триває далі
         // нижче (перемикання товару, n_route тощо), а не чекає ще одного ходу.
+
+        // Аудит 2026-09-03 (термінальна ескалація, живий кейс власника — розмір поза
+        // сіткою/провал створення замовлення в CRM): термінальні "стоп"-ноди (напр.
+        // n_size_oor_stop, n_crm_order_failed_stop) — свідомі глухі кути БЕЗ жодного
+        // вихідного ребра (return {adminEngaged:true}, і все) — тому runtime.currentNodeId
+        // після них лишається null. Далі за замовчуванням (нижче в цій-таки функції)
+        // null currentNodeId падає на СТАРТОВУ ноду воронки. Для goverla_shop/covercar_ua
+        // це випадково потрапляє на n_returning_check (бо n_signal_cond враховує вже
+        // відомий ctx.product) — але це НЕГАРАНТОВАНО для будь-якого графа воронки і
+        // ламке при майбутніх правках (напр. якщо хтось посилить regex n_signal_check,
+        // прибере n_signal_cond, чи додасть нову _stop-ноду без цього шляху) — бот
+        // знову зустрічав би клієнта "з нуля", а не контекстним поверненням. Явно
+        // ведемо на n_returning_check (та сама "м'яке повернення" нода — "З поверненням!
+        // Ви цікавились Х — ще актуально?"), якщо вона є в цій воронці й товар відомий.
+        // Якщо товару в контексті ще нема (ескалація сталась ДО того, як товар
+        // визначили) — навмисно НЕ чіпаємо: нижче спрацює звичайний шлях через start
+        // (n_unknown_msg — коректно перепитає товар, тут "повертатись" нема куди).
+        if (!runtime.currentNodeId && ctx.product && ctx.product.name) {
+            const _resumeNode = flow.nodes.find((n) => n.id === 'n_returning_check');
+            if (_resumeNode) {
+                runtime.currentNodeId = _resumeNode.id;
+                runtime.waitingForUser = false;
+            }
+        }
     }
 
     // Перемикання товару ПОСЕРЕД консультації (не тільки на етапі "товар невідомий").

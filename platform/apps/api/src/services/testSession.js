@@ -2111,6 +2111,70 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                         else if (exit.parsed.color) ctx.colorUnavailable = false;
                     }
 
+                    // Проблема 1 (аудит 2026-09-03, живий кейс goverla_shop, ФІНАНСОВИЙ
+                    // РИЗИК): клієнт уже обрав спосіб оплати (n_pay_collect позаду, лінк
+                    // на оплату вже надіслано), і на будь-якій НАСТУПНІЙ claude dialog-ноді
+                    // (напр. n_collect — збір адреси) пише "передумав, краще 1/2". Промпт цих
+                    // нод має "відповідай текстом на побічне питання" — модель ЧЕСНО рахує
+                    // нову суму словами, але СТАРИЙ ctx.payAmount/ctx.ibanPayUrl (той самий
+                    // інвойс) лишався незмінним — клієнт міг заплатити не ту суму. Сигнал
+                    // paymentMethodChange — УНІВЕРСАЛЬНИЙ, той самий патерн, що й handoff/
+                    // colorUnavailable вище: БУДЬ-ЯКА claude dialog-нода (крім самої
+                    // n_pay_collect, де це і так штатний перший вибір) може повернути
+                    // {"paymentMethodChange":"cod"|"full"} у json_output. Рушій: 1) best-effort
+                    // видаляє СТАРИЙ ibanoplata-інвойс (ліміт ~20 активних на акаунт), 2)
+                    // оновлює context.paymentInfo.method, 3) повертає currentNodeId на
+                    // n_intl_route (не напряму на n_pay_amount) — n_intl_route САМ форсує
+                    // method:'full' для міжнародної доставки (правило "накладеного платежу
+                    // міжнародно не буває"), тож перевикористовуємо той самий guard, а не
+                    // дублюємо його тут. Далі граф іде штатно: n_pay_amount (нова сума) →
+                    // n_skip_payment_cond → n_iban_invoice (СВІЖИЙ інвойс з правильною сумою)
+                    // → n_requisites (новий лінк) → назад у збір адреси. Захист від інших
+                    // ботів: стрибок лише якщо в ЦЬОМУ flow.nodes реально є n_intl_route/
+                    // n_pay_amount — інакше сигнал просто ігнорується (guard нижче).
+                    if (node.id !== 'n_pay_collect' && exit.parsed && typeof exit.parsed === 'object') {
+                        const _newPayMethod = exit.parsed.paymentMethodChange;
+                        if (
+                            (_newPayMethod === 'cod' || _newPayMethod === 'full')
+                            && ctx.paymentInfo && ctx.paymentInfo.method
+                            && ctx.paymentInfo.method !== _newPayMethod
+                        ) {
+                            const _payChangeTarget = nodesById.has('n_intl_route')
+                                ? 'n_intl_route'
+                                : (nodesById.has('n_pay_amount') ? 'n_pay_amount' : null);
+                            if (_payChangeTarget) {
+                                const _oldInvoiceUid = (ctx.ibanInvoiceUid || '').toString().trim();
+                                if (_oldInvoiceUid) {
+                                    try {
+                                        const _delApiKey = (funnelEnv.IBANOPLATA_API_KEY || '').trim();
+                                        if (_delApiKey) {
+                                            const _delStart = Date.now();
+                                            let _delStatus = null;
+                                            try {
+                                                const _dr = await fetch(`https://api.ibanoplata.com/v2/iban-invoice/${encodeURIComponent(_oldInvoiceUid)}`, {
+                                                    method: 'DELETE', headers: { Accept: 'application/json', 'X-Api-Key': _delApiKey },
+                                                });
+                                                _delStatus = _dr.status;
+                                            } catch (_e) { /* best-effort, не блокуємо перевипуск нового інвойсу */ }
+                                            db.apiCall.create({ data: {
+                                                sessionId: session.id, service: 'ibanoplata', method: 'delete_invoice',
+                                                requestData: { uid: _oldInvoiceUid, reason: 'payment_method_changed' }, responseData: {}, statusCode: _delStatus, durationMs: Date.now() - _delStart,
+                                            } }).catch(() => {});
+                                        }
+                                    } catch (_e) { /* best-effort */ }
+                                }
+                                ctx.paymentInfo = Object.assign({}, ctx.paymentInfo, { method: _newPayMethod });
+                                ctx.ibanPayUrl = '';
+                                ctx.ibanInvoiceUid = '';
+                                runtime.lastUserMessage = '';
+                                runtime.waitingForUser = false;
+                                runtime.userConfirmationReceived = false;
+                                runtime.currentNodeId = _payChangeTarget;
+                                continue;
+                            }
+                        }
+                    }
+
                     // For user_confirms: flag for finalization on next iteration
                     if (isUserConfirmExit) {
                         const outputPath = data.outputVar ? String(data.outputVar).replace(/^context\./, '') : '';
@@ -3470,11 +3534,40 @@ ${_baseUrl}/legal/terms — Правила використання`;
 
                 // ── ibanoplata: створення IBAN-посилання на оплату (orderRef у призначенні) ──
                 if (connectorType === 'ibanoplata' && action === 'create_invoice') {
+                    // Проблема 2 (аудит 2026-09-03, живий кейс: реквізити читались із
+                    // funnelEnv.FOP_NAME/CODE/IBAN — застарілий per-bot ФОП, не бачив зміни
+                    // активного ФОП у новій CRM). Тепер: якщо в funnelKey воронки є CRM_API_KEY
+                    // (+CRM_API_BASE/CRM_API_URL) — питаємо АКТИВНОГО ФОП (isActive:true) у CRM
+                    // ПЕРЕД funnelEnv.FOP_*. Best-effort, короткий таймаут (3с): якщо CRM
+                    // недоступна / ключа нема / активного ФОП нема / у нього немає iban —
+                    // тихо падаємо назад на СТАРУ funnelKey-логіку нижче (нічого не ламаємо,
+                    // якщо CRM недоступна). Той самий підхід (Bearer tenant.apiKey, нормалізація
+                    // /api) що вже є у funnelStage-ноді (n_crm_order/n_ttn_sync_crm, 2026-09-02).
+                    let crmActiveFop = null;
+                    try {
+                        const _crmRawBase = String(funnelEnv.CRM_API_URL || funnelEnv.CRM_API_BASE || '').trim().replace(/\/$/, '');
+                        const _crmApiUrl = _crmRawBase && !_crmRawBase.endsWith('/api') ? `${_crmRawBase}/api` : _crmRawBase;
+                        const _crmApiKey = String(funnelEnv.CRM_API_KEY || '').trim();
+                        if (_crmApiUrl && _crmApiKey) {
+                            const _fopAc = new AbortController();
+                            const _fopTo = setTimeout(() => { try { _fopAc.abort(); } catch (_e) { /* noop */ } }, 3000);
+                            try {
+                                const _fr = await fetch(`${_crmApiUrl}/fops`, { headers: { Authorization: `Bearer ${_crmApiKey}` }, signal: _fopAc.signal });
+                                if (_fr.ok) {
+                                    const _fj = await _fr.json().catch(() => ({}));
+                                    const _list = Array.isArray(_fj.data) ? _fj.data : [];
+                                    const _active = _list.find((f) => f && f.isActive === true && f.name && f.iban);
+                                    if (_active) crmActiveFop = _active;
+                                }
+                            } finally { clearTimeout(_fopTo); }
+                        }
+                    } catch (_e) { /* best-effort — фолбек на funnelKey нижче */ }
+
                     // Ключі: перевага funnelEnv (ключі воронки) → потім збережений конектор.
                     const apiKey = (funnelEnv.IBANOPLATA_API_KEY || config.api_key || config.apiKey || '').trim();
-                    const orgName = renderTemplate(data.organizationName || funnelEnv.FOP_NAME || config.organization_name || '', scope);
-                    const idCode = renderTemplate(data.identificationCode || funnelEnv.FOP_CODE || config.identification_code || '', scope);
-                    const iban = renderTemplate(data.iban || funnelEnv.FOP_IBAN || config.iban || '', scope);
+                    const orgName = renderTemplate(data.organizationName || (crmActiveFop && crmActiveFop.name) || funnelEnv.FOP_NAME || config.organization_name || '', scope);
+                    const idCode = renderTemplate(data.identificationCode || (crmActiveFop && crmActiveFop.taxId) || funnelEnv.FOP_CODE || config.identification_code || '', scope);
+                    const iban = renderTemplate(data.iban || (crmActiveFop && crmActiveFop.iban) || funnelEnv.FOP_IBAN || config.iban || '', scope);
                     const amountNum = parseFloat(String(renderTemplate(data.amount || '{{context.payAmount}}', scope)).replace(',', '.')) || 0;
                     // orderRef — короткий унікальний ідентифікатор замовлення, який летить у
                     // призначення платежу → потім шукаємо його у виписці Mono.
@@ -3529,7 +3622,7 @@ ${_baseUrl}/legal/terms — Правила використання`;
                     }
                     db.apiCall.create({ data: {
                         sessionId: session.id, service: 'ibanoplata', method: 'create_invoice',
-                        requestData: { amount: reqBody.amount, paymentPurpose, orderRef },
+                        requestData: { amount: reqBody.amount, paymentPurpose, orderRef, fopSource: crmActiveFop ? 'crm' : 'funnelKey', fopName: orgName },
                         responseData: { ibanInvoiceUid: ibJson.ibanInvoiceUid || null, ibanInvoiceUrl: payUrl || null, error: ibJson.errorMessage || null },
                         statusCode: ibStatus, durationMs: Date.now() - ibStart,
                     } }).catch(() => {});

@@ -20,6 +20,20 @@ const { guardSessionParam } = require('../middleware/rbac');
 router.param('id', guardSessionParam);
 router.param('sessionId', guardSessionParam);
 
+// Окремий, трохи ширший guard ЛИШЕ для /test/:tid/... (send/state/end) — 2026-09-03.
+// /test/start вже й так приймає системний X-Api-Secret без жодного guard'а (може
+// стартувати тестову сесію для будь-якого бота) — тут просто вирівнюємо продовження/
+// стан/завершення ВЖЕ РОЗПОЧАТОЇ тестової сесії під той самий рівень довіри, щоб можна
+// було прогнати багатокроковий тест через API, а не лише через кнопку "Тест" в браузері.
+// Звичайні сесії (:id, реальні розмови клієнтів) — і далі ТІЛЬКИ під guardSessionParam,
+// цей guard їх не торкається.
+async function guardTestSessionParam(req, res, next, tid) {
+    const apiSecret = req.headers['x-api-secret'];
+    if (apiSecret && apiSecret === process.env.API_SECRET) return next();
+    return guardSessionParam(req, res, next, tid);
+}
+router.param('tid', guardTestSessionParam);
+
 async function deleteSessionCascade(sessionId) {
     return db.$transaction(async (tx) => {
         const exists = await tx.session.findUnique({
@@ -59,32 +73,32 @@ router.post('/test/start',
     })
 );
 
-// POST /api/sessions/test/:id/send
-router.post('/test/:id/send',
+// POST /api/sessions/test/:tid/send
+router.post('/test/:tid/send',
     validateParams({
-        params: z.object({ id: z.string().uuid() }),
+        params: z.object({ tid: z.string().uuid() }),
         body: z.object({ message: z.string().min(1).max(4096) }),
     }),
     asyncHandler(async (req, res) => {
-        const data = await sendTestMessage({ sessionId: req.params.id, message: req.body.message });
+        const data = await sendTestMessage({ sessionId: req.params.tid, message: req.body.message });
         res.json({ ok: true, data });
     })
 );
 
-// GET /api/sessions/test/:id/state
-router.get('/test/:id/state',
-    validateParams({ params: z.object({ id: z.string().uuid() }) }),
+// GET /api/sessions/test/:tid/state
+router.get('/test/:tid/state',
+    validateParams({ params: z.object({ tid: z.string().uuid() }) }),
     asyncHandler(async (req, res) => {
-        const data = await getTestSessionState({ sessionId: req.params.id });
+        const data = await getTestSessionState({ sessionId: req.params.tid });
         res.json({ ok: true, data });
     })
 );
 
-// POST /api/sessions/test/:id/end
-router.post('/test/:id/end',
-    validateParams({ params: z.object({ id: z.string().uuid() }) }),
+// POST /api/sessions/test/:tid/end
+router.post('/test/:tid/end',
+    validateParams({ params: z.object({ tid: z.string().uuid() }) }),
     asyncHandler(async (req, res) => {
-        const data = await endTestSession({ sessionId: req.params.id });
+        const data = await endTestSession({ sessionId: req.params.tid });
         res.json({ ok: true, data });
     })
 );

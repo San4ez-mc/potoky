@@ -180,6 +180,35 @@ function makePlacer(nodes) {
     };
 }
 
+// Правка промпту n_color (живий прогін 2026-09-04: після назви кольору модель сама питала
+// "Оформлюємо?" і розповідала про оплату — це робота наступного кроку n_order_intent, який
+// тепер speakFirst; виходило два питання поспіль і "два голоси").
+const COLOR_CONFIRM_OLD = 'Відповідай ОДНИМ коротким дружнім реченням і ЗАВЖДИ закінчуй питанням, яке веде далі (ніколи не закінчуй просто похвалою).\nКоли клієнт назвав колір із наявних — підтверди його і ЗАВЖДИ додай у json_output рівно {"color":"<колір>"}. Жодних службових токенів.';
+const COLOR_CONFIRM_NEW = 'Поки колір НЕ обрано — відповідай ОДНИМ коротким дружнім реченням і закінчуй питанням про колір.\nКоли клієнт назвав колір із наявних — підтверди його ОДНИМ реченням БЕЗ жодного питання (НЕ питай "оформляємо?", НЕ розповідай про оплату/адресу — це зробить наступний крок) і ЗАВЖДИ додай у json_output рівно {"color":"<колір>"}. Жодних службових токенів.\nЯКЩО в контексті вище є список кольорів, яких НЕМАЄ, і клієнт замість нового кольору пише "оформляємо"/"беру"/"давайте" — колір ще не обрано: коротко нагадай, що цього кольору нема, назви наявні і спитай, який брати; color у json НЕ повертай.';
+
+// Сесія власника c4e10092 (старий бот, 2026-09-01): n_pay_collect не віддала JSON на "200 грн",
+// лишилась активною і ВИГАДАЛА номер картки, "підтвердила оплату" й зібрала адресу. Жорстка
+// заборона + однозначне правило виходу.
+const PAY_COLLECT_GUARD = '\nЗАБОРОНЕНО: вигадувати реквізити, номери карток, посилання, підтверджувати "оплату отримано/замовлення активовано", збирати ПІБ/адресу — ти цього НЕ робиш і НЕ маєш реквізитів; усе це дає НАСТУПНИЙ крок системи одразу після твого json_output. Будь-яке повідомлення, з якого зрозумілий спосіб ("1", "2", "200", "перший", "часткова", "повна", "наложка", "повністю") → ТІЛЬКИ json_output {"method":"cod"} або {"method":"full"}, без слів. Якщо клієнт пише "чекаю"/"де реквізити" — це означає, що спосіб уже названо: поверни json_output з останнім зрозумілим method.';
+function applyPayCollectGuard(node) { if (node && !String(node.data.systemPrompt || '').includes('вигадувати реквізити, номери карток')) node.data.systemPrompt = String(node.data.systemPrompt || '') + PAY_COLLECT_GUARD; }
+
+// --refresh: коли структура вже застосована (маркер n_supplier_pay_gate) — оновити лише код нод
+// із файлів і промпти/тексти (ітерації після живих прогонів), без змін графа.
+function refresh(flow) {
+    const notes = [];
+    const nodes = flow.nodes.map((n) => ({ ...n, data: { ...n.data } }));
+    const byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
+    for (const [id, get] of Object.entries(CODE)) { if (byId[id]) { byId[id].data.code = get(); notes.push('code ' + id); } }
+    if (byId.n_order_intent) byId.n_order_intent.data.systemPrompt = ORDER_INTENT_PROMPT;
+    if (byId.n_collect) byId.n_collect.data.systemPrompt = COLLECT_PROMPT;
+    if (byId.n_welcome_back && byId.n_welcome_back.type === 'claude') byId.n_welcome_back.data.systemPrompt = WELCOME_BACK_PROMPT;
+    if (byId.n_upsell2_wait) byId.n_upsell2_wait.data.systemPrompt = UPSELL2_PROMPT;
+    if (byId.n_color) { const sp = String(byId.n_color.data.systemPrompt || ''); if (sp.includes(COLOR_CONFIRM_OLD)) { byId.n_color.data.systemPrompt = sp.split(COLOR_CONFIRM_OLD).join(COLOR_CONFIRM_NEW); notes.push('prompt n_color'); } else if (!sp.includes('БЕЗ жодного питання')) notes.push('⚠️ n_color: фрагмент підтвердження не знайдено'); }
+    if (byId.n_size) byId.n_size.data.waitAfterPresentation = true;
+    applyPayCollectGuard(byId.n_pay_collect);
+    return { nodes, edges: flow.edges, notes };
+}
+
 function transform(flow, keysMap, opts) {
     opts = opts || {};
     const notes = [];
@@ -281,6 +310,7 @@ function transform(flow, keysMap, opts) {
     retarget('n_np_gate', 'n_np_ask', 'n_collect', 'true');
     setData('n_np_gate', { description: 'Місто/відділення неоднозначні? TRUE → n_collect (speakFirst озвучить np.askMsg і прийме відповідь); FALSE → перевірка оплати.' });
     setData('n_size', { waitAfterPresentation: true });
+    replaceInPrompt('n_color', COLOR_CONFIRM_OLD, COLOR_CONFIRM_NEW, 'підтвердження кольору');
     { const n = byId()['n_color']; if (n && !/"size":"<РОЗМІР>"/.test(n.data.systemPrompt || '')) n.data.systemPrompt = String(n.data.systemPrompt || '') + '\nЯКЩО клієнт на цьому кроці ЯВНО називає ІНШИЙ розмір, ніж рекомендований («я ношу L», «дайте M») — не сперечайся: у json_output разом із color додай "size":"<РОЗМІР>" (великими літерами, лише з розмірів товару: {{context.product.sizes}}); якщо кольору ще не назвав — лише {"size":"<РОЗМІР>"} НЕ повертай, спершу спитай колір і поверни обидва разом.'; }
     setData('n_req_iban_v', { text: '{{context.fop.iban}}', description: 'IBAN активного ФОП з CRM (context.fop, ставить n_pay_amount; фолбек — funnelKey FOP_IBAN).' });
     setData('n_req_code_v', { text: '{{context.fop.code}}', description: 'ЄДРПОУ/ІПН активного ФОП з CRM (context.fop).' });
@@ -330,6 +360,7 @@ function transform(flow, keysMap, opts) {
     ['n_size', 'n_color', 'n_set_choice'].forEach((id) => replaceInPrompt(id, MATCH_NOTE_OLD, MATCH_NOTE_NEW, 'matchNote'));
     if (!opts.keepCarText) replaceInPrompt('n_set_choice', SET_CHOICE_CAR_OLD, SET_CHOICE_CAR_NEW, 'авто/салон');
     replaceInPrompt('n_pay_collect', PAY_COLLECT_COUNTRY_OLD, PAY_COLLECT_COUNTRY_NEW, 'country');
+    applyPayCollectGuard(byId()['n_pay_collect']);
     setData('n_pay_collect', { softHandoffOff: true, connectorId: CLAUDE_HAIKU, description: 'Визначає спосіб оплати (1/2, country лише з method). softHandoffOff: слова "обман/шахраї/не прийшло" не перехоплює двигун — нода веде сценарій винятку довіри (cod_trust).' });
     setData('n_recall_confirm', { connectorId: CLAUDE_HAIKU });
     // covercar-клон: n_intl_unsupported_admin без targetKey (сповіщення йшло б у системний чат — антипатерн A6)
@@ -381,8 +412,16 @@ async function patchBot(db, cfg, APPLY) {
     if (!flow) { console.log('ERROR: flow not found for', BOT_ID); return; }
     const keyRows = await db.funnelKey.findMany({ where: { botId: BOT_ID }, select: { key: true, value: true } });
     const keysMap = Object.fromEntries(keyRows.map((k) => [k.key, k.value]));
-    const r = transform({ nodes: flow.nodes, edges: flow.edges }, keysMap, cfg);
-    if (r.alreadyApplied) { console.log('ALREADY_APPLIED'); return; }
+    let r = transform({ nodes: flow.nodes, edges: flow.edges }, keysMap, cfg);
+    if (r.alreadyApplied) {
+        if (!process.argv.includes('--refresh')) { console.log('ALREADY_APPLIED (для оновлення коду/промптів: --refresh --apply)'); return; }
+        r = refresh({ nodes: flow.nodes, edges: flow.edges });
+        console.log('REFRESH: ' + r.notes.join(', '));
+        if (!APPLY) return;
+        await db.flowDefinition.update({ where: { botId: BOT_ID }, data: { nodes: r.nodes } });
+        console.log('REFRESHED');
+        return;
+    }
     console.log(r.notes.join('\n'));
     console.log('nodes', flow.nodes.length, '→', r.nodes.length, '| edges', flow.edges.length, '→', r.edges.length);
     console.log('keys update:', r.keyUpdates.map((k) => k.key + '=' + k.value).join(', '), '| delete:', r.keyDeletes.join(', ') || '—');
@@ -399,5 +438,5 @@ async function patchBot(db, cfg, APPLY) {
     console.log('APPLIED (бекап у backups/).');
 }
 
-module.exports = { transform, BOT_ID, BOTS, optsForBot };
+module.exports = { transform, refresh, BOT_ID, BOTS, optsForBot };
 if (require.main === module) main().catch((e) => { console.log('ERROR', e.message, e.stack); process.exit(1); });

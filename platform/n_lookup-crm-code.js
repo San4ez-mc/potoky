@@ -227,13 +227,17 @@ try {
   // upsellItems — структуровані {id,name,price}, потрібні n_crm_order, щоб реально
   // ДОДАТИ погоджений допродаж другою позицією в замовлення (не лише згадати текстом).
   var upsell = [], upsellItems = [], __upsellPhoto = '';
-  function upname(prod) { var up = Number(prod.price) || 0; return (prod.displayName || prod.name) + (up ? (' — ' + up + ' грн') : ''); }
+  // Живий прогін 2026-09-04: displayName супутнього товару з CRM виявився рядком специфікації
+  // ("Матеріал: двухнитка (100% бавовна)"), бо його presentationText починається зі спец-рядка,
+  // а customerName порожній. Для допродажу беремо назву, що не схожа на "Підпис: значення".
+  function looksLikeSpecLine(s) { s = String(s || '').trim(); return !s || s.length < 4 || /:$/.test(s) || /^[^:]{1,30}:\s/.test(s) || /^(в\s*наявност|наявніст|кольор|розмір|матеріал|ціна\b|акці|сезон)/i.test(s); }
+  function upname(prod) { var up = Number(prod.price) || 0; var nm = prod.customerName || (!looksLikeSpecLine(prod.displayName) && prod.displayName) || prod.name || 'Товар'; return nm + (up ? (' — ' + up + ' грн') : ''); }
   var compIds = Array.isArray(found.companionProductIds) ? found.companionProductIds : [];
   for (var ui = 0; ui < compIds.length && upsell.length < 3; ui++) {
     var cprod = all.filter(function (x) { return String(x.id) === String(compIds[ui]) && String(x.id) !== String(found.id); })[0];
     if (!cprod) continue;
     upsell.push(upname(cprod));
-    upsellItems.push({ id: cprod.id, name: (cprod.displayName || cprod.name), price: Number(cprod.price) || 0 });
+    upsellItems.push({ id: cprod.id, name: upname(cprod).replace(/\s—\s\d+ грн$/, ''), price: Number(cprod.price) || 0 });
     if (!__upsellPhoto) { __upsellPhoto = resolveUrl(cprod.thumbnailUrl || (cprod.images || [])[0] || ''); }
   }
   var __upsellPhotoNote = __upsellPhoto
@@ -301,7 +305,7 @@ try {
   //    службові нотатки-рядки, що починаються з ℹ️ (внутрішні нотатки адміна). ──
   var __descClean = String(found.presentationText || '').split('\n').filter(function (ln) { return !/^\s*ℹ️/.test(ln); }).join('\n').trim();
   var __rawFirstLine = (__descClean.split('\n')[0] || '').trim();
-  var __looksLikeHeading = /:$/.test(__rawFirstLine) || /^(в\s*наявност|наявніст|кольор|розмір|ціна\b|акці)/i.test(__rawFirstLine) || __rawFirstLine.length < 4;
+  var __looksLikeHeading = /:$/.test(__rawFirstLine) || /^[^:]{1,30}:\s/.test(__rawFirstLine) || /^(в\s*наявност|наявніст|кольор|розмір|матеріал|ціна\b|акці|сезон)/i.test(__rawFirstLine) || __rawFirstLine.length < 4;
   var __customerName = found.customerName || (!__looksLikeHeading && __rawFirstLine) || found.name || 'Товар';
   // Аудит 2026-09-04: presentationText у новій CRM може бути порожнім — тоді n_welcome слав
   // лише "👉 Зараз підберемо..." без назви й ціни. Мінімальний чесний фолбек з даних картки.

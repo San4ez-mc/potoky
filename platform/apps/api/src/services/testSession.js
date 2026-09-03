@@ -1590,7 +1590,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
         // натрапляють на першу "не тиху" ноду (вона ще встигає їх прочитати), і реально
         // чистяться на самому початку ноди ПІСЛЯ неї. Детермінований (код, не "здогадка"
         // моделі) спосіб сказати "щось щойно сталось", без прив'язки до id нод.
-        const SILENT_PASSTHROUGH_TYPES = new Set(['condition', 'js']);
+        const SILENT_PASSTHROUGH_TYPES = new Set(['condition', 'js', 'funnelStage']);
         if (runtime.__pendingClearArmed) {
             for (const k of (runtime.__pendingClearFlags || [])) delete ctx[k];
             runtime.__pendingClearFlags = [];

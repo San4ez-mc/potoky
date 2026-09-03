@@ -24,6 +24,16 @@ function sizeOk(o){
   return pr.some(function(x){ return /розмір|размер/i.test(String(x.name||'')) && String(x.value).toUpperCase()===String(chosenSize).toUpperCase(); });
 }
 function hasQty(o){ return o && o.quantity!==undefined && o.quantity!==null && o.quantity!==''; }
+// Живий прогін 2026-09-04: у новій CRM залишки по offers НЕ ведуться (43/43 offers quantity=0) —
+// перевірка "quantity>0" блокувала КОЖЕН колір ("варіант закінчився"). Тому наявність по
+// залишках перевіряємо ЛИШЕ якщо товар реально веде облік: хоча б один offer із quantity>0.
+// Інакше вважаємо, що товар є (як і старий бот без даних про залишки).
+var stockTracked = offers.some(function(o){ return Number(o.quantity) > 0; });
+if(!stockTracked){
+  var okNoStock={ available: true, availReason: '' };
+  if(sizeOverride && sizeOverride!==context.recommendedSize){ okNoStock.recommendedSize=sizeOverride; okNoStock.sizeSource='client'; }
+  return okNoStock;
+}
 if(chosenColor){
   var candidates=offers.filter(function(o){ var pr=o.properties||[]; return pr.some(function(x){ return String(x.value)===String(chosenColor); }); });
   if(candidates.length){

@@ -159,10 +159,12 @@ async function runNode(id, context, extra) {
     x = await runNode('n_reconcile', { ...recBase, payStatus: 'confirmed', payTxId: 't_prev', monoStatement: [] });
     ok('B-R5', 'уже підтверджена оплата не звіряється вдруге', x.payStatus === 'confirmed' && x.payTxId === 't_prev');
 
-    x = await runNode('n_avail', { product: { offers: [{ properties: [{ name: 'Колір', value: 'чорний' }], quantity: 0 }] }, colorChoice: { color: 'чорний' } });
-    ok('B-A1', 'колір з quantity 0 → нема, unavailableColors', x.available === false && x.availReason === 'color' && x.unavailableColors[0] === 'чорний');
-    x = await runNode('n_avail', { product: { offers: [{ properties: [], quantity: 0 }] } });
-    ok('B-A2', 'товар без кольорів, quantity 0 → no_stock', x.available === false && x.availReason === 'no_stock');
+    x = await runNode('n_avail', { product: { offers: [{ properties: [{ name: 'Колір', value: 'чорний' }], quantity: 0 }, { properties: [{ name: 'Колір', value: 'сірий' }], quantity: 2 }] }, colorChoice: { color: 'чорний' } });
+    ok('B-A1', 'облік ведеться, колір з quantity 0 → нема, unavailableColors', x.available === false && x.availReason === 'color' && x.unavailableColors[0] === 'чорний');
+    x = await runNode('n_avail', { product: { offers: [{ properties: [{ name: 'Розмір', value: 'M' }], quantity: 0 }, { properties: [{ name: 'Розмір', value: 'L' }], quantity: 3 }] }, recommendedSize: 'M' });
+    ok('B-A2', 'товар без кольорів, M quantity 0 (облік є) → no_stock', x.available === false && x.availReason === 'no_stock');
+    x = await runNode('n_avail', { product: { offers: [{ properties: [{ name: 'Колір', value: 'чорний' }], quantity: 0 }, { properties: [{ name: 'Колір', value: 'сірий' }], quantity: 0 }] }, colorChoice: { color: 'чорний' } });
+    ok('B-A7', 'CRM без обліку залишків (усі quantity 0) → товар вважаємо наявним', x.available === true, JSON.stringify(x));
     x = await runNode('n_avail', { product: { offers: [{ properties: [] }] } });
     ok('B-A3', 'offers без quantity → не блокуємо', x.available === true);
     x = await runNode('n_avail', { product: { offers: [{ properties: [{ name: 'Розмір', value: 'M' }], quantity: 3 }, { properties: [{ name: 'Розмір', value: 'L' }], quantity: 0 }] }, recommendedSize: 'L' });

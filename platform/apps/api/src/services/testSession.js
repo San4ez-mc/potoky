@@ -1402,6 +1402,56 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
     });
     const funnelEnv = Object.fromEntries(funnelKeyRows.map((k) => [k.key, k.value]));
 
+    // Зміна способу оплати ПІСЛЯ видачі інвойсу (2026-09-03/04): спільний хелпер для двох шляхів —
+    // (а) модель повернула {"paymentMethodChange":"cod"|"full"}; (б) детермінований regex-детект
+    // на claude-ноді з data.detectPaymentChange===true (живий прогін 2026-09-04: Haiku в n_collect
+    // замість JSON вигадала посилання goverla.shop/pay — на гроші не можна покладатись на промпт).
+    // Дії: best-effort видалити старий ibanoplata-інвойс, оновити paymentInfo.method, стрибнути на
+    // n_intl_route (він форсує full для закордону) або n_pay_amount — далі граф штатно перевипускає лінк.
+    const performPaymentMethodChange = async (newMethod, targetNodeId) => {
+        const _oldInvoiceUid = (ctx.ibanInvoiceUid || '').toString().trim();
+        if (_oldInvoiceUid) {
+            try {
+                const _delApiKey = (funnelEnv.IBANOPLATA_API_KEY || '').trim();
+                if (_delApiKey) {
+                    const _delStart = Date.now();
+                    let _delStatus = null;
+                    try {
+                        const _dr = await fetch(`https://api.ibanoplata.com/v2/iban-invoice/${encodeURIComponent(_oldInvoiceUid)}`, {
+                            method: 'DELETE', headers: { Accept: 'application/json', 'X-Api-Key': _delApiKey },
+                        });
+                        _delStatus = _dr.status;
+                    } catch (_e) { /* best-effort */ }
+                    db.apiCall.create({ data: {
+                        sessionId: session.id, service: 'ibanoplata', method: 'delete_invoice',
+                        requestData: { uid: _oldInvoiceUid, reason: 'payment_method_changed' }, responseData: {}, statusCode: _delStatus, durationMs: Date.now() - _delStart,
+                    } }).catch(() => {});
+                }
+            } catch (_e) { /* best-effort */ }
+        }
+        ctx.paymentInfo = Object.assign({}, ctx.paymentInfo, { method: newMethod });
+        ctx.ibanPayUrl = '';
+        ctx.ibanInvoiceUid = '';
+        runtime.lastUserMessage = '';
+        runtime.waitingForUser = false;
+        runtime.userConfirmationReceived = false;
+        runtime.currentNodeId = targetNodeId;
+    };
+    const paymentChangeTargetNode = () => (nodesById.has('n_intl_route') ? 'n_intl_route' : (nodesById.has('n_pay_amount') ? 'n_pay_amount' : null));
+    // 'cod' | 'full' | null — лише при явному намірі змінити або дуже короткій відповіді ("1", "2").
+    const detectPaymentMethodChange = (text) => {
+        const t = String(text || '').trim();
+        if (!t) return null;
+        const short = t.replace(/[^\wа-яіїєґ]/gi, '').length <= 3;
+        const intent = /передумав|краще|змін|давайте|хочу|можна|перейд|оберу|обираю|виб[ие]р|варіант|спос[іо]б/i.test(t);
+        if (!short && !intent) return null;
+        const wantsCod = /частков|накладн|наложк|післяплат|при\s*отриманн|передоплат[аиу]?\s*200|\b200\b|перш(ий|ого|у)|варіант\s*1|^\s*1\s*$/i.test(t);
+        const wantsFull = /повн(а|у|істю|ої)|всю\s*суму|одразу\s*всю|друг(ий|ого|у)|варіант\s*2|^\s*2\s*$/i.test(t);
+        if (wantsCod && !wantsFull) return 'cod';
+        if (wantsFull && !wantsCod) return 'full';
+        return null;
+    };
+
     // Auto-resolve TELEGRAM_BOT_TOKEN from TELEGRAM_CONNECTOR_ID when not set directly.
     // Bots that store the token inside a savedConnector (e.g. CM2) need this so that
     // {{env.TELEGRAM_BOT_TOKEN}} in httpRequest bodies resolves to the actual token
@@ -1730,6 +1780,18 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
             // speakFirst: нода-діалог сама починає розмову (пропонує/питає), не чекаючи вводу.
             // Тільки на ПЕРШОМУ вході (нема lastUserMessage); далі — звичайний діалог.
             const speakFirstNow = data.speakFirst === true && mode === 'dialog' && !runtime.lastUserMessage;
+            // Детермінована зміна способу оплати (data.detectPaymentChange) — ДО виклику моделі,
+            // лише коли інвойс уже є (paymentInfo.method) і нода не n_pay_collect (там це штатний вибір).
+            if (data.detectPaymentChange === true && mode === 'dialog' && node.id !== 'n_pay_collect' && runtime.lastUserMessage
+                && ctx.paymentInfo && ctx.paymentInfo.method && ctx.paymentInfo.method !== 'cod_trust') {
+                const _detected = detectPaymentMethodChange(runtime.lastUserMessage);
+                const _target = _detected && _detected !== ctx.paymentInfo.method ? paymentChangeTargetNode() : null;
+                if (_target) {
+                    pushDelivery(runtime, 'payment_method_change', true, null, { nodeId: node.id, from: ctx.paymentInfo.method, to: _detected, via: 'regex' });
+                    await performPaymentMethodChange(_detected, _target);
+                    continue;
+                }
+            }
             // Аудит 2026-09-04 (живий кейс власника, "дубль опису товару на кроці зріст/вага"):
             // data.waitAfterPresentation===true — якщо в ЦЬОМУ Ж ході щойно показали картку
             // товару (ctx.productJustPresented, ставить n_welcome через setContext) і нода ще не
@@ -2205,37 +2267,9 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                             && ctx.paymentInfo && ctx.paymentInfo.method
                             && ctx.paymentInfo.method !== _newPayMethod
                         ) {
-                            const _payChangeTarget = nodesById.has('n_intl_route')
-                                ? 'n_intl_route'
-                                : (nodesById.has('n_pay_amount') ? 'n_pay_amount' : null);
+                            const _payChangeTarget = paymentChangeTargetNode();
                             if (_payChangeTarget) {
-                                const _oldInvoiceUid = (ctx.ibanInvoiceUid || '').toString().trim();
-                                if (_oldInvoiceUid) {
-                                    try {
-                                        const _delApiKey = (funnelEnv.IBANOPLATA_API_KEY || '').trim();
-                                        if (_delApiKey) {
-                                            const _delStart = Date.now();
-                                            let _delStatus = null;
-                                            try {
-                                                const _dr = await fetch(`https://api.ibanoplata.com/v2/iban-invoice/${encodeURIComponent(_oldInvoiceUid)}`, {
-                                                    method: 'DELETE', headers: { Accept: 'application/json', 'X-Api-Key': _delApiKey },
-                                                });
-                                                _delStatus = _dr.status;
-                                            } catch (_e) { /* best-effort, не блокуємо перевипуск нового інвойсу */ }
-                                            db.apiCall.create({ data: {
-                                                sessionId: session.id, service: 'ibanoplata', method: 'delete_invoice',
-                                                requestData: { uid: _oldInvoiceUid, reason: 'payment_method_changed' }, responseData: {}, statusCode: _delStatus, durationMs: Date.now() - _delStart,
-                                            } }).catch(() => {});
-                                        }
-                                    } catch (_e) { /* best-effort */ }
-                                }
-                                ctx.paymentInfo = Object.assign({}, ctx.paymentInfo, { method: _newPayMethod });
-                                ctx.ibanPayUrl = '';
-                                ctx.ibanInvoiceUid = '';
-                                runtime.lastUserMessage = '';
-                                runtime.waitingForUser = false;
-                                runtime.userConfirmationReceived = false;
-                                runtime.currentNodeId = _payChangeTarget;
+                                await performPaymentMethodChange(_newPayMethod, _payChangeTarget);
                                 continue;
                             }
                         }

@@ -85,7 +85,7 @@ ok('V12b', 'n_lookup рахує matchNote/productMismatch і фолбек пре
 ok('S15a', botOpts.keepCarText ? 'covercar: текст про авто збережено' : 'нема тексту про авто/салон', botOpts.keepCarText === nodes.some((n) => /авто\/модель|весь салон|сидіння/i.test(n.data.systemPrompt || '')));
 ok('D3', 'n_size: waitAfterPresentation + презентація сама питає параметри', byId.n_size.data.waitAfterPresentation === true && /__paramAsk/.test(byId.n_lookup.data.code));
 ok('D2', 'ручні реквізити з активного ФОП (context.fop)', ['n_req_iban_v', 'n_req_code_v', 'n_req_name_v'].every((id) => /context\.fop\./.test(byId[id].data.text)) && /\/fops/.test(byId.n_pay_amount.data.code) && /context\.fop/.test(byId.n_reconcile.data.code));
-ok('D1', 'n_collect вміє paymentMethodChange (перевипуск інвойсу в двигуні)', /paymentMethodChange/.test(byId.n_collect.data.systemPrompt));
+ok('D1', 'n_collect вміє paymentMethodChange (перевипуск інвойсу в двигуні) + regex-детект', /paymentMethodChange/.test(byId.n_collect.data.systemPrompt) && byId.n_collect.data.detectPaymentChange === true);
 ok('D5', 'n_color приймає явний розмір клієнта, n_avail переписує', /"size":"<РОЗМІР>"/.test(byId.n_color.data.systemPrompt) && /sizeOverride/.test(byId.n_avail.data.code));
 ok('D6', 'n_requisites називає суму', /До сплати зараз/.test(byId.n_requisites.data.text) && (byId.n_requisites.data.variants || []).every((v) => /До сплати зараз/.test(v)));
 ok('S16', 'n_confirm: confirmLead+ttnLine, без "акційної ціни"', /confirmLead/.test(byId.n_confirm.data.text) && /ttnLine/.test(byId.n_confirm.data.text) && !nodes.some((n) => /акційною ціною/.test(JSON.stringify(n.data))));

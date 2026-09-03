@@ -116,7 +116,7 @@ const COLLECT_PROMPT = `Ти — {{env.PERSONA_NAME}}, консультантк�
 Коли відомі ВСІ 4 поля (з повідомлення клієнта або з блоку ВЖЕ ВІДОМО плюс його відповідь) — НЕ перепитуй підтвердження, НЕ пиши видимого тексту, одразу поверни ТІЛЬКИ json_output {"fullName":"...","phone":"...","city":"...","branch":"..."}; якщо клієнт назвав область — додай "region":"...". Відповідь на УТОЧНЕННЯ (область / точна назва / номер) → той самий JSON з оновленими city/region/branch.
 Просить реквізити вручну (IBAN/ЄДРПОУ/«як оплатити вручну») → РІВНО {"wantsManualReq":true}, без тексту.
 Пише, що оплатив, або описує чек текстом → подякуй, скажи, що звіримо після отримання даних, і попроси відсутні поля (без JSON, поки полів бракує).
-Передумав спосіб оплати («краще 1», «хочу повністю», «краще накладений») → РІВНО {"paymentMethodChange":"cod"} або {"paymentMethodChange":"full"}.
+Передумав спосіб оплати («краще 1», «хочу повністю», «краще накладений») → РІВНО {"paymentMethodChange":"cod"} або {"paymentMethodChange":"full"}, БЕЗ тексту. НІКОЛИ не вигадуй посилання на оплату, суми чи реквізити — нове посилання надішле система сама.
 Інше питання → коротко відповідай текстом з відомих даних, потім знову попроси відсутні поля.
 Явно просить живу людину → {"handoff":true}. Не згадуй сайтів. Українською, на «ви», тепло.`;
 
@@ -200,7 +200,7 @@ function refresh(flow) {
     const byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
     for (const [id, get] of Object.entries(CODE)) { if (byId[id]) { byId[id].data.code = get(); notes.push('code ' + id); } }
     if (byId.n_order_intent) byId.n_order_intent.data.systemPrompt = ORDER_INTENT_PROMPT;
-    if (byId.n_collect) byId.n_collect.data.systemPrompt = COLLECT_PROMPT;
+    if (byId.n_collect) { byId.n_collect.data.systemPrompt = COLLECT_PROMPT; byId.n_collect.data.detectPaymentChange = true; }
     if (byId.n_welcome_back && byId.n_welcome_back.type === 'claude') byId.n_welcome_back.data.systemPrompt = WELCOME_BACK_PROMPT;
     if (byId.n_upsell2_wait) byId.n_upsell2_wait.data.systemPrompt = UPSELL2_PROMPT;
     if (byId.n_color) { const sp = String(byId.n_color.data.systemPrompt || ''); if (sp.includes(COLOR_CONFIRM_OLD)) { byId.n_color.data.systemPrompt = sp.split(COLOR_CONFIRM_OLD).join(COLOR_CONFIRM_NEW); notes.push('prompt n_color'); } else if (!sp.includes('БЕЗ жодного питання')) notes.push('⚠️ n_color: фрагмент підтвердження не знайдено'); }
@@ -306,7 +306,7 @@ function transform(flow, keysMap, opts) {
     // ── В8 допродаж у першому повідомленні n_order_intent; speakFirst ──
     retarget('n_avail_cond', 'n_upsell_cond', 'n_order_intent', 'true');
     setData('n_order_intent', { systemPrompt: ORDER_INTENT_PROMPT, speakFirst: true, messagesTemplate: '', label: '9. Підсумок + допродаж + намір замовити', description: 'speakFirst: сама підсумовує і питає "Оформляємо?" (з допродажем як одним рішенням). json: ready yes/no (+addUpsell, qty), wantsUpsellPhoto, handoff.' });
-    setData('n_collect', { systemPrompt: COLLECT_PROMPT, speakFirst: true, connectorId: CLAUDE_HAIKU, label: '12. Збір адреси (speakFirst, знає статус оплати)', description: 'speakFirst: одразу просить відсутні поля; знає статус оплати та уточнення НП (np.askMsg). json: 4 поля (+region), wantsManualReq, paymentMethodChange, handoff.' });
+    setData('n_collect', { systemPrompt: COLLECT_PROMPT, speakFirst: true, detectPaymentChange: true, connectorId: CLAUDE_HAIKU, label: '12. Збір адреси (speakFirst, знає статус оплати)', description: 'speakFirst: одразу просить відсутні поля; знає статус оплати та уточнення НП (np.askMsg). json: 4 поля (+region), wantsManualReq, paymentMethodChange, handoff.' });
     retarget('n_np_gate', 'n_np_ask', 'n_collect', 'true');
     setData('n_np_gate', { description: 'Місто/відділення неоднозначні? TRUE → n_collect (speakFirst озвучить np.askMsg і прийме відповідь); FALSE → перевірка оплати.' });
     setData('n_size', { waitAfterPresentation: true });

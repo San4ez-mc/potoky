@@ -26,7 +26,7 @@ if(!ref){
 // звірки квитанцій (n_reconcile). Раніше бралися лише зі статичних funnelKey FOP_* (застарілий
 // ФОП). Фолбек на funnelKey, якщо CRM недоступна. Двигун для ibanoplata робить те саме.
 var fop={ name:String(keys.FOP_NAME||''), code:String(keys.FOP_CODE||''), iban:String(keys.FOP_IBAN||''), source:'funnelKey' };
-if(!context.testMode){
+if(true){ // read-only, працює і в testMode
   try{
     var base=(keys.CRM_API_BASE||'http://127.0.0.1:4700/api').replace(/\/$/,''); var apiKey=(keys.CRM_API_KEY||'').trim();
     if(apiKey){

@@ -1,0 +1,403 @@
+'use strict';
+/*
+ * Аудит воронки goverla_shop [КЛОН → Fineko CRM] (fcdee415) від 2026-09-03/04 — ВСІ фікси в
+ * одному ідемпотентному патчі. ДЖЕРЕЛО ІСТИНИ для постійних змін (fineko-funnel-standard §8,
+ * корінь 5). Разом із ним у репо: зміни двигуна (testSession.js: colorUnavailable-only не
+ * завершує ноду; HARD/SOFT handoff-regex + data.softHandoffOff; тиха пауза product_unknown;
+ * {"productMismatch":true}; вужчий return-regex до замовлення) і worker (VOLATILE_CONTEXT_KEYS).
+ *
+ * Що робить (нумерація = пункти звіту аудиту):
+ *  К1 гейт оплати перед постачальником: n_create → n_supplier_pay_gate → (confirmed | 0 грн)
+ *     n_supplier_route, інакше n_supplier_hold (алерт) → n_confirm_prep.
+ *  К2 квитанція до адреси: n_del_invoice / n_pay_notfound_msg → n_has_address_cond → n_crm_order
+ *     або n_collect; n_reconcile не звіряє двічі; n_crm_order без телефону = явна причина.
+ *  К3 cod_trust / уже підтверджена оплата: n_np_gate[false] → n_pay_check_cond → минаємо Mono.
+ *  К4 нагадування після покупки: n_followup_* видалено (таймер wait ніколи не спрацьовував, а
+ *     будь-яке повідомлення покупця тригерило "ще актуально?"); n_order_cond[false] →
+ *     n_declined_msg. Нагадування живуть у worker (checkZernioReminders).
+ *  К5 фолбеки постачальників (перший результат по артикулу/місту/відділенню/розміру) прибрано —
+ *     код із brewdrop-supplier-code.js / easydrop-offline-code.js / easydrop-cart-code.js.
+ *  К6 n_calc: розмір клієнта / числова сітка / дефолт "M" → чесна ескалація (n_calc-code.js),
+ *     sizeReplyText залежить від джерела розміру.
+ *  В7 петля "З поверненням": n_welcome_back → claude dialog + n_welcome_back_cond → n_is_set або
+ *     n_welcome_back_clear; n_post_order_cond для клієнта з оформленим замовленням.
+ *  В8 тихі кроки: speakFirst на n_order_intent/n_collect; n_upsell_cond/n_upsell_msg злито в
+ *     перше повідомлення n_order_intent; n_np_ask видалено (уточнення каже n_collect);
+ *     підпис у n_size_photo.
+ *  В9 colorUnavailable — двигун. В10 softHandoffOff на n_pay_collect. В11 n_unknown_admin раз
+ *     на сесію (n_unknown_once_cond). В12 matchNote/productMismatch (n_lookup-crm-code.js +
+ *     промпти). С14 фолбек презентації (n_lookup). С15 текст про авто в n_set_choice прибрано,
+ *     опис бота оновлено. С16 порядок ТТН/подяк: n_ttn_cond/n_ttn_client/n_final видалено,
+ *     n_confirm_prep рахує confirmLead/ttnLine. С17 чесний n_upsell2_wait без "акційної ціни".
+ *     С19 n_pay: рядок про закордон у всіх варіантах; n_pay_collect: country лише з method;
+ *     orderRef з SHOP_TAG (n_pay_amount-code.js). С23 n_reconcile: лише платежі після
+ *     orderRefAt, слабкий збіг за сумою тільки після слів "оплатив" і при одному кандидаті.
+ *     С24 Haiku на n_pay_collect/n_collect/n_recall_confirm/n_upsell2_wait/n_welcome_back.
+ *     С25 розкладка: funnelStage-ноди й нові ноди на вільних клітинках; ключі DRY_RUN=1,
+ *     мертві порожні ключі видалено. n_avail: товар без кольорів теж перевіряється
+ *     (n_avail_kind_cond → n_avail_stock_*).
+ *
+ * ЗАПУСК:  node patch-goverla-crm-audit-2026-09-04.js            (dry-run, друкує план)
+ *          node patch-goverla-crm-audit-2026-09-04.js --apply    (записує у БД)
+ *          node patch-goverla-crm-audit-2026-09-04.js --dump <file.json>  (трансформація дампу
+ *                                                      get_funnel → stdout JSON, для тестів)
+ * Ідемпотентний (маркер: нода n_supplier_pay_gate). Лише fcdee415 (goverla CRM-клон).
+ */
+const fs = require('fs');
+const path = require('path');
+
+// Обидва CRM-клони: графи однакові (різні лише ключі); covercar продає накидки на авто, тому
+// текст про "яке авто / весь салон" у n_set_choice для нього лишається (keepCarText).
+const BOTS = {
+    goverlaCrmClone: { botId: 'fcdee415-bef2-4a74-a650-e6e4b5a12322', keepCarText: false, shop: 'GOVERLA' },
+    covercarCrmClone: { botId: 'a2d5ba79-f87b-48f2-8301-56292cdf3972', keepCarText: true, shop: 'covercar' },
+};
+const BOT_ID = BOTS.goverlaCrmClone.botId;
+function optsForBot(botId) { return Object.values(BOTS).find((b) => b.botId === botId) || BOTS.goverlaCrmClone; }
+const CLAUDE_SONNET = '2ec53ba5-144e-463b-9758-c217c4a69b0e';
+const CLAUDE_HAIKU = '4a8000aa-837f-4a73-bf5c-224949ebaf9a';
+
+function readCode(f) { return fs.readFileSync(path.join(__dirname, f), 'utf8').replace(/\r\n/g, '\n').replace(/\n+$/, ''); }
+const CODE = {
+    n_lookup: () => readCode('n_lookup-crm-code.js'),
+    n_calc: () => readCode('n_calc-code.js'),
+    n_pay_amount: () => readCode('n_pay_amount-code.js'),
+    n_reconcile: () => readCode('n_reconcile-code.js'),
+    n_crm_order: () => readCode('n_crm_order-crm-code.js'),
+    n_avail: () => readCode('n_avail-code.js'),
+    n_supplier_order: () => readCode('brewdrop-supplier-code.js'),
+    n_supplier_order_ed: () => readCode('easydrop-offline-code.js'),
+    n_supplier_order_cart: () => readCode('easydrop-cart-code.js'),
+};
+
+const MATCH_NOTE_OLD = '⚠️ Товар вище вже ОДНОЗНАЧНО підтверджено системою за артикулом/кодом, який назвав клієнт — НІКОЛИ не пиши, що товар/артикул "не знайдено" чи "немає в каталозі", навіть якщо точний код не видно в описі нижче. Завжди довіряй даним про товар вище.';
+const MATCH_NOTE_NEW = '{{context.product.matchNote}}';
+
+const SET_CHOICE_CAR_OLD = 'Якщо клієнт задав РОЗМИТЕ питання про ціну (просто "скільки коштує?" без деталей) — ПЕРШИМ ділом коротко уточни: яке авто/модель і чи потрібен весь салон чи окремі сидіння, тоді відповідай конкретно. Не вивалюй одразу весь прайс-лист без контексту.';
+const SET_CHOICE_CAR_NEW = 'Якщо клієнт задав РОЗМИТЕ питання про ціну (просто "скільки коштує?") — назви ціну всього комплекту і по-товарні ціни позицій з опису вище (коротко, без зайвого), тоді спитай, весь комплект чи окрема позиція.';
+
+const PAY_INTL_LINE = '\n\n🌍 Доставка за кордон? Напишіть, будь ласка, у яку країну — підкажу умови.';
+
+const ORDER_INTENT_PROMPT = `Ти — {{env.PERSONA_NAME}}, тепла консультантка {{env.SHOP_TAG}}. Товар: {{context.product.customerName}} — {{context.product.price}} грн. Опис (для контексту, не цитуй списком): {{context.product.desc}}
+Колір, ЯКЩО узгоджено: «{{context.colorChoice.color}}» (порожньо = у товару нема вибору кольору, просто не згадуй). Розмір, ЯКЩО визначено: «{{context.recommendedSize}}» (порожньо = не згадуй).
+{{context.product.matchNote}}
+{{context.product.qtyPromoText}}
+ВАЖЛИВІ НЮАНСИ ТОВАРУ (лише для тебе, не цитуй списком): {{context.product.aiInfo}}
+КОРОТКИЙ СТАН ДІАЛОГУ: {{context.dialogStateText}}
+ДОПРОДАЖ (порожньо = нема): «{{context.product.upsell}}». {{context.product.upsellPhotoNote}}
+
+ТВОЯ ЗАДАЧА: підвести до оформлення. Коли ти починаєш першою (система просить "почни діалог сам"): ОДНЕ повідомлення — короткий підсумок (товар, колір/розмір якщо є, ціна) і РІВНО ОДНЕ питання:
+- ДОПРОДАЖ порожній → «Оформляємо замовлення? 🙂»
+- ДОПРОДАЖ є → «Оформляємо? І підкажіть: додати ще {{context.product.upsell}} до цієї ж посилки, чи лише основний товар?» (одне рішення з двома варіантами, НЕ два окремі питання).
+Акцію за кількість (якщо рядок вище непорожній і клієнт не називав кількість) згадай ОДИН раз у підсумку, ненав'язливо.
+
+ФОРМАТ json_output (СУВОРО, лише коли клієнт ВІДПОВІВ на твоє питання):
+- Явна згода (так/да/давай/оформляй/+/ок/хочу/беру, «так, з допродажем», «тільки основний») → у КІНЦІ рівно {"ready":"yes"}. Якщо клієнт погодився ДОДАТИ допродаж → {"ready":"yes","addUpsell":true}. Якщо називав кількість → додай "qty":<число>.
+- Явна остаточна відмова (ні/не хочу/не буду/скасуйте/не треба) → {"ready":"no"}.
+- Вагається («подумаю», «пізніше», «пораджусь», «якщо встигнете відправити») — це НЕ відмова: БЕЗ JSON, тепло наведи ОДИН реальний аргумент оформити сьогодні (черга на відправку, раніше отримаєте, акція діє зараз) і знову спитай «Оформляємо сьогодні?».
+- Інше питання (доставка, склад, розмір, оплата) → відповідай ЗВИЧАЙНИМ ТЕКСТОМ з даних вище, потім знову «Оформляємо?». Без JSON.
+- Просить фото допродажу → {"wantsUpsellPhoto":true} (можна разом з іншими полями), лише якщо фото є за нотаткою вище.
+ЗАБОРОНЕНО писати {"ready":"pending"}, {"ready":"waiting"} чи інші значення ready — їх не існує. Коротке «так/+» у відповідь на «Оформляємо?» = yes.
+Про СПОСІБ оплати відповідай РІВНО одним реченням, без списку й цифр: «Оплата гнучка — можна частину зараз і решту при отриманні, або одразу повністю; на наступному кроці зручно оберете 🙂». Деталі дає наступний крок.
+Просить живу людину/менеджера, або питання СПРАВДІ поза даними (гарантія, міжнародна доставка, знижки, претензія, скарга) → {"handoff":true} (без ready).
+НЕ вигадуй розміри/характеристики/колір, яких немає вище. Не згадуй сайтів/кошиків. Кожне повідомлення закінчуй питанням або чітким наступним кроком. Українською, на «ви», тепло і по справі.`;
+
+const COLLECT_PROMPT = `Ти — {{env.PERSONA_NAME}}, консультантка {{env.SHOP_TAG}}. Збери дані доставки Новою Поштою: ПІБ (2 слова достатньо, по-батькові НЕ вимагай), ТЕЛЕФОН, МІСТО, № ВІДДІЛЕННЯ або поштомата.
+КОРОТКИЙ СТАН ДІАЛОГУ: {{context.dialogStateText}}
+ВЖЕ ВІДОМО (порожнє = ще нема, не вигадуй): ПІБ «{{context.orderData.fullName}}», телефон «{{context.orderData.phone}}», місто «{{context.orderData.city}}», відділення «{{context.orderData.branch}}».
+СТАТУС ОПЛАТИ (виставляє код): «{{context.payStatus}}» — "confirmed" = оплату вже отримали; порожньо або not_found = ще не бачимо. Сума: {{context.payAmount}} грн ({{context.payLabel}}).
+УТОЧНЕННЯ ВІД НОВОЇ ПОШТИ (порожньо = нема): «{{context.np.askMsg}}»
+
+Коли ти починаєш першою (система просить "почни діалог сам"):
+- якщо УТОЧНЕННЯ непорожнє — напиши ЛИШЕ його (тепло, своїми словами) і чекай відповідь;
+- інакше якщо статус "confirmed" — «Оплату отримали ✅» і попроси ті поля, яких ще нема;
+- інакше — коротко: поки оплачуєте за посиланням вище, напишіть дані для відправки (перелічи лише відсутні поля). Реквізити не повторюй.
+Одне повідомлення — одне прохання. Якщо чогось бракує — тепло попроси саме це.
+Коли відомі ВСІ 4 поля (з повідомлення клієнта або з блоку ВЖЕ ВІДОМО плюс його відповідь) — НЕ перепитуй підтвердження, НЕ пиши видимого тексту, одразу поверни ТІЛЬКИ json_output {"fullName":"...","phone":"...","city":"...","branch":"..."}; якщо клієнт назвав область — додай "region":"...". Відповідь на УТОЧНЕННЯ (область / точна назва / номер) → той самий JSON з оновленими city/region/branch.
+Просить реквізити вручну (IBAN/ЄДРПОУ/«як оплатити вручну») → РІВНО {"wantsManualReq":true}, без тексту.
+Пише, що оплатив, або описує чек текстом → подякуй, скажи, що звіримо після отримання даних, і попроси відсутні поля (без JSON, поки полів бракує).
+Передумав спосіб оплати («краще 1», «хочу повністю», «краще накладений») → РІВНО {"paymentMethodChange":"cod"} або {"paymentMethodChange":"full"}.
+Інше питання → коротко відповідай текстом з відомих даних, потім знову попроси відсутні поля.
+Явно просить живу людину → {"handoff":true}. Не згадуй сайтів. Українською, на «ви», тепло.`;
+
+const WELCOME_BACK_PROMPT = `Ти — {{env.PERSONA_NAME}}, консультантка {{env.SHOP_TAG}}. Клієнт повернувся після паузи. Раніше він цікавився: {{context.product.customerName}} — {{context.product.price}} грн. {{context.product.matchNote}}
+КОРОТКИЙ СТАН ДІАЛОГУ: {{context.dialogStateText}}
+Відповідай на його повідомлення по суті (коротко, з даних вище) і зʼясуй одне: цей товар ще актуальний чи цікавить щось інше. Якщо з повідомлення це вже зрозуміло — НЕ перепитуй.
+json_output (СУВОРО, лише коли зрозуміло):
+- товар актуальний / хоче продовжити (так, актуально, хочу замовити, який розмір є, скільки коштує, а є в наявності) → {"stillInterested":true}
+- не актуально / інший товар / просто прощається → {"stillInterested":false}; у тексті попроси скинути пост або артикул, якщо цікавить щось інше.
+- просить живу людину/менеджера → {"handoff":true}
+Не вигадуй товарів, кольорів, цін. Одне питання за раз. Українською, на «ви», тепло.`;
+
+const UPSELL2_PROMPT = `Клієнт щойно оформив замовлення ({{context.product.customerName}}). Ти — {{env.PERSONA_NAME}}, {{env.SHOP_TAG}}. Це ОДНА коротка відповідь на його повідомлення, не діалог.
+- Дякує / прощається → щиро подякуй за замовлення й побажай гарного дня.
+- Питає про статус, ТТН, терміни → ТТН надішлемо в цей чат після відправки; терміни — за Новою Поштою; не вигадуй дат.
+- Хоче додати ще товар → попроси скинути пост/рілс або артикул: менеджер додасть до цієї ж посилки, якщо ще не відправили.
+- Пише про оплату/чек → подякуй, команда звірить і напише; НЕ стверджуй «підтверджено», «зарахували» — ти цього не бачиш.
+ЗАВЖДИ додай json_output рівно {"done":true}. Виняток: просить живу людину → ТІЛЬКИ {"handoff":true}. Українською, на «ви», одним-двома реченнями. Жодних службових токенів.`;
+
+const PAY_COLLECT_COUNTRY_OLD = 'ЯКЩО клієнт називає КРАЇНУ доставки (не Україна) — це важливо, додай у ТОЙ САМИЙ json_output ще й поле "country":"<назва країни українською>" (разом з method, якщо метод теж зрозумілий; якщо метод ще не називав — просто {"country":"<країна>"} окремо, наступний крок сам розбереться з оплатою для міжнародної доставки).';
+const PAY_COLLECT_COUNTRY_NEW = 'ЯКЩО клієнт називає КРАЇНУ доставки за кордон (НЕ Україну — Україна/укр. міста це не "country", поле не додавай) — додай у ТОЙ САМИЙ json_output поле "country":"<назва країни українською>" РАЗОМ з method. Для закордону доступна лише повна передоплата — тому якщо клієнт назвав країну, але не спосіб, поверни {"method":"full","country":"<країна>"} і НЕ перепитуй спосіб. Ніколи не повертай JSON лише з country без method.';
+
+const CONFIRM_TEXT = `{{context.confirmLead}}
+
+{{context.np.summary}}{{context.ttnLine}}
+Якщо захочете додати щось до цієї ж посилки — напишіть до відправки, підкажу 😊{{context.product.footwearNote}}`;
+
+const CONFIRM_PREP_CODE = `// n_confirm_prep — рахує вступ n_confirm залежно від статусу оплати і рядок про ТТН
+// (аудит 2026-09-04: раніше "посилка вже їде, ТТН" йшло ПЕРЕД "ТТН надішлемо пізніше",
+// а "ми вже оформили" — навіть коли оплату не знайдено).
+function pick(a){ return a[Math.floor(Math.random()*a.length)]; }
+var paid = context.payStatus === 'confirmed' || Number(context.payAmount) === 0;
+var lead = paid
+  ? pick(['Дякуємо за замовлення — ви супер! 🎉 Ми вже його оформили 💛', 'Дякуємо за замовлення! 🎉 Уже все оформили 💛', 'Ура, замовлення оформлене! 🎉 Дякуємо, що обрали нас 💛'])
+  : pick(['Дякуємо! 🎉 Замовлення зафіксували — щойно побачимо оплату, одразу передамо у відправку 💛', 'Дякуємо! 🎉 Дані отримали, замовлення в системі — після підтвердження оплати одразу відправляємо 💛']);
+var ttn = String(context.supplierTtn || '');
+var ttnLine = ttn.length > 3
+  ? '🚚 Посилка вже в дорозі! Номер накладної (ТТН): ' + ttn + ' — відстежити можна на Новій Пошті 📦'
+  : 'Номер накладної (ТТН) надішлемо прямо сюди, щойно передамо посилку Новій Пошті 📦';
+return { confirmLead: lead, ttnLine: ttnLine };`;
+
+// ── розкладка: сітка 360×200, нові/переміщені ноди на вільних клітинках ──
+const GX = 360, GY = 200;
+function makePlacer(nodes) {
+    const occ = new Map();
+    const key = (n) => Math.round(n.position.x / GX) + ':' + Math.round(n.position.y / GY);
+    nodes.forEach((n) => occ.set(key(n), (occ.get(key(n)) || 0) + 1));
+    return {
+        free(id) { const n = nodes.find((x) => x.id === id); if (!n) return; const k = key(n); const c = (occ.get(k) || 0) - 1; if (c <= 0) occ.delete(k); else occ.set(k, c); },
+        place(x, y) {
+            const cx = Math.round(x / GX), cy = Math.round(y / GY);
+            for (let r = 0; r < 12; r++) {
+                for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+                    const k = (cx + dx) + ':' + (cy + dy);
+                    if (!occ.has(k) && cx + dx >= 0 && cy + dy >= 0) { occ.set(k, 1); return { x: (cx + dx) * GX, y: (cy + dy) * GY }; }
+                }
+            }
+            return { x, y };
+        },
+    };
+}
+
+function transform(flow, keysMap, opts) {
+    opts = opts || {};
+    const notes = [];
+    let nodes = flow.nodes.map((n) => ({ ...n, data: { ...n.data } }));
+    let edges = flow.edges.map((e) => ({ ...e }));
+    if (nodes.some((n) => n.id === 'n_supplier_pay_gate')) return { alreadyApplied: true };
+
+    const byId = () => Object.fromEntries(nodes.map((n) => [n.id, n]));
+    const pos = (id) => (byId()[id] || { position: { x: 0, y: 0 } }).position;
+    const removeNode = (id) => { nodes = nodes.filter((n) => n.id !== id); edges = edges.filter((e) => e.source !== id && e.target !== id); notes.push('− нода ' + id); };
+    const removeEdge = (s, t, h) => { edges = edges.filter((e) => !(e.source === s && e.target === t && (h === undefined || (e.sourceHandle || null) === h))); };
+    const addEdge = (s, t, h) => { const e = { id: 'e_' + s + '_' + t + (h ? '_' + h : ''), source: s, target: t }; if (h) e.sourceHandle = h; edges.push(e); };
+    const retarget = (s, oldT, newT, h) => { let hit = 0; edges = edges.map((e) => { if (e.source === s && e.target === oldT && (h === undefined || (e.sourceHandle || null) === h)) { hit++; return { ...e, target: newT }; } return e; }); if (!hit) notes.push('⚠️ ребро не знайдено: ' + s + ' → ' + oldT); };
+    const setData = (id, patch) => { const n = byId()[id]; if (!n) { notes.push('⚠️ нода відсутня: ' + id); return; } Object.assign(n.data, patch); };
+    const replaceInPrompt = (id, oldS, newS, label) => { const n = byId()[id]; if (!n) return; const sp = String(n.data.systemPrompt || ''); if (!sp.includes(oldS)) { if (label === 'matchNote' && !sp.includes(newS)) { n.data.systemPrompt = sp.replace(/\n/, '\n' + newS + '\n'); notes.push('ℹ️ ' + id + ': matchNote додано рядком (старий фрагмент не знайдено)'); return; } notes.push('⚠️ ' + id + ': не знайдено фрагмент ' + (label || '')); return; } n.data.systemPrompt = sp.split(oldS).join(newS); };
+
+    // ── видалення: ноди прибираємо НАПРИКІНЦІ (щоб retarget бачив старі ребра); placer їх не рахує ──
+    const REMOVE = ['n_followup_wait', 'n_followup_guard', 'n_followup_cond', 'n_followup_msg', 'n_followup_skip', 'n_upsell_cond', 'n_upsell_msg', 'n_np_ask', 'n_ttn_cond', 'n_ttn_client', 'n_final'];
+
+    const placer = makePlacer(nodes.filter((n) => !REMOVE.includes(n.id)));
+    const addNode = (id, type, data, nearX, nearY) => { const p = placer.place(nearX, nearY); nodes.push({ id, type, position: p, data }); notes.push('+ нода ' + id + ' @' + p.x + ',' + p.y); return p; };
+
+    // ── коди нод із файлів ──
+    for (const [id, get] of Object.entries(CODE)) setData(id, { code: get() });
+    setData('n_lookup', { label: '1. Товар по ad-id / артикулу / фото (Fineko CRM)' });
+    setData('n_crm_order', { label: '12.5 Створити замовлення у Fineko CRM' });
+
+    // ── К1 гейт оплати перед постачальником ──
+    retarget('n_create', 'n_supplier_route', 'n_supplier_pay_gate');
+    addNode('n_supplier_pay_gate', 'condition', {
+        label: '13.3 Оплата підтверджена (або 0 грн)?',
+        condition: "context.payStatus === 'confirmed' || Number(context.payAmount) === 0",
+        description: 'TRUE → авто-замовлення постачальнику. FALSE (оплату у виписці не знайдено) → постачальнику НЕ шлемо, сигнал менеджеру, клієнту — підтвердження без "вже оформили".',
+    }, pos('n_supplier_route').x - GX, pos('n_supplier_route').y);
+    addEdge('n_supplier_pay_gate', 'n_supplier_route', 'true');
+    addNode('n_supplier_hold', 'notifyTg', {
+        label: '13.3b Постачальнику НЕ відправлено — чекаємо оплату',
+        targetKey: 'ADMIN_TELEGRAM_ID',
+        message: '⏸ <b>Постачальнику НЕ відправлено — оплата ще не підтверджена</b>\n\n🧾 Замовлення: {{context.orderRef}} | CRM: {{context.crmOrderId}} | сума {{context.payAmount}} грн ({{context.payLabel}})\n🛍️ Товар: {{context.product.name}} | 📏 {{context.recommendedSize}} | 🎨 {{context.colorChoice.color}}\n👤 {{context.orderData.fullName}}, {{context.orderData.phone}} — {{context.orderData.city}}, НП {{context.orderData.branch}}\n\n➡️ Після надходження оплати оформіть постачальнику вручну.',
+        description: 'Замовлення в CRM створено як неоплачене; постачальнику нічого не пішло (гейт n_supplier_pay_gate).',
+    }, pos('n_supplier_route').x - GX, pos('n_supplier_route').y + GY);
+    addEdge('n_supplier_pay_gate', 'n_supplier_hold', 'false');
+
+    // ── С16 підтвердження: n_confirm_prep перед n_confirm; ТТН-ноди й n_final прибрано ──
+    addNode('n_confirm_prep', 'js', { label: '13.85 Вступ підтвердження + рядок ТТН', code: CONFIRM_PREP_CODE, description: 'confirmLead (оплачено / чекаємо оплату) і ttnLine (ТТН є / надішлемо) для n_confirm.' }, pos('n_confirm').x - GX, pos('n_confirm').y);
+    addEdge('n_supplier_hold', 'n_confirm_prep');
+    retarget('n_ttn_sync_crm', 'n_ttn_cond', 'n_confirm_prep');
+    retarget('n_supplier_manual', 'n_confirm', 'n_confirm_prep');
+    addEdge('n_confirm_prep', 'n_confirm');
+    setData('n_confirm', { text: CONFIRM_TEXT, variants: [], description: 'Підсумкове підтвердження: вступ залежить від статусу оплати (confirmLead), рядок ТТН — від наявності ТТН (ttnLine). Без обіцянок "акційної ціни".' });
+    removeEdge('n_confirm', 'n_upsell2_wait');
+    addEdge('n_confirm', 'n_fs5');
+    addEdge('n_fs5', 'n_upsell2_wait');
+    setData('n_upsell2_wait', { systemPrompt: UPSELL2_PROMPT, connectorId: CLAUDE_HAIKU, label: '15. Після замовлення — одна відповідь', description: 'Одна чесна відповідь після оформлення (статус/ТТН/додати товар/чек). Термінальна: далі клієнт потрапляє в n_post_order_cond.' });
+
+    // ── К2/К3 оплата ↔ адреса ──
+    addNode('n_pay_check_cond', 'condition', {
+        label: '12.65 Оплату вже підтверджено або 0 грн?',
+        condition: "context.payStatus === 'confirmed' || Number(context.payAmount) === 0",
+        description: 'TRUE (квитанція вже звірена раніше, або виняток довіри без передоплати) → минаємо виписку Mono. FALSE → звірка як завжди.',
+    }, pos('n_mono_fetch').x - GX, pos('n_mono_fetch').y);
+    retarget('n_np_gate', 'n_mono_fetch', 'n_pay_check_cond', 'false');
+    addEdge('n_pay_check_cond', 'n_mono_fetch', 'false');
+    addNode('n_has_address_cond', 'condition', {
+        label: '12.96 Адреса вже зібрана?',
+        condition: 'context.orderData && context.orderData.phone && context.orderData.fullName && context.orderData.city',
+        description: 'TRUE → створюємо замовлення в CRM. FALSE (квитанція прийшла раніше за адресу) → n_collect збирає дані, потім повертаємось сюди через n_np_gate/n_pay_check_cond.',
+    }, pos('n_crm_order').x - GX, pos('n_crm_order').y);
+    addEdge('n_pay_check_cond', 'n_has_address_cond', 'true');
+    retarget('n_del_invoice', 'n_crm_order', 'n_has_address_cond');
+    retarget('n_pay_notfound_msg', 'n_crm_order', 'n_has_address_cond');
+    addEdge('n_has_address_cond', 'n_crm_order', 'true');
+    addEdge('n_has_address_cond', 'n_collect', 'false');
+    // n_pay_notfound_admin — раз на сесію
+    retarget('n_pay_status_cond', 'n_pay_notfound_admin', 'n_pay_notfound_once_cond', 'false');
+    addNode('n_pay_notfound_once_cond', 'condition', { label: '12.955 Сигнал про ненайдену оплату ще не слали?', condition: '!context.payNotFoundNotified', description: 'TRUE → алерт менеджеру (один раз). FALSE → лише повідомлення клієнту.' }, pos('n_pay_notfound_admin').x + GX, pos('n_pay_notfound_admin').y - GY);
+    addEdge('n_pay_notfound_once_cond', 'n_pay_notfound_admin', 'true');
+    addEdge('n_pay_notfound_once_cond', 'n_pay_notfound_msg', 'false');
+    retarget('n_pay_notfound_admin', 'n_pay_notfound_msg', 'n_pay_notfound_mark');
+    addNode('n_pay_notfound_mark', 'js', { label: '12.965 Позначити: сигнал надіслано', code: 'return { payNotFoundNotified: true };', description: 'Щоб повторна звірка (після адреси/чека) не дублювала алерт.' }, pos('n_pay_notfound_admin').x + GX, pos('n_pay_notfound_admin').y);
+    addEdge('n_pay_notfound_mark', 'n_pay_notfound_msg');
+    setData('n_pay_notfound_admin', {
+        message: '⚠️ <b>Оплату поки не знайдено у виписці Mono</b>\n\n🧾 Замовлення: {{context.orderRef}} | сума {{context.payAmount}} грн ({{context.payLabel}})\n👤 Клієнт: {{context.senderName}} ({{context.igUsername}})\n🛍️ Товар: {{context.product.name}} / {{context.recommendedSize}} / {{context.colorChoice.color}}\n💬 Останнє: «{{context.lastCustomerMessage}}»\n\n🔍 Якщо клієнт скине чек — звірка повториться сама. Постачальнику без оплати не піде (гейт).',
+        description: 'Оплату не знайдено (клієнт дав адресу або чек, у виписці збігу нема) — один раз на сесію.',
+    });
+    setData('n_pay_notfound_msg', { text: 'Дякую! 🙌 Оплату поки не бачу у виписці — щойно надійде, підтверджу і передам у відправку. Якщо вже оплатили — скиньте, будь ласка, чек або скрін, так швидше 🙂', description: 'Клієнту: оплату ще не бачимо (чесно, без "перевіряємо вручну" як факту).' });
+    setData('n_pay_status_cond', { description: 'Оплату знайдено у виписці? TRUE → антидубль, видалення лінка, далі адреса/CRM. FALSE → сигнал (раз) + повідомлення клієнту, далі адреса/CRM без постачальника.' });
+    setData('n_trust_confirm_msg', { text: 'Домовились! 🤝 Оформлюємо без передоплати — накладним платежем повністю при отриманні. Дякуємо за довіру 💛' });
+
+    // ── К4 нагадування/відмова ──
+    retarget('n_order_cond', 'n_followup_wait', 'n_declined_msg', 'false');
+    addNode('n_declined_msg', 'message', { label: '9.5 Відмова — без тиску', text: 'Добре, без тиску 🙂 Якщо передумаєте або зʼявляться питання щодо «{{context.product.customerName}}» — просто напишіть, я поруч 💛', variants: [], description: 'Термінальна. Наступне повідомлення клієнта піде через n_welcome_back (claude) — "ще актуально?". Нагадування — worker checkZernioReminders.' }, pos('n_order_cond').x, pos('n_order_cond').y + GY);
+    removeEdge('n_fs5', 'n_followup_wait');
+
+    // ── В8 допродаж у першому повідомленні n_order_intent; speakFirst ──
+    retarget('n_avail_cond', 'n_upsell_cond', 'n_order_intent', 'true');
+    setData('n_order_intent', { systemPrompt: ORDER_INTENT_PROMPT, speakFirst: true, messagesTemplate: '', label: '9. Підсумок + допродаж + намір замовити', description: 'speakFirst: сама підсумовує і питає "Оформляємо?" (з допродажем як одним рішенням). json: ready yes/no (+addUpsell, qty), wantsUpsellPhoto, handoff.' });
+    setData('n_collect', { systemPrompt: COLLECT_PROMPT, speakFirst: true, connectorId: CLAUDE_HAIKU, label: '12. Збір адреси (speakFirst, знає статус оплати)', description: 'speakFirst: одразу просить відсутні поля; знає статус оплати та уточнення НП (np.askMsg). json: 4 поля (+region), wantsManualReq, paymentMethodChange, handoff.' });
+    retarget('n_np_gate', 'n_np_ask', 'n_collect', 'true');
+    setData('n_np_gate', { description: 'Місто/відділення неоднозначні? TRUE → n_collect (speakFirst озвучить np.askMsg і прийме відповідь); FALSE → перевірка оплати.' });
+    setData('n_size', { waitAfterPresentation: true });
+    { const n = byId()['n_color']; if (n && !/"size":"<РОЗМІР>"/.test(n.data.systemPrompt || '')) n.data.systemPrompt = String(n.data.systemPrompt || '') + '\nЯКЩО клієнт на цьому кроці ЯВНО називає ІНШИЙ розмір, ніж рекомендований («я ношу L», «дайте M») — не сперечайся: у json_output разом із color додай "size":"<РОЗМІР>" (великими літерами, лише з розмірів товару: {{context.product.sizes}}); якщо кольору ще не назвав — лише {"size":"<РОЗМІР>"} НЕ повертай, спершу спитай колір і поверни обидва разом.'; }
+    setData('n_req_iban_v', { text: '{{context.fop.iban}}', description: 'IBAN активного ФОП з CRM (context.fop, ставить n_pay_amount; фолбек — funnelKey FOP_IBAN).' });
+    setData('n_req_code_v', { text: '{{context.fop.code}}', description: 'ЄДРПОУ/ІПН активного ФОП з CRM (context.fop).' });
+    setData('n_req_name_v', { text: '{{context.fop.name}}', description: 'Назва активного ФОП з CRM (context.fop).' });
+    { const n = byId()['n_requisites']; if (n) { const AMT = '💰 До сплати зараз: {{context.payAmount}} грн ({{context.payLabel}}).\n\n'; n.data.text = AMT + String(n.data.text || ''); n.data.variants = (n.data.variants || []).map((v) => (v.includes('До сплати зараз') ? v : AMT + v)); } }
+    setData('n_size_photo', { caption: 'Ось розмірна сітка 📏 Якщо потрібно, підкажіть зріст і вагу — підберу точно 🙂' });
+    setData('n_size_reply', { text: '{{context.sizeReplyText}}{{context.sizeColorFollowup}}', variants: [], description: 'Текст готує n_calc (sizeReplyText: за сіткою / клієнт назвав сам / точний вимір) + питання про колір, якщо є вибір.' });
+
+    // ── В7 повернення / після замовлення ──
+    setData('n_welcome_back', { label: '1.95 Повернення: ще актуально? (claude)', mode: 'dialog', systemPrompt: WELCOME_BACK_PROMPT, exitCondition: 'json_output', outputVar: 'welcomeBack', connectorId: CLAUDE_HAIKU, temperature: 0.3, speakFirst: true, description: 'Клієнт повернувся без нового сигналу товару: відповідає по суті, зʼясовує актуальність. json: stillInterested true/false, handoff.' });
+    { const n = byId()['n_welcome_back']; if (n) { n.type = 'claude'; delete n.data.text; delete n.data.variants; } }
+    addNode('n_welcome_back_cond', 'condition', { label: '1.96 Товар ще актуальний?', condition: 'context.welcomeBack && context.welcomeBack.stillInterested === true', description: 'TRUE → продовжуємо з того ж товару (n_is_set → розмір/колір/оформлення). FALSE → скидаємо товар, чекаємо пост/артикул.' }, pos('n_welcome_back').x, pos('n_welcome_back').y + GY);
+    addEdge('n_welcome_back', 'n_welcome_back_cond');
+    addEdge('n_welcome_back_cond', 'n_is_set', 'true');
+    addNode('n_welcome_back_clear', 'js', { label: '1.97 Товар не актуальний — скинути', code: "return { product: null, sharedPost: null, entryAd: '', entryAdId: '', colorChoice: null, sizeInput: null, recommendedSize: '', orderIntent: null, welcomeBack: null, adminEngaged: true, handoffKind: 'product_unknown' };", description: 'Скидає товарний скоуп; стан як після n_unknown_stop — наступний пост/артикул підхопиться зі старту.' }, pos('n_welcome_back').x + GX, pos('n_welcome_back').y + GY);
+    addEdge('n_welcome_back_cond', 'n_welcome_back_clear', 'false');
+    retarget('n_lookup', 'n_returning_check', 'n_post_order_cond');
+    addNode('n_post_order_cond', 'condition', { label: '1.85 Пише після оформленого замовлення?', condition: 'context.crmOrderId && !context.hasFreshSignalThisTurn', description: 'TRUE → статус + сигнал менеджеру (не питаємо "ще актуально?" у покупця). FALSE → звичайний шлях.' }, pos('n_lookup').x + GX, pos('n_lookup').y);
+    addEdge('n_post_order_cond', 'n_returning_check', 'false');
+    addNode('n_post_order_msg', 'message', { label: '1.86 Замовлення в роботі', text: 'Ваше замовлення в роботі 💛 {{context.ttnLine}}\nПередала ваше повідомлення менеджеру — відповість найближчим часом. Якщо хочете щось додати до посилки — скиньте пост або артикул 🙂', variants: [], description: 'Клієнт написав після оформлення (до автоскидання сесії воркером).' }, pos('n_lookup').x + 2 * GX, pos('n_lookup').y);
+    addEdge('n_post_order_cond', 'n_post_order_msg', 'true');
+    addNode('n_post_order_admin', 'notifyTg', { label: '1.87 Сигнал: клієнт пише після замовлення', targetKey: 'ADMIN_TELEGRAM_ID', message: '💬 <b>Клієнт написав після оформлення</b> — замовлення {{context.orderRef}} (CRM {{context.crmOrderId}})\n\n👤 {{context.senderName}} ({{context.igUsername}})\n💬 «{{context.lastCustomerMessage}}»', description: 'Термінальна після повідомлення: менеджер відповідає в Instagram.' }, pos('n_lookup').x + 3 * GX, pos('n_lookup').y);
+    addEdge('n_post_order_msg', 'n_post_order_admin');
+
+    // ── В11 сигнал про невідомий товар — раз на сесію ──
+    retarget('n_unknown_notify_gate', 'n_unknown_admin', 'n_unknown_once_cond', 'true');
+    addNode('n_unknown_once_cond', 'condition', { label: '1c.6 Сигнал ще не слали?', condition: '!context.unknownNotifiedAt', description: 'TRUE → алерт менеджеру (один на сесію). FALSE → тихо в паузу.' }, pos('n_unknown_admin').x - GX, pos('n_unknown_admin').y);
+    addEdge('n_unknown_once_cond', 'n_unknown_admin', 'true');
+    addEdge('n_unknown_once_cond', 'n_unknown_stop', 'false');
+    retarget('n_unknown_admin', 'n_unknown_stop', 'n_unknown_mark');
+    addNode('n_unknown_mark', 'js', { label: '1c.7 Позначити: сигнал надіслано', code: 'return { unknownNotifiedAt: new Date().toISOString() };' }, pos('n_unknown_admin').x - GX, pos('n_unknown_admin').y + GY);
+    addEdge('n_unknown_mark', 'n_unknown_stop');
+
+    // ── n_avail: товар без кольорів закінчився ──
+    retarget('n_avail_cond', 'n_avail_no', 'n_avail_kind_cond', 'false');
+    addNode('n_avail_kind_cond', 'condition', { label: '6.55 Закінчився сам товар (не колір)?', condition: "context.availReason === 'no_stock'", description: 'TRUE → товар без варіантів кольору розпродано: менеджер. FALSE → нема кольору: просимо інший (n_avail_no).' }, pos('n_avail_no').x - GX, pos('n_avail_no').y);
+    addEdge('n_avail_kind_cond', 'n_avail_no', 'false');
+    addNode('n_avail_stock_msg', 'message', { label: '6.56 Товар закінчився', text: 'Ой, саме цей товар зараз закінчився 😔 Покличу менеджера — він уточнить, коли буде поставка, і напише сюди. Якщо тим часом цікавить щось інше — скиньте пост або артикул 🙂', variants: [] }, pos('n_avail_no').x - 2 * GX, pos('n_avail_no').y);
+    addEdge('n_avail_kind_cond', 'n_avail_stock_msg', 'true');
+    addNode('n_avail_stock_admin', 'notifyTg', { label: '6.57 Сигнал: товар закінчився', targetKey: 'ADMIN_TELEGRAM_ID', message: '📦 <b>ТОВАР ЗАКІНЧИВСЯ</b> (за залишками offers у CRM) — клієнт чекає\n\n👤 {{context.senderName}} ({{context.igUsername}})\n🛍️ {{context.product.name}} | розмір {{context.recommendedSize}}' }, pos('n_avail_no').x - 2 * GX, pos('n_avail_no').y + GY);
+    addEdge('n_avail_stock_msg', 'n_avail_stock_admin');
+    addNode('n_avail_stock_stop', 'js', { label: '6.58 Пауза бота', code: "return { adminEngaged: true, handoffReason: 'no_stock' };" }, pos('n_avail_no').x - 2 * GX, pos('n_avail_no').y + 2 * GY);
+    addEdge('n_avail_stock_admin', 'n_avail_stock_stop');
+    setData('n_avail_cond', { description: 'Товар у наявності? TRUE → підсумок і намір замовити (n_order_intent). FALSE → n_avail_kind_cond (колір / весь товар).' });
+
+    // ── промпти: matchNote, авто в n_set_choice, n_pay_collect ──
+    ['n_size', 'n_color', 'n_set_choice'].forEach((id) => replaceInPrompt(id, MATCH_NOTE_OLD, MATCH_NOTE_NEW, 'matchNote'));
+    if (!opts.keepCarText) replaceInPrompt('n_set_choice', SET_CHOICE_CAR_OLD, SET_CHOICE_CAR_NEW, 'авто/салон');
+    replaceInPrompt('n_pay_collect', PAY_COLLECT_COUNTRY_OLD, PAY_COLLECT_COUNTRY_NEW, 'country');
+    setData('n_pay_collect', { softHandoffOff: true, connectorId: CLAUDE_HAIKU, description: 'Визначає спосіб оплати (1/2, country лише з method). softHandoffOff: слова "обман/шахраї/не прийшло" не перехоплює двигун — нода веде сценарій винятку довіри (cod_trust).' });
+    setData('n_recall_confirm', { connectorId: CLAUDE_HAIKU });
+    // covercar-клон: n_intl_unsupported_admin без targetKey (сповіщення йшло б у системний чат — антипатерн A6)
+    if (byId()['n_intl_unsupported_admin']) setData('n_intl_unsupported_admin', { targetKey: 'ADMIN_TELEGRAM_ID' });
+    { const n = byId()['n_pay']; if (n) { n.data.variants = (n.data.variants || []).map((v) => (v.includes('Доставка за кордон') ? v : v + PAY_INTL_LINE)); } }
+    setData('n_create', { message: '🎉 <b>НОВЕ ЗАМОВЛЕННЯ #{{context.crmOrderId}}</b>\n\n🛍️ Товар: {{context.product.name}}\n🔖 Артикул: {{context.orderSku}}\n📏 Розмір: {{context.recommendedSize}} | 🎨 Колір: {{context.colorChoice.color}}\n💳 Оплата: {{context.payLabel}} — статус у виписці: {{context.payStatus}}\n\n👤 Клієнт: {{context.senderName}} — https://instagram.com/{{context.igUsername}}\n📦 Отримувач: {{context.orderData.fullName}}, {{context.orderData.phone}}\n📍 Адреса: {{context.orderData.city}}, НП {{context.orderData.branch}}\n🏭 Постачальник: {{context.supplier}}' });
+
+    // ── розкладка funnelStage-нод (лежали поверх інших) ──
+    [['n_fs1', 'n_welcome'], ['n_fs2', 'n_calc'], ['n_fs3', 'n_color'], ['n_fs4', 'n_pay_collect'], ['n_fs5', 'n_confirm'], ['n_fs6', 'n_supplier_notify']].forEach(([fs, near]) => {
+        const n = byId()[fs]; if (!n) return; placer.free(fs); const p = placer.place(pos(near).x + GX, pos(near).y); n.position = p; notes.push('↔ ' + fs + ' → ' + p.x + ',' + p.y);
+    });
+    { const n = byId()['n_ttn_sync_crm']; if (n) { placer.free('n_ttn_sync_crm'); n.position = placer.place(n.position.x, n.position.y); } }
+
+    REMOVE.forEach(removeNode);
+
+    // ── ключі ──
+    const keyUpdates = [
+        { key: 'BREWDROP_DRY_RUN', value: '1', label: 'DRY-RUN замовлень brewdrop (1 = не відправляти; у бій лише з дозволу власника)' },
+        { key: 'EASYDROP_DRY_RUN', value: '1', label: 'DRY-RUN easydrop офлайн-форма' },
+        { key: 'EASYDROP_CART_DRY_RUN', value: '1', label: 'DRY-RUN easydrop-кошик' },
+    ];
+    const keyDeletes = ['DEFAULT_AD_ID', 'EASYDROP_SUPPLIER_ID', 'EASYDROP_SUPPLIER_NAME'].filter((k) => keysMap && k in keysMap && !String(keysMap[k] || '').trim());
+
+    const description = 'Instagram/Zernio-воронка продажів (' + (opts.shop || 'GOVERLA') + '), переведена на нову Fineko CRM (ключі CRM_API_*). Станом на 2026-09-04 ще НЕ підключений до реального трафіку; постачальники у DRY-RUN (BREWDROP_DRY_RUN / EASYDROP_*_DRY_RUN = 1) до явного дозволу власника. Аудит-фікси 2026-09-04 (patch-goverla-crm-audit-2026-09-04.js): гейт оплати перед постачальником, квитанція до адреси, cod_trust без звірки, нагадування після покупки прибрано, петля «З поверненням», тихі кроки (speakFirst), colorUnavailable, розмір поза літерною сіткою, фолбеки постачальників.';
+
+    return { nodes, edges, keyUpdates, keyDeletes, description, notes };
+}
+
+async function main() {
+    const argv = process.argv.slice(2);
+    const dumpIdx = argv.indexOf('--dump');
+    if (dumpIdx >= 0) {
+        const d = JSON.parse(fs.readFileSync(argv[dumpIdx + 1], 'utf8'));
+        const keysMap = Object.fromEntries((d.keys || []).map((k) => [k.key, k.value]));
+        const r = transform({ nodes: d.nodes, edges: d.edges }, keysMap, optsForBot(d.bot && d.bot.id));
+        process.stdout.write(JSON.stringify(r));
+        return;
+    }
+    const APPLY = argv.includes('--apply');
+    const { db } = require('@platform/db');
+    for (const [name, cfg] of Object.entries(BOTS)) { console.log('\n=== ' + name + ' ' + cfg.botId + ' ==='); await patchBot(db, cfg, APPLY); }
+    if (!APPLY) console.log('\nDRY-RUN — запусти з --apply.');
+    process.exit(0);
+}
+
+async function patchBot(db, cfg, APPLY) {
+    const BOT_ID = cfg.botId;
+    const flow = await db.flowDefinition.findUnique({ where: { botId: BOT_ID } });
+    if (!flow) { console.log('ERROR: flow not found for', BOT_ID); return; }
+    const keyRows = await db.funnelKey.findMany({ where: { botId: BOT_ID }, select: { key: true, value: true } });
+    const keysMap = Object.fromEntries(keyRows.map((k) => [k.key, k.value]));
+    const r = transform({ nodes: flow.nodes, edges: flow.edges }, keysMap, cfg);
+    if (r.alreadyApplied) { console.log('ALREADY_APPLIED'); return; }
+    console.log(r.notes.join('\n'));
+    console.log('nodes', flow.nodes.length, '→', r.nodes.length, '| edges', flow.edges.length, '→', r.edges.length);
+    console.log('keys update:', r.keyUpdates.map((k) => k.key + '=' + k.value).join(', '), '| delete:', r.keyDeletes.join(', ') || '—');
+    if (!APPLY) return;
+    const backupDir = path.join(__dirname, 'backups');
+    if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir);
+    fs.writeFileSync(path.join(backupDir, 'flow-' + BOT_ID + '-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json'), JSON.stringify({ nodes: flow.nodes, edges: flow.edges, keys: keyRows }, null, 1));
+    await db.flowDefinition.update({ where: { botId: BOT_ID }, data: { nodes: r.nodes, edges: r.edges } });
+    for (const row of r.keyUpdates) {
+        await db.funnelKey.upsert({ where: { botId_key: { botId: BOT_ID, key: row.key } }, update: { value: row.value, label: row.label }, create: { botId: BOT_ID, key: row.key, value: row.value, label: row.label, isSecret: false } });
+    }
+    for (const k of r.keyDeletes) await db.funnelKey.deleteMany({ where: { botId: BOT_ID, key: k } });
+    await db.bot.update({ where: { id: BOT_ID }, data: { description: r.description } }).catch((e) => console.log('bot.description not updated:', e.message));
+    console.log('APPLIED (бекап у backups/).');
+}
+
+module.exports = { transform, BOT_ID, BOTS, optsForBot };
+if (require.main === module) main().catch((e) => { console.log('ERROR', e.message, e.stack); process.exit(1); });

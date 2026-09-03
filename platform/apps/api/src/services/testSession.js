@@ -1127,6 +1127,15 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
     // писати, і (б) знімає adminEngaged із ЦЬОГО ходу, щоб уся звичайна
     // обробка нижче (в т.ч. перемикання товару, n_route тощо) відпрацювала як
     // для щойно активного клієнта — жодної permanentної мовчанки.
+    // Аудит 2026-09-04: пауза product_unknown — це НЕ "клієнт чекає менеджера": йому сказали
+    // "покажіть товар", а не "зачекайте". Тому без "перепрошуємо за очікування" і без
+    // повторного алерту (n_unknown_admin і так шле раз на сесію) — тихо знімаємо паузу,
+    // далі звичайний шлях зі старту (n_unknown_msg перепитає товар ще раз).
+    if (ctx.adminEngaged && !ctx.funnelPaused && ctx.handoffKind === 'product_unknown' && (incomingUserMessage || incomingImageUrl)) {
+        ctx.adminEngaged = false;
+        delete ctx.handoffKind;
+        delete ctx.handoffReason;
+    }
     if (ctx.adminEngaged && !ctx.funnelPaused && (incomingUserMessage || incomingImageUrl)) {
         ctx.adminEngaged = false;
         delete ctx.handoffKind;
@@ -1328,8 +1337,14 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
     // тільки з двома суперечливими повідомленнями замість одного. Тепер —
     // явний return одразу після відповіді: цей конкретний хід завершено, але БЕЗ
     // прапорця паузи, тож бот лишається "живим" для наступного повідомлення.
-    if (incomingUserMessage && !ctx.returnHandledAt
-        && /поверн(ення|ути|іть)|обмін(яти|яю)?|обмен/i.test(String(incomingUserMessage))) {
+    // Аудит 2026-09-04: ДО замовлення "чи є повернення?" — звичайне передпродажне питання,
+    // на яке має відповідати діалогова нода (KB/промпт), а не "передала запит менеджеру".
+    // Широкий regex лишаємо лише для сесій із оформленим замовленням; інакше — тільки
+    // явний намір ("хочу повернути", "поверніть гроші", "обміняти товар").
+    const _returnRe = ctx.crmOrderId
+        ? /поверн(ення|ути|іть)|обмін(яти|яю)?|обмен/i
+        : /хочу\s+(поверну|обміня|вернут)|поверн(ути|іть)\s+(товар|гроші|кошти|замовлення|посилку)|обміня(ти|ю)\s+(товар|розмір|на\s)|вернуть\s+(товар|деньги)/i;
+    if (incomingUserMessage && !ctx.returnHandledAt && _returnRe.test(String(incomingUserMessage))) {
         ctx.returnHandledAt = new Date().toISOString();
         const retMsg = 'Звичайно, допоможемо! 🙂 Передала ваш запит на повернення/обмін менеджеру — він зв\'яжеться з деталями найближчим часом. Якщо тим часом є ще питання — я тут 💛';
         await persistAssistantMessage(session.id, retMsg, { source: 'return_keyword' });
@@ -1350,8 +1365,17 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
 
     // Явне прохання живої людини — детермінований детект (не покладаємось лише на LLM).
     // Не спрацьовує, якщо замовлення вже оформлене (там веде інший сценарій).
+    // Аудит 2026-09-04: regex розділено на HARD (явне прохання людини, брак, скарга — завжди
+    // handoff) і SOFT (слова недовіри / "не прийшло"). SOFT свідомо опрацьовує сама нода,
+    // якщо позначена data.softHandoffOff===true (напр. n_pay_collect: "боюсь, що обманете" →
+    // сценарій винятку довіри cod_trust з промпту) — раніше двигун перехоплював ці слова
+    // ДО ноди, і ретельно прописаний сценарій ніколи не спрацьовував.
+    const _hoNode = runtime.currentNodeId ? nodesById.get(runtime.currentNodeId) : null;
+    const _softHandoffOff = Boolean(_hoNode && _hoNode.data && _hoNode.data.softHandoffOff === true);
+    const _hoHardRe = /менеджер|оператор(?!ськ)|з\s*людин|живою\s*людин|жива\s*людин|людину\s*(покличте|дайте)|ви\s*бот|це\s*бот|справжн(я|ій)\s*людин|\bбрак\b|скарг|жалоб|конфлікт/i;
+    const _hoSoftRe = /обман|шахра|не\s*прийшл|не\s*дійшл|не\s*дошл/i;
     if (incomingUserMessage && !ctx.crmOrderId
-        && /менеджер|оператор(?!ськ)|з\s*людин|живою\s*людин|жива\s*людин|людину\s*(покличте|дайте)|ви\s*бот|це\s*бот|справжн(я|ій)\s*людин|\bбрак\b|скарг|жалоб|конфлікт|обман|шахра|не\s*прийшл|не\s*дійшл|не\s*дошл/i.test(String(incomingUserMessage))) {
+        && (_hoHardRe.test(String(incomingUserMessage)) || (!_softHandoffOff && _hoSoftRe.test(String(incomingUserMessage))))) {
         ctx.adminEngaged = true;
         ctx.handoffReason = String(incomingUserMessage).slice(0, 160);
         const hoMsg = 'Добре, зараз покличу менеджера 🙂 Незабаром вам відповість жива людина — дякую за терпіння 💛';
@@ -1706,6 +1730,19 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
             // speakFirst: нода-діалог сама починає розмову (пропонує/питає), не чекаючи вводу.
             // Тільки на ПЕРШОМУ вході (нема lastUserMessage); далі — звичайний діалог.
             const speakFirstNow = data.speakFirst === true && mode === 'dialog' && !runtime.lastUserMessage;
+            // Аудит 2026-09-04 (живий кейс власника, "дубль опису товару на кроці зріст/вага"):
+            // data.waitAfterPresentation===true — якщо в ЦЬОМУ Ж ході щойно показали картку
+            // товару (ctx.productJustPresented, ставить n_welcome через setContext) і нода ще не
+            // має історії — НЕ викликаємо модель з первинним повідомленням клієнта (вона
+            // переказувала опис ще раз), а чекаємо його відповідь на питання з презентації
+            // (n_welcome сам питає параметри). Детерміновано, без покладання на промпт.
+            if (data.waitAfterPresentation === true && mode === 'dialog' && ctx.productJustPresented && runtime.lastUserMessage
+                && !(Array.isArray(runtime.dialogHistory[node.id]) && runtime.dialogHistory[node.id].length)) {
+                delete ctx.productJustPresented;
+                runtime.lastUserMessage = '';
+                runtime.waitingForUser = true;
+                break;
+            }
             if (!runtime.lastUserMessage && !inFinalizationStage && !resumeAfterTool && !selfContained && !speakFirstNow) {
                 runtime.waitingForUser = true;
                 break;
@@ -1941,6 +1978,18 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                     const otherKeys = Object.keys(exit.parsed).filter((k) => k !== 'wantsUpsellPhoto');
                     if (otherKeys.length === 0) exit.done = false;
                 }
+                // Аудит 2026-09-04 (goverla CRM-клон): {"colorUnavailable":true} БЕЗ "color" — клієнт
+                // назвав колір, якого нема; модель уже відповіла текстом і запропонувала наявні.
+                // Це НЕ рішення — нода лишається активною й чекає наступний вибір. Раніше такий
+                // json завершував n_color, далі n_avail без кольору вважав товар наявним, і
+                // замовлення йшло в "Оформляємо?" та в CRM з першим-ліпшим offer. Прапорець на
+                // root промотуємо тут же (worker читає ctx.colorUnavailable для "розумних
+                // нагадувань"), бо штатний блок промоції нижче виконується лише при exit.done.
+                if (exit.parsed && exit.parsed.colorUnavailable === true && !exit.parsed.color) {
+                    ctx.colorUnavailable = true;
+                    const otherKeys = Object.keys(exit.parsed).filter((k) => k !== 'colorUnavailable' && k !== 'wantsPhoto' && k !== 'photoArticle');
+                    if (otherKeys.length === 0) exit.done = false;
+                }
 
                 const isJsonExit = String(exitCondition).trim() === 'json_output';
                 // Використовуємо jsonStart (а не exit.done) — інакше форсований wantsPhoto-only
@@ -2091,6 +2140,23 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                         } catch (_e) { /* silent */ }
                         runtime.lastUserMessage = '';
                         runtime.waitingForUser = true;
+                        break;
+                    }
+                    // Аудит 2026-09-04: {"productMismatch":true} — модель (за matchNote низької
+                    // впевненості з n_lookup: keyword/photo-матчинг) визнала, що товар у контексті
+                    // не той, і вже попросила клієнта скинути пост/артикул. Скидаємо товарний
+                    // скоуп і переходимо у той самий стан, що після n_unknown_stop: наступний
+                    // пост/артикул підхопиться зі старту (блок product_unknown вище), а звичайне
+                    // повідомлення без сигналу знову м'яко перепитає товар.
+                    if (exit.parsed && exit.parsed.productMismatch === true) {
+                        ['product', 'sharedPost', 'entryAd', 'entryAdId', 'postId', 'storyId', 'colorChoice', 'sizeInput', 'recommendedSize',
+                            'sizeOutOfRange', 'sizeOorReason', 'available', 'orderIntent', 'setPick', 'setMode', 'setParent', 'productJustPresented'].forEach((k) => { delete ctx[k]; });
+                        ctx.adminEngaged = true;
+                        ctx.handoffKind = 'product_unknown';
+                        runtime.dialogHistory = {};
+                        runtime.lastUserMessage = '';
+                        runtime.waitingForUser = true;
+                        runtime.currentNodeId = null;
                         break;
                     }
                     if (data.outputVar && !isUserConfirmExit) {

@@ -8,7 +8,13 @@
 
 function roleOf(req) {
     if (req.session && req.session.role) return req.session.role;
-    return req.session && req.session.isAdmin ? 'superadmin' : 'none';
+    if (req.session && req.session.isAdmin) return 'superadmin';
+    // Системний X-Api-Secret (той самий, що вже пропускає authMiddleware і /sessions/test/*) —
+    // рівень суперадміна для param-гардів: інакше API-виклики з секретом отримували 404
+    // на /bots/:id/sessions тощо (2026-09-04, автотести/скрипти міграції через API).
+    const apiSecret = req.headers && req.headers['x-api-secret'];
+    if (apiSecret && process.env.API_SECRET && apiSecret === process.env.API_SECRET) return 'superadmin';
+    return 'none';
 }
 
 function isSuperadmin(req) {

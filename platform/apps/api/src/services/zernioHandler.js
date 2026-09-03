@@ -371,9 +371,33 @@ function withConvLock(key, fn) {
     _convLocks.set(key, next.then(() => {}, () => {}));
     return next;
 }
-async function handleZernioEvent(botId, body) {
+// Свап трафіку на нову СРМ (2026-09-04): Zernio шле вебхук на URL зі СТАРИМ botId
+// (/webhook/zernio/:botId), а робочою воронкою тепер є CRM-клон. Щоб не чіпати
+// налаштування Zernio, старий бот отримує funnelKey ZERNIO_FORWARD_BOT_ID = id клона —
+// всі події обробляються під ботом-ціллю (його ключі Zernio/Instagram ідентичні). Старий
+// бот можна архівувати (isActive=false) — форвардинг від цього не залежить.
+const _forwardCache = new Map();
+async function resolveZernioTargetBot(botId) {
+    const cached = _forwardCache.get(botId);
+    if (cached && cached.until > Date.now()) return cached.target;
+    let target = botId;
+    try {
+        const row = await db.funnelKey.findFirst({ where: { botId, key: 'ZERNIO_FORWARD_BOT_ID' }, select: { value: true } });
+        const v = (row && row.value || '').trim();
+        if (/^[0-9a-f-]{36}$/i.test(v) && v !== botId) {
+            const bot = await db.bot.findUnique({ where: { id: v }, select: { id: true } });
+            if (bot) target = v;
+            else logger.warn('[zernioHandler] ZERNIO_FORWARD_BOT_ID вказує на неіснуючого бота — обробляю під старим', { botId, forwardTo: v });
+        }
+    } catch (e) { logger.warn('[zernioHandler] forward lookup failed: ' + e.message); }
+    _forwardCache.set(botId, { target, until: Date.now() + 60 * 1000 });
+    return target;
+}
+async function handleZernioEvent(webhookBotId, body) {
     const event = body?.event;
     if (!event) return { ok: true, skipped: 'no-event' };
+    const botId = await resolveZernioTargetBot(webhookBotId);
+    if (botId !== webhookBotId) logger.info('[zernioHandler] forward', { from: webhookBotId, to: botId, event });
     const convId = body?.conversation?.id || body?.conversation?.conversationId || body?.data?.conversationId || 'nc';
     return withConvLock(`${botId}:${convId}`, () =>
         (event === 'message.received' ? handleIncomingMessage(botId, body)

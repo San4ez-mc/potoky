@@ -185,6 +185,16 @@ try {
 
   if (!found) return fallback('Жоден пріоритет матчингу не спрацював (ad_id/артикул/keyword/vision)');
 
+  // Аудит 2026-09-04: впевненість матчингу → у промпти діалогових нод через
+  // {{context.product.matchNote}}. Раніше всі промпти казали "товар ОДНОЗНАЧНО підтверджено,
+  // НІКОЛИ не пиши, що не знайдено" навіть для keyword/photo-збігу — і модель наполягала на
+  // не тому товарі. Низька впевненість дозволяє моделі визнати помилку через
+  // json_output {"productMismatch":true} (двигун скидає товар і просить пост/артикул).
+  var __lowConfidence = /^(keyword|photo)/.test(via);
+  var __matchNote = __lowConfidence
+    ? '⚠️ Товар вище підібрано АВТОМАТИЧНО за схожістю (' + (via.indexOf('photo') === 0 ? 'за фото' : 'за описом поста') + '), без точного артикулу. Якщо клієнт каже, що це не той товар, описує явно інший, або сумнівається — НЕ наполягай: коротко вибачся, попроси скинути пост/рілс або назвати артикул і поверни json_output {"productMismatch":true}. Якщо клієнт підтверджує або просто продовжує розмову про цей товар — працюй як завжди.'
+    : '⚠️ Товар вище вже ОДНОЗНАЧНО підтверджено системою за артикулом/кодом/рекламою, які назвав чи відкрив клієнт — НІКОЛИ не пиши, що товар/артикул "не знайдено" чи "немає в каталозі", навіть якщо точний код не видно в описі нижче. Завжди довіряй даним про товар вище.';
+
   // ── Довантажуємо supplier (mechanism/логін/aiNotes/telegram, §4 ТЗ) і category (requiredParams, §3 ТЗ) ──
   var supplierInfo = null;
   if (found.supplier && found.supplier.id) {
@@ -293,11 +303,22 @@ try {
   var __rawFirstLine = (__descClean.split('\n')[0] || '').trim();
   var __looksLikeHeading = /:$/.test(__rawFirstLine) || /^(в\s*наявност|наявніст|кольор|розмір|ціна\b|акці)/i.test(__rawFirstLine) || __rawFirstLine.length < 4;
   var __customerName = found.customerName || (!__looksLikeHeading && __rawFirstLine) || found.name || 'Товар';
+  // Аудит 2026-09-04: presentationText у новій CRM може бути порожнім — тоді n_welcome слав
+  // лише "👉 Зараз підберемо..." без назви й ціни. Мінімальний чесний фолбек з даних картки.
+  if (!__descClean) {
+    __descClean = __customerName + (price ? (' — ' + price + ' грн') : '')
+      + (colors.length ? ('\nКольори: ' + colors.join(', ')) : '')
+      + (sizes.length ? ('\nРозміри: ' + sizes.join(', ')) : '');
+  }
   // Аудит 2026-09-01 (patch-size-followup-dedup.js, вже застосований на клонах): followUpQuestion
   // НЕ дублює конкретне питання (n_size сама питає, з динамічними параметрами §3 ТЗ) —
   // лише нейтральний перехід, інакше клієнт бачить питання двічі поспіль.
+  // Аудит 2026-09-04: n_size тепер має waitAfterPresentation (двигун) — у ході презентації
+  // модель НЕ викликається (це і давало "дубль опису"), тож конкретне питання про параметри
+  // ставить сама презентація, з назв параметрів категорії в CRM.
+  var __paramAsk = categoryParams.map(function (p) { return String(p.name || '').toLowerCase(); }).filter(Boolean).join(' і ');
   var __followUpQuestion = __isClothing
-    ? '👉 Зараз підберемо для вас ідеальний варіант 😊'
+    ? ('👉 Підкажіть, будь ласка, ' + (__paramAsk || 'зріст і вагу') + ' — підберу ідеальний розмір 😊')
     : 'Цікавить? 😊';
 
   // Рекомендація власника (озвучена під час роботи над цим ТЗ): один структурований
@@ -363,6 +384,7 @@ try {
       _source: 'crm', supplier: (found.supplier && found.supplier.name) || '', supplierId: (found.supplier && found.supplier.id) || '',
       supplierInfo: supplierInfo, // {mechanism, loginUsername, loginPassword, aiNotes, telegramGroupId, website, contactInfo, description} — §4 ТЗ
       setComponents: rawComponents.map(function (c) { return c.sku; }).join(', '), isSet: !!found.isSet, setItems: setItems, setList: setList,
+      matchNote: __matchNote, matchConfidence: __lowConfidence ? 'low' : 'high',
       _matchKey: mk, _via: via, _matchedSharedPostId: (context.sharedPost && context.sharedPost.mediaId) ? String(context.sharedPost.mediaId) : '', _matchedEntryAd: String(context.entryAd || context.entryAdId || ''),
       id: found.id, categoryId: found.categoryId, categoryName: (categoryFull && categoryFull.name) || '',
       name: found.name || 'Товар', customerName: __customerName, desc: __descClean, followUpQuestion: __followUpQuestion,

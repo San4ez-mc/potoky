@@ -16,7 +16,10 @@ try {
   var col = (context.colorChoice && context.colorChoice.color) || '';
   var size = context.recommendedSize || '';
   var method = (context.paymentInfo && context.paymentInfo.method) || '';
-  if (!od.phone) return {}; // адресу/телефон ще не зібрано — цей крок ще не має запускатись
+  // Аудит 2026-09-04: раніше `return {}` без пояснення → n_crm_order_cond бачив порожній
+  // crmOrderId і слав менеджеру "ПОМИЛКА CRM" з порожньою причиною. Штатно сюди без адреси
+  // не заходимо (n_has_address_cond перед цією нодою), але якщо все ж — причина явна.
+  if (!od.phone) return { crmOrderError: 'адресу/телефон ще не зібрано (n_collect не пройдено)' };
 
   var phone = String(od.phone).replace(/[^0-9]/g, '');
   var hdr = { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json', Accept: 'application/json' };
@@ -25,11 +28,20 @@ try {
   var buyerId = context.crmClientId || null;
   if (!buyerId) {
     try {
-      var br = await fetch(base + '/buyers/find-or-create', { method: 'POST', headers: hdr, body: JSON.stringify({ phone: phone, fullName: (od.fullName || 'Клієнт') }) });
+      var br = await fetch(base + '/buyers/find-or-create', { method: 'POST', headers: hdr, body: JSON.stringify({ phone: phone, fullName: (od.fullName || 'Клієнт'), igUsername: context.igUsername || undefined }) });
       var bj = await br.json().catch(function () { return {}; });
       if (br.ok && bj && bj.ok && bj.data) buyerId = bj.data.id;
       else return { crmOrderError: 'buyers/find-or-create: ' + ((bj && bj.error && bj.error.message) || ('HTTP ' + br.status)) };
     } catch (e) { return { crmOrderError: 'buyers/find-or-create: ' + e.message }; }
+  }
+
+  // Завдання «памʼять вимірів клієнта»: якщо цієї сесії зібрали параметри розміру
+  // (context.knownMeasurementsToSave з n_calc) — персистимо на Buyer (merge по ключах на
+  // бекенді, не overwrite), best-effort, не блокує оформлення замовлення при помилці.
+  if (buyerId && context.knownMeasurementsToSave) {
+    try {
+      await fetch(base + '/buyers/' + buyerId, { method: 'PATCH', headers: hdr, body: JSON.stringify({ knownMeasurements: context.knownMeasurementsToSave }) });
+    } catch (e) { /* best-effort */ }
   }
 
   // 2) підбір offerId за обраним кольором/розміром (той самий принцип, що KeyCRM-версія)

@@ -94,19 +94,28 @@ router.get('/:id/sessions',
             where.NOT = { context: { path: ['channel'], equals: 'instagram' } };
         }
         // Пошук по імені/username користувача АБО по тексту переписки (по словах, AND між словами).
+        // Аудит 2026-09-04 (скрін власника: "олексій сір" знаходив kristina/Андрій/…): раніше
+        // кожне слово шукалось окремо по будь-якому полю АБО по тексту ВСІХ повідомлень —
+        // "олексій" збігався з реквізитами ФОП у відповідях бота, "сір" — із "сірий" колір,
+        // тож майже всі сесії проходили. Тепер: усі слова мають збігтись у ОДНІЙ групі —
+        // або в даних клієнта (імʼя/username/igUsername/senderName із context), або лише в
+        // повідомленнях самого клієнта (role user), не бота.
         if (search) {
             const tokens = search.split(/\s+/).filter(Boolean);
-            where.AND = [
-                ...(where.AND || []),
-                ...tokens.map((token) => ({
-                    OR: [
-                        { user: { firstName: { contains: token, mode: 'insensitive' } } },
-                        { user: { lastName: { contains: token, mode: 'insensitive' } } },
-                        { user: { username: { contains: token, mode: 'insensitive' } } },
-                        { messages: { some: { content: { contains: token, mode: 'insensitive' } } } },
-                    ],
-                })),
-            ];
+            const userGroup = { AND: tokens.map((token) => ({
+                OR: [
+                    { user: { firstName: { contains: token, mode: 'insensitive' } } },
+                    { user: { lastName: { contains: token, mode: 'insensitive' } } },
+                    { user: { username: { contains: token, mode: 'insensitive' } } },
+                    { context: { path: ['igUsername'], string_contains: token } },
+                    { context: { path: ['senderName'], string_contains: token } },
+                    { context: { path: ['igUsername'], string_contains: token.toLowerCase() } },
+                ],
+            })) };
+            const messagesGroup = { AND: tokens.map((token) => ({
+                messages: { some: { role: 'user', content: { contains: token, mode: 'insensitive' } } },
+            })) };
+            where.AND = [...(where.AND || []), { OR: [userGroup, messagesGroup] }];
         }
 
         const [sessions, total] = await Promise.all([

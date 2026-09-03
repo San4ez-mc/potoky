@@ -346,6 +346,16 @@ const VOLATILE_CONTEXT_KEYS = [
     'supplierOrderStatus', 'supplierNeedsManual', 'supplierTtn', 'monoStatement', 'consumedTxIds',
     'payStatus', 'payVia', 'payTxId', 'reminders', 'followUpCount', 'upsell2', 'available',
     'entryAd', 'skipFollowup', 'lastReceiptImageUrl', 'lastUserImageUrl',
+    // Аудит 2026-09-04 (goverla CRM-клон): прапорці попереднього проходу, які раніше
+    // переживали скидання — sizeAskedFor блокував питання розміру для нового товару тієї ж
+    // категорії, colorUnavailable назавжди глушив "розумні нагадування", unavailableColors
+    // забороняв реальні кольори нового товару.
+    'sizeAskedFor', 'unavailableColors', 'colorUnavailable', 'sizeOorReason', 'sizeSource', 'sizeReplyText',
+    'sizeColorFollowup', 'sizeMatchedBy', 'knownMeasurementsToSave', 'knownMeasurementsText', 'dialogState',
+    'dialogStateText', 'setPick', 'setMode', 'setParent', 'availReason', 'availNoText', 'orderRefAt',
+    'payNotFoundNotified', 'unknownNotifiedAt', 'postOrderNotifiedAt', 'welcomeBack', 'ttnLine',
+    'intlStatus', 'intlCountry', 'recallConfirm', 'recalledDeliveryReady', 'returningCustomerChecked',
+    'returningCustomerData', 'hasFreshSignalThisTurn', 'hasProductSignal', 'productJustPresented',
 ];
 async function resetStaleOrCompletedSessions() {
     try {

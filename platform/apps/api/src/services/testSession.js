@@ -1158,13 +1158,22 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
         // ламке при майбутніх правках (напр. якщо хтось посилить regex n_signal_check,
         // прибере n_signal_cond, чи додасть нову _stop-ноду без цього шляху) — бот
         // знову зустрічав би клієнта "з нуля", а не контекстним поверненням. Явно
-        // ведемо на n_returning_check (та сама "м'яке повернення" нода — "З поверненням!
-        // Ви цікавились Х — ще актуально?"), якщо вона є в цій воронці й товар відомий.
+        // ведемо на n_prev_match_snapshot (НЕ одразу на n_returning_check!) — та сама
+        // js-нода, що ЗАВЖДИ перераховує context.hasFreshSignalThisTurn з нуля ПЕРЕД
+        // n_returning_check. Живий тест підтвердив: стрибок ОДРАЗУ на n_returning_check
+        // ламався — hasFreshSignalThisTurn лишався зі СТАРОГО значення (виставленого
+        // ще як клієнт ВПЕРШЕ назвав артикул товару, задовго до ескалації) і НІКОЛИ
+        // не скидався, тож n_returning_check помилково йшов у "have_product" (повна
+        // презентація+допродаж в один хід) замість м'якого "З поверненням!". Через
+        // n_prev_match_snapshot той самий n_lookup (зберігає товар, є сигналу нема) і
+        // n_returning_check отримують СВІЖЕ значення — саме так, як і за звичайним
+        // "поверни на start" шляхом, тільки явно й не завʼязано на випадкову форму графа.
         // Якщо товару в контексті ще нема (ескалація сталась ДО того, як товар
         // визначили) — навмисно НЕ чіпаємо: нижче спрацює звичайний шлях через start
         // (n_unknown_msg — коректно перепитає товар, тут "повертатись" нема куди).
         if (!runtime.currentNodeId && ctx.product && ctx.product.name) {
-            const _resumeNode = flow.nodes.find((n) => n.id === 'n_returning_check');
+            const _resumeNode = flow.nodes.find((n) => n.id === 'n_prev_match_snapshot')
+                || flow.nodes.find((n) => n.id === 'n_returning_check');
             if (_resumeNode) {
                 runtime.currentNodeId = _resumeNode.id;
                 runtime.waitingForUser = false;

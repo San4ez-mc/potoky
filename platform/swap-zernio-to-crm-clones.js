@@ -71,7 +71,10 @@ async function swapPair(p) {
 
 (async () => {
     let allOk = true;
-    for (const p of PAIRS) { const r = await swapPair(p); allOk = allOk && r; }
+    // --only=goverla|covercar — свапнути лише одну пару (напр. covercar першим, goverla після вимкнення testMode)
+    const onlyArg = process.argv.find((a) => a.startsWith('--only='));
+    const pairs = onlyArg ? PAIRS.filter((p) => p.name === onlyArg.slice(7)) : PAIRS;
+    for (const p of pairs) { const r = await swapPair(p); allOk = allOk && r; }
     if (!APPLY) console.log('\nDRY-RUN — запусти з --apply' + (allOk ? '.' : ' ПІСЛЯ усунення STOP-причин вище.'));
     process.exit(allOk ? 0 : 1);
 })().catch((e) => { console.log('ERROR', e.message, e.stack); process.exit(1); });

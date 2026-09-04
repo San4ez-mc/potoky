@@ -5,7 +5,7 @@
 // інакше чужа передоплата тієї ж суми (типові 200 грн) зараховувалась цьому клієнту;
 // (3) слабкий збіг "лише за сумою" — тільки коли клієнт САМ сказав, що оплатив (або дав
 // квитанцію) і кандидат рівно один.
-if (context.payStatus === 'confirmed' && context.payTxId) return { payStatus:'confirmed', payVia: context.payVia || 'mono:prev', payTxId: context.payTxId };
+if (context.payStatus === 'confirmed' && context.payTxId) return { payStatus:'confirmed', payVia: context.payVia || 'mono:prev', payTxId: context.payTxId, payConfirmedLine:'Оплату отримали ✅ ' };
 // Реквізити: активний ФОП з CRM (context.fop, ставить n_pay_amount), інакше funnelKey.
 var EXPECTED_IBAN = String((context.fop&&context.fop.iban)||keys.FOP_IBAN||'').replace(/\s/g,'');
 var EXPECTED_CODE = String((context.fop&&context.fop.code)||keys.FOP_CODE||'').replace(/\D/g,'');
@@ -59,5 +59,5 @@ if(!found && expected && claimedPaid){
   var amtCands = stmt.filter(function(t){ return !isC(t.id) && Math.abs(Number(t.amountUah)-expected)<0.01; });
   if(amtCands.length===1){ found = amtCands[0]; via='mono:amount'; }
 }
-if(found){ consumed.push(found.id); return { payStatus:'confirmed', payVia:via, payTxId:found.id, consumedTxIds:consumed }; }
-return { payStatus:'not_found', payVia:'none' };
+if(found){ consumed.push(found.id); return { payStatus:'confirmed', payVia:via, payTxId:found.id, consumedTxIds:consumed, payConfirmedLine:'Оплату отримали ✅ ' }; }
+return { payStatus:'not_found', payVia:'none', payConfirmedLine:'' };

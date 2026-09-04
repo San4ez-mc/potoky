@@ -92,8 +92,8 @@ const ORDER_INTENT_PROMPT = `Ти — {{env.PERSONA_NAME}}, тепла конс�
 Акцію за кількість (якщо рядок вище непорожній і клієнт не називав кількість) згадай ОДИН раз у підсумку, ненав'язливо.
 
 ФОРМАТ json_output (СУВОРО, лише коли клієнт ВІДПОВІВ на твоє питання):
-- Явна згода (так/да/давай/оформляй/+/ок/хочу/беру, «так, з допродажем», «тільки основний») → у КІНЦІ рівно {"ready":"yes"}. Якщо клієнт погодився ДОДАТИ допродаж → {"ready":"yes","addUpsell":true}. Якщо називав кількість → додай "qty":<число>.
-- Явна остаточна відмова (ні/не хочу/не буду/скасуйте/не треба) → {"ready":"no"}.
+- Явна згода (так/да/давай/оформляй/+/ок/хочу/беру, «так, з допродажем», «тільки основний») → ТІЛЬКИ json_output {"ready":"yes"} БЕЗ жодного тексту (наступний крок сам покаже підсумок і оплату — не дублюй). Якщо клієнт погодився ДОДАТИ допродаж → {"ready":"yes","addUpsell":true}. Якщо називав кількість → додай "qty":<число>.
+- Явна остаточна відмова (ні/не хочу/не буду/скасуйте/не треба) → ТІЛЬКИ json_output {"ready":"no"} БЕЗ тексту (прощання напише наступний крок).
 - Вагається («подумаю», «пізніше», «пораджусь», «якщо встигнете відправити») — це НЕ відмова: БЕЗ JSON, тепло наведи ОДИН реальний аргумент оформити сьогодні (черга на відправку, раніше отримаєте, акція діє зараз) і знову спитай «Оформляємо сьогодні?».
 - Інше питання (доставка, склад, розмір, оплата) → відповідай ЗВИЧАЙНИМ ТЕКСТОМ з даних вище, потім знову «Оформляємо?». Без JSON.
 - Просить фото допродажу → {"wantsUpsellPhoto":true} (можна разом з іншими полями), лише якщо фото є за нотаткою вище.
@@ -108,11 +108,8 @@ const COLLECT_PROMPT = `Ти — {{env.PERSONA_NAME}}, консультантк�
 СТАТУС ОПЛАТИ (виставляє код): «{{context.payStatus}}» — "confirmed" = оплату вже отримали; порожньо або not_found = ще не бачимо. Сума: {{context.payAmount}} грн ({{context.payLabel}}).
 УТОЧНЕННЯ ВІД НОВОЇ ПОШТИ (порожньо = нема): «{{context.np.askMsg}}»
 
-Коли ти починаєш першою (система просить "почни діалог сам"):
-- якщо УТОЧНЕННЯ непорожнє — напиши ЛИШЕ його (тепло, своїми словами) і чекай відповідь;
-- інакше якщо статус "confirmed" — «Оплату отримали ✅» і попроси ті поля, яких ще нема;
-- інакше — коротко: поки оплачуєте за посиланням вище, напишіть дані для відправки (перелічи лише відсутні поля). Реквізити не повторюй.
-Одне повідомлення — одне прохання. Якщо чогось бракує — тепло попроси саме це.
+Посилання на оплату, реквізити (IBAN/ЄДРПОУ/назва), суму і прохання написати дані система ВЖЕ надіслала окремими повідомленнями ДО тебе — ти їх НІКОЛИ не пишеш, не повторюєш і не вигадуєш (ніяких «UA1234…», «12345678», «ПриватБанк», «надішле окремим повідомленням»). Твоя робота — лише прийняти дані доставки.
+Одне повідомлення — одне прохання. Якщо чогось бракує — тепло попроси саме це (лише відсутні поля).
 Коли відомі ВСІ 4 поля (з повідомлення клієнта або з блоку ВЖЕ ВІДОМО плюс його відповідь) — НЕ перепитуй підтвердження, НЕ пиши видимого тексту, одразу поверни ТІЛЬКИ json_output {"fullName":"...","phone":"...","city":"...","branch":"..."}; якщо клієнт назвав область — додай "region":"...". Відповідь на УТОЧНЕННЯ (область / точна назва / номер) → той самий JSON з оновленими city/region/branch.
 Просить реквізити вручну (IBAN/ЄДРПОУ/«як оплатити вручну») → РІВНО {"wantsManualReq":true}, без тексту.
 Пише, що оплатив, або описує чек текстом → подякуй, скажи, що звіримо після отримання даних, і попроси відсутні поля (без JSON, поки полів бракує).
@@ -192,6 +189,52 @@ const COLOR_CONFIRM_NEW = 'Поки колір НЕ обрано — відпо�
 const PAY_COLLECT_GUARD = '\nЗАБОРОНЕНО: вигадувати реквізити, номери карток, посилання, підтверджувати "оплату отримано/замовлення активовано", збирати ПІБ/адресу — ти цього НЕ робиш і НЕ маєш реквізитів; усе це дає НАСТУПНИЙ крок системи одразу після твого json_output. Будь-яке повідомлення, з якого зрозумілий спосіб ("1", "2", "200", "перший", "часткова", "повна", "наложка", "повністю") → ТІЛЬКИ json_output {"method":"cod"} або {"method":"full"}, без слів. Якщо клієнт пише "чекаю"/"де реквізити" — це означає, що спосіб уже названо: поверни json_output з останнім зрозумілим method.';
 function applyPayCollectGuard(node) { if (node && !String(node.data.systemPrompt || '').includes('вигадувати реквізити, номери карток')) node.data.systemPrompt = String(node.data.systemPrompt || '') + PAY_COLLECT_GUARD; }
 
+// ── v2 (другий прохід архітектора після живих прогонів 2026-09-04) ──
+// 1) n_color: при названому кольорі — ТІЛЬКИ json, без тексту (підсумок пише n_order_intent speakFirst;
+//    інакше "Графітовий — чудовий вибір!" + одразу підсумок = два повідомлення підряд).
+const COLOR_CONFIRM_V2 = 'Поки колір НЕ обрано — відповідай ОДНИМ коротким дружнім реченням і закінчуй питанням про колір.\nКоли клієнт назвав колір із наявних — поверни ТІЛЬКИ json_output {"color":"<колір>"} БЕЗ жодного тексту (підтвердження і підсумок напише наступний крок — не дублюй). Жодних службових токенів.\nЯКЩО в контексті вище є список кольорів, яких НЕМАЄ, і клієнт замість нового кольору пише "оформляємо"/"беру"/"давайте" — колір ще не обрано: коротко нагадай, що цього кольору нема, назви наявні і спитай, який брати; color у json НЕ повертай.';
+// 2) "подумаю/пізніше" на кроках розміру/кольору — не допитувати "над чим саме?"
+const DEFER_RULE = '\nЯКЩО клієнт відкладає («подумаю», «пізніше», «напишу потім», «дякую, поки ні») — НЕ допитуй, над чим саме: одне мʼяке речення без тиску («Добре, без поспіху 🙂 Коли будете готові — напишіть зріст і вагу / колір, і продовжимо») і чекай. Без JSON.';
+// 3) артикул у промптах n_size/n_color — модель сумнівалась у товарі, бо в назві нема коду.
+const SKU_IN_PROMPT_OLD = 'Товар: {{context.product.customerName}}';
+const SKU_IN_PROMPT_NEW = 'Товар: {{context.product.customerName}} (артикул {{context.product.sku}})';
+// 4) n_collect без speakFirst: після реквізитів модель "починала першою" і ВИГАДАЛА IBAN/ЄДРПОУ.
+//    Прохання написати адресу — детерміновано в текстах n_requisites / n_req_sum / n_trust_confirm_msg /
+//    n_np_ask / n_collect_ask; n_collect лише реагує.
+const ADDRESS_ASK = '\n\n📦 Дані для відправки (ПІБ, телефон, місто, № відділення або поштомата Нової Пошти) можна написати прямо зараз одним повідомленням 🙂';
+function applyV2(nodes, edges, notes) {
+    const byId = () => Object.fromEntries(nodes.map((n) => [n.id, n]));
+    const has = (id) => !!byId()[id];
+    const pos = (id) => (byId()[id] || { position: { x: 0, y: 0 } }).position;
+    const placer = makePlacer(nodes);
+    const addEdge = (s, t, h) => { if (edges.some((e) => e.source === s && e.target === t && (e.sourceHandle || null) === (h || null))) return; const e = { id: 'e_' + s + '_' + t + (h ? '_' + h : ''), source: s, target: t }; if (h) e.sourceHandle = h; edges.push(e); };
+    const retarget = (s, oldT, newT, h) => { edges.forEach((e) => { if (e.source === s && e.target === oldT && (h === undefined || (e.sourceHandle || null) === h)) e.target = newT; }); };
+    const appendAsk = (id) => { const n = byId()[id]; if (!n) return; const app = (t) => (String(t || '').includes('Дані для відправки (ПІБ') ? t : String(t || '') + ADDRESS_ASK); n.data.text = app(n.data.text); if (Array.isArray(n.data.variants) && n.data.variants.length) n.data.variants = n.data.variants.map(app); };
+    ['n_requisites', 'n_req_sum', 'n_trust_confirm_msg'].forEach(appendAsk);
+    if (has('n_collect')) Object.assign(byId().n_collect.data, { speakFirst: false, connectorId: CLAUDE_SONNET, description: 'Реактивний збір адреси (без speakFirst — прохання ставлять message-ноди перед нею). Sonnet: Haiku двічі вигадувала реквізити/посилання. json: 4 поля (+region), wantsManualReq, paymentMethodChange (+regex у двигуні), handoff.' });
+    if (!has('n_np_ask')) {
+        nodes.push({ id: 'n_np_ask', type: 'message', position: placer.place(pos('n_np_gate').x - GX, pos('n_np_gate').y + GY), data: { label: '12.63 Уточнити адресу (НП)', text: '{{context.np.askMsg}}', variants: [], description: 'Уточнення від перевірки Нової Пошти (неоднозначне місто / не знайдено відділення). Далі n_collect приймає відповідь.' } });
+        notes.push('+ нода n_np_ask');
+    }
+    retarget('n_np_gate', 'n_collect', 'n_np_ask', 'true');
+    retarget('n_np_ask', 'n_collect_skip_cond', 'n_collect');
+    addEdge('n_np_ask', 'n_collect');
+    if (!has('n_collect_ask')) {
+        nodes.push({ id: 'n_collect_ask', type: 'message', position: placer.place(pos('n_has_address_cond').x - GX, pos('n_has_address_cond').y + GY), data: { label: '12.97 Попросити адресу (оплата прийшла раніше)', text: '{{context.payConfirmedLine}}Тепер напишіть, будь ласка, дані для відправки Новою Поштою одним повідомленням: ПІБ, телефон, місто, № відділення або поштомата 📦', variants: [], description: 'Квитанція/адреса: оплату звірено раніше за адресу — просимо дані (payConfirmedLine ставить n_reconcile).' } });
+        notes.push('+ нода n_collect_ask');
+    }
+    retarget('n_has_address_cond', 'n_collect', 'n_collect_ask', 'false');
+    addEdge('n_collect_ask', 'n_collect');
+    for (const id of ['n_size', 'n_color']) {
+        const n = byId()[id]; if (!n) continue; let sp = String(n.data.systemPrompt || '');
+        if (!/артикул \{\{context\.product\.sku\}\}/.test(sp)) sp = sp.replace(/(Товар|ТОВАР): \{\{context\.product\.customerName\}\}/, '$1: {{context.product.customerName}} (артикул {{context.product.sku}})');
+        if (!sp.includes('клієнт відкладає')) sp += DEFER_RULE;
+        if (id === 'n_color') { if (sp.includes(COLOR_CONFIRM_OLD)) sp = sp.split(COLOR_CONFIRM_OLD).join(COLOR_CONFIRM_V2); if (sp.includes(COLOR_CONFIRM_NEW)) sp = sp.split(COLOR_CONFIRM_NEW).join(COLOR_CONFIRM_V2); if (!sp.includes('ТІЛЬКИ json_output {"color"')) notes.push('⚠️ n_color: фрагмент підтвердження не знайдено'); }
+        n.data.systemPrompt = sp;
+    }
+    return { nodes, edges };
+}
+
 // --refresh: коли структура вже застосована (маркер n_supplier_pay_gate) — оновити лише код нод
 // із файлів і промпти/тексти (ітерації після живих прогонів), без змін графа.
 function refresh(flow) {
@@ -203,10 +246,10 @@ function refresh(flow) {
     if (byId.n_collect) { byId.n_collect.data.systemPrompt = COLLECT_PROMPT; byId.n_collect.data.detectPaymentChange = true; }
     if (byId.n_welcome_back && byId.n_welcome_back.type === 'claude') byId.n_welcome_back.data.systemPrompt = WELCOME_BACK_PROMPT;
     if (byId.n_upsell2_wait) byId.n_upsell2_wait.data.systemPrompt = UPSELL2_PROMPT;
-    if (byId.n_color) { const sp = String(byId.n_color.data.systemPrompt || ''); if (sp.includes(COLOR_CONFIRM_OLD)) { byId.n_color.data.systemPrompt = sp.split(COLOR_CONFIRM_OLD).join(COLOR_CONFIRM_NEW); notes.push('prompt n_color'); } else if (!sp.includes('БЕЗ жодного питання')) notes.push('⚠️ n_color: фрагмент підтвердження не знайдено'); }
     if (byId.n_size) byId.n_size.data.waitAfterPresentation = true;
     applyPayCollectGuard(byId.n_pay_collect);
-    return { nodes, edges: flow.edges, notes };
+    const v2 = applyV2(nodes, flow.edges.map((e) => ({ ...e })), notes);
+    return { nodes: v2.nodes, edges: v2.edges, notes };
 }
 
 function transform(flow, keysMap, opts) {
@@ -226,7 +269,7 @@ function transform(flow, keysMap, opts) {
     const replaceInPrompt = (id, oldS, newS, label) => { const n = byId()[id]; if (!n) return; const sp = String(n.data.systemPrompt || ''); if (!sp.includes(oldS)) { if (label === 'matchNote' && !sp.includes(newS)) { n.data.systemPrompt = sp.replace(/\n/, '\n' + newS + '\n'); notes.push('ℹ️ ' + id + ': matchNote додано рядком (старий фрагмент не знайдено)'); return; } notes.push('⚠️ ' + id + ': не знайдено фрагмент ' + (label || '')); return; } n.data.systemPrompt = sp.split(oldS).join(newS); };
 
     // ── видалення: ноди прибираємо НАПРИКІНЦІ (щоб retarget бачив старі ребра); placer їх не рахує ──
-    const REMOVE = ['n_followup_wait', 'n_followup_guard', 'n_followup_cond', 'n_followup_msg', 'n_followup_skip', 'n_upsell_cond', 'n_upsell_msg', 'n_np_ask', 'n_ttn_cond', 'n_ttn_client', 'n_final'];
+    const REMOVE = ['n_followup_wait', 'n_followup_guard', 'n_followup_cond', 'n_followup_msg', 'n_followup_skip', 'n_upsell_cond', 'n_upsell_msg', 'n_ttn_cond', 'n_ttn_client', 'n_final'];
 
     const placer = makePlacer(nodes.filter((n) => !REMOVE.includes(n.id)));
     const addNode = (id, type, data, nearX, nearY) => { const p = placer.place(nearX, nearY); nodes.push({ id, type, position: p, data }); notes.push('+ нода ' + id + ' @' + p.x + ',' + p.y); return p; };
@@ -307,7 +350,7 @@ function transform(flow, keysMap, opts) {
     retarget('n_avail_cond', 'n_upsell_cond', 'n_order_intent', 'true');
     setData('n_order_intent', { systemPrompt: ORDER_INTENT_PROMPT, speakFirst: true, messagesTemplate: '', label: '9. Підсумок + допродаж + намір замовити', description: 'speakFirst: сама підсумовує і питає "Оформляємо?" (з допродажем як одним рішенням). json: ready yes/no (+addUpsell, qty), wantsUpsellPhoto, handoff.' });
     setData('n_collect', { systemPrompt: COLLECT_PROMPT, speakFirst: true, detectPaymentChange: true, connectorId: CLAUDE_HAIKU, label: '12. Збір адреси (speakFirst, знає статус оплати)', description: 'speakFirst: одразу просить відсутні поля; знає статус оплати та уточнення НП (np.askMsg). json: 4 поля (+region), wantsManualReq, paymentMethodChange, handoff.' });
-    retarget('n_np_gate', 'n_np_ask', 'n_collect', 'true');
+    retarget('n_np_ask', 'n_collect_skip_cond', 'n_collect');
     setData('n_np_gate', { description: 'Місто/відділення неоднозначні? TRUE → n_collect (speakFirst озвучить np.askMsg і прийме відповідь); FALSE → перевірка оплати.' });
     setData('n_size', { waitAfterPresentation: true });
     replaceInPrompt('n_color', COLOR_CONFIRM_OLD, COLOR_CONFIRM_NEW, 'підтвердження кольору');
@@ -375,6 +418,7 @@ function transform(flow, keysMap, opts) {
     { const n = byId()['n_ttn_sync_crm']; if (n) { placer.free('n_ttn_sync_crm'); n.position = placer.place(n.position.x, n.position.y); } }
 
     REMOVE.forEach(removeNode);
+    { const v2 = applyV2(nodes, edges, notes); nodes = v2.nodes; edges = v2.edges; }
 
     // ── ключі ──
     const keyUpdates = [
@@ -418,7 +462,7 @@ async function patchBot(db, cfg, APPLY) {
         r = refresh({ nodes: flow.nodes, edges: flow.edges });
         console.log('REFRESH: ' + r.notes.join(', '));
         if (!APPLY) return;
-        await db.flowDefinition.update({ where: { botId: BOT_ID }, data: { nodes: r.nodes } });
+        await db.flowDefinition.update({ where: { botId: BOT_ID }, data: { nodes: r.nodes, edges: r.edges } });
         console.log('REFRESHED');
         return;
     }

@@ -7,7 +7,7 @@
             патч тоді поверне alreadyApplied і тести підуть по дампу як є) */
 const fs = require('fs');
 const path = require('path');
-const { transform, optsForBot } = require('./patch-goverla-crm-audit-2026-09-04.js');
+const { transform, refresh, optsForBot } = require('./patch-goverla-crm-audit-2026-09-04.js');
 
 const dumpPath = process.argv[2];
 if (!dumpPath) { console.log('usage: node test-regression-goverla-crm.js <dump.json>'); process.exit(2); }
@@ -16,7 +16,7 @@ const keysMap = Object.fromEntries((dump.keys || []).map((k) => [k.key, k.value]
 const botOpts = optsForBot(dump.bot && dump.bot.id);
 console.log('BOT:', dump.bot && dump.bot.id, dump.bot && dump.bot.name, '| keepCarText=' + botOpts.keepCarText);
 let r = transform({ nodes: dump.nodes, edges: dump.edges }, keysMap, botOpts);
-if (r.alreadyApplied) r = { nodes: dump.nodes, edges: dump.edges, keyUpdates: [], keyDeletes: [], notes: ['(дамп уже з патчем)'] };
+if (r.alreadyApplied) { const rr = refresh({ nodes: dump.nodes, edges: dump.edges }); r = { nodes: rr.nodes, edges: rr.edges, keyUpdates: [], keyDeletes: [], notes: ['(дамп уже з патчем → перевіряємо --refresh)'].concat(rr.notes) }; }
 const nodes = r.nodes, edges = r.edges;
 const byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
 const results = [];
@@ -50,19 +50,20 @@ ok('S-06', 'нема fan-out (>1 ребра) поза condition', fanout.length 
 const cells = {}; const overlaps = [];
 nodes.forEach((n) => { const k = Math.round(n.position.x / 360) + ':' + Math.round(n.position.y / 200); if (cells[k]) overlaps.push(cells[k] + '~' + n.id); cells[k] = n.id; });
 ok('S-07', 'ноди не накладаються (сітка 360×200)', overlaps.length === 0, overlaps.join(','));
-['n_followup_wait', 'n_followup_guard', 'n_followup_msg', 'n_upsell_msg', 'n_np_ask', 'n_ttn_client', 'n_final'].forEach((id) => ok('S-08', 'видалено ' + id, !byId[id]));
+['n_followup_wait', 'n_followup_guard', 'n_followup_msg', 'n_upsell_msg', 'n_ttn_client', 'n_final'].forEach((id) => ok('S-08', 'видалено ' + id, !byId[id]));
 
 console.log('\n===== КРИТИЧНІ ГІЛКИ =====');
 ok('K1a', 'n_create → гейт оплати', next('n_create') === 'n_supplier_pay_gate', next('n_create'));
 ok('K1b', 'гейт[true] → постачальник, [false] → hold', branch('n_supplier_pay_gate', 'true') === 'n_supplier_route' && branch('n_supplier_pay_gate', 'false') === 'n_supplier_hold');
 ok('K1c', 'hold → n_confirm_prep → n_confirm → n_fs5 → n_upsell2_wait', next('n_supplier_hold') === 'n_confirm_prep' && next('n_confirm_prep') === 'n_confirm' && next('n_confirm') === 'n_fs5' && next('n_fs5') === 'n_upsell2_wait');
 ok('K1d', 'після n_upsell2_wait нема нагадування', outdeg.n_upsell2_wait === 0);
-ok('K2a', 'n_del_invoice → адреса є? → n_crm_order / n_collect', next('n_del_invoice') === 'n_has_address_cond' && branch('n_has_address_cond', 'true') === 'n_crm_order' && branch('n_has_address_cond', 'false') === 'n_collect');
+ok('K2a', 'n_del_invoice → адреса є? → n_crm_order / n_collect_ask → n_collect', next('n_del_invoice') === 'n_has_address_cond' && branch('n_has_address_cond', 'true') === 'n_crm_order' && branch('n_has_address_cond', 'false') === 'n_collect_ask' && next('n_collect_ask') === 'n_collect');
+ok('V2a', 'n_collect_ask показує payConfirmedLine (ставить n_reconcile)', /payConfirmedLine/.test(byId.n_collect_ask.data.text) && /payConfirmedLine/.test(byId.n_reconcile.data.code));
 ok('K2b', 'n_pay_notfound_msg → адреса є?', next('n_pay_notfound_msg') === 'n_has_address_cond');
 ok('K2c', 'n_crm_order без телефону дає явну причину', /crmOrderError: 'адресу\/телефон/.test(byId.n_crm_order.data.code));
 ok('K2d', 'n_reconcile не звіряє двічі', /payStatus === 'confirmed' && context\.payTxId/.test(byId.n_reconcile.data.code));
 ok('K3a', 'n_np_gate[false] → перевірка "вже оплачено/0 грн"', branch('n_np_gate', 'false') === 'n_pay_check_cond' && branch('n_pay_check_cond', 'true') === 'n_has_address_cond' && branch('n_pay_check_cond', 'false') === 'n_mono_fetch');
-ok('K3b', 'n_np_gate[true] → n_collect (уточнення каже n_collect)', branch('n_np_gate', 'true') === 'n_collect');
+ok('K3b', 'n_np_gate[true] → n_np_ask (детерміноване уточнення) → n_collect', branch('n_np_gate', 'true') === 'n_np_ask' && next('n_np_ask') === 'n_collect' && /np\.askMsg/.test(byId.n_np_ask.data.text));
 ok('K4a', 'n_order_cond[false] → відмова без нагадування', branch('n_order_cond', 'false') === 'n_declined_msg' && outdeg.n_declined_msg === 0);
 ok('K4b', 'n_fs5 не веде у wait', !edges.some((e) => e.source === 'n_fs5' && /followup/.test(e.target)));
 ok('K5a', 'brewdrop без sd[0] / ba[0]', !/\|\|sd\[0\]|\|\|ba\[0\]/.test(byId.n_supplier_order.data.code));
@@ -74,7 +75,12 @@ console.log('\n===== ВИСОКІ =====');
 ok('V7a', 'n_welcome_back — claude з json stillInterested', byId.n_welcome_back.type === 'claude' && /stillInterested/.test(byId.n_welcome_back.data.systemPrompt) && byId.n_welcome_back.data.outputVar === 'welcomeBack');
 ok('V7b', 'welcome_back → cond → n_is_set / clear', next('n_welcome_back') === 'n_welcome_back_cond' && branch('n_welcome_back_cond', 'true') === 'n_is_set' && branch('n_welcome_back_cond', 'false') === 'n_welcome_back_clear');
 ok('V7c', 'n_lookup → post_order_cond → returning_check', next('n_lookup') === 'n_post_order_cond' && branch('n_post_order_cond', 'false') === 'n_returning_check' && branch('n_post_order_cond', 'true') === 'n_post_order_msg');
-ok('V8a', 'speakFirst на n_order_intent / n_collect / n_welcome_back', ['n_order_intent', 'n_collect', 'n_welcome_back'].every((id) => byId[id].data.speakFirst === true));
+ok('V8a', 'speakFirst на n_order_intent / n_welcome_back; n_collect реактивна (Sonnet)', ['n_order_intent', 'n_welcome_back'].every((id) => byId[id].data.speakFirst === true) && byId.n_collect.data.speakFirst === false && byId.n_collect.data.connectorId === '2ec53ba5-144e-463b-9758-c217c4a69b0e');
+ok('V2b', 'прохання про адресу детерміноване в n_requisites / n_req_sum / n_trust_confirm_msg', ['n_requisites', 'n_req_sum', 'n_trust_confirm_msg'].every((id) => /Дані для відправки \(ПІБ/.test(byId[id].data.text) && (byId[id].data.variants || []).every((v) => /Дані для відправки \(ПІБ/.test(v))));
+ok('V2c', 'n_collect не пише реквізити/посилання сама', /НІКОЛИ не пишеш, не повторюєш і не вигадуєш/.test(byId.n_collect.data.systemPrompt));
+ok('V2d', 'n_color: колір → лише json; артикул у промптах n_size/n_color; правило "подумаю"', /ТІЛЬКИ json_output \{"color"/.test(byId.n_color.data.systemPrompt) && ['n_size', 'n_color'].every((id) => /артикул \{\{context\.product\.sku\}\}/.test(byId[id].data.systemPrompt) && /клієнт відкладає/.test(byId[id].data.systemPrompt)));
+ok('V2e', 'n_order_intent: згода/відмова → лише json', /ТІЛЬКИ json_output \{"ready":"yes"\} БЕЗ жодного тексту/.test(byId.n_order_intent.data.systemPrompt));
+ok('V2f', 'один допродаж (узгоджено з n_pay_amount/n_crm_order) + заголовок презентації', /upsell\.length < 1/.test(byId.n_lookup.data.code) && /заголовок з назвою і ціною/.test(byId.n_lookup.data.code));
 ok('V8b', 'n_avail_cond[true] → n_order_intent (допродаж у першому повідомленні)', branch('n_avail_cond', 'true') === 'n_order_intent' && /ДОПРОДАЖ/.test(byId.n_order_intent.data.systemPrompt));
 ok('V8c', 'n_size_photo має підпис із наступним кроком', /зріст і вагу/.test(byId.n_size_photo.data.caption || ''));
 ok('V8d', 'n_collect знає статус оплати та уточнення НП', /payStatus/.test(byId.n_collect.data.systemPrompt) && /np\.askMsg/.test(byId.n_collect.data.systemPrompt));
@@ -91,7 +97,7 @@ ok('D6', 'n_requisites називає суму', /До сплати зараз/.
 ok('S16', 'n_confirm: confirmLead+ttnLine, без "акційної ціни"', /confirmLead/.test(byId.n_confirm.data.text) && /ttnLine/.test(byId.n_confirm.data.text) && !nodes.some((n) => /акційною ціною/.test(JSON.stringify(n.data))));
 ok('S19a', 'n_pay: рядок про закордон у всіх варіантах', (byId.n_pay.data.variants || []).every((v) => /за кордон/.test(v)));
 ok('S19b', 'n_pay_collect: country лише з method', /Ніколи не повертай JSON лише з country/.test(byId.n_pay_collect.data.systemPrompt));
-ok('S24', 'Haiku на простих нодах', ['n_pay_collect', 'n_collect', 'n_recall_confirm', 'n_upsell2_wait', 'n_welcome_back'].every((id) => byId[id].data.connectorId === '4a8000aa-837f-4a73-bf5c-224949ebaf9a'));
+ok('S24', 'Haiku на простих нодах', ['n_pay_collect', 'n_recall_confirm', 'n_upsell2_wait', 'n_welcome_back'].every((id) => byId[id].data.connectorId === '4a8000aa-837f-4a73-bf5c-224949ebaf9a'));
 ok('S25a', 'DRY_RUN=1', r.keyUpdates.length === 0 || r.keyUpdates.every((k) => k.value === '1'));
 ok('AV1', 'n_avail_cond[false] → вид відсутності → менеджер / інший колір', branch('n_avail_cond', 'false') === 'n_avail_kind_cond' && branch('n_avail_kind_cond', 'true') === 'n_avail_stock_msg' && branch('n_avail_kind_cond', 'false') === 'n_avail_no');
 const claudeBad = nodes.filter((n) => n.type === 'claude' && !(n.data.systemPrompt || '').trim()).map((n) => n.id);

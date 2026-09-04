@@ -235,9 +235,11 @@ try {
   // ("Матеріал: двухнитка (100% бавовна)"), бо його presentationText починається зі спец-рядка,
   // а customerName порожній. Для допродажу беремо назву, що не схожа на "Підпис: значення".
   function looksLikeSpecLine(s) { s = String(s || '').trim(); return !s || s.length < 4 || /:$/.test(s) || /^[^:]{1,30}:\s/.test(s) || /^(в\s*наявност|наявніст|кольор|розмір|матеріал|ціна\b|акці|сезон)/i.test(s); }
-  function upname(prod) { var up = Number(prod.price) || 0; var nm = prod.customerName || (!looksLikeSpecLine(prod.displayName) && prod.displayName) || prod.name || 'Товар'; return nm + (up ? (' — ' + up + ' грн') : ''); }
+  function upname(prod) { var up = Number(prod.price) || 0; var nm = (!looksLikeSpecLine(prod.customerName) && prod.customerName) || (!looksLikeSpecLine(prod.displayName) && prod.displayName) || prod.name || 'Товар'; return nm + (up ? (' — ' + up + ' грн') : ''); }
   var compIds = Array.isArray(found.companionProductIds) ? found.companionProductIds : [];
-  for (var ui = 0; ui < compIds.length && upsell.length < 3; ui++) {
+  // v2 (2026-09-04): ОДИН допродаж, не три — n_pay_amount/n_crm_order додають лише upsellItems[0],
+  // а n_order_intent пропонував "ці аксесуари" списком: клієнт погоджувався на три, платив за один.
+  for (var ui = 0; ui < compIds.length && upsell.length < 1; ui++) {
     var cprod = all.filter(function (x) { return String(x.id) === String(compIds[ui]) && String(x.id) !== String(found.id); })[0];
     if (!cprod) continue;
     upsell.push(upname(cprod));
@@ -321,6 +323,9 @@ try {
     __descClean = __customerName + (price ? (' — ' + price + ' грн') : '')
       + (colors.length ? ('\nКольори: ' + colors.join(', ')) : '')
       + (sizes.length ? ('\nРозміри: ' + sizes.join(', ')) : '');
+  } else if (__descClean.toLowerCase().indexOf(String(__customerName).toLowerCase().slice(0, 25)) < 0) {
+    // v2: презентація без назви товару (covercar: текст починається зі специфікації) — заголовок з назвою і ціною.
+    __descClean = __customerName + (price ? (' — ' + price + ' грн') : '') + '\n\n' + __descClean;
   }
   // Аудит 2026-09-01 (patch-size-followup-dedup.js, вже застосований на клонах): followUpQuestion
   // НЕ дублює конкретне питання (n_size сама питає, з динамічними параметрами §3 ТЗ) —

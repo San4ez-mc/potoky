@@ -276,8 +276,12 @@ function applyV4(nodes, edges, notes) {
     if (byId.n_unknown_msg) delete byId.n_unknown_msg.data.model; // фіксована фраза — дефолт (Haiku)
     // Взуття: клієнт часто каже довжину стопи/устілки в см ("стелька 27,5") — окреме поле footLength,
     // n_calc підбирає по sizeChartData (Довжина стопи). Раніше це йшло як clothingSize і летіло до менеджера.
+    if (byId.n_size && /поверни json_output \{"footLength"/.test(byId.n_size.data.systemPrompt || '')) {
+        byId.n_size.data.systemPrompt = byId.n_size.data.systemPrompt.replace('поверни json_output {"footLength":<число см, крапка як роздільник>} (можна разом із color)', 'поверни ТІЛЬКИ json_output {"footLength":<число см, крапка як роздільник>} без жодного тексту (можна разом із color)');
+        notes.push('n_size footLength rule (no-text)');
+    }
     if (byId.n_size && !/"footLength"/.test(byId.n_size.data.systemPrompt || '')) {
-        byId.n_size.data.systemPrompt = String(byId.n_size.data.systemPrompt || '') + '\nЯКЩО це взуття і клієнт назвав довжину стопи або устілки в сантиметрах («стелька 27,5», «стопа 27 см») — поверни json_output {"footLength":<число см, крапка як роздільник>} (можна разом із color); розмір НЕ вгадуй сам — його порахує система за сіткою товару. Якщо назвав розмір взуття цифрою («42») — це clothingSize.';
+        byId.n_size.data.systemPrompt = String(byId.n_size.data.systemPrompt || '') + '\nЯКЩО це взуття і клієнт назвав довжину стопи або устілки в сантиметрах («стелька 27,5», «стопа 27 см») — поверни ТІЛЬКИ json_output {"footLength":<число см, крапка як роздільник>} без жодного тексту (можна разом із color); розмір НЕ вгадуй сам — його порахує система за сіткою товару. Якщо назвав розмір взуття цифрою («42») — це clothingSize.';
         notes.push('n_size footLength rule');
     }
     if (byId.n_size && byId.n_size.data.useKb !== false) { byId.n_size.data.useKb = false; notes.push('n_size useKb=false'); }

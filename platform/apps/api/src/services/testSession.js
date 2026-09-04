@@ -3907,7 +3907,10 @@ ${_baseUrl}/legal/terms — Правила використання`;
             // Build initial messages from template. У dialogMode без вводу — стартовий тригер,
             // щоб агент сам привітався/продовжив (як speakFirst).
             let agentUserInput = runtime.lastUserMessage
-                || (data.dialogMode ? (data.startTrigger || 'Почни/продовж діалог: за потреби виклич get_profile, зрозумій поточний стан і став наступне питання або підсумуй.') : '');
+                // startTrigger теж шаблон: без renderTemplate {{context.x}} доїжджало до
+                // моделі як текст, і вона бачила назву змінної замість значення —
+                // тобто ухвалювала рішення наосліп.
+                || (data.dialogMode ? renderTemplate(data.startTrigger || 'Почни/продовж діалог: за потреби виклич get_profile, зрозумій поточний стан і став наступне питання або підсумуй.', agentScope) : '');
             // Вхідний документ → додати його текст у ввід (агент сам витягне дані й збереже через інструменти).
             if (ctx.lastFile && ctx.lastFile.fileUrl) {
                 try {

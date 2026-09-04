@@ -68,6 +68,7 @@ const CODE = {
     n_supplier_order: () => readCode('brewdrop-supplier-code.js'),
     n_supplier_order_ed: () => readCode('easydrop-offline-code.js'),
     n_supplier_order_cart: () => readCode('easydrop-cart-code.js'),
+    n_catalog_hint: () => readCode('n_catalog_hint-code.js'),
 };
 
 const MATCH_NOTE_OLD = '⚠️ Товар вище вже ОДНОЗНАЧНО підтверджено системою за артикулом/кодом, який назвав клієнт — НІКОЛИ не пиши, що товар/артикул "не знайдено" чи "немає в каталозі", навіть якщо точний код не видно в описі нижче. Завжди довіряй даним про товар вище.';
@@ -294,6 +295,44 @@ function applyV4(nodes, edges, notes) {
     return { nodes, edges };
 }
 
+// v5 (тест Олексія 2026-09-04 19:27, «Яка ціна кофти?» без артикулу → «покажіть товар» + алерт):
+// перед n_unknown_msg — js-нода n_catalog_hint: за словом-категорією підбирає з CRM до 4 товарів
+// (артикул, назва, ціна); n_unknown_msg їх показує і питає, який саме; алерт менеджеру в такому
+// разі не шлемо (клієнт не завис, він обирає).
+const UNKNOWN_PROMPT_V5 = `Ти — {{env.PERSONA_NAME}}, продавчиня {{env.SHOP_TAG}}. Товар ще НЕ визначено. Діалог міг початися не з поста, а з привітання, питання чи назви категорії — твоя робота відкрити розмову і підвести до конкретного товару.
+Повідомлення клієнта: «{{context.flowRuntime.lastUserMessage}}»
+КАТЕГОРІЇ МАГАЗИНУ з CRM (з кількістю товарів; порожньо = недоступно): {{context.catalogCategories}}
+ПІДКАЗКА З КАТАЛОГУ (порожньо = нема; це РЕАЛЬНІ товари, знайдені системою за категорією з повідомлення):
+{{context.catalogHint}}
+ДОВІДКА МАГАЗИНУ: {{env.SHOP_FAQ}}
+
+ПРАВИЛА (одне коротке повідомлення, 2-4 речення, закінчується питанням):
+1. Якщо ПІДКАЗКА НЕ порожня — привітайся у тон клієнта і перелічи ці товари РІВНО як у підказці (артикул, назва, ціна; нічого не змінюй і не додавай), потім спитай: «Який цікавить? Напишіть артикул або скиньте пост 😊».
+2. Інакше якщо це просто привітання чи «хочу щось замовити» — привітайся, назвись одним словом і запропонуй категорії з блоку КАТЕГОРІЇ (лише назви, без кількостей у дужках, якщо їх більше 5 — перші 5), спитай, що цікавить, або хай скине пост/рілс/артикул.
+3. Інакше якщо це загальне питання (доставка, оплата, обмін, виробник, примірка) — відповідай ОДНИМ-двома реченнями строго з ДОВІДКИ, потім спитай, який товар цікавить (категорії або пост/артикул).
+4. Інакше (клієнт має на увазі конкретний товар, якого ти не знаєш) — тепло скажи, що не впевнена, про який саме товар мова, і попроси скинути пост чи рілс з Instagram або назвати артикул.
+
+СУВОРО ЗАБОРОНЕНО вигадувати товари, ціни, наявність, умови поза підказкою і довідкою. Без JSON, без службових токенів.`;
+function applyV5(nodes, edges, notes) {
+    const byId = () => Object.fromEntries(nodes.map((n) => [n.id, n]));
+    if (!byId().n_unknown_msg) return { nodes, edges };
+    if (!byId().n_catalog_hint) {
+        const placer = makePlacer(nodes);
+        const u = byId().n_unknown_msg;
+        const p = placer.place(u.position.x - GX, u.position.y);
+        nodes.push({ id: 'n_catalog_hint', type: 'js', position: p, data: { label: '1a. Підказка з каталогу за категорією', code: CODE.n_catalog_hint(), description: 'Товар не визначено, але названо категорію («кофта», «лофери») → до 4 товарів із CRM у context.catalogHint для n_unknown_msg.' } });
+        edges = edges.map((e) => (e.target === 'n_unknown_msg' ? { ...e, target: 'n_catalog_hint' } : e));
+        edges.push({ id: 'e_n_catalog_hint_n_unknown_msg', source: 'n_catalog_hint', target: 'n_unknown_msg' });
+        notes.push('+ нода n_catalog_hint @' + p.x + ',' + p.y);
+    } else { byId().n_catalog_hint.data.code = CODE.n_catalog_hint(); }
+    byId().n_unknown_msg.data.systemPrompt = UNKNOWN_PROMPT_V5;
+    byId().n_unknown_msg.data.description = 'Товар не визначено: якщо є catalogHint — перелічує реальні товари категорії і питає артикул; інакше просить пост/артикул.';
+    // Алерт менеджеру лише коли клієнт ЯВНО посилався на товар (пост/артикул/фото), а n_lookup не знайшов;
+    // привітання, категорії, загальні питання бот тепер обробляє сам.
+    if (byId().n_unknown_once_cond) byId().n_unknown_once_cond.data.condition = '!context.unknownNotifiedAt && !context.catalogHint && context.hasProductSignal === true';
+    return { nodes, edges };
+}
+
 function applyV2(nodes, edges, notes) {
     const byId = () => Object.fromEntries(nodes.map((n) => [n.id, n]));
     const has = (id) => !!byId()[id];
@@ -346,7 +385,8 @@ function refresh(flow, opts) {
     applyPayCollectGuard(byId.n_pay_collect);
     const v2 = applyV2(nodes, flow.edges.map((e) => ({ ...e })), notes);
     const v3raw = applyV3(v2.nodes, v2.edges, notes);
-    const v3 = applyV4(v3raw.nodes, v3raw.edges, notes);
+    const v4 = applyV4(v3raw.nodes, v3raw.edges, notes);
+    const v3 = applyV5(v4.nodes, v4.edges, notes);
     return { nodes: v3.nodes, edges: v3.edges, notes, keyUpdates: [
         { key: 'ORDER_TERMS_LINE', value: ORDER_TERMS_DEFAULT, label: 'Рядок умов у підсумку перед "Оформляємо?" (n_order_intent)', onlyIfMissing: true },
         { key: 'SHOP_FAQ', value: SHOP_FAQ_DEFAULT[opts.shop] || SHOP_FAQ_DEFAULT.GOVERLA, label: 'Довідка магазину для бота (виробник, склад, примірка, терміни) — редагуй тут', onlyIfMissing: true },
@@ -376,7 +416,7 @@ function transform(flow, keysMap, opts) {
     const addNode = (id, type, data, nearX, nearY) => { const p = placer.place(nearX, nearY); nodes.push({ id, type, position: p, data }); notes.push('+ нода ' + id + ' @' + p.x + ',' + p.y); return p; };
 
     // ── коди нод із файлів ──
-    for (const [id, get] of Object.entries(CODE)) setData(id, { code: get() });
+    for (const [id, get] of Object.entries(CODE)) { if (byId()[id]) setData(id, { code: get() }); }
     setData('n_lookup', { label: '1. Товар по ad-id / артикулу / фото (Fineko CRM)' });
     setData('n_crm_order', { label: '12.5 Створити замовлення у Fineko CRM' });
 
@@ -519,7 +559,7 @@ function transform(flow, keysMap, opts) {
     { const n = byId()['n_ttn_sync_crm']; if (n) { placer.free('n_ttn_sync_crm'); n.position = placer.place(n.position.x, n.position.y); } }
 
     REMOVE.forEach(removeNode);
-    { const v2 = applyV2(nodes, edges, notes); const v3 = applyV3(v2.nodes, v2.edges, notes); const v4 = applyV4(v3.nodes, v3.edges, notes); nodes = v4.nodes; edges = v4.edges; }
+    { const v2 = applyV2(nodes, edges, notes); const v3 = applyV3(v2.nodes, v2.edges, notes); const v4 = applyV4(v3.nodes, v3.edges, notes); const v5 = applyV5(v4.nodes, v4.edges, notes); nodes = v5.nodes; edges = v5.edges; }
 
     // ── ключі ──
     const keyUpdates = [

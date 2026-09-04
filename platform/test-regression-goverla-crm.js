@@ -59,7 +59,11 @@ ok('K1c', 'hold → n_confirm_prep → n_confirm → n_fs5 → n_upsell2_wait', 
 ok('K1d', 'після n_upsell2_wait нема нагадування', outdeg.n_upsell2_wait === 0);
 ok('K2a', 'n_del_invoice → адреса є? → n_crm_order / n_collect_ask → n_collect', next('n_del_invoice') === 'n_has_address_cond' && branch('n_has_address_cond', 'true') === 'n_crm_order' && branch('n_has_address_cond', 'false') === 'n_collect_ask' && next('n_collect_ask') === 'n_collect');
 ok('V2a', 'n_collect_ask показує payConfirmedLine (ставить n_reconcile)', /payConfirmedLine/.test(byId.n_collect_ask.data.text) && /payConfirmedLine/.test(byId.n_reconcile.data.code));
-ok('K2b', 'n_pay_notfound_msg → адреса є?', next('n_pay_notfound_msg') === 'n_has_address_cond');
+ok('K2b', 'n_pay_notfound_msg → адреса є?; повторна звірка без повтору повідомлення', next('n_pay_notfound_msg') === 'n_has_address_cond' && branch('n_pay_notfound_once_cond', 'false') === 'n_has_address_cond');
+ok('V4a', 'моделі: Sonnet явно на критичних нодах (data.model), Haiku за дефолтом на решті', ['n_size', 'n_color', 'n_set_choice', 'n_order_intent', 'n_collect'].every((id) => byId[id].data.model === 'claude-sonnet-4-6') && ['n_pay_collect', 'n_recall_confirm', 'n_upsell2_wait', 'n_welcome_back', 'n_unknown_msg'].every((id) => !byId[id].data.model));
+ok('V4b', 'n_size без пошуку по KB; у n_pay нема рядка про закордон', byId.n_size.data.useKb === false && ![byId.n_pay.data.text].concat(byId.n_pay.data.variants || []).some((t) => /за кордон/.test(t)));
+ok('V4c', 'призначення платежу готове для копіювання', /Оплата за товар \{\{context\.orderRef\}\}/.test(byId.n_req_ref_v.data.text));
+ok('V4d', 'сигнал "товар не визначено" не на привітання; без тест-рестарту', /добр/.test(byId.n_unknown_once_cond.data.condition) && byId.n_unknown_stop.data.testRestartAfter === false && (() => { try { return !new Function('context', 'return ' + byId.n_unknown_once_cond.data.condition)({ lastUserMessage: 'Добрий вечір)' }) && new Function('context', 'return ' + byId.n_unknown_once_cond.data.condition)({ lastUserMessage: 'Скільки коштує кофта?' }); } catch (e) { return false; } })());
 ok('K2c', 'n_crm_order без телефону дає явну причину', /crmOrderError: 'адресу\/телефон/.test(byId.n_crm_order.data.code));
 ok('K2d', 'n_reconcile не звіряє двічі', /payStatus === 'confirmed' && context\.payTxId/.test(byId.n_reconcile.data.code));
 ok('K3a', 'n_np_gate[false] → перевірка "вже оплачено/0 грн"', branch('n_np_gate', 'false') === 'n_pay_check_cond' && branch('n_pay_check_cond', 'true') === 'n_has_address_cond' && branch('n_pay_check_cond', 'false') === 'n_mono_fetch');
@@ -110,7 +114,7 @@ ok('D1', 'n_collect вміє paymentMethodChange (перевипуск інво�
 ok('D5', 'n_color приймає явний розмір клієнта, n_avail переписує', /"size":"<РОЗМІР>"/.test(byId.n_color.data.systemPrompt) && /sizeOverride/.test(byId.n_avail.data.code));
 ok('D6', 'n_requisites називає суму', /До сплати зараз/.test(byId.n_requisites.data.text) && (byId.n_requisites.data.variants || []).every((v) => /До сплати зараз/.test(v)));
 ok('S16', 'n_confirm: confirmLead+ttnLine, без "акційної ціни"', /confirmLead/.test(byId.n_confirm.data.text) && /ttnLine/.test(byId.n_confirm.data.text) && !nodes.some((n) => /акційною ціною/.test(JSON.stringify(n.data))));
-ok('S19a', 'n_pay: рядок про закордон у всіх варіантах', (byId.n_pay.data.variants || []).every((v) => /за кордон/.test(v)));
+ok('S19a', 'n_pay: варіанти є', (byId.n_pay.data.variants || []).length > 0);
 ok('S19b', 'n_pay_collect: country лише з method', /Ніколи не повертай JSON лише з country/.test(byId.n_pay_collect.data.systemPrompt));
 ok('S24', 'Haiku на простих нодах', ['n_pay_collect', 'n_recall_confirm', 'n_upsell2_wait', 'n_welcome_back'].every((id) => byId[id].data.connectorId === '4a8000aa-837f-4a73-bf5c-224949ebaf9a'));
 ok('S25a', 'DRY_RUN=1', (r.keyUpdates || []).filter((k) => /DRY_RUN/.test(k.key)).every((k) => k.value === '1'));

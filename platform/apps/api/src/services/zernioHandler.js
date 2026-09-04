@@ -1083,6 +1083,13 @@ async function runFlowAndDeliver(sessionId, entry) {
     for (const om of outMsgs) {
         const m = om.metadata || {};
         if (m.hidden) continue;
+        // Живий тест 2026-09-04 (Олексій): клієнт отримав текст "[повідомлення]" — це луна inbox-синку
+        // (наш же щойно надісланий фото-альбом без тексту, збережений як zernio_inbox з плейсхолдером)
+        // потрапила у вибірку "нові повідомлення асистента" і пішла клієнту як текст. Луну і порожні
+        // плейсхолдери НЕ доставляємо.
+        if (m.source === 'zernio_inbox' || m.status === 'sent') continue;
+        if (!String(om.content || '').trim() && !(m.attachment && m.attachment.url)) continue;
+        if (/^\[повідомлення\]$/.test(String(om.content || '').trim())) continue;
         const att = m.attachment;
         const imgUrl = att && (att.type === 'photo' || att.type === 'image') && att.url && String(att.url).startsWith('http') ? att.url : null;
         try {

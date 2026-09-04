@@ -1588,6 +1588,11 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
     if (incomingImageUrl) {
         ctx.lastReceiptImageUrl = incomingImageUrl;
         ctx.lastUserImageUrl = incomingImageUrl;
+    } else if (incomingUserMessage) {
+        // Живий тест 2026-09-04 (Олексій): фото з попереднього ходу лишалось у lastUserImageUrl,
+        // і наступний ТЕКСТ ("Світло-сірий") n_prev_match_snapshot рахував як "свіжий сигнал товару"
+        // → повторна презентація замість post-order/welcome-back. Фото належить лише своєму ходу.
+        delete ctx.lastUserImageUrl;
     }
 
     let lastAssistant = null;

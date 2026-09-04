@@ -260,6 +260,30 @@ function applyV3(nodes, edges, notes) {
     }
     return { nodes, edges };
 }
+// v4 (живий тест Олексія 2026-09-04, сесія 5a542121): (1) МОДЕЛІ — двигун бере модель з data.model
+// ноди або дефолту CLAUDE_MODEL=haiku; connectorId дає лише ключ. Тож усі "Sonnet"-ноди насправді
+// працювали на Haiku (звідси вигадані реквізити, зайві уточнення). Ставимо data.model явно.
+// (2) рядок "Доставка за кордон?" у меню оплати читався як "бот вирішив, що за кордон" — прибрано;
+// країну бот і так розуміє з відповіді. (3) призначення платежу для ручної оплати — готовий рядок
+// для копіювання. (4) сигнал "товар не визначено" не шлемо на голе привітання; без тест-рестарту.
+// (5) "Оплату поки не бачу" — один раз, повторна звірка мовчки йде далі.
+const MODEL_STRONG = 'claude-sonnet-4-6';
+const STRONG_NODES = ['n_size', 'n_color', 'n_set_choice', 'n_order_intent', 'n_collect'];
+const GREETING_RE = "/^\\s*(добр(ий|ого|е)\\s*(день|вечір|ранок|дня)?|привіт|вітаю|здрастуйте|hi|hello|хай)[\\s!)🙂😊👋.]*$/i";
+function applyV4(nodes, edges, notes) {
+    const byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
+    for (const id of STRONG_NODES) { if (byId[id] && byId[id].data.model !== MODEL_STRONG) { byId[id].data.model = MODEL_STRONG; notes.push('model ' + id + '=' + MODEL_STRONG); } }
+    if (byId.n_unknown_msg) delete byId.n_unknown_msg.data.model; // фіксована фраза — дефолт (Haiku)
+    if (byId.n_size && byId.n_size.data.useKb !== false) { byId.n_size.data.useKb = false; notes.push('n_size useKb=false'); }
+    if (byId.n_pay) { const strip = (t) => String(t || '').replace(/\n*🌍 Доставка за кордон\?[^\n]*/g, '').replace(/\s+$/, ''); byId.n_pay.data.text = strip(byId.n_pay.data.text); byId.n_pay.data.variants = (byId.n_pay.data.variants || []).map(strip); }
+    if (byId.n_req_ref_l) { byId.n_req_ref_l.data.text = '📌 Призначення платежу — скопіюйте як є, так ми одразу знайдемо вашу оплату 👇'; byId.n_req_ref_l.data.variants = []; }
+    if (byId.n_req_ref_v) { byId.n_req_ref_v.data.text = 'Оплата за товар {{context.orderRef}}'; byId.n_req_ref_v.data.variants = []; }
+    if (byId.n_unknown_once_cond) byId.n_unknown_once_cond.data.condition = '!context.unknownNotifiedAt && !' + GREETING_RE + '.test(String(context.lastUserMessage || \'\'))';
+    if (byId.n_unknown_stop) byId.n_unknown_stop.data.testRestartAfter = false;
+    edges = edges.map((e) => (e.source === 'n_pay_notfound_once_cond' && (e.sourceHandle || null) === 'false' && e.target === 'n_pay_notfound_msg') ? { ...e, target: 'n_has_address_cond' } : e);
+    return { nodes, edges };
+}
+
 function applyV2(nodes, edges, notes) {
     const byId = () => Object.fromEntries(nodes.map((n) => [n.id, n]));
     const has = (id) => !!byId()[id];
@@ -311,7 +335,8 @@ function refresh(flow, opts) {
     if (byId.n_size) byId.n_size.data.waitAfterPresentation = true;
     applyPayCollectGuard(byId.n_pay_collect);
     const v2 = applyV2(nodes, flow.edges.map((e) => ({ ...e })), notes);
-    const v3 = applyV3(v2.nodes, v2.edges, notes);
+    const v3raw = applyV3(v2.nodes, v2.edges, notes);
+    const v3 = applyV4(v3raw.nodes, v3raw.edges, notes);
     return { nodes: v3.nodes, edges: v3.edges, notes, keyUpdates: [
         { key: 'ORDER_TERMS_LINE', value: ORDER_TERMS_DEFAULT, label: 'Рядок умов у підсумку перед "Оформляємо?" (n_order_intent)', onlyIfMissing: true },
         { key: 'SHOP_FAQ', value: SHOP_FAQ_DEFAULT[opts.shop] || SHOP_FAQ_DEFAULT.GOVERLA, label: 'Довідка магазину для бота (виробник, склад, примірка, терміни) — редагуй тут', onlyIfMissing: true },
@@ -484,7 +509,7 @@ function transform(flow, keysMap, opts) {
     { const n = byId()['n_ttn_sync_crm']; if (n) { placer.free('n_ttn_sync_crm'); n.position = placer.place(n.position.x, n.position.y); } }
 
     REMOVE.forEach(removeNode);
-    { const v2 = applyV2(nodes, edges, notes); const v3 = applyV3(v2.nodes, v2.edges, notes); nodes = v3.nodes; edges = v3.edges; }
+    { const v2 = applyV2(nodes, edges, notes); const v3 = applyV3(v2.nodes, v2.edges, notes); const v4 = applyV4(v3.nodes, v3.edges, notes); nodes = v4.nodes; edges = v4.edges; }
 
     // ── ключі ──
     const keyUpdates = [

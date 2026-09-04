@@ -1325,7 +1325,17 @@ async function handleSideEvent(botId, event, body) {
             const _ourEcho = _recent.find((r) => ((r.metadata || {}).source) !== 'zernio_inbox' && _norm(r.content) === _sentNorm);
             if (_ourEcho) { const _c = _ourEcho.metadata || {}; if (!_c.zernioMessageId && msg.id) await db.message.update({ where: { id: _ourEcho.id }, data: { metadata: { ..._c, zernioMessageId: msg.id, status: 'sent' } } }).catch(() => {}); return { ok: true, processed: 0 }; }
         }
-        await db.message.create({ data: { sessionId: session.id, role: 'assistant', content: msg.text || '[повідомлення]', metadata: { source: 'zernio_inbox', zernioMessageId: msg.id || null, platformMessageId: msg.platformMessageId || null, status: 'sent' } } });
+        // Луна НАШОГО ж медіа (фото-альбом товару без тексту): у сесії вона показувалась як
+        // «[повідомлення] від менеджера (напряму в Instagram)» (скрін власника 2026-09-05).
+        // Без тексту шукаємо своє свіже повідомлення з фото без zernioMessageId і дотегуємо його.
+        const _sentAtts = Array.isArray(msg.attachments) ? msg.attachments : (Array.isArray(msg.media) ? msg.media : []);
+        if (!_sentText) {
+            const _recentM = await db.message.findMany({ where: { sessionId: session.id, role: 'assistant', createdAt: { gte: new Date(Date.now() - 300000) } }, orderBy: { createdAt: 'desc' }, take: 15 });
+            const _ourMedia = _recentM.find((r) => { const c = r.metadata || {}; return c.source !== 'zernio_inbox' && !c.zernioMessageId && (c.attachment || c.nodeType === 'sendPhoto' || /photo/.test(String(c.nodeType || '')) || (Array.isArray(c.attachments) && c.attachments.length)); });
+            if (_ourMedia) { const _c = _ourMedia.metadata || {}; await db.message.update({ where: { id: _ourMedia.id }, data: { metadata: { ..._c, zernioMessageId: msg.id || null, platformMessageId: msg.platformMessageId || _c.platformMessageId || null, status: 'sent' } } }).catch(() => {}); return { ok: true, processed: 0 }; }
+        }
+        const _label = _sentText || (_sentAtts.length ? ('[' + (_sentAtts.length > 1 ? 'фото ×' + _sentAtts.length : ((_sentAtts[0] && /video/i.test(String(_sentAtts[0].type || ''))) ? 'відео' : 'фото')) + ' від менеджера]') : '[повідомлення від менеджера]');
+        await db.message.create({ data: { sessionId: session.id, role: 'assistant', content: _label, metadata: { source: 'zernio_inbox', zernioMessageId: msg.id || null, platformMessageId: msg.platformMessageId || null, status: 'sent', ...(_sentAtts.length ? { attachments: _sentAtts.slice(0, 10) } : {}) } } });
         return { ok: true, processed: 1 };
     }
 

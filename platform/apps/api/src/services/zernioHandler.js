@@ -976,11 +976,32 @@ async function handleIncomingMessage(botId, body) {
         session = await db.session.update({ where: { id: session.id }, data: { context: _c } });
     }
 
+    // Живий тест 2026-09-04 (Олексій, сесія 5a542121): вебхуки Zernio приходили із затримкою
+    // 2 хв ("Сірий") і 18,5 хв ("Світло-сірий") відносно часу створення повідомлення (час
+    // зашитий у Mongo ObjectId msg.id; body.timestamp, якщо є). Запізніле повідомлення
+    // оброблялось як нове — після завершеного замовлення бот заново показував товар.
+    // Рахуємо реальний вік повідомлення; "застаріле" (старіше за нашу останню відповідь
+    // на 90+ с, без товарного сигналу) зберігаємо в історію, але у воронку НЕ пускаємо.
+    let msgCreatedAt = null;
+    try {
+        const rawTs = body.timestamp || msg.timestamp || msg.createdAt || msg.created_at || null;
+        if (rawTs) { const n = Number(rawTs); msgCreatedAt = Number.isFinite(n) ? new Date(n < 1e12 ? n * 1000 : n) : new Date(rawTs); }
+        if ((!msgCreatedAt || isNaN(msgCreatedAt.getTime())) && zMsgId && /^[0-9a-f]{24}$/i.test(String(zMsgId))) msgCreatedAt = new Date(parseInt(String(zMsgId).slice(0, 8), 16) * 1000);
+        if (msgCreatedAt && isNaN(msgCreatedAt.getTime())) msgCreatedAt = null;
+    } catch (_e) { msgCreatedAt = null; }
+    const channelLatencyMs = msgCreatedAt ? Math.max(0, Date.now() - msgCreatedAt.getTime()) : null;
+    const lastAssistantMsg = await db.message.findMany({ where: { sessionId: session.id, role: 'assistant' }, orderBy: { createdAt: 'desc' }, take: 8, select: { createdAt: true, metadata: true } })
+        .then((rows) => rows.find((r) => ((r.metadata || {}).source) !== 'zernio_inbox') || null).catch(() => null);
+    const hasProductSignal = !!(sharedPost || adId || postId || storyId || (Array.isArray(mappedAtts) && mappedAtts.length) || /(?:артикул|арт\.?|art|код|sku|#|№)\s*[:#№.\-]?\s*[A-Za-zА-Яа-яІЇЄҐіїєґ]{0,5}\d{2,8}/i.test(String(text || '')) || /\b[A-Za-z]\d{3,6}\b/.test(String(text || '')));
+    const staleInbound = !!(msgCreatedAt && lastAssistantMsg && !hasProductSignal && (lastAssistantMsg.createdAt.getTime() - msgCreatedAt.getTime()) > 90 * 1000);
+
     await db.message.create({
         data: {
             sessionId: session.id, role: 'user', content: text || (sharedPost && sharedPost.caption ? ('[переслав ' + sharedPost.kind + '] ' + sharedPost.caption.slice(0, 80)) : mediaLabel),
             metadata: {
                 source: 'zernio', zernioMessageId: zMsgId, platformMessageId, messageId: zMsgId,
+                ...(msgCreatedAt ? { channelCreatedAt: msgCreatedAt.toISOString(), channelLatencyMs } : {}),
+                ...(staleInbound ? { stale: true, staleReason: 'older than last bot reply by >90s (channel delay)' } : {}),
                 ...(adId ? { adId } : {}),
                 ...(attachment ? { attachment, attachments: mappedAtts } : {}),
                 ...(sharedPost ? { sharedPost } : {}),
@@ -1011,6 +1032,14 @@ async function handleIncomingMessage(botId, body) {
     // вона має тримати бота мовчазним; adminEngaged — автоматичне рішення системи,
     // resume на нього рушій робить сам).
     const inImageUrl = (attachment && attachment.type === 'photo' && attachment.url && String(attachment.url).startsWith('http')) ? attachment.url : null;
+    if (channelLatencyMs != null && channelLatencyMs > 60 * 1000) {
+        logger.warn('[zernioHandler] inbound arrived late from channel', { botId, sessionId: session.id, latencySec: Math.round(channelLatencyMs / 1000), stale: staleInbound, text: String(text || '').slice(0, 60) });
+        await logDelivery(session.id, botId, 'zernio_inbound', true, null, { latencyMs: channelLatencyMs, stale: staleInbound, text: String(text || '').slice(0, 80), reason: staleInbound ? 'stale: skipped flow (older than last bot reply)' : 'late but processed' });
+    }
+    if (staleInbound) {
+        logger.info('[zernioHandler] stale inbound — stored, flow not run', { botId, sessionId: session.id });
+        return { ok: true, processed: 1, stale: true };
+    }
     if (!testModeBlocked && !ctxNow.funnelPaused) {
         // Аудит 2026-08-27 (антипатерн A12, реальний кейс Сіразетдінова): рілс/пост і
         // підпис-текст до нього іноді приходять ДВОМА окремими webhook-подіями за

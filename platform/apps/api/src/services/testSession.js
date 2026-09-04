@@ -3476,6 +3476,19 @@ ${sourceContent || '(немає даних)'}
                     if (fsRes && !fsRes.ok) {
                         notifyAdminOfServiceOutage(session.id, 'CRM funnel-events (аналітика етапів воронки)', `HTTP ${fsRes.status}`).catch(() => {});
                     }
+                    // 2026-09-05 (запит власника: картка замовлення в CRM не рухалась по воронці): якщо
+                    // замовлення в CRM уже створене — переводимо його на стадію з ТІЄЮ Ж назвою, що й
+                    // етап воронки (стадії pipeline у CRM названі як етапи). Best-effort.
+                    if (ctx.crmOrderId && !String(ctx.crmOrderId).startsWith('TEST-')) {
+                        try {
+                            const _pr = await fetch(`${crmApiUrl}/pipelines`, { headers: { Authorization: `Bearer ${crmApiKey}` } });
+                            const _pj = _pr.ok ? await _pr.json().catch(() => ({})) : {};
+                            let _stageId = null;
+                            const _want = stageName.toLowerCase();
+                            for (const _p of (Array.isArray(_pj.data) ? _pj.data : [])) { const _hit = (_p.stages || []).find((s) => String(s.name || '').trim().toLowerCase() === _want); if (_hit) { _stageId = _hit.id; break; } }
+                            if (_stageId) await fetch(`${crmApiUrl}/orders/${ctx.crmOrderId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${crmApiKey}` }, body: JSON.stringify({ stageId: _stageId }) }).catch(() => {});
+                        } catch (_e) { /* best-effort */ }
+                    }
                 }
             } catch (e) {
                 console.warn('[funnelStage] best-effort fail:', e.message);
@@ -3777,8 +3790,46 @@ ${_baseUrl}/legal/terms — Правила використання`;
                 // одночасними сесіями (і api, і worker), захищає ліміт 1/60c навіть
                 // коли десятки клієнтів чекають підтвердження одночасно.
                 if (connectorType === 'monobank' && action === 'get_statement') {
-                    const token = (funnelEnv.MONO_TOKEN || config.token || config.api_key || '').trim();
-                    const account = (renderTemplate(data.accountId || funnelEnv.MONO_ACCOUNT_ID || config.account_id || '0', scope) || '0').trim() || '0';
+                    // 2026-09-05 (живий тест Олексія): оплата пішла на рахунок АКТИВНОГО ФОП з CRM
+                    // (Клімчук), а виписка бралась зі старого ключа MONO_TOKEN/MONO_ACCOUNT_ID (інший
+                    // ФОП) — платіж "не знайдено" ніколи. Пріоритет: monobankToken активного ФОП у CRM
+                    // (той самий, з якого ibanoplata бере IBAN), рахунок — через client-info (кеш у
+                    // context.fop.monoAccountId); фолбек — ключі воронки.
+                    let token = (funnelEnv.MONO_TOKEN || config.token || config.api_key || '').trim();
+                    let account = (renderTemplate(data.accountId || funnelEnv.MONO_ACCOUNT_ID || config.account_id || '0', scope) || '0').trim() || '0';
+                    let monoFopSource = 'funnelKey';
+                    try {
+                        const _mRawBase = String(funnelEnv.CRM_API_URL || funnelEnv.CRM_API_BASE || '').trim().replace(/\/$/, '');
+                        const _mApiUrl = _mRawBase && !_mRawBase.endsWith('/api') ? `${_mRawBase}/api` : _mRawBase;
+                        const _mApiKey = String(funnelEnv.CRM_API_KEY || '').trim();
+                        if (_mApiUrl && _mApiKey) {
+                            const _mAc = new AbortController(); const _mTo = setTimeout(() => { try { _mAc.abort(); } catch (_e) { /* noop */ } }, 3000);
+                            let _mFop = null;
+                            try {
+                                const _fr2 = await fetch(`${_mApiUrl}/fops`, { headers: { Authorization: `Bearer ${_mApiKey}` }, signal: _mAc.signal });
+                                if (_fr2.ok) { const _fj2 = await _fr2.json().catch(() => ({})); _mFop = (Array.isArray(_fj2.data) ? _fj2.data : []).find((f) => f && f.isActive === true && f.monobankToken) || null; }
+                            } finally { clearTimeout(_mTo); }
+                            if (_mFop) {
+                                token = String(_mFop.monobankToken).trim();
+                                monoFopSource = 'crm:' + (_mFop.name || '');
+                                const _cached = ctx.fop && ctx.fop.monoAccountId && ctx.fop.monoTokenHint === token.slice(0, 6) ? ctx.fop.monoAccountId : null;
+                                if (_cached) account = _cached;
+                                else {
+                                    const _ciAc = new AbortController(); const _ciTo = setTimeout(() => { try { _ciAc.abort(); } catch (_e) { /* noop */ } }, 5000);
+                                    try {
+                                        const _ci = await fetch('https://api.monobank.ua/personal/client-info', { headers: { 'X-Token': token }, signal: _ciAc.signal });
+                                        const _cij = _ci.ok ? await _ci.json().catch(() => ({})) : {};
+                                        const _accs = Array.isArray(_cij.accounts) ? _cij.accounts : [];
+                                        const _fopIban = String(_mFop.iban || '').replace(/\s/g, '');
+                                        const _pick = _accs.find((a) => _fopIban && String(a.iban || '').replace(/\s/g, '') === _fopIban)
+                                            || _accs.find((a) => String(a.type || '').toLowerCase() === 'fop' && Number(a.currencyCode) === 980)
+                                            || _accs.find((a) => String(a.type || '').toLowerCase() === 'fop');
+                                        if (_pick && _pick.id) { account = _pick.id; ctx.fop = Object.assign({}, ctx.fop || {}, { monoAccountId: _pick.id, monoTokenHint: token.slice(0, 6) }); }
+                                    } catch (_e) { /* best-effort: лишаємо account з ключів */ } finally { clearTimeout(_ciTo); }
+                                }
+                            }
+                        }
+                    } catch (_e) { /* best-effort — фолбек на ключі воронки */ }
                     const windowHours = parseInt(data.windowHours || 48, 10) || 48;
                     const monoStart = Date.now();
                     const { items, fromCache, status: monoStatus } = await getMonoStatement({ redisClient, token, account, windowHours });
@@ -3797,7 +3848,7 @@ ${_baseUrl}/legal/terms — Правила використання`;
                     if (outputVar) setByPath(ctx, outputVar, credits);
                     db.apiCall.create({ data: {
                         sessionId: session.id, service: 'monobank', method: 'get_statement',
-                        requestData: { account, windowHours },
+                        requestData: { account, windowHours, fopSource: monoFopSource },
                         responseData: { count: credits.length, fromCache: !!fromCache },
                         statusCode: monoStatus || (fromCache ? 304 : null), durationMs: Date.now() - monoStart,
                     } }).catch(() => {});

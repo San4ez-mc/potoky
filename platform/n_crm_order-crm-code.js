@@ -24,15 +24,19 @@ try {
   var phone = String(od.phone).replace(/[^0-9]/g, '');
   var hdr = { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json', Accept: 'application/json' };
 
-  // 1) buyer find-or-create (дедуп за телефоном, §1 ТЗ)
-  var buyerId = context.crmClientId || null;
-  if (!buyerId) {
-    try {
-      var br = await fetch(base + '/buyers/find-or-create', { method: 'POST', headers: hdr, body: JSON.stringify({ phone: phone, fullName: (od.fullName || 'Клієнт'), igUsername: context.igUsername || undefined }) });
-      var bj = await br.json().catch(function () { return {}; });
-      if (br.ok && bj && bj.ok && bj.data) buyerId = bj.data.id;
-      else return { crmOrderError: 'buyers/find-or-create: ' + ((bj && bj.error && bj.error.message) || ('HTTP ' + br.status)) };
-    } catch (e) { return { crmOrderError: 'buyers/find-or-create: ' + e.message }; }
+  // 1) buyer find-or-create (дедуп за телефоном, §1 ТЗ). 2026-09-05: ЗАВЖДИ за телефоном з адреси,
+  // а не за crmClientId з памʼяті сесії — клієнт міг назвати іншого отримувача (тест Олексія:
+  // buyer лишався з його телефоном, хоча в адресі був «Халімон Андрій 0688…»). Після цього
+  // дописуємо ПІБ/instagram на картку покупця.
+  var buyerId = null;
+  try {
+    var br = await fetch(base + '/buyers/find-or-create', { method: 'POST', headers: hdr, body: JSON.stringify({ phone: phone, fullName: (od.fullName || 'Клієнт'), igUsername: context.igUsername || undefined }) });
+    var bj = await br.json().catch(function () { return {}; });
+    if (br.ok && bj && bj.ok && bj.data) buyerId = bj.data.id;
+    else return { crmOrderError: 'buyers/find-or-create: ' + ((bj && bj.error && bj.error.message) || ('HTTP ' + br.status)) };
+  } catch (e) { return { crmOrderError: 'buyers/find-or-create: ' + e.message }; }
+  if (buyerId && od.fullName) {
+    try { await fetch(base + '/buyers/' + buyerId, { method: 'PATCH', headers: hdr, body: JSON.stringify({ fullName: od.fullName, igUsername: context.igUsername || undefined }) }); } catch (e) { /* best-effort */ }
   }
 
   // Завдання «памʼять вимірів клієнта»: якщо цієї сесії зібрали параметри розміру
@@ -80,6 +84,13 @@ try {
     items: items
   };
 
+  // Стадія при створенні (2026-09-05): картка одразу на правильній колонці, а не на «Презентація товару».
+  try {
+    var wantStage = (context.payStatus === 'confirmed' || Number(context.payAmount) === 0) ? 'замовлення прийняте' : 'очікуємо дані та оплату';
+    var prr = await fetch(base + '/pipelines', { headers: hdr }); var prj = prr.ok ? await prr.json().catch(function () { return {}; }) : {};
+    var pls = Array.isArray(prj.data) ? prj.data : [];
+    for (var pi = 0; pi < pls.length && !body.stageId; pi++) { var sh = (pls[pi].stages || []).filter(function (s) { return String(s.name || '').trim().toLowerCase() === wantStage; })[0]; if (sh) body.stageId = sh.id; }
+  } catch (e) { /* best-effort */ }
   var r = await fetch(base + '/orders', { method: 'POST', headers: hdr, body: JSON.stringify(body) });
   var d = await r.json().catch(function () { return {}; });
   if (r.ok && d && d.ok && d.data && d.data.id) {

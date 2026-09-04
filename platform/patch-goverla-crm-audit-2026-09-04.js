@@ -327,6 +327,10 @@ function applyV5(nodes, edges, notes) {
         notes.push('+ нода n_catalog_hint @' + p.x + ',' + p.y);
     } else { byId().n_catalog_hint.data.code = CODE.n_catalog_hint(); }
     byId().n_unknown_msg.data.systemPrompt = UNKNOWN_PROMPT_V5;
+    // 2026-09-05 (Олексій не отримував відповіді): single-нода без exitCondition вважається json_output
+    // і двигун зберігає її текст як hidden (щоб не показувати сирий JSON) — клієнт не бачив відповіді.
+    byId().n_unknown_msg.data.exitCondition = 'none';
+    if (byId().n_supplier_hold) byId().n_supplier_hold.data.message = '⏸ <b>Постачальнику НЕ відправлено — оплата ще не підтверджена</b>\n\n🧾 Замовлення: {{context.orderRef}}\n🗂 CRM: {{context.crmOrderId}}\n💰 Сума: {{context.payAmount}} грн ({{context.payLabel}})\n\n🛍️ Товар: {{context.product.name}}\n📏 Розмір: {{context.recommendedSize}} | 🎨 Колір: {{context.colorChoice.color}}\n\n👤 {{context.orderData.fullName}}, {{context.orderData.phone}}\n📍 {{context.orderData.city}}, НП {{context.orderData.branch}}\n\n➡️ Після надходження оплати оформіть постачальнику вручну.';
     byId().n_unknown_msg.data.description = 'Товар не визначено: якщо є catalogHint — перелічує реальні товари категорії і питає артикул; інакше просить пост/артикул.';
     // Алерт менеджеру лише коли клієнт ЯВНО посилався на товар (пост/артикул/фото), а n_lookup не знайшов;
     // привітання, категорії, загальні питання бот тепер обробляє сам.

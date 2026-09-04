@@ -3452,7 +3452,9 @@ ${sourceContent || '(немає даних)'}
                 const rawBase = String(scope.env?.CRM_API_URL || scope.env?.CRM_API_BASE || '').trim().replace(/\/$/, '');
                 const crmApiUrl = rawBase && !rawBase.endsWith('/api') ? `${rawBase}/api` : rawBase;
                 const crmApiKey = String(scope.env?.CRM_API_KEY || '').trim();
-                if (stageName && crmApiUrl && crmApiKey) {
+                // 2026-09-04: тестові сесії (testMode / isTest) НЕ пишемо в аналітику CRM — вони засмічували
+                // графік-воронку (43 "презентації" за день тестів).
+                if (stageName && crmApiUrl && crmApiKey && !ctx.testMode && session.isTest !== true) {
                     const botRow = await db.bot.findUnique({ where: { id: session.botId }, select: { slug: true } }).catch(() => null);
                     const fsRes = await fetch(`${crmApiUrl}/funnel-events`, {
                         method: 'POST',

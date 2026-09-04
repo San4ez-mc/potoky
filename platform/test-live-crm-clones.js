@@ -80,6 +80,11 @@ async function scenarioOrderFlow(name, botId) {
     const upsell = lastCtx.product && lastCtx.product.upsell;
     const upsellName = (lastCtx.product && lastCtx.product.upsellItems && lastCtx.product.upsellItems[0] && lastCtx.product.upsellItems[0].name) || String(upsell || '').split('—')[0].trim();
     r = await say(s, upsell ? 'Так, і додайте ' + upsellName : 'Так, оформляємо');
+    if (upsell && !/1 або 2|спосіб оплати/i.test(r.all) && /кол[іь]р|скільки/i.test(r.all)) {
+        ok(name, 'допродаж з кольорами: рівно одне уточнення', (r.all.match(/\?/g) || []).length <= 2, r.all.slice(0, 160));
+        r = await say(s, 'Одну чорну');
+        ok(name, 'після уточнення: upsellNote/qty записано', r.ctx.orderIntent && r.ctx.orderIntent.addUpsell === true && /чорн/i.test(String(r.ctx.orderIntent.upsellNote || '')), JSON.stringify(r.ctx.orderIntent));
+    }
     ok(name, 'перейшов до вибору оплати', /1 або 2|спосіб оплати/i.test(r.all), r.all.slice(0, 120));
     r = await say(s, '2');
     ok(name, 'посилання на оплату + сума', /ibanoplata|оплат/i.test(r.all) && /До сплати зараз/.test(r.all), r.all.slice(0, 200));

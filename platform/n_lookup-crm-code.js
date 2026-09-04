@@ -120,6 +120,25 @@ try {
   // в Ad (Пріоритет 0) для цього mediaId ще нема.
   if (!found && context.entryAd) { found = matchByAdToken(all, String(context.entryAd)); if (found) { via = 'ad_id'; mk = String(context.entryAd); } }
 
+  // ПРІОРИТЕТ 1.5 (тест Олексія 2026-09-04 22:27, «Яка ціна кофти?» як відповідь на рекламу): ad_id
+  // 120250805751140329 ще не був синхронізований у CRM, але НАЗВА реклами («Допис в Instagram:
+  // Вʼязана чоловіча кофта...._Group_1») збігається з іншими вже привʼязаними рекламами тієї ж
+  // кампанії. Якщо всі реклами з такою назвою ведуть на ОДИН товар — беремо його (це рішення
+  // менеджера про привʼязку, лише перенесене на новий ad_id).
+  function __normAdName(s) { return String(s || '').toLowerCase().replace(/_group_\d+/g, '').replace(/^допис в instagram:\s*/i, '').replace(/[.…]+$/g, '').replace(/[^\wа-яіїєґ\s]/gi, ' ').replace(/\s+/g, ' ').trim(); }
+  if (!found && context.adTitle && adsList.length) {
+    var __adT = __normAdName(context.adTitle);
+    if (__adT.length >= 8) {
+      var __adProds = {};
+      adsList.forEach(function (a) { if (a.productId && __normAdName(a.name) === __adT) __adProds[String(a.productId)] = 1; });
+      var __adProdIds = Object.keys(__adProds);
+      if (__adProdIds.length === 1) {
+        var __byTitle = all.filter(function (x) { return String(x.id) === __adProdIds[0]; })[0];
+        if (__byTitle) { found = __byTitle; via = 'ad_title'; mk = 'adtitle_' + __adProdIds[0]; }
+      }
+    }
+  }
+
   // ПРІОРИТЕТ 2: артикул (з тексту клієнта / підпису поста / adTitle)
   if (!found) {
     var fromUser = extractArticles(context.lastUserMessage || input || '');
@@ -135,10 +154,13 @@ try {
   }
 
   // ПРІОРИТЕТ 2.5: keyword-overlap підпису проти displayName, тай-брейк за ціною
-  if (!found && context.sharedPost && context.sharedPost.caption) {
+  // Джерело слів: підпис пересланого поста, а якщо його нема — назва реклами (відповідь на рекламу
+  // без синхронізованого ad_id, 2026-09-04).
+  var __kwSource = (context.sharedPost && context.sharedPost.caption) || (context.adTitle ? __normAdName(context.adTitle) : '');
+  if (!found && __kwSource) {
     var STOPWORDS_KW = { 'та': 1, 'і': 1, 'й': 1, 'на': 1, 'до': 1, 'за': 1, 'від': 1, 'для': 1, 'або': 1, 'це': 1, 'вже': 1, 'ще': 1, 'як': 1, 'що': 1, 'по': 1, 'при': 1, 'без': 1, 'між': 1 };
     function tokenizeKW(s) { return String(s || '').toLowerCase().replace(/[^\wа-яіїєґ\s]/gi, ' ').split(/\s+/).filter(function (w) { return w.length >= 4 && !STOPWORDS_KW[w]; }); }
-    var capWordsKW = tokenizeKW(context.sharedPost.caption);
+    var capWordsKW = tokenizeKW(__kwSource);
     if (capWordsKW.length) {
       var capSetKW = {}; for (var wi = 0; wi < capWordsKW.length; wi++) capSetKW[capWordsKW[wi]] = 1;
       var scoredKW = [];
@@ -163,9 +185,13 @@ try {
   }
 
   // ПРІОРИТЕТ 2.9: Gemini-візія проти каталогу (скрін клієнта або обкладинка пересланого поста)
-  var __visionUrl = context.lastUserImageUrl || (!found && context.sharedPost && context.sharedPost.url) || '';
+  // Картинка реклами з referral (ads_context_data.photo_url / video_url → facebook.com/ads/image) —
+  // ще одне джерело для візії, коли клієнт відповів на рекламу без поста й артикулу (2026-09-04).
+  var __refImg = '';
+  try { var __acd = (context.lastReferral && context.lastReferral.ads_context_data) || {}; __refImg = String(__acd.photo_url || __acd.image_url || __acd.video_url || ''); } catch (e) { __refImg = ''; }
+  var __visionUrl = context.lastUserImageUrl || (!found && context.sharedPost && context.sharedPost.url) || (!found && __refImg) || '';
   if (!found && __visionUrl && keys.GEMINI_API_KEY) {
-    function imgOk(u) { try { var h = new URL(u).hostname.toLowerCase(); if (h === 'api.telegram.org') return true; return ['cdninstagram.com', 'fbcdn.net', 'fbsbx.com', 'lookaside.fbsbx.com'].some(function (d) { return h === d || h.endsWith('.' + d); }); } catch (e) { return false; } }
+    function imgOk(u) { try { var h = new URL(u).hostname.toLowerCase(); if (h === 'api.telegram.org') return true; return ['cdninstagram.com', 'fbcdn.net', 'fbsbx.com', 'lookaside.fbsbx.com', 'facebook.com'].some(function (d) { return h === d || h.endsWith('.' + d); }); } catch (e) { return false; } }
     if (imgOk(__visionUrl)) {
       var acp = new AbortController(); var top = setTimeout(function () { try { acp.abort(); } catch (e) { } }, 10000);
       try {
@@ -185,6 +211,18 @@ try {
         }
       } catch (e) { } finally { clearTimeout(top); }
     }
+  }
+
+  // Реєструємо НОВУ рекламу в CRM (ad_id, якого ще нема в /ads): з товаром, якщо визначили, або без —
+  // тоді рядок підсвітиться менеджеру на сторінці «Рекламні витрати» для ручної привʼязки. Best-effort.
+  if (context.entryAd && !context.testMode && !adsList.some(function (a) { return String(a.externalId || '') === String(context.entryAd); })) {
+    try {
+      var __campaign = (context.lastReferral && context.lastReferral.ads_context_data) || {};
+      await fetch(base + '/ads', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, hdr()), body: JSON.stringify({
+        externalId: String(context.entryAd), name: String(context.adTitle || __campaign.ad_title || 'Реклама ' + context.entryAd).slice(0, 200),
+        productId: found ? found.id : null, campaignName: String(context.adTitle || '').replace(/_group_\d+/i, '').slice(0, 200) || null,
+      }) });
+    } catch (e) { /* best-effort */ }
   }
 
   if (!found) return fallback('Жоден пріоритет матчингу не спрацював (ad_id/артикул/keyword/vision)');

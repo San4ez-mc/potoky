@@ -1416,7 +1416,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
     // n_intl_route (він форсує full для закордону) або n_pay_amount — далі граф штатно перевипускає лінк.
     const performPaymentMethodChange = async (newMethod, targetNodeId) => {
         const _oldInvoiceUid = (ctx.ibanInvoiceUid || '').toString().trim();
-        if (_oldInvoiceUid) {
+        if (_oldInvoiceUid && !ctx.testMode && _oldInvoiceUid !== 'test-uid') {
             try {
                 const _delApiKey = (funnelEnv.IBANOPLATA_API_KEY || '').trim();
                 if (_delApiKey) {
@@ -2063,6 +2063,25 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                 if (exit.parsed && exit.parsed.colorUnavailable === true && !exit.parsed.color) {
                     ctx.colorUnavailable = true;
                     const otherKeys = Object.keys(exit.parsed).filter((k) => k !== 'colorUnavailable' && k !== 'wantsPhoto' && k !== 'photoArticle');
+                    if (otherKeys.length === 0) exit.done = false;
+                }
+                // v3 (реальні переписки 2026-09-04: "хто виробник?", "чи можна підʼїхати приміряти?"): питання, на
+                // яке в моделі нема даних, — НЕ handoff (бот зупинявся й клієнт втрачав крок), а "askManager":
+                // модель чесно каже, що уточнить, і веде далі; менеджеру летить сигнал у Telegram, бот НЕ спиняється.
+                if (exit.parsed && exit.parsed.askManager && typeof exit.parsed.askManager === 'string') {
+                    try {
+                        const _amAdmin = funnelEnv.ADMIN_TELEGRAM_ID || await getSystemKeyValue('ADMIN_TELEGRAM_ID');
+                        const _amTok = funnelEnv.TELEGRAM_BOT_TOKEN || '';
+                        if (_amAdmin && /^\d+:[A-Za-z0-9_-]{20,}$/.test(_amTok) && !ctx.testMode) {
+                            const _amText = shopPrefix(funnelEnv) + '❓ <b>Клієнт спитав те, чого бот не знає</b> (бот продовжує діалог, відповідь можна дописати в чат)\n\n👤 ' + (ctx.senderName || '') + ' (' + (ctx.igUsername || '') + ')\n💬 «' + String(exit.parsed.askManager).slice(0, 200) + '»\n🛍️ ' + ((ctx.product && ctx.product.customerName) || '') + '\n🔗 Сесія: ' + session.id;
+                            const _amR = await fetch('https://api.telegram.org/bot' + _amTok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(_amAdmin), text: _amText, parse_mode: 'HTML', disable_web_page_preview: true }) }).catch(() => null);
+                            const _amJ = _amR ? await _amR.json().catch(() => ({})) : {};
+                            pushDelivery(runtime, 'telegram_notify', !!_amJ.ok, _amJ.ok ? null : (_amJ.description || 'fetch failed'), { nodeId: node.id, chatId: String(_amAdmin), reason: 'ask_manager' });
+                        } else {
+                            pushDelivery(runtime, 'telegram_notify', false, ctx.testMode ? 'testMode' : 'немає ADMIN_TELEGRAM_ID або TELEGRAM_BOT_TOKEN', { nodeId: node.id, reason: 'ask_manager' });
+                        }
+                    } catch (_e) { /* сигнал не має ламати діалог */ }
+                    const otherKeys = Object.keys(exit.parsed).filter((k) => k !== 'askManager' && k !== 'wantsPhoto' && k !== 'photoArticle');
                     if (otherKeys.length === 0) exit.done = false;
                 }
 

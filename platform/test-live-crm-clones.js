@@ -78,7 +78,8 @@ async function scenarioOrderFlow(name, botId) {
     ok(name, 'бот сам спитав «Оформляємо?» (speakFirst), не мовчить', /оформля|додати .{0,80}чи лише/i.test(r.all), r.all.slice(-160));
     ok(name, 'у підсумку є рядок умов (обмін/повернення, відправка)', /обмін|повернення/i.test(r.all) && /Нов(ою|а) [Пп]ошт/i.test(r.all), r.all.slice(-200));
     const upsell = lastCtx.product && lastCtx.product.upsell;
-    r = await say(s, upsell ? 'Так, і додайте ' + String(upsell).split('—')[0].trim() : 'Так, оформляємо');
+    const upsellName = (lastCtx.product && lastCtx.product.upsellItems && lastCtx.product.upsellItems[0] && lastCtx.product.upsellItems[0].name) || String(upsell || '').split('—')[0].trim();
+    r = await say(s, upsell ? 'Так, і додайте ' + upsellName : 'Так, оформляємо');
     ok(name, 'перейшов до вибору оплати', /1 або 2|спосіб оплати/i.test(r.all), r.all.slice(0, 120));
     r = await say(s, '2');
     ok(name, 'посилання на оплату + сума', /ibanoplata|оплат/i.test(r.all) && /До сплати зараз/.test(r.all), r.all.slice(0, 200));

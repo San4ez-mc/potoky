@@ -93,7 +93,10 @@ const ORDER_INTENT_PROMPT = `Ти — {{env.PERSONA_NAME}}, тепла конс�
 - ДОПРОДАЖ є → «Оформляємо? І підкажіть: додати ще {{context.product.upsell}} до цієї ж посилки, чи лише основний товар?» (одне рішення з двома варіантами, НЕ два окремі питання).
 Акцію за кількість (якщо рядок вище непорожній і клієнт не називав кількість) згадай ОДИН раз у підсумку, ненав'язливо.
 ЯКЩО клієнт погоджується на допродаж і називає кількість/кольори («так, біла 1 і чорна 1», «дві футболки») — додай "upsellQty":<число> і "upsellNote":"<як сказав клієнт: кольори/розміри>" (ціну за кількість порахує система за акцією).
-ЯКЩО клієнт замість відповіді одразу надсилає дані доставки (ПІБ/телефон/місто/відділення) — це згода: {"ready":"yes","prefill":{"fullName":"...","phone":"...","city":"...","branch":"..."}} (лише ті поля, що є; без тексту). Дані не губляться — наступні кроки їх підхоплять.
+ЯКЩО клієнт замість відповіді одразу надсилає дані доставки (є телефон / місто / відділення / ПІБ) — це ЗГОДА, НЕ перепитуй «оформляємо?» і НЕ пиши тексту: поверни ТІЛЬКИ json_output {"ready":"yes","prefill":{"fullName":"...","phone":"...","city":"...","branch":"..."}} (лише ті поля, що є). Дані не губляться — наступні кроки їх підхоплять.
+Ти НЕ вітаєшся («Привіт», «Доброго дня») — клієнта вже привітали. Розмір/параметри згадуй ЛИШЕ з поля «Розмір» вище; якщо воно порожнє — не пиши розмір узагалі (не бери цифри з повідомлень клієнта). Якщо клієнт надіслав фото (текст "[фото]") — одне речення: для оформлення фото не потрібне, і знову «Оформляємо?».
+ДОВІДКА МАГАЗИНУ (відповідай з неї на питання про виробника, склад, примірку, терміни): {{env.SHOP_FAQ}}
+Якщо питання є в даних вище або в ДОВІДЦІ — відповідай сам. Якщо відповіді НЕМА (нестандартне питання, індивідуальне пошиття, знижка, претензія) — НЕ handoff: чесно скажи «уточню в менеджера і напишу сюди», додай json_output {"askManager":"<питання клієнта>"} і повертайся до «Оформляємо?». handoff — ЛИШЕ коли клієнт явно просить живу людину.
 
 ФОРМАТ json_output (СУВОРО, лише коли клієнт ВІДПОВІВ на твоє питання):
 - Явна згода (так/да/давай/оформляй/+/ок/хочу/беру, «так, з допродажем», «тільки основний») → ТІЛЬКИ json_output {"ready":"yes"} БЕЗ жодного тексту (наступний крок сам покаже підсумок і оплату — не дублюй). Якщо клієнт погодився ДОДАТИ допродаж → {"ready":"yes","addUpsell":true}. Якщо називав кількість → додай "qty":<число>.
@@ -103,7 +106,7 @@ const ORDER_INTENT_PROMPT = `Ти — {{env.PERSONA_NAME}}, тепла конс�
 - Просить фото допродажу → {"wantsUpsellPhoto":true} (можна разом з іншими полями), лише якщо фото є за нотаткою вище.
 ЗАБОРОНЕНО писати {"ready":"pending"}, {"ready":"waiting"} чи інші значення ready — їх не існує. Коротке «так/+» у відповідь на «Оформляємо?» = yes.
 Про СПОСІБ оплати відповідай РІВНО одним реченням, без списку й цифр: «Оплата гнучка — можна частину зараз і решту при отриманні, або одразу повністю; на наступному кроці зручно оберете 🙂». Деталі дає наступний крок.
-Просить живу людину/менеджера, або питання СПРАВДІ поза даними (гарантія, міжнародна доставка, знижки, претензія, скарга) → {"handoff":true} (без ready).
+Просить живу людину/менеджера явно («покличте менеджера», «ви бот?») → {"handoff":true} (без ready). Міжнародна доставка → відповідай, що підкажеш умови на кроці оплати (там є вибір країни).
 НЕ вигадуй розміри/характеристики/колір, яких немає вище. Не згадуй сайтів/кошиків. Кожне повідомлення закінчуй питанням або чітким наступним кроком. Українською, на «ви», тепло і по справі.`;
 
 const COLLECT_PROMPT = `Ти — {{env.PERSONA_NAME}}, консультантка {{env.SHOP_TAG}}. Збери дані доставки Новою Поштою: ПІБ (2 слова достатньо, по-батькові НЕ вимагай), ТЕЛЕФОН, МІСТО, № ВІДДІЛЕННЯ або поштомата.
@@ -212,6 +215,15 @@ const ADDRESS_ASK = '\n\n📦 Дані для відправки (ПІБ, тел
 const SIZE_FIRST_MSG_RE = '\\d{2,3}\\s*[\\/,\\s\\-]\\s*\\d{2,3}|зр[іо]ст|ріст|ваг[аи]|\\bсм\\b|\\bкг\\b|розмір\\s*[SMLX]{1,4}\\b|\\b[SMLX]{1,4}\\s*розмір';
 const SIZE_PROMPT_V3 = '\nДОДАТКОВО: (а) зріст у метрах («1,78», «1.78 м») = 178 см — переводь сам; (б) якщо клієнт разом із параметрами назвав КОЛІР зі списку кольорів товару («чорний 182/100», «S в графітному») — додай у той самий json_output поле "color":"<колір як у списку>", щоб не перепитувати; (в) якщо клієнт надіслав фото (текст "[фото]") — по фото розмір не визначаю, скажи це одним реченням і попроси зріст і вагу (товар НЕ змінюй); (г) якщо клієнт назвав власні заміри (плечі/рукав/ширина) — подякуй і скажи, що підбір іде за зростом і вагою, попроси їх.';
 const ORDER_TERMS_DEFAULT = 'Обмін/повернення 14 днів ✅ Відправка Новою поштою 📦 Відправка до 5 робочих днів 🚚';
+// Довідка магазину — з реальних відповідей менеджерів (2026-09-04); власник редагує ключ у налаштуваннях воронки.
+const SHOP_FAQ_DEFAULT = {
+    GOVERLA: 'Виробник — Україна. Відправка зі складу в Харкові Новою Поштою, до 5 робочих днів. Примірка/самовивіз неможливі — але є обмін/повернення 14 днів. Розмір підбираємо за зростом і вагою; при сумнівах між двома розмірами радимо більший. Оплата: 200 грн передоплата + решта при отриманні, або повна.',
+    covercar: 'Накидки від виробника (м. Дніпро), відправка Новою Поштою до 5 робочих днів. Примірка/самовивіз неможливі — є обмін/повернення 14 днів. Накидки універсальні, підходять на будь-які сидіння. Оплата: 200 грн передоплата + решта при отриманні, або повна.',
+};
+// Заміна "поза даними → handoff" на askManager у n_size/n_color (бот не спиняється, менеджер отримує питання).
+const ASK_MANAGER_RULE = '\nДОВІДКА МАГАЗИНУ (відповідай з неї на питання про виробника, склад, примірку, терміни): {{env.SHOP_FAQ}}\nЯКЩО питання поза даними товару і ДОВІДКОЮ (гарантія, індивідуальне пошиття, знижки, нестандартна оплата) — НЕ клич менеджера: чесно скажи «уточню в менеджера і напишу сюди», додай json_output {"askManager":"<питання клієнта>"} і повертайся до питання цього кроку. handoff — ЛИШЕ на явне прохання живої людини, претензію чи скаргу.';
+const HANDOFF_UNKNOWN_OLD_COLOR = 'ЯКЩО питання поза твоїми даними (гарантія, доставка за кордон, нестандартна оплата, знижки, претензія) — НЕ вигадуй: поверни json_output {"handoff":true}.';
+const HANDOFF_UNKNOWN_OLD_SET = 'ЯКЩО питання СПРАВДІ поза твоїми даними (гарантія на ІНШИЙ товар не з нашого каталогу, доставка за кордон, нестандартна оплата, знижки, претензія, скарга) — поверни json_output {"handoff":true}.';
 const PREFILL_CODE = `// n_order_prefill (v3): клієнт надіслав дані доставки ще на кроці "Оформляємо?" — n_order_intent
 // поклав їх у orderIntent.prefill. Переносимо в orderData; якщо є всі 4 поля — n_collect пропускається
 // (recalledDeliveryReady, той самий шлях, що для повторного клієнта).
@@ -229,6 +241,13 @@ function applyV3(nodes, edges, notes) {
     if (has('n_size')) { const n = byId().n_size; n.data.waitAfterPresentationUnless = SIZE_FIRST_MSG_RE; n.data.keepProductOnImage = true; if (!String(n.data.systemPrompt || '').includes('зріст у метрах')) n.data.systemPrompt = String(n.data.systemPrompt || '') + SIZE_PROMPT_V3; }
     ['n_color', 'n_set_choice'].forEach((id) => { if (has(id)) byId()[id].data.keepProductOnImage = true; });
     if (has('n_welcome_back')) byId().n_welcome_back.data.keepUserMessageOnExit = true;
+    for (const id of ['n_size', 'n_color', 'n_set_choice']) {
+        const n = byId()[id]; if (!n) continue; let sp = String(n.data.systemPrompt || '');
+        if (sp.includes(HANDOFF_UNKNOWN_OLD_COLOR)) sp = sp.split(HANDOFF_UNKNOWN_OLD_COLOR).join('');
+        if (sp.includes(HANDOFF_UNKNOWN_OLD_SET)) sp = sp.split(HANDOFF_UNKNOWN_OLD_SET).join('');
+        if (!sp.includes('askManager')) sp += ASK_MANAGER_RULE;
+        n.data.systemPrompt = sp;
+    }
     if (!has('n_order_prefill')) {
         nodes.push({ id: 'n_order_prefill', type: 'js', position: placer.place(pos('n_order_cond').x - GX, pos('n_order_cond').y + GY), data: { label: '9.6 Адреса, надіслана наперед', code: PREFILL_CODE, description: 'Переносить orderIntent.prefill (дані доставки, надіслані замість "так") у orderData; повний набір → n_collect пропускається.' } });
         notes.push('+ нода n_order_prefill');
@@ -272,7 +291,8 @@ function applyV2(nodes, edges, notes) {
 
 // --refresh: коли структура вже застосована (маркер n_supplier_pay_gate) — оновити лише код нод
 // із файлів і промпти/тексти (ітерації після живих прогонів), без змін графа.
-function refresh(flow) {
+function refresh(flow, opts) {
+    opts = opts || {};
     const notes = [];
     const nodes = flow.nodes.map((n) => ({ ...n, data: { ...n.data } }));
     const byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
@@ -285,7 +305,10 @@ function refresh(flow) {
     applyPayCollectGuard(byId.n_pay_collect);
     const v2 = applyV2(nodes, flow.edges.map((e) => ({ ...e })), notes);
     const v3 = applyV3(v2.nodes, v2.edges, notes);
-    return { nodes: v3.nodes, edges: v3.edges, notes, keyUpdates: [{ key: 'ORDER_TERMS_LINE', value: ORDER_TERMS_DEFAULT, label: 'Рядок умов у підсумку перед "Оформляємо?" (n_order_intent)', onlyIfMissing: true }] };
+    return { nodes: v3.nodes, edges: v3.edges, notes, keyUpdates: [
+        { key: 'ORDER_TERMS_LINE', value: ORDER_TERMS_DEFAULT, label: 'Рядок умов у підсумку перед "Оформляємо?" (n_order_intent)', onlyIfMissing: true },
+        { key: 'SHOP_FAQ', value: SHOP_FAQ_DEFAULT[opts.shop] || SHOP_FAQ_DEFAULT.GOVERLA, label: 'Довідка магазину для бота (виробник, склад, примірка, терміни) — редагуй тут', onlyIfMissing: true },
+    ] };
 }
 
 function transform(flow, keysMap, opts) {
@@ -462,6 +485,7 @@ function transform(flow, keysMap, opts) {
         { key: 'EASYDROP_DRY_RUN', value: '1', label: 'DRY-RUN easydrop офлайн-форма' },
         { key: 'EASYDROP_CART_DRY_RUN', value: '1', label: 'DRY-RUN easydrop-кошик' },
         { key: 'ORDER_TERMS_LINE', value: ORDER_TERMS_DEFAULT, label: 'Рядок умов у підсумку перед "Оформляємо?" (n_order_intent)', onlyIfMissing: true },
+        { key: 'SHOP_FAQ', value: SHOP_FAQ_DEFAULT[opts.shop] || SHOP_FAQ_DEFAULT.GOVERLA, label: 'Довідка магазину для бота (виробник, склад, примірка, терміни) — редагуй тут', onlyIfMissing: true },
     ];
     const keyDeletes = ['DEFAULT_AD_ID', 'EASYDROP_SUPPLIER_ID', 'EASYDROP_SUPPLIER_NAME'].filter((k) => keysMap && k in keysMap && !String(keysMap[k] || '').trim());
 
@@ -496,7 +520,7 @@ async function patchBot(db, cfg, APPLY) {
     let r = transform({ nodes: flow.nodes, edges: flow.edges }, keysMap, cfg);
     if (r.alreadyApplied) {
         if (!process.argv.includes('--refresh')) { console.log('ALREADY_APPLIED (для оновлення коду/промптів: --refresh --apply)'); return; }
-        r = refresh({ nodes: flow.nodes, edges: flow.edges });
+        r = refresh({ nodes: flow.nodes, edges: flow.edges }, cfg);
         console.log('REFRESH: ' + r.notes.join(', '));
         if (!APPLY) return;
         await db.flowDefinition.update({ where: { botId: BOT_ID }, data: { nodes: r.nodes, edges: r.edges } });

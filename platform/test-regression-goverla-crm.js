@@ -16,7 +16,7 @@ const keysMap = Object.fromEntries((dump.keys || []).map((k) => [k.key, k.value]
 const botOpts = optsForBot(dump.bot && dump.bot.id);
 console.log('BOT:', dump.bot && dump.bot.id, dump.bot && dump.bot.name, '| keepCarText=' + botOpts.keepCarText);
 let r = transform({ nodes: dump.nodes, edges: dump.edges }, keysMap, botOpts);
-if (r.alreadyApplied) { const rr = refresh({ nodes: dump.nodes, edges: dump.edges }); r = { nodes: rr.nodes, edges: rr.edges, keyUpdates: rr.keyUpdates || [], keyDeletes: [], notes: ['(дамп уже з патчем → перевіряємо --refresh)'].concat(rr.notes) }; }
+if (r.alreadyApplied) { const rr = refresh({ nodes: dump.nodes, edges: dump.edges }, botOpts); r = { nodes: rr.nodes, edges: rr.edges, keyUpdates: rr.keyUpdates || [], keyDeletes: [], notes: ['(дамп уже з патчем → перевіряємо --refresh)'].concat(rr.notes) }; }
 const nodes = r.nodes, edges = r.edges;
 const byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
 const results = [];
@@ -87,6 +87,7 @@ ok('V3c', 'адреса наперед: n_order_cond[true] → n_order_prefill �
 ok('V3d', 'кількість/нотатка допродажу наскрізно (prompt → n_pay_amount → n_crm_order)', /upsellQty/.test(byId.n_order_intent.data.systemPrompt) && /upsellQty/.test(byId.n_pay_amount.data.code) && /upsellNote/.test(byId.n_crm_order.data.code) && /qtyPrices: __cq/.test(byId.n_lookup.data.code));
 ok('V3e', 'умови в підсумку (ORDER_TERMS_LINE) + слово «Оформляємо» обовʼязкове', /ORDER_TERMS_LINE/.test(byId.n_order_intent.data.systemPrompt) && /ОБОВʼЯЗКОВО містить слово «Оформляємо»/.test(byId.n_order_intent.data.systemPrompt) && (r.keyUpdates || []).some((k) => k.key === 'ORDER_TERMS_LINE'));
 ok('V3f', 'n_welcome_back передає повідомлення далі (keepUserMessageOnExit)', byId.n_welcome_back.data.keepUserMessageOnExit === true);
+ok('V3g', 'askManager замість handoff на невідомі питання + SHOP_FAQ у промптах і ключах', ['n_size', 'n_color', 'n_set_choice', 'n_order_intent'].every((id) => /askManager/.test(byId[id].data.systemPrompt) && /SHOP_FAQ/.test(byId[id].data.systemPrompt)) && !/поза твоїми даними \(гарантія, доставка за кордон, нестандартна оплата, знижки, претензія\) — НЕ вигадуй: поверни json_output \{"handoff"/.test(byId.n_color.data.systemPrompt) && (r.keyUpdates || []).some((k) => k.key === 'SHOP_FAQ' && k.value.length > 50));
 // Кожне видиме повідомлення закінчується питанням або чітким кроком (стандарт §3.4)
 const CTA_RE = /\?\s*[^\wа-яіїєґ]*$|напиш|скиньт|підкаж|оберіть|надішл|скопіюй|натисн|можна написати|чекаю|повідом|підтверд|оформля|перевір|звірим|надійде|підкажу|допоможу|поруч|напишіть/i;
 // Свідомі винятки: n_welcome/n_size_reply/n_np_ask — текст цілком з плейсхолдерів (followUpQuestion/sizeReplyText/

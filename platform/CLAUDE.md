@@ -323,6 +323,11 @@ pm2 logs platform-api --lines 20
 **Помилка:** `{{context.intentParams.constraints}}` в messagesTemplate Claude-ноди рендерив об'єкт `{"no_images":true}` — лапки ламали JSON.parse шаблону. `parseClaudeMessages` мовчки падає у fallback `[{role:'user', content:'Продовжуємо діалог'}]` — модель отримує системний промпт без завдання і просто базікає.
 **Правило:** У `messagesTemplate` підставляти ТІЛЬКИ прості рядки/числа. Об'єкти конвертувати у quote-free текст в JS-ноді перед Claude-нодою (напр. `no_images, text_only`). Симптом проблеми: відповідь моделі починається з «Готовий продовжити діалог» / «Що робимо далі?».
 
+### 15.12 Модель claude-ноди = `data.model`, а НЕ конектор
+
+**Помилка (2026-09-04):** ноди «перевели на Sonnet», поставивши `connectorId` конектора «Claude Sonnet для воронок» — а в логах усі виклики йшли на `claude-haiku-4-5`. `connectorId` дає лише API-ключ; модель береться з `data.model` ноди, інакше дефолт `process.env.CLAUDE_MODEL` (haiku).
+**Правило:** сильна модель на ноді = явне `data.model: 'claude-sonnet-4-6'`. Перевіряти по `api_calls.requestData.model`, не по назві конектора.
+
 ### 15.10 Чекпоінти в контент-воронках — fileType для проміжних даних
 
 **Архітектура:** Великі генерації (план на місяць) розбиваються на кроки з `saveFile` на кожному:

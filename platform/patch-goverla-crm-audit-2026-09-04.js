@@ -274,6 +274,12 @@ function applyV4(nodes, edges, notes) {
     const byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
     for (const id of STRONG_NODES) { if (byId[id] && byId[id].data.model !== MODEL_STRONG) { byId[id].data.model = MODEL_STRONG; notes.push('model ' + id + '=' + MODEL_STRONG); } }
     if (byId.n_unknown_msg) delete byId.n_unknown_msg.data.model; // фіксована фраза — дефолт (Haiku)
+    // Взуття: клієнт часто каже довжину стопи/устілки в см ("стелька 27,5") — окреме поле footLength,
+    // n_calc підбирає по sizeChartData (Довжина стопи). Раніше це йшло як clothingSize і летіло до менеджера.
+    if (byId.n_size && !/"footLength"/.test(byId.n_size.data.systemPrompt || '')) {
+        byId.n_size.data.systemPrompt = String(byId.n_size.data.systemPrompt || '') + '\nЯКЩО це взуття і клієнт назвав довжину стопи або устілки в сантиметрах («стелька 27,5», «стопа 27 см») — поверни json_output {"footLength":<число см, крапка як роздільник>} (можна разом із color); розмір НЕ вгадуй сам — його порахує система за сіткою товару. Якщо назвав розмір взуття цифрою («42») — це clothingSize.';
+        notes.push('n_size footLength rule');
+    }
     if (byId.n_size && byId.n_size.data.useKb !== false) { byId.n_size.data.useKb = false; notes.push('n_size useKb=false'); }
     if (byId.n_pay) { const strip = (t) => String(t || '').replace(/\n*🌍 Доставка за кордон\?[^\n]*/g, '').replace(/\s+$/, ''); byId.n_pay.data.text = strip(byId.n_pay.data.text); byId.n_pay.data.variants = (byId.n_pay.data.variants || []).map(strip); }
     if (byId.n_req_ref_l) { byId.n_req_ref_l.data.text = '📌 Призначення платежу — скопіюйте як є, так ми одразу знайдемо вашу оплату 👇'; byId.n_req_ref_l.data.variants = []; }

@@ -152,6 +152,13 @@ async function runNode(id, context, extra) {
     ok('B-C7', 'M нема, є S/L → найближчий літерний', ['S', 'L'].includes(x.recommendedSize) && !x.sizeOutOfRange, x.recommendedSize);
     x = await runNode('n_calc', { testMode: true, product: prodHW, sizeInput: { height: 230, weight: 72 } });
     ok('B-C8', 'зріст 230 → поза сіткою', x.sizeOutOfRange === true);
+    const prodShoeChart = { categoryId: 'c3', categoryParams: [{ name: 'Розмір взуття' }], categoryParamsIsHeightWeight: false, colors: '', sizes: [], sizeChartData: { unit: 'см', sizes: ['41', '42', '43', '44', '45'], measurements: { 'Довжина стопи': [26.5, 27, 27.5, 28, 28.5] } } };
+    x = await runNode('n_calc', { testMode: true, product: prodShoeChart, sizeInput: { footLength: 27.5 } });
+    ok('B-C10', 'лофери: стопа 27,5 см → 43 за сіткою товару (exact)', x.recommendedSize === '43' && x.sizeSource === 'exact', JSON.stringify([x.recommendedSize, x.sizeSource, x.sizeOorReason]));
+    x = await runNode('n_calc', { testMode: true, product: prodShoeChart, sizeInput: { footLength: 27.2 } });
+    ok('B-C11', 'лофери: стопа 27,2 см → більший з двох (43), не тисне', x.recommendedSize === '43', x.recommendedSize);
+    x = await runNode('n_calc', { testMode: true, product: prodShoeChart, sizeInput: { footLength: 31 } });
+    ok('B-C12', 'лофери: стопа 31 см → поза сіткою → менеджер', x.sizeOutOfRange === true && /поза сіткою/.test(x.sizeOorReason), x.sizeOorReason);
     x = await runNode('n_calc', { testMode: true, product: prodHW, sizeInput: { clothingSize: 'XL' } });
     ok('B-C9', 'клієнт наполіг на XL, у товарі S/M/L → ескалація з причиною', x.sizeOutOfRange === true && /XL/.test(x.sizeOorReason), x.sizeOorReason);
 

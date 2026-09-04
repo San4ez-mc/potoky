@@ -106,24 +106,30 @@ function oor(reason, size) {
 var avail = (context.product && Array.isArray(context.product.sizes) && context.product.sizes.length) ? context.product.sizes.map(function (x) { return String(x).toUpperCase().trim(); }) : [];
 var order = ['XS','S','M','L','XL','XXL','XXXL','2XL','3XL','4XL'];
 
-// 1) Точний вимір (обхват грудей) проти реальних вимірів ЦЬОГО товару (sizeChartData).
-var chestVal = Number(s0.chest) || 0;
+// 1) Точний вимір проти реальних вимірів ЦЬОГО товару (sizeChartData.measurements).
+//    Обхват грудей → ключ /груд/; довжина стопи/устілки (взуття, 2026-09-04) → /стоп|устілк|foot/.
+//    Для стопи: якщо між двома розмірами — беремо БІЛЬШИЙ (взуття не має тиснути).
 var sc = context.product && context.product.sizeChartData;
-if (chestVal > 0 && sc && Array.isArray(sc.sizes) && sc.measurements) {
-  var chestKey = Object.keys(sc.measurements).find(function(k){ return /груд/i.test(k); });
-  if (chestKey && Array.isArray(sc.measurements[chestKey]) && sc.measurements[chestKey].length === sc.sizes.length) {
-    var arr = sc.measurements[chestKey];
-    var bestIdx = 0, bestDiff = Infinity;
-    for (var ci = 0; ci < arr.length; ci++) {
-      var d = Math.abs(Number(arr[ci]) - chestVal);
-      if (d < bestDiff) { bestDiff = d; bestIdx = ci; }
-    }
-    var exactSize = String(sc.sizes[bestIdx] || '').toUpperCase().trim();
-    if (exactSize && (!avail.length || avail.indexOf(exactSize) >= 0)) {
-      var r = done(exactSize, 'exact'); r.sizeMatchedBy = 'exact_measurement'; return r;
-    }
-  }
+function exactBy(val, keyRe, preferLarger) {
+  if (!(val > 0) || !sc || !Array.isArray(sc.sizes) || !sc.measurements) return null;
+  var key = Object.keys(sc.measurements).find(function(k){ return keyRe.test(k); });
+  if (!key || !Array.isArray(sc.measurements[key]) || sc.measurements[key].length !== sc.sizes.length) return null;
+  var arr = sc.measurements[key].map(Number);
+  var bestIdx = -1, bestDiff = Infinity;
+  for (var ci = 0; ci < arr.length; ci++) { var d = Math.abs(arr[ci] - val); if (d < bestDiff) { bestDiff = d; bestIdx = ci; } }
+  if (bestIdx < 0) return null;
+  if (preferLarger && arr[bestIdx] < val && bestIdx + 1 < arr.length && (arr[bestIdx + 1] - val) <= 0.6) bestIdx = bestIdx + 1;
+  var mn = Math.min.apply(null, arr), mx = Math.max.apply(null, arr);
+  if (val < mn - 1 || val > mx + 1) return { outOfChart: true, min: mn, max: mx, key: key };
+  var exactSize = String(sc.sizes[bestIdx] || '').toUpperCase().trim();
+  if (!exactSize || (avail.length && avail.indexOf(exactSize) < 0)) return null;
+  return { size: exactSize };
 }
+var chestVal = Number(s0.chest) || 0;
+var footVal = Number(s0.footLength) || 0;
+var ex = exactBy(chestVal, /груд/i, false) || exactBy(footVal, /стоп|устілк|foot|нога/i, true);
+if (ex && ex.outOfChart) return oor('вимір ' + (footVal || chestVal) + ' см поза сіткою товару (' + ex.key + ': ' + ex.min + '–' + ex.max + ' см)', '');
+if (ex && ex.size) { var r = done(ex.size, 'exact'); r.sizeMatchedBy = 'exact_measurement'; return r; }
 
 // 2) Розмір, який клієнт назвав сам (S/M/L або будь-який параметр категорії без зросту/ваги).
 var s = s0;

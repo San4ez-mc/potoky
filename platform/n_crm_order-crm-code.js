@@ -10,7 +10,8 @@ try {
   var base = (keys.CRM_API_BASE || 'http://127.0.0.1:4700/api').replace(/\/$/, '');
   var apiKey = (keys.CRM_API_KEY || '').trim();
   if (!apiKey) return { crmOrderError: 'CRM_API_KEY не заповнено' };
-  if (context.crmOrderId) return {}; // вже створено цього ходу/раніше — не дублюємо
+  var hdr = { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json', Accept: 'application/json' };
+  /* v6 (2026-09-05): повторний прохід із наявним crmOrderId обробляється нижче (платіж + стадія), не дублюємо замовлення */ // вже створено цього ходу/раніше — не дублюємо
 
   var p = context.product || {}; var od = context.orderData || {};
   var col = (context.colorChoice && context.colorChoice.color) || '';
@@ -20,6 +21,32 @@ try {
   // crmOrderId і слав менеджеру "ПОМИЛКА CRM" з порожньою причиною. Штатно сюди без адреси
   // не заходимо (n_has_address_cond перед цією нодою), але якщо все ж — причина явна.
   if (!od.phone) return { crmOrderError: 'адресу/телефон ще не зібрано (n_collect не пройдено)' };
+
+  // Платіж у CRM (Журнал платежів) — 2026-09-05: раніше сюди ніхто не писав. Викликається і при
+  // створенні (якщо оплата вже підтверджена), і при повторному проході після чека/«оплатив».
+  async function postPayment(orderId) {
+    if (context.payStatus !== 'confirmed' || context.crmPaymentPosted) return false;
+    try {
+      var pm = String(context.payVia || '').indexOf('mono') === 0 ? 'monobank' : (String(context.payVia || '') || 'transfer');
+      var pr0 = await fetch(base + '/payments', { method: 'POST', headers: hdr, body: JSON.stringify({ orderId: orderId, amount: Number(context.payAmount) || 0, method: pm, status: 'success' }) });
+      return pr0.ok;
+    } catch (e) { return false; }
+  }
+  async function setStage(orderId, stageNameLower) {
+    try {
+      var prr0 = await fetch(base + '/pipelines', { headers: hdr }); var prj0 = prr0.ok ? await prr0.json().catch(function () { return {}; }) : {};
+      var pls0 = Array.isArray(prj0.data) ? prj0.data : []; var sid = null;
+      for (var q = 0; q < pls0.length && !sid; q++) { var h0 = (pls0[q].stages || []).filter(function (s) { return String(s.name || '').trim().toLowerCase() === stageNameLower; })[0]; if (h0) sid = h0.id; }
+      if (sid) await fetch(base + '/orders/' + orderId, { method: 'PATCH', headers: hdr, body: JSON.stringify({ stageId: sid }) });
+    } catch (e) { /* best-effort */ }
+  }
+  // Повторний прохід ПІСЛЯ створення замовлення (чек / «оплатив» прийшли пізніше): не дублюємо
+  // замовлення — фіксуємо платіж, переводимо стадію, а сповіщення менеджеру буде «ОПЛАТА ПІДТВЕРДЖЕНА».
+  if (context.crmOrderId && String(context.crmOrderId).indexOf('TEST-') !== 0) {
+    var posted = await postPayment(context.crmOrderId);
+    if (context.payStatus === 'confirmed') await setStage(context.crmOrderId, 'замовлення прийняте');
+    return { crmOrderId: context.crmOrderId, crmPaymentPosted: posted || !!context.crmPaymentPosted, createAlertTitle: context.payStatus === 'confirmed' ? 'ОПЛАТА ПІДТВЕРДЖЕНА' : 'ЗАМОВЛЕННЯ (повторно, без оплати)' };
+  }
 
   var phone = String(od.phone).replace(/[^0-9]/g, '');
   var hdr = { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json', Accept: 'application/json' };
@@ -94,7 +121,8 @@ try {
   var r = await fetch(base + '/orders', { method: 'POST', headers: hdr, body: JSON.stringify(body) });
   var d = await r.json().catch(function () { return {}; });
   if (r.ok && d && d.ok && d.data && d.data.id) {
-    return { crmOrderId: d.data.id, crmClientId: buyerId, supplier: supplierName, orderSku: (sku || '') };
+    var postedNow = await postPayment(d.data.id);
+    return { crmOrderId: d.data.id, crmClientId: buyerId, supplier: supplierName, orderSku: (sku || ''), crmPaymentPosted: postedNow, createAlertTitle: 'НОВЕ ЗАМОВЛЕННЯ' };
   }
   return { crmOrderError: ((d && d.error && d.error.message) || (d && d.message) || ('HTTP ' + r.status)) };
 } catch (e) { return { crmOrderError: e.message }; }

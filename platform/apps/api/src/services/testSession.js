@@ -1316,7 +1316,11 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
     // vision квитанції за context.lastReceiptImageUrl) реально відпрацювала для
     // ЦЬОГО фото, а не загубилась у консультаційній ноді, яка про квитанції нічого
     // не знає (звідси "Вибачте, я не можу переглядати фото... Який товар цікавить?").
-    if (incomingImageUrl && ctx.orderRef && !ctx.crmOrderId && !ctx.adminEngaged && !ctx.funnelPaused) {
+    // 2026-09-05 (тест Олексія: чек надіслано ПІСЛЯ створення замовлення → потрапляв у n_upsell2_wait і
+    // ніколи не звірявся; замовлення лишалось неоплаченим, у CRM платежу нема): звірку запускаємо і після
+    // створення замовлення — на фото або на явне "оплатив/переказав", доки payStatus не confirmed.
+    const _claimsPaid = /оплатив|оплатила|заплатив|заплатила|переказав|переказала|скинув чек|скинула чек|оплата пройшла|гроші (пішли|відправив|відправила)|paid/i.test(String(incomingUserMessage || ''));
+    if (ctx.orderRef && ctx.payStatus !== 'confirmed' && (incomingImageUrl || (_claimsPaid && ctx.crmOrderId)) && !ctx.adminEngaged && !ctx.funnelPaused) {
         const _monoNode = flow.nodes.find((n) => n.id === 'n_mono_fetch');
         if (_monoNode && runtime.currentNodeId !== 'n_mono_fetch' && runtime.currentNodeId !== 'n_reconcile') {
             runtime.currentNodeId = 'n_mono_fetch';

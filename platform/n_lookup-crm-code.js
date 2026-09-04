@@ -152,7 +152,8 @@ try {
       var __aid = String(context.entryAd || '').trim();
       var __igTok = String(keys.INSTAGRAM_ACCESS_TOKEN || '').trim();
       var __muTok = String(keys.META_SYSTEM_USER_TOKEN || '').trim();
-      async function __gget(path, tok) { var acg = new AbortController(); var tog = setTimeout(function () { try { acg.abort(); } catch (e) {} }, 4000); try { var rg = await fetch('https://graph.facebook.com/v21.0/' + path + (path.indexOf('?') >= 0 ? '&' : '?') + 'access_token=' + encodeURIComponent(tok), { signal: acg.signal }); var jg = await rg.json().catch(function () { return {}; }); return rg.ok ? jg : null; } catch (e) { return null; } finally { clearTimeout(tog); } }
+      var __gErr = [];
+      async function __gget(path, tok) { var acg = new AbortController(); var tog = setTimeout(function () { try { acg.abort(); } catch (e) {} }, 4000); try { var rg = await fetch('https://graph.facebook.com/v21.0/' + path + (path.indexOf('?') >= 0 ? '&' : '?') + 'access_token=' + encodeURIComponent(tok), { signal: acg.signal }); var jg = await rg.json().catch(function () { return {}; }); if (!rg.ok) { __gErr.push(path.split('?')[0] + ': ' + rg.status + ' ' + String((jg.error && jg.error.message) || '').slice(0, 160)); return null; } return jg; } catch (e) { __gErr.push(path.split('?')[0] + ': ' + e.message); return null; } finally { clearTimeout(tog); } }
       if (__pid && __igTok) {
         var __m = await __gget(__pid + '?fields=caption,media_url,thumbnail_url,permalink', __igTok);
         if (__m && (__m.caption || __m.media_url)) { __adCaption = String(__m.caption || ''); __adImage = String(__m.thumbnail_url || __m.media_url || ''); }
@@ -169,6 +170,8 @@ try {
     } catch (e) { __adCaption = __adCaption || ''; }
     if (__adCaption) context.adCaption = __adCaption;
     if (__adImage) context.adImage = __adImage;
+    if (typeof __gErr !== 'undefined' && __gErr.length) context.adCaptionError = __gErr.join(' | ').slice(0, 400);
+    if (!__igTok && !__muTok) context.adCaptionError = 'немає INSTAGRAM_ACCESS_TOKEN/META_SYSTEM_USER_TOKEN у ключах воронки';
   }
 
   // ПРІОРИТЕТ 2: артикул (з тексту клієнта / підпису поста / adTitle / повного тексту реклами)

@@ -46,7 +46,12 @@ if(true){ // read-only, працює і в testMode
     }
   }catch(e){ /* best-effort — фолбек на funnelKey вище */ }
 }
-var out={ orderRef:ref, orderRefAt:refAt, orderQty:qty, fop:fop, upsellSum:upsellSum, upsellQty:upsellQty };
+var od0=context.orderData||{};
+var haveAddr = !!(context.recalledDeliveryReady || (od0.fullName && od0.phone && od0.city && od0.branch));
+var addressAskLine = haveAddr
+  ? '📦 Дані для відправки у нас уже є ✅ ('+(od0.city||'')+(od0.branch?(', '+od0.branch):'')+') — якщо щось змінилось, напишіть.'
+  : '📦 Дані для відправки (ПІБ, телефон, місто, № відділення або поштомата Нової Пошти) можна написати прямо зараз одним повідомленням 🙂';
+var out={ orderRef:ref, orderRefAt:refAt, orderQty:qty, fop:fop, upsellSum:upsellSum, upsellQty:upsellQty, addressAskLine:addressAskLine };
 if(method==='cod_trust'){ out.payAmount=0; out.payLabel='без передоплати (виняток за домовленістю, накладений платіж повністю)'; return out; }
 out.payAmount = method==='cod'?200:full;
 out.payLabel = method==='cod'?('передоплата 200 грн, решта '+(full-200)+' грн при отриманні'):('повна оплата, '+full+' грн');

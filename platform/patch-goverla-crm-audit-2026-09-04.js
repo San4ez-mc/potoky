@@ -267,7 +267,10 @@ function applyV2(nodes, edges, notes) {
     const placer = makePlacer(nodes);
     const addEdge = (s, t, h) => { if (edges.some((e) => e.source === s && e.target === t && (e.sourceHandle || null) === (h || null))) return; const e = { id: 'e_' + s + '_' + t + (h ? '_' + h : ''), source: s, target: t }; if (h) e.sourceHandle = h; edges.push(e); };
     const retarget = (s, oldT, newT, h) => { edges.forEach((e) => { if (e.source === s && e.target === oldT && (h === undefined || (e.sourceHandle || null) === h)) e.target = newT; }); };
-    const appendAsk = (id) => { const n = byId()[id]; if (!n) return; const app = (t) => (String(t || '').includes('Дані для відправки (ПІБ') ? t : String(t || '') + ADDRESS_ASK); n.data.text = app(n.data.text); if (Array.isArray(n.data.variants) && n.data.variants.length) n.data.variants = n.data.variants.map(app); };
+    // v3.3: рядок динамічний ({{context.addressAskLine}}, ставить n_pay_amount) — якщо адресу вже дали наперед
+    // (prefill/повторний клієнт), просимо не «напишіть дані», а показуємо «дані вже є ✅».
+    const ASK_PH = '\n\n{{context.addressAskLine}}';
+    const appendAsk = (id) => { const n = byId()[id]; if (!n) return; const app = (t) => { let s = String(t || ''); if (s.includes(ADDRESS_ASK)) s = s.split(ADDRESS_ASK).join(ASK_PH); return s.includes('{{context.addressAskLine}}') ? s : s + ASK_PH; }; n.data.text = app(n.data.text); if (Array.isArray(n.data.variants) && n.data.variants.length) n.data.variants = n.data.variants.map(app); };
     ['n_requisites', 'n_req_sum', 'n_trust_confirm_msg'].forEach(appendAsk);
     if (has('n_collect')) Object.assign(byId().n_collect.data, { speakFirst: false, connectorId: CLAUDE_SONNET, description: 'Реактивний збір адреси (без speakFirst — прохання ставлять message-ноди перед нею). Sonnet: Haiku двічі вигадувала реквізити/посилання. json: 4 поля (+region), wantsManualReq, paymentMethodChange (+regex у двигуні), handoff.' });
     if (!has('n_np_ask')) {

@@ -632,7 +632,8 @@ function extractJsonSegment(text) {
         };
     }
 
-    const fencedMatch = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+    // Sonnet (2026-09-04) відкриває блок як ```json_output — приймаємо будь-яку json-мітку.
+    const fencedMatch = raw.match(/```(?:json[\w-]*)?\s*([\s\S]*?)\s*```/i);
     if (fencedMatch && fencedMatch[1]) {
         const fencedContent = fencedMatch[1].trim();
         const parsedFenced = tryParse(fencedContent);
@@ -791,7 +792,8 @@ function shouldExitDialog({ exitCondition, responseText, inputText }) {
 function stripJsonAndTrailingText(responseText, jsonStart) {
     if (!responseText || typeof responseText !== 'string') return '';
     if (typeof jsonStart !== 'number' || jsonStart <= 0) return '';
-    return responseText.slice(0, jsonStart).trim();
+    // Мітка відкритого блоку перед JSON ("```json_output") не має долетіти до клієнта.
+    return responseText.slice(0, jsonStart).replace(/```[\w-]*\s*$/, '').trim();
 }
 
 function getFlowRuntime(context) {

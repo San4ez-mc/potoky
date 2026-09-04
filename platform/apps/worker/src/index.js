@@ -356,6 +356,7 @@ const VOLATILE_CONTEXT_KEYS = [
     'payNotFoundNotified', 'unknownNotifiedAt', 'postOrderNotifiedAt', 'welcomeBack', 'ttnLine',
     'intlStatus', 'intlCountry', 'recallConfirm', 'recalledDeliveryReady', 'returningCustomerChecked',
     'returningCustomerData', 'hasFreshSignalThisTurn', 'hasProductSignal', 'productJustPresented',
+    'catalogHint', 'catalogHintCount', 'catalogHintTotal', 'catalogCategories', 'unknownTurns',
 ];
 async function resetStaleOrCompletedSessions() {
     try {

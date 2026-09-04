@@ -4,7 +4,8 @@
 // n_unknown_msg: catalogCategories — категорії магазину з CRM з кількістю товарів (для привітання),
 // catalogHint — до 4 товарів названої категорії (артикул, назва, ціна). Best-effort: помилка → порожньо.
 var msg = String(context.lastUserMessage || input || '').toLowerCase();
-function out(hint, cnt, cats) { return { catalogHint: hint || '', catalogHintCount: cnt || 0, catalogCategories: cats || '' }; }
+var unknownTurns = (Number(context.unknownTurns) || 0) + 1;
+function out(hint, cnt, cats) { return { catalogHint: hint || '', catalogHintCount: cnt || 0, catalogCategories: cats || '', unknownTurns: unknownTurns }; }
 if (context.product) return out('', 0, '');
 var base = (keys.CRM_API_BASE || 'http://127.0.0.1:4700/api').replace(/\/$/, '');
 var apiKey = (keys.CRM_API_KEY || '').trim();
@@ -44,4 +45,4 @@ if (!hits.length) return out('', 0, catList);
 hits.sort(function (a, b) { return (Number(a.price) || 0) - (Number(b.price) || 0); });
 var top = hits.slice(0, 4);
 var lines = top.map(function (p) { return (p.sku ? ('Артикул ' + p.sku + ' — ') : '') + String(p.name || '').trim() + (Number(p.price) ? (' — ' + Number(p.price) + ' грн') : ''); });
-return { catalogHint: lines.join('\n'), catalogHintCount: top.length, catalogHintTotal: hits.length, catalogCategories: catList };
+return { catalogHint: lines.join('\n'), catalogHintCount: top.length, catalogHintTotal: hits.length, catalogCategories: catList, unknownTurns: unknownTurns };

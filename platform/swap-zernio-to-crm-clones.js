@@ -51,7 +51,12 @@ async function swapPair(p) {
         return true;
     }
     if (diff.length) { console.log('  STOP: канальні ключі клона відрізняються від старого бота: ' + diff.join(', ') + ' — вирівняй ключі клона перед свапом.'); return false; }
-    if (newBot.settings && newBot.settings.testMode) { console.log('  STOP: у клона увімкнено testMode — відповідатиме лише дозволеним; вимкни в налаштуваннях воронки.'); return false; }
+    if (newBot.settings && newBot.settings.testMode) {
+        // Рішення власника 2026-09-04: goverla свапаємо з увімкненим testMode — відповідає лише allowlist
+        // тестерів, решта клієнтів у ТИШІ, доки testMode не вимкнуть у налаштуваннях клона.
+        if (!process.argv.includes('--allow-testmode')) { console.log('  STOP: у клона увімкнено testMode — відповідатиме лише дозволеним (' + (newBot.settings.testModeAllowedUsers || []).join(', ') + '); вимкни в налаштуваннях воронки або запусти з --allow-testmode (свідомо: інші клієнти отримають тишу).'); return false; }
+        console.log('  ⚠️ testMode увімкнено, свап дозволено прапорцем --allow-testmode: відповідатиме ЛИШЕ ' + (newBot.settings.testModeAllowedUsers || []).join(', ') + '; решта клієнтів — тиша до вимкнення testMode.');
+    }
     const flow = await db.flowDefinition.findUnique({ where: { botId: p.newBotId }, select: { nodes: true } });
     if (!flow || !flow.nodes.some((n) => n.id === 'n_supplier_pay_gate')) { console.log('  STOP: на клоні ще не застосовано patch-goverla-crm-audit-2026-09-04.js (нема n_supplier_pay_gate).'); return false; }
     if (!nk.CRM_API_KEY || !nk.CRM_API_BASE) { console.log('  STOP: у клона нема CRM_API_KEY/CRM_API_BASE.'); return false; }

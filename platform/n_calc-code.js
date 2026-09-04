@@ -71,7 +71,7 @@ function replyFor(source, size) {
   if (source === 'exact') {
     var m = (typeof __exactMeasure === 'string' && __exactMeasure) ? __exactMeasure : 'обхватом грудей';
     return pickOne([
-      'За вашим ' + m + ' підійде розмір ' + S + ' 📏 — звірила з сіткою саме цієї моделі 👌',
+      'За ' + m + ' підійде розмір ' + S + ' 📏 — звірила з сіткою саме цієї моделі 👌',
       'За ' + m + ' ваш розмір — ' + S + ' 📏, це точно за сіткою цієї моделі 👌'
     ]);
   }
@@ -132,8 +132,8 @@ var chestVal = Number(s0.chest) || 0;
 var footVal = Number(s0.footLength) || 0;
 var __exactMeasure = '';
 var ex = exactBy(chestVal, /груд/i, false);
-if (ex) __exactMeasure = 'обхватом грудей ' + chestVal + ' см';
-if (!ex) { ex = exactBy(footVal, /стоп|устілк|foot|нога/i, true); if (ex) __exactMeasure = 'довжиною стопи ' + footVal + ' см'; }
+if (ex) __exactMeasure = 'обхватом грудей ' + String(chestVal).replace('.', ',') + ' см';
+if (!ex) { ex = exactBy(footVal, /стоп|устілк|foot|нога/i, true); if (ex) __exactMeasure = 'довжиною стопи ' + String(footVal).replace('.', ',') + ' см'; }
 if (ex && ex.outOfChart) return oor('вимір ' + (footVal || chestVal) + ' см поза сіткою товару (' + ex.key + ': ' + ex.min + '–' + ex.max + ' см)', '');
 if (ex && ex.size) { var r = done(ex.size, 'exact'); r.sizeMatchedBy = 'exact_measurement'; return r; }
 

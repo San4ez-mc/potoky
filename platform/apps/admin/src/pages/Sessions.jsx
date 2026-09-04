@@ -36,8 +36,11 @@ export function Sessions() {
     const [errorsModal, setErrorsModal] = useState(null);
     const [errorsOnly, setErrorsOnly] = useState(false);
     const [sessionType, setSessionType] = useState('all');
-    // #12: за замовчуванням показуємо лише справжні сесії (bot), webhook — це тести
-    const [source, setSource] = useState('bot');
+    // 2026-09-04: дефолт 'bot' (TG) ховав реальні сесії Zernio-каналів (Instagram через Zernio) —
+    // їхній user чомусь webhook_system, тому вони випадають і з 'bot' (виключає webhook_system),
+    // і з 'instagram' (перевіряє лише channel==='instagram', не 'zernio'). Поки категоризацію
+    // каналів не поправили на бекенді — дефолт 'Всі', щоб не ховати реальні розмови.
+    const [source, setSource] = useState('all');
     const [readMap, setReadMap] = useState(() => getReadMap());
     const [searchInput, setSearchInput] = useState('');
     const [search, setSearch] = useState('');

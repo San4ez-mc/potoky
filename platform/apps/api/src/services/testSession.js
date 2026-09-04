@@ -1280,7 +1280,13 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
         // вже в чекауті" (виставляється одразу при переході до оплати), тому фото на
         // цьому етапі більше НЕ трактуємо як новий товар — його підхопить звірка оплати
         // (n_reconcile: context.lastReceiptImageUrl → Gemini vision квитанції).
-        if (!_isDifferentProduct && incomingImageUrl && !ctx.orderRef) {
+        // Реальні кейси goverla 2026-09-04: клієнт посеред підбору розміру/кольору шле фото СВОЄЇ куртки
+        // ("це куртка, яка мені норм", "вони однакові??") — скидати товар і шукати "новий" по фото тут
+        // хибно. Ноди з data.keepProductOnImage===true (n_size/n_color/n_set_choice) тримають товар;
+        // фото йде моделі як "[фото]", а змінити товар клієнт може постом/артикулом.
+        const _curNodeForImage = runtime.currentNodeId ? nodesById.get(runtime.currentNodeId) : null;
+        const _keepOnImage = Boolean(_curNodeForImage && _curNodeForImage.data && _curNodeForImage.data.keepProductOnImage === true);
+        if (!_isDifferentProduct && incomingImageUrl && !ctx.orderRef && !_keepOnImage) {
             _isDifferentProduct = true;
         }
         if (_isDifferentProduct) {
@@ -1798,7 +1804,14 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
             // має історії — НЕ викликаємо модель з первинним повідомленням клієнта (вона
             // переказувала опис ще раз), а чекаємо його відповідь на питання з презентації
             // (n_welcome сам питає параметри). Детерміновано, без покладання на промпт.
-            if (data.waitAfterPresentation === true && mode === 'dialog' && ctx.productJustPresented && runtime.lastUserMessage
+            // waitAfterPresentationUnless — regex (рядок у data): якщо ПЕРШЕ повідомлення клієнта вже містить
+            // потрібне (напр. "182/100", "зріст 167 вага 75" — реальні кейси goverla 2026-09-04), не чекаємо,
+            // а одразу віддаємо його моделі — інакше бот перепитує те, що клієнт щойно написав.
+            let _presentationUnless = false;
+            if (data.waitAfterPresentationUnless && runtime.lastUserMessage) {
+                try { _presentationUnless = new RegExp(String(data.waitAfterPresentationUnless), 'i').test(String(runtime.lastUserMessage)); } catch (_e) { _presentationUnless = false; }
+            }
+            if (data.waitAfterPresentation === true && mode === 'dialog' && ctx.productJustPresented && runtime.lastUserMessage && !_presentationUnless
                 && !(Array.isArray(runtime.dialogHistory[node.id]) && runtime.dialogHistory[node.id].length)) {
                 delete ctx.productJustPresented;
                 runtime.lastUserMessage = '';
@@ -2297,7 +2310,10 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                     }
 
                     // Regular exit
-                    runtime.lastUserMessage = '';
+                    // data.keepUserMessageOnExit (v3, 2026-09-04): нода-«шлюз» (n_welcome_back) не споживає
+                    // повідомлення клієнта — воно йде далі наступній діалоговій ноді. Кейс: клієнт після паузи
+                    // відповідає на старе питання ("182 90") — інакше n_size мовчки чекала б нового вводу.
+                    if (data.keepUserMessageOnExit !== true) runtime.lastUserMessage = '';
                     runtime.waitingForUser = false;
                     runtime.userConfirmationReceived = false;
                     runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);

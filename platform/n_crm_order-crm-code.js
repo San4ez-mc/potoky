@@ -66,12 +66,16 @@ try {
   var upItems = (p.upsellItems || []);
   if (context.orderIntent && context.orderIntent.addUpsell && upItems.length) {
     var up0 = upItems[0];
-    items.push({ productId: up0.id || null, offerId: null, name: up0.name || 'Допродаж', price: up0.price || 0, quantity: 1, properties: null, isUpsell: true });
+    // v3: кількість/нотатка допродажу від клієнта ("Біла-1 Чорна-1") — у quantity і в назву позиції/коментар менеджеру
+    var upQty = Number(context.upsellQty || context.orderIntent.upsellQty) || 1; if (!(upQty >= 1)) upQty = 1;
+    var upNote = String(context.orderIntent.upsellNote || '').trim();
+    var upUnit = upQty > 1 && Number(context.upsellSum) ? Math.round((Number(context.upsellSum) / upQty) * 100) / 100 : (up0.price || 0);
+    items.push({ productId: up0.id || null, offerId: null, name: (up0.name || 'Допродаж') + (upNote ? (' (' + upNote + ')') : ''), price: upUnit, quantity: upQty, properties: null, isUpsell: true });
   }
   var body = {
     buyerId: buyerId,
     sourceName: 'Instagram' + (shopTag ? (' ' + shopTag) : ''),
-    managerComment: 'Товар: ' + (p.customerName || p.name || '') + ' | Розмір: ' + size + ' | Колір: ' + col + ' | Оплата: ' + payTxt + (supplierName ? (' | Постачальник: ' + supplierName) : '') + (items.length > 1 ? (' | + допродаж: ' + items[1].name) : '') + ' | Перевірити оплату.',
+    managerComment: 'Товар: ' + (p.customerName || p.name || '') + ' | Розмір: ' + size + ' | Колір: ' + col + ' | Оплата: ' + payTxt + (supplierName ? (' | Постачальник: ' + supplierName) : '') + (items.length > 1 ? (' | + допродаж: ' + items[1].name + ' × ' + items[1].quantity) : '') + ' | Перевірити оплату.',
     shipping: { shippingService: 'Нова Пошта', city: (od.city || ''), branch: (od.branch || ''), recipientFullName: (od.fullName || ''), recipientPhone: phone },
     items: items
   };

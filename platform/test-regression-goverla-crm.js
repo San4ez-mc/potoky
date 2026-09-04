@@ -16,7 +16,7 @@ const keysMap = Object.fromEntries((dump.keys || []).map((k) => [k.key, k.value]
 const botOpts = optsForBot(dump.bot && dump.bot.id);
 console.log('BOT:', dump.bot && dump.bot.id, dump.bot && dump.bot.name, '| keepCarText=' + botOpts.keepCarText);
 let r = transform({ nodes: dump.nodes, edges: dump.edges }, keysMap, botOpts);
-if (r.alreadyApplied) { const rr = refresh({ nodes: dump.nodes, edges: dump.edges }); r = { nodes: rr.nodes, edges: rr.edges, keyUpdates: [], keyDeletes: [], notes: ['(дамп уже з патчем → перевіряємо --refresh)'].concat(rr.notes) }; }
+if (r.alreadyApplied) { const rr = refresh({ nodes: dump.nodes, edges: dump.edges }); r = { nodes: rr.nodes, edges: rr.edges, keyUpdates: rr.keyUpdates || [], keyDeletes: [], notes: ['(дамп уже з патчем → перевіряємо --refresh)'].concat(rr.notes) }; }
 const nodes = r.nodes, edges = r.edges;
 const byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
 const results = [];
@@ -81,6 +81,20 @@ ok('V2c', 'n_collect не пише реквізити/посилання сам�
 ok('V2d', 'n_color: колір → лише json; артикул у промптах n_size/n_color; правило "подумаю"', /ТІЛЬКИ json_output \{"color"/.test(byId.n_color.data.systemPrompt) && ['n_size', 'n_color'].every((id) => /артикул \{\{context\.product\.sku\}\}/.test(byId[id].data.systemPrompt) && /клієнт відкладає/.test(byId[id].data.systemPrompt)));
 ok('V2e', 'n_order_intent: згода/відмова → лише json', /ТІЛЬКИ json_output \{"ready":"yes"\} БЕЗ жодного тексту/.test(byId.n_order_intent.data.systemPrompt));
 ok('V2f', 'один допродаж (узгоджено з n_pay_amount/n_crm_order) + заголовок презентації', /upsell\.length < 1/.test(byId.n_lookup.data.code) && /заголовок з назвою і ціною/.test(byId.n_lookup.data.code));
+ok('V3a', 'n_size: параметри в першому повідомленні не перепитуються (waitAfterPresentationUnless), фото не скидає товар', typeof byId.n_size.data.waitAfterPresentationUnless === 'string' && new RegExp(byId.n_size.data.waitAfterPresentationUnless, 'i').test('Чорний колір Параметри 182/100') && new RegExp(byId.n_size.data.waitAfterPresentationUnless, 'i').test('яка ціна кофти Параметри ріст 167 Вага 75 кг') && !new RegExp(byId.n_size.data.waitAfterPresentationUnless, 'i').test('Як замовити кофту?') && ['n_size', 'n_color', 'n_set_choice'].every((id) => byId[id].data.keepProductOnImage === true));
+ok('V3b', 'n_size: метри→см, колір у json; n_calc фіксує колір із кроку розміру', /зріст у метрах/.test(byId.n_size.data.systemPrompt) && /"color":"<колір як у списку>"/.test(byId.n_size.data.systemPrompt) && /__colorPick/.test(byId.n_calc.data.code));
+ok('V3c', 'адреса наперед: n_order_cond[true] → n_order_prefill → n_pay', branch('n_order_cond', 'true') === 'n_order_prefill' && next('n_order_prefill') === 'n_pay' && /"prefill"/.test(byId.n_order_intent.data.systemPrompt));
+ok('V3d', 'кількість/нотатка допродажу наскрізно (prompt → n_pay_amount → n_crm_order)', /upsellQty/.test(byId.n_order_intent.data.systemPrompt) && /upsellQty/.test(byId.n_pay_amount.data.code) && /upsellNote/.test(byId.n_crm_order.data.code) && /qtyPrices: __cq/.test(byId.n_lookup.data.code));
+ok('V3e', 'умови в підсумку (ORDER_TERMS_LINE) + слово «Оформляємо» обовʼязкове', /ORDER_TERMS_LINE/.test(byId.n_order_intent.data.systemPrompt) && /ОБОВʼЯЗКОВО містить слово «Оформляємо»/.test(byId.n_order_intent.data.systemPrompt) && (r.keyUpdates || []).some((k) => k.key === 'ORDER_TERMS_LINE'));
+ok('V3f', 'n_welcome_back передає повідомлення далі (keepUserMessageOnExit)', byId.n_welcome_back.data.keepUserMessageOnExit === true);
+// Кожне видиме повідомлення закінчується питанням або чітким кроком (стандарт §3.4)
+const CTA_RE = /\?\s*[^\wа-яіїєґ]*$|напиш|скиньт|підкаж|оберіть|надішл|скопіюй|натисн|можна написати|чекаю|повідом|підтверд|оформля|перевір|звірим|надійде|підкажу|допоможу|поруч|напишіть/i;
+// Свідомі винятки: n_welcome/n_size_reply/n_np_ask — текст цілком з плейсхолдерів (followUpQuestion/sizeReplyText/
+// np.askMsg самі містять питання); n_req_* — фрагменти реквізитів для копіювання, CTA у n_req_sum;
+// n_intl_unsupported_msg — термінальний handoff ("покличу менеджера").
+const CTA_EXEMPT = new Set(['n_welcome', 'n_size_reply', 'n_np_ask', 'n_req_manual', 'n_req_iban_l', 'n_req_iban_v', 'n_req_code_l', 'n_req_code_v', 'n_req_ref_l', 'n_req_ref_v', 'n_req_name_l', 'n_req_name_v', 'n_intl_unsupported_msg']);
+const noCta = nodes.filter((n) => n.type === 'message' && !CTA_EXEMPT.has(n.id)).filter((n) => { const texts = [n.data.text].concat(n.data.variants || []).filter(Boolean); return texts.some((t) => !CTA_RE.test(String(t).replace(/\{\{[^}]+\}\}/g, ' ').trim())); }).map((n) => n.id);
+ok('M1', 'кожна message-нода закінчується питанням/наступним кроком', noCta.length === 0, noCta.join(','));
 ok('V8b', 'n_avail_cond[true] → n_order_intent (допродаж у першому повідомленні)', branch('n_avail_cond', 'true') === 'n_order_intent' && /ДОПРОДАЖ/.test(byId.n_order_intent.data.systemPrompt));
 ok('V8c', 'n_size_photo має підпис із наступним кроком', /зріст і вагу/.test(byId.n_size_photo.data.caption || ''));
 ok('V8d', 'n_collect знає статус оплати та уточнення НП', /payStatus/.test(byId.n_collect.data.systemPrompt) && /np\.askMsg/.test(byId.n_collect.data.systemPrompt));
@@ -98,7 +112,7 @@ ok('S16', 'n_confirm: confirmLead+ttnLine, без "акційної ціни"', 
 ok('S19a', 'n_pay: рядок про закордон у всіх варіантах', (byId.n_pay.data.variants || []).every((v) => /за кордон/.test(v)));
 ok('S19b', 'n_pay_collect: country лише з method', /Ніколи не повертай JSON лише з country/.test(byId.n_pay_collect.data.systemPrompt));
 ok('S24', 'Haiku на простих нодах', ['n_pay_collect', 'n_recall_confirm', 'n_upsell2_wait', 'n_welcome_back'].every((id) => byId[id].data.connectorId === '4a8000aa-837f-4a73-bf5c-224949ebaf9a'));
-ok('S25a', 'DRY_RUN=1', r.keyUpdates.length === 0 || r.keyUpdates.every((k) => k.value === '1'));
+ok('S25a', 'DRY_RUN=1', (r.keyUpdates || []).filter((k) => /DRY_RUN/.test(k.key)).every((k) => k.value === '1'));
 ok('AV1', 'n_avail_cond[false] → вид відсутності → менеджер / інший колір', branch('n_avail_cond', 'false') === 'n_avail_kind_cond' && branch('n_avail_kind_cond', 'true') === 'n_avail_stock_msg' && branch('n_avail_kind_cond', 'false') === 'n_avail_no');
 const claudeBad = nodes.filter((n) => n.type === 'claude' && !(n.data.systemPrompt || '').trim()).map((n) => n.id);
 ok('CL1', 'усі claude-ноди мають промпт', claudeBad.length === 0, claudeBad.join(','));

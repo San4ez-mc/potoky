@@ -7,8 +7,15 @@ var full=tierPrice!=null?Number(tierPrice):(unit*qty);
 // Аудит 2026-09-04 (живий кейс власника, сесія 7944d0c6): клієнт погодився на допродаж, бот
 // підсумував 2177 грн, а інвойс створився на 1279 — допродаж не входив у суму. Додаємо ціну
 // погодженого допродажу (та сама позиція, яку n_crm_order кладе другим item-ом).
-var upsellSum=0;
-if(context.orderIntent&&context.orderIntent.addUpsell){ var up=(context.product&&context.product.upsellItems)||[]; if(up[0]&&Number(up[0].price)) upsellSum=Number(up[0].price); }
+var upsellSum=0, upsellQty=0;
+if(context.orderIntent&&context.orderIntent.addUpsell){
+  var up=(context.product&&context.product.upsellItems)||[];
+  if(up[0]&&Number(up[0].price)){
+    upsellQty=Number(context.orderIntent.upsellQty)||1; if(!(upsellQty>=1)) upsellQty=1;
+    var uqp=(up[0].qtyPrices||{})[String(upsellQty)];
+    upsellSum = uqp!=null ? Number(uqp) : Number(up[0].price)*upsellQty;   // v3: "Біла-1 Чорна-1" = 2 шт за акційною 799
+  }
+}
 full=full+upsellSum;
 // orderRef — короткий код у призначенні платежу: префікс із SHOP_TAG (клон = шаблон + конфіг),
 // id з psid/igUsername (для Instagram telegramId нема — раніше виходило "GOVNAN…"), orderRefAt —
@@ -39,7 +46,7 @@ if(true){ // read-only, працює і в testMode
     }
   }catch(e){ /* best-effort — фолбек на funnelKey вище */ }
 }
-var out={ orderRef:ref, orderRefAt:refAt, orderQty:qty, fop:fop, upsellSum:upsellSum };
+var out={ orderRef:ref, orderRefAt:refAt, orderQty:qty, fop:fop, upsellSum:upsellSum, upsellQty:upsellQty };
 if(method==='cod_trust'){ out.payAmount=0; out.payLabel='без передоплати (виняток за домовленістю, накладений платіж повністю)'; return out; }
 out.payAmount = method==='cod'?200:full;
 out.payLabel = method==='cod'?('передоплата 200 грн, решта '+(full-200)+' грн при отриманні'):('повна оплата, '+full+' грн');

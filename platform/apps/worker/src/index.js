@@ -379,7 +379,11 @@ async function resetStaleOrCompletedSessions() {
                 if (!purchased && !silentTooLong) continue;
 
                 const cleanCtx = { ...ctx };
-                for (const k of VOLATILE_CONTEXT_KEYS) delete cleanCtx[k];
+                // v3 (2026-09-04): тихе скидання (24h без покупки) лишає товарний скоуп — наступне "доброго дня"
+                // піде через n_welcome_back ("ви цікавились X, ще актуально?"), а не "покажіть товар" з нуля.
+                // Після ПОКУПКИ — повне очищення, як і було.
+                const KEEP_ON_SILENT = new Set(['product', 'colorChoice', 'sizeInput', 'recommendedSize', 'sizeSource', 'orderData', 'np', 'entryAd', 'sizeAskedFor']);
+                for (const k of VOLATILE_CONTEXT_KEYS) { if (!purchased && KEEP_ON_SILENT.has(k)) continue; delete cleanCtx[k]; }
                 cleanCtx.flowRuntime = {}; // engine сам знайде start-ноду на наступному кроці
                 cleanCtx.resetAt = now;
                 cleanCtx.resetReason = purchased ? 'purchased' : 'silent_24h';

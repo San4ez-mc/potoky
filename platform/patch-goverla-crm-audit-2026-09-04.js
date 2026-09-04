@@ -86,10 +86,14 @@ const ORDER_INTENT_PROMPT = `Ти — {{env.PERSONA_NAME}}, тепла конс�
 КОРОТКИЙ СТАН ДІАЛОГУ: {{context.dialogStateText}}
 ДОПРОДАЖ (порожньо = нема): «{{context.product.upsell}}». {{context.product.upsellPhotoNote}}
 
-ТВОЯ ЗАДАЧА: підвести до оформлення. Коли ти починаєш першою (система просить "почни діалог сам"): ОДНЕ повідомлення — короткий підсумок (товар, колір/розмір якщо є, ціна) і РІВНО ОДНЕ питання:
+УМОВИ (додай ОДНИМ рядком у підсумок, дослівно): {{env.ORDER_TERMS_LINE}}
+
+ТВОЯ ЗАДАЧА: підвести до оформлення. Коли ти починаєш першою (система просить "почни діалог сам"): ОДНЕ повідомлення — короткий підсумок (товар, колір/розмір якщо є, ціна, рядок УМОВ) і РІВНО ОДНЕ питання, яке ОБОВʼЯЗКОВО містить слово «Оформляємо»:
 - ДОПРОДАЖ порожній → «Оформляємо замовлення? 🙂»
 - ДОПРОДАЖ є → «Оформляємо? І підкажіть: додати ще {{context.product.upsell}} до цієї ж посилки, чи лише основний товар?» (одне рішення з двома варіантами, НЕ два окремі питання).
 Акцію за кількість (якщо рядок вище непорожній і клієнт не називав кількість) згадай ОДИН раз у підсумку, ненав'язливо.
+ЯКЩО клієнт погоджується на допродаж і називає кількість/кольори («так, біла 1 і чорна 1», «дві футболки») — додай "upsellQty":<число> і "upsellNote":"<як сказав клієнт: кольори/розміри>" (ціну за кількість порахує система за акцією).
+ЯКЩО клієнт замість відповіді одразу надсилає дані доставки (ПІБ/телефон/місто/відділення) — це згода: {"ready":"yes","prefill":{"fullName":"...","phone":"...","city":"...","branch":"..."}} (лише ті поля, що є; без тексту). Дані не губляться — наступні кроки їх підхоплять.
 
 ФОРМАТ json_output (СУВОРО, лише коли клієнт ВІДПОВІВ на твоє питання):
 - Явна згода (так/да/давай/оформляй/+/ок/хочу/беру, «так, з допродажем», «тільки основний») → ТІЛЬКИ json_output {"ready":"yes"} БЕЗ жодного тексту (наступний крок сам покаже підсумок і оплату — не дублюй). Якщо клієнт погодився ДОДАТИ допродаж → {"ready":"yes","addUpsell":true}. Якщо називав кількість → додай "qty":<число>.
@@ -202,6 +206,37 @@ const SKU_IN_PROMPT_NEW = 'Товар: {{context.product.customerName}} (арт�
 //    Прохання написати адресу — детерміновано в текстах n_requisites / n_req_sum / n_trust_confirm_msg /
 //    n_np_ask / n_collect_ask; n_collect лише реагує.
 const ADDRESS_ASK = '\n\n📦 Дані для відправки (ПІБ, телефон, місто, № відділення або поштомата Нової Пошти) можна написати прямо зараз одним повідомленням 🙂';
+// v3 (реальні переписки 2026-09-04): параметри/колір у першому ж повідомленні ("Чорний колір Параметри 182/100",
+// "яка ціна кофти Параметри ріст 167 Вага 75", "Потрібен розмір S в графітному") — не перепитувати; "1,78" = 178 см;
+// фото своєї речі посеред підбору не скидає товар; адреса "наперед" не губиться; умови в підсумку.
+const SIZE_FIRST_MSG_RE = '\\d{2,3}\\s*[\\/,\\s\\-]\\s*\\d{2,3}|зр[іо]ст|ріст|ваг[аи]|\\bсм\\b|\\bкг\\b|розмір\\s*[SMLX]{1,4}\\b|\\b[SMLX]{1,4}\\s*розмір';
+const SIZE_PROMPT_V3 = '\nДОДАТКОВО: (а) зріст у метрах («1,78», «1.78 м») = 178 см — переводь сам; (б) якщо клієнт разом із параметрами назвав КОЛІР зі списку кольорів товару («чорний 182/100», «S в графітному») — додай у той самий json_output поле "color":"<колір як у списку>", щоб не перепитувати; (в) якщо клієнт надіслав фото (текст "[фото]") — по фото розмір не визначаю, скажи це одним реченням і попроси зріст і вагу (товар НЕ змінюй); (г) якщо клієнт назвав власні заміри (плечі/рукав/ширина) — подякуй і скажи, що підбір іде за зростом і вагою, попроси їх.';
+const ORDER_TERMS_DEFAULT = 'Обмін/повернення 14 днів ✅ Відправка Новою поштою 📦 Відправка до 5 робочих днів 🚚';
+const PREFILL_CODE = `// n_order_prefill (v3): клієнт надіслав дані доставки ще на кроці "Оформляємо?" — n_order_intent
+// поклав їх у orderIntent.prefill. Переносимо в orderData; якщо є всі 4 поля — n_collect пропускається
+// (recalledDeliveryReady, той самий шлях, що для повторного клієнта).
+var pf = (context.orderIntent && context.orderIntent.prefill) || null;
+if (!pf || typeof pf !== 'object') return {};
+var od = Object.assign({}, context.orderData || {});
+['fullName', 'phone', 'city', 'branch'].forEach(function (k) { if (pf[k] && String(pf[k]).trim()) od[k] = String(pf[k]).trim(); });
+var ready = !!(od.fullName && od.phone && od.city && od.branch);
+return { orderData: od, recalledDeliveryReady: ready };`;
+function applyV3(nodes, edges, notes) {
+    const byId = () => Object.fromEntries(nodes.map((n) => [n.id, n]));
+    const has = (id) => !!byId()[id];
+    const pos = (id) => (byId()[id] || { position: { x: 0, y: 0 } }).position;
+    const placer = makePlacer(nodes);
+    if (has('n_size')) { const n = byId().n_size; n.data.waitAfterPresentationUnless = SIZE_FIRST_MSG_RE; n.data.keepProductOnImage = true; if (!String(n.data.systemPrompt || '').includes('зріст у метрах')) n.data.systemPrompt = String(n.data.systemPrompt || '') + SIZE_PROMPT_V3; }
+    ['n_color', 'n_set_choice'].forEach((id) => { if (has(id)) byId()[id].data.keepProductOnImage = true; });
+    if (has('n_welcome_back')) byId().n_welcome_back.data.keepUserMessageOnExit = true;
+    if (!has('n_order_prefill')) {
+        nodes.push({ id: 'n_order_prefill', type: 'js', position: placer.place(pos('n_order_cond').x - GX, pos('n_order_cond').y + GY), data: { label: '9.6 Адреса, надіслана наперед', code: PREFILL_CODE, description: 'Переносить orderIntent.prefill (дані доставки, надіслані замість "так") у orderData; повний набір → n_collect пропускається.' } });
+        notes.push('+ нода n_order_prefill');
+        edges.forEach((e) => { if (e.source === 'n_order_cond' && e.target === 'n_pay' && (e.sourceHandle || null) === 'true') e.target = 'n_order_prefill'; });
+        edges.push({ id: 'e_n_order_prefill_n_pay', source: 'n_order_prefill', target: 'n_pay' });
+    }
+    return { nodes, edges };
+}
 function applyV2(nodes, edges, notes) {
     const byId = () => Object.fromEntries(nodes.map((n) => [n.id, n]));
     const has = (id) => !!byId()[id];
@@ -249,7 +284,8 @@ function refresh(flow) {
     if (byId.n_size) byId.n_size.data.waitAfterPresentation = true;
     applyPayCollectGuard(byId.n_pay_collect);
     const v2 = applyV2(nodes, flow.edges.map((e) => ({ ...e })), notes);
-    return { nodes: v2.nodes, edges: v2.edges, notes };
+    const v3 = applyV3(v2.nodes, v2.edges, notes);
+    return { nodes: v3.nodes, edges: v3.edges, notes, keyUpdates: [{ key: 'ORDER_TERMS_LINE', value: ORDER_TERMS_DEFAULT, label: 'Рядок умов у підсумку перед "Оформляємо?" (n_order_intent)', onlyIfMissing: true }] };
 }
 
 function transform(flow, keysMap, opts) {
@@ -418,13 +454,14 @@ function transform(flow, keysMap, opts) {
     { const n = byId()['n_ttn_sync_crm']; if (n) { placer.free('n_ttn_sync_crm'); n.position = placer.place(n.position.x, n.position.y); } }
 
     REMOVE.forEach(removeNode);
-    { const v2 = applyV2(nodes, edges, notes); nodes = v2.nodes; edges = v2.edges; }
+    { const v2 = applyV2(nodes, edges, notes); const v3 = applyV3(v2.nodes, v2.edges, notes); nodes = v3.nodes; edges = v3.edges; }
 
     // ── ключі ──
     const keyUpdates = [
         { key: 'BREWDROP_DRY_RUN', value: '1', label: 'DRY-RUN замовлень brewdrop (1 = не відправляти; у бій лише з дозволу власника)' },
         { key: 'EASYDROP_DRY_RUN', value: '1', label: 'DRY-RUN easydrop офлайн-форма' },
         { key: 'EASYDROP_CART_DRY_RUN', value: '1', label: 'DRY-RUN easydrop-кошик' },
+        { key: 'ORDER_TERMS_LINE', value: ORDER_TERMS_DEFAULT, label: 'Рядок умов у підсумку перед "Оформляємо?" (n_order_intent)', onlyIfMissing: true },
     ];
     const keyDeletes = ['DEFAULT_AD_ID', 'EASYDROP_SUPPLIER_ID', 'EASYDROP_SUPPLIER_NAME'].filter((k) => keysMap && k in keysMap && !String(keysMap[k] || '').trim());
 
@@ -463,6 +500,11 @@ async function patchBot(db, cfg, APPLY) {
         console.log('REFRESH: ' + r.notes.join(', '));
         if (!APPLY) return;
         await db.flowDefinition.update({ where: { botId: BOT_ID }, data: { nodes: r.nodes, edges: r.edges } });
+        for (const row of (r.keyUpdates || [])) {
+            if (row.onlyIfMissing && keysMap[row.key] !== undefined && String(keysMap[row.key] || '').trim()) continue;
+            await db.funnelKey.upsert({ where: { botId_key: { botId: BOT_ID, key: row.key } }, update: { value: row.value, label: row.label }, create: { botId: BOT_ID, key: row.key, value: row.value, label: row.label, isSecret: false } });
+            console.log('  key', row.key, '=', row.value.slice(0, 40));
+        }
         console.log('REFRESHED');
         return;
     }
@@ -475,6 +517,7 @@ async function patchBot(db, cfg, APPLY) {
     fs.writeFileSync(path.join(backupDir, 'flow-' + BOT_ID + '-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json'), JSON.stringify({ nodes: flow.nodes, edges: flow.edges, keys: keyRows }, null, 1));
     await db.flowDefinition.update({ where: { botId: BOT_ID }, data: { nodes: r.nodes, edges: r.edges } });
     for (const row of r.keyUpdates) {
+        if (row.onlyIfMissing && keysMap[row.key] !== undefined && String(keysMap[row.key] || '').trim()) continue;
         await db.funnelKey.upsert({ where: { botId_key: { botId: BOT_ID, key: row.key } }, update: { value: row.value, label: row.label }, create: { botId: BOT_ID, key: row.key, value: row.value, label: row.label, isSecret: false } });
     }
     for (const k of r.keyDeletes) await db.funnelKey.deleteMany({ where: { botId: BOT_ID, key: k } });

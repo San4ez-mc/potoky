@@ -235,7 +235,13 @@ try {
   // ("Матеріал: двухнитка (100% бавовна)"), бо його presentationText починається зі спец-рядка,
   // а customerName порожній. Для допродажу беремо назву, що не схожа на "Підпис: значення".
   function looksLikeSpecLine(s) { s = String(s || '').trim(); return !s || s.length < 4 || /:$/.test(s) || /^[^:]{1,30}:\s/.test(s) || /^(в\s*наявност|наявніст|кольор|розмір|матеріал|ціна\b|акці|сезон)/i.test(s); }
-  function upname(prod) { var up = Number(prod.price) || 0; var nm = (!looksLikeSpecLine(prod.customerName) && prod.customerName) || (!looksLikeSpecLine(prod.displayName) && prod.displayName) || prod.name || 'Товар'; return nm + (up ? (' — ' + up + ' грн') : ''); }
+  function upname(prod) {
+    var up = Number(prod.price) || 0; var nm = (!looksLikeSpecLine(prod.customerName) && prod.customerName) || (!looksLikeSpecLine(prod.displayName) && prod.displayName) || prod.name || 'Товар';
+    // v3: акція за кількість і кольори допродажу в текст пропозиції (реальний кейс: "Так Біла-1 Чорна-1", 2 шт = 799)
+    var bp = (Array.isArray(prod.bulkPricing) ? prod.bulkPricing : []).filter(function (b) { return b && b.quantity && b.price; }).map(function (b) { return b.quantity + ' шт — ' + Number(b.price) + ' грн'; });
+    var cols = [...new Set((prod.offers || []).flatMap(function (o) { return (o.properties || []).filter(function (q) { return /кол|цвет/i.test(q.name || ''); }).map(function (q) { return q.value; }); }))];
+    return nm + (up ? (' — ' + up + ' грн') : '') + (bp.length ? (' (' + bp.join(', ') + ')') : '') + (cols.length ? ('; кольори: ' + cols.join(', ')) : '');
+  }
   var compIds = Array.isArray(found.companionProductIds) ? found.companionProductIds : [];
   // v2 (2026-09-04): ОДИН допродаж, не три — n_pay_amount/n_crm_order додають лише upsellItems[0],
   // а n_order_intent пропонував "ці аксесуари" списком: клієнт погоджувався на три, платив за один.
@@ -243,7 +249,8 @@ try {
     var cprod = all.filter(function (x) { return String(x.id) === String(compIds[ui]) && String(x.id) !== String(found.id); })[0];
     if (!cprod) continue;
     upsell.push(upname(cprod));
-    upsellItems.push({ id: cprod.id, name: upname(cprod).replace(/\s—\s\d+ грн$/, ''), price: Number(cprod.price) || 0 });
+    var __cq = {}; (Array.isArray(cprod.bulkPricing) ? cprod.bulkPricing : []).forEach(function (b) { if (b && b.quantity && b.price) __cq[String(b.quantity)] = Number(b.price); });
+    upsellItems.push({ id: cprod.id, name: upname(cprod).replace(/\s—\s\d+ грн$/, ''), price: Number(cprod.price) || 0, qtyPrices: __cq, colors: [...new Set((cprod.offers || []).flatMap(function (o) { return (o.properties || []).filter(function (q) { return /кол|цвет/i.test(q.name || ''); }).map(function (q) { return q.value; }); }))].join(', ') });
     if (!__upsellPhoto) { __upsellPhoto = resolveUrl(cprod.thumbnailUrl || (cprod.images || [])[0] || ''); }
   }
   var __upsellPhotoNote = __upsellPhoto

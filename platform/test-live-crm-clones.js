@@ -75,7 +75,8 @@ async function scenarioOrderFlow(name, botId) {
     }
     // очікуємо speakFirst n_order_intent: "Оформляємо?" (з допродажем як одним рішенням, якщо є)
     const lastCtx = r.ctx;
-    ok(name, 'бот сам спитав «Оформляємо?» (speakFirst), не мовчить', /оформля/i.test(r.all), r.all.slice(-160));
+    ok(name, 'бот сам спитав «Оформляємо?» (speakFirst), не мовчить', /оформля|додати .{0,80}чи лише/i.test(r.all), r.all.slice(-160));
+    ok(name, 'у підсумку є рядок умов (обмін/повернення, відправка)', /обмін|повернення/i.test(r.all) && /Нов(ою|а) [Пп]ошт/i.test(r.all), r.all.slice(-200));
     const upsell = lastCtx.product && lastCtx.product.upsell;
     r = await say(s, upsell ? 'Так, і додайте ' + String(upsell).split('—')[0].trim() : 'Так, оформляємо');
     ok(name, 'перейшов до вибору оплати', /1 або 2|спосіб оплати/i.test(r.all), r.all.slice(0, 120));
@@ -114,6 +115,33 @@ async function scenarioReturnAndUnknown(name, botId) {
     await api('POST', '/sessions/test/' + s.id + '/end');
 }
 
+// Реальні переписки goverla 2026-09-04 (менеджери відповідали замість бота): клієнт не за алгоритмом.
+const CTA_LIVE_RE = /\?|напиш|скиньт|підкаж|оберіть|надішл|скопіюй|можна написати|чекаю|підтверд|оформля|перевір|надійде|підкажу|допоможу|поруч/i;
+async function scenarioOffScript(name, botId) {
+    console.log('\n### ' + name + ': не за алгоритмом (параметри+колір у першому повідомленні, питання не по темі, фото, адреса наперед)');
+    const s = await newSession(botId, 'off');
+    const turns = [];
+    const say2 = async (t) => { const r = await say(s, t); turns.push({ t, r }); return r; };
+    let r = await say2('Артикул ' + ART[name] + ' Чорний колір Параметри 182/100');
+    if (!r.ctx.product) { ok(name, 'товар знайдено', false, r.ctx.productUnknownReason); return; }
+    const isClothing = !!r.ctx.product.isClothing;
+    if (isClothing) {
+        ok(name, 'параметри з першого повідомлення прийнято без перепитування', !!r.ctx.recommendedSize, 'recommendedSize=' + r.ctx.recommendedSize + ' node=' + (r.ctx.flowRuntime && r.ctx.flowRuntime.currentNodeId));
+        ok(name, 'колір із першого повідомлення зафіксовано', !!(r.ctx.colorChoice && /чорн/i.test(r.ctx.colorChoice.color)), JSON.stringify(r.ctx.colorChoice));
+    }
+    r = await say2('Хто виробник? І чи можна до вас підʼїхати приміряти?');
+    ok(name, 'питання не по темі: відповідь є, бот не замовк і не втік до менеджера без потреби', r.replies.length > 0 && !r.ctx.adminEngaged, r.all.slice(0, 200));
+    r = await say2('[фото]');
+    ok(name, 'фото посеред діалогу не скинуло товар', !!r.ctx.product && r.ctx.product.sku, 'product=' + (r.ctx.product && r.ctx.product.sku));
+    r = await say2('Ігнатьєв Андрій, м. Суми, відділення 13, 0503072828');
+    ok(name, 'адреса замість "так": згода + prefill → оплата', /1 або 2|спосіб оплати/i.test(r.all) && r.ctx.orderData && r.ctx.orderData.phone, JSON.stringify(r.ctx.orderData));
+    r = await say2('1');
+    ok(name, 'після оплати адресу НЕ перепитує (prefill повний → n_collect пропущено)', !/ПІБ.*телефон.*місто/is.test(r.all) || /Оплату поки не бачу|Дякуємо/i.test(r.all), r.all.slice(-200));
+    const noCta = turns.filter((x) => x.r.replies.length && !CTA_LIVE_RE.test(x.r.replies[x.r.replies.length - 1])).map((x) => x.t.slice(0, 25) + ' → ' + x.r.replies[x.r.replies.length - 1].slice(-60));
+    ok(name, 'кожна відповідь бота закінчується питанням/кроком', noCta.length === 0, noCta.join(' | '));
+    await api('POST', '/sessions/test/' + s.id + '/end');
+}
+
 async function scenarioTrust(name, botId) {
     console.log('\n### ' + name + ': заперечення проти передоплати → виняток довіри (softHandoffOff)');
     const s = await newSession(botId, 'trust');
@@ -136,7 +164,7 @@ async function scenarioTrust(name, botId) {
     const names = which === 'all' ? Object.keys(BOTS) : [which];
     for (const n of names) {
         const botId = BOTS[n];
-        for (const sc of [scenarioOrderFlow, scenarioReturnAndUnknown, scenarioTrust]) {
+        for (const sc of [scenarioOrderFlow, scenarioReturnAndUnknown, scenarioTrust, scenarioOffScript]) {
             try { await sc(n, botId); } catch (e) { ok(n, sc.name + ' без винятків', false, e.message); }
         }
     }

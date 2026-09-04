@@ -81,8 +81,20 @@ function replyFor(source, size) {
   ]);
 }
 var __askedFor = (context.product && context.product.categoryId) || true;
+// v3 (реальні кейси 2026-09-04: "Чорний колір Параметри 182/100", "Потрібен розмір S в графітному"):
+// колір, названий разом із параметрами, n_size кладе в sizeInput.color — фіксуємо його як colorChoice,
+// щоб не перепитувати на наступному кроці (лише якщо він є у списку кольорів товару).
+var __colorPick = null;
+if (s0.color && context.product && String(context.product.colors || '').trim()) {
+  var __want = String(s0.color).toLowerCase().replace(/[^a-zа-яіїєґ0-9\- ]/gi, '').trim();
+  var __list = String(context.product.colors).split(',').map(function (c) { return c.trim(); }).filter(Boolean);
+  __colorPick = __list.filter(function (c) { var l = c.toLowerCase(); return l === __want || l.indexOf(__want) === 0 || __want.indexOf(l) === 0; })[0] || null;
+}
+if (__colorPick) { __needsColorAsk = false; __sizeColorFollowup = '\n\n🎨 Колір: ' + __colorPick + ' — зафіксувала 👍'; }
 function done(size, source) {
-  return { recommendedSize: size, sizeSource: source, sizeReplyText: replyFor(source, size), sizeOutOfRange: false, sizeColorFollowup: __sizeColorFollowup, sizeAskedFor: __askedFor, knownMeasurementsToSave: __kmSave };
+  var out = { recommendedSize: size, sizeSource: source, sizeReplyText: replyFor(source, size), sizeOutOfRange: false, sizeColorFollowup: __sizeColorFollowup, sizeAskedFor: __askedFor, knownMeasurementsToSave: __kmSave };
+  if (__colorPick) out.colorChoice = { color: __colorPick, _fromSizeStep: true };
+  return out;
 }
 function oor(reason, size) {
   return { sizeOutOfRange: true, sizeOorReason: reason, recommendedSize: size || '', sizeAskedFor: __askedFor, knownMeasurementsToSave: __kmSave };

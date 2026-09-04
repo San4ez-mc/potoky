@@ -139,10 +139,42 @@ try {
     }
   }
 
-  // ПРІОРИТЕТ 2: артикул (з тексту клієнта / підпису поста / adTitle)
+  // ПРІОРИТЕТ 1.7 (2026-09-04, питання власника «а отримати повний текст реклами ще одним запитом?»):
+  // так — за post_id/ad_id з referral тягнемо через Graph API повний підпис поста (там є артикул)
+  // і картинку креативу. Ключі: INSTAGRAM_ACCESS_TOKEN (медіа IG), META_SYSTEM_USER_TOKEN (креатив
+  // реклами) — беруться з ключів воронки, якщо є. Best-effort, 4 с на запит.
+  var __adCaption = String(context.adCaption || '');
+  var __adImage = '';
+  if (!found && !__adCaption) {
+    try {
+      var __acd0 = (context.lastReferral && context.lastReferral.ads_context_data) || {};
+      var __pid = String(__acd0.post_id || context.postId || '').trim();
+      var __aid = String(context.entryAd || '').trim();
+      var __igTok = String(keys.INSTAGRAM_ACCESS_TOKEN || '').trim();
+      var __muTok = String(keys.META_SYSTEM_USER_TOKEN || '').trim();
+      async function __gget(path, tok) { var acg = new AbortController(); var tog = setTimeout(function () { try { acg.abort(); } catch (e) {} }, 4000); try { var rg = await fetch('https://graph.facebook.com/v21.0/' + path + (path.indexOf('?') >= 0 ? '&' : '?') + 'access_token=' + encodeURIComponent(tok), { signal: acg.signal }); var jg = await rg.json().catch(function () { return {}; }); return rg.ok ? jg : null; } catch (e) { return null; } finally { clearTimeout(tog); } }
+      if (__pid && __igTok) {
+        var __m = await __gget(__pid + '?fields=caption,media_url,thumbnail_url,permalink', __igTok);
+        if (__m && (__m.caption || __m.media_url)) { __adCaption = String(__m.caption || ''); __adImage = String(__m.thumbnail_url || __m.media_url || ''); }
+      }
+      if (!__adCaption && __aid && __muTok) {
+        var __ad = await __gget(__aid + '?fields=creative{effective_object_story_id,body,thumbnail_url,object_story_spec}', __muTok);
+        var __cr = (__ad && __ad.creative) || null;
+        if (__cr) {
+          __adCaption = String(__cr.body || ((__cr.object_story_spec || {}).video_data || {}).message || ((__cr.object_story_spec || {}).link_data || {}).message || '');
+          __adImage = String(__cr.thumbnail_url || '');
+          if (!__adCaption && __cr.effective_object_story_id) { var __st = await __gget(__cr.effective_object_story_id + '?fields=message,full_picture', __muTok); if (__st) { __adCaption = String(__st.message || ''); __adImage = __adImage || String(__st.full_picture || ''); } }
+        }
+      }
+    } catch (e) { __adCaption = __adCaption || ''; }
+    if (__adCaption) context.adCaption = __adCaption;
+    if (__adImage) context.adImage = __adImage;
+  }
+
+  // ПРІОРИТЕТ 2: артикул (з тексту клієнта / підпису поста / adTitle / повного тексту реклами)
   if (!found) {
     var fromUser = extractArticles(context.lastUserMessage || input || '');
-    var cands = fromUser.concat(extractArticles((context.sharedPost && context.sharedPost.caption) || '')).concat(extractArticles(context.adTitle || ''));
+    var cands = fromUser.concat(extractArticles((context.sharedPost && context.sharedPost.caption) || '')).concat(extractArticles(__adCaption || '')).concat(extractArticles(context.adTitle || ''));
     var seen = {}, cc = []; for (var ci = 0; ci < cands.length; ci++) { if (!seen[cands[ci]]) { seen[cands[ci]] = 1; cc.push(cands[ci]); } } cc = cc.slice(0, 8);
     // 2a) offer-SKU → товар + колір/розмір цього оферу
     for (var a = 0; a < cc.length && !found; a++) {
@@ -156,7 +188,7 @@ try {
   // ПРІОРИТЕТ 2.5: keyword-overlap підпису проти displayName, тай-брейк за ціною
   // Джерело слів: підпис пересланого поста, а якщо його нема — назва реклами (відповідь на рекламу
   // без синхронізованого ad_id, 2026-09-04).
-  var __kwSource = (context.sharedPost && context.sharedPost.caption) || (context.adTitle ? __normAdName(context.adTitle) : '');
+  var __kwSource = (context.sharedPost && context.sharedPost.caption) || __adCaption || (context.adTitle ? __normAdName(context.adTitle) : '');
   if (!found && __kwSource) {
     var STOPWORDS_KW = { 'та': 1, 'і': 1, 'й': 1, 'на': 1, 'до': 1, 'за': 1, 'від': 1, 'для': 1, 'або': 1, 'це': 1, 'вже': 1, 'ще': 1, 'як': 1, 'що': 1, 'по': 1, 'при': 1, 'без': 1, 'між': 1 };
     function tokenizeKW(s) { return String(s || '').toLowerCase().replace(/[^\wа-яіїєґ\s]/gi, ' ').split(/\s+/).filter(function (w) { return w.length >= 4 && !STOPWORDS_KW[w]; }); }
@@ -189,7 +221,7 @@ try {
   // ще одне джерело для візії, коли клієнт відповів на рекламу без поста й артикулу (2026-09-04).
   var __refImg = '';
   try { var __acd = (context.lastReferral && context.lastReferral.ads_context_data) || {}; __refImg = String(__acd.photo_url || __acd.image_url || __acd.video_url || ''); } catch (e) { __refImg = ''; }
-  var __visionUrl = context.lastUserImageUrl || (!found && context.sharedPost && context.sharedPost.url) || (!found && __refImg) || '';
+  var __visionUrl = context.lastUserImageUrl || (!found && context.sharedPost && context.sharedPost.url) || (!found && __adImage) || (!found && __refImg) || '';
   if (!found && __visionUrl && keys.GEMINI_API_KEY) {
     function imgOk(u) { try { var h = new URL(u).hostname.toLowerCase(); if (h === 'api.telegram.org') return true; return ['cdninstagram.com', 'fbcdn.net', 'fbsbx.com', 'lookaside.fbsbx.com', 'facebook.com'].some(function (d) { return h === d || h.endsWith('.' + d); }); } catch (e) { return false; } }
     if (imgOk(__visionUrl)) {

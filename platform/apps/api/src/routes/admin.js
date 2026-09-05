@@ -106,7 +106,9 @@ router.get('/sessions/unread-count',
             where: {
                 isActive: true, isTest: false,
                 lastActive: { gte: since },
-                user: { telegramId: { not: null }, NOT: { username: 'webhook_system' } },
+                // Prisma відхиляє `{ not: null }` для nullable BigInt («Argument not must not be null») —
+                // це падало ~50 разів/день у логах; правильна форма: NOT: { telegramId: null }.
+                user: { NOT: [{ telegramId: null }, { username: 'webhook_system' }] },
                 ...(allowedProjectIds(req) ? { bot: { projectId: { in: allowedProjectIds(req) } } } : {}),
             },
             include: { messages: { orderBy: { createdAt: 'desc' }, take: 1 } },

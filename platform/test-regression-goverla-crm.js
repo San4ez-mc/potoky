@@ -183,6 +183,19 @@ async function runNode(id, context, extra) {
     ok('B-A5', 'клієнт назвав L на кроці кольору → recommendedSize L (було XL)', x.available === true && x.recommendedSize === 'L' && x.sizeSource === 'client', JSON.stringify(x));
     x = await runNode('n_avail', { product: { sizes: ['S', 'M'], offers: [] }, colorChoice: { color: 'чорний', size: 'XXL' }, recommendedSize: 'M' });
     ok('B-A6', 'названий розмір поза сіткою товару → ігноруємо, лишаємо M', x.recommendedSize === undefined);
+    // v8: кілька штук одного товару в різних кольорах (тест Олексія 2026-09-05 «Сірий і Синій», «ще синій хочу»)
+    x = await runNode('n_avail', { product: { price: 1799, sizes: ['M', 'L'], offers: [] }, colorChoice: { color: 'Світло-сірий', colors: ['Світло-сірий', 'Темно-синій'], qty: 2 }, recommendedSize: 'L' });
+    ok('B-M1', 'n_avail: два кольори → orderUnits ×2, текст і сума за 2 шт', x.available === true && x.orderQty === 2 && x.orderUnits.length === 2 && x.orderUnits[1].color === 'Темно-синій' && x.orderUnits[1].size === 'L' && /2 шт: Світло-сірий L, Темно-синій L/.test(x.orderUnitsText) && x.orderUnitsTotal === 3598, JSON.stringify(x));
+    x = await runNode('n_avail', { product: { price: 1279, qtyPrices: { '2': 2199 }, sizes: ['M'], offers: [] }, colorChoice: { color: 'Чорний', qty: 2 }, recommendedSize: 'M' });
+    ok('B-M2', 'n_avail: «дві чорні» (qty без colors) → 2 позиції, акційна ціна 2199', x.orderQty === 2 && x.orderUnits[1].color === 'Чорний' && x.orderUnitsTotal === 2199, JSON.stringify(x));
+    x = await runNode('n_avail', { product: { offers: [{ properties: [{ name: 'Колір', value: 'чорний' }], quantity: 2 }, { properties: [{ name: 'Колір', value: 'сірий' }], quantity: 0 }] }, colorChoice: { color: 'чорний', colors: ['чорний', 'сірий'] } });
+    ok('B-M3', 'n_avail: один із двох кольорів закінчився (облік є) → нема, саме він у unavailableColors', x.available === false && x.unavailableColors[0] === 'сірий', JSON.stringify(x));
+    x = await runNode('n_pay_amount', { paymentInfo: { method: 'full' }, product: { price: 1799 }, orderUnits: [{ color: 'Світло-сірий', size: 'L' }], orderIntent: { ready: 'yes', units: [{ color: 'Світло-сірий', size: 'L' }, { color: 'Темно-синій', size: 'L' }], qty: 2 } }, { user: {} });
+    ok('B-M4', 'n_pay_amount: клієнт додав другий колір на «Оформляємо?» → 2 позиції, 3598 грн', x.orderQty === 2 && x.payAmount === 3598 && x.orderUnits.length === 2 && /Темно-синій L/.test(x.orderUnitsText), JSON.stringify([x.orderQty, x.payAmount, x.orderUnitsText]));
+    x = await runNode('n_pay_amount', { paymentInfo: { method: 'cod' }, product: { price: 1799 }, orderUnits: [{ color: 'Світло-сірий', size: 'L' }, { color: 'Темно-синій', size: 'L' }], orderIntent: { ready: 'yes' } }, { user: {} });
+    ok('B-M5', 'n_pay_amount: позиції з кроку кольору без units у json → лишаються 2, cod = 200 + 3398', x.orderQty === 2 && x.payAmount === 200 && /3398/.test(x.payLabel), x.payLabel);
+    ok('B-M6', 'n_crm_order: позиції з orderUnits, групування за колір+розмір, ціна за шт із суми', /orderUnits/.test(byId.n_crm_order.data.code) && /groups/.test(byId.n_crm_order.data.code) && /unitsText/.test(byId.n_crm_order.data.code));
+    ok('B-M7', 'n_color: правило кількох кольорів; n_order_intent: позиції + units у json; сповіщення/постачальник знають про позиції', /КІЛЬКА штук у різних кольорах/.test(byId.n_color.data.systemPrompt) && /"units":\[/.test(byId.n_order_intent.data.systemPrompt) && /orderUnitsText/.test(byId.n_order_intent.data.systemPrompt) && /orderUnitsText/.test(byId.n_create.data.message) && /orderQty\) > 1/.test(byId.n_supplier_route.data.code));
 
     const nowSec = Math.floor(Date.now() / 1000);
     const stmt = [{ id: 't_old', amountUah: 200, time: nowSec - 7200, comment: '' }, { id: 't_new', amountUah: 200, time: nowSec - 60, comment: '' }];

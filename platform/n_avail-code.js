@@ -17,6 +17,18 @@ if(context.colorChoice&&context.colorChoice.size){
 }
 var chosenSize=sizeOverride||context.recommendedSize||null;
 var avail=true;
+// v8 (тест Олексія 2026-09-05 16:43, «Сірий і Синій» → бот змусив обрати один, потім «ще синій хочу» пішло
+// до менеджера): кілька штук одного товару в різних кольорах — штатний сценарій. n_color повертає
+// colors:[...] (+qty); тут будуємо позиції замовлення orderUnits [{color,size}] і текст для підсумку/CRM.
+var colorsList=(context.colorChoice&&Array.isArray(context.colorChoice.colors)&&context.colorChoice.colors.length)
+  ? context.colorChoice.colors.map(function(c){ return String(c||'').trim(); }).filter(Boolean)
+  : (chosenColor?[String(chosenColor)]:[]);
+var wantQty=Number(context.colorChoice&&context.colorChoice.qty)||0;
+if(wantQty>1&&colorsList.length===1){ while(colorsList.length<wantQty) colorsList.push(colorsList[0]); }
+var units=(colorsList.length?colorsList:['']).map(function(c){ return { color:c, size:chosenSize||'' }; });
+function unitsText(us){ return us.length+' шт: '+us.map(function(u){ return [u.color,u.size].filter(Boolean).join(' ')||'—'; }).join(', '); }
+function unitsTotal(n){ var qp=(context.product&&context.product.qtyPrices)||{}; var t=qp[String(n)]; return t!=null?Number(t):(Number(context.product&&context.product.price)||0)*n; }
+var unitsOut={ orderUnits:units, orderQty:units.length, orderUnitsText:unitsText(units), orderUnitsTotal:unitsTotal(units.length) };
 function sizeOk(o){
   var pr=o.properties||[];
   var hasSizeProp = pr.some(function(x){ return /розмір|размер/i.test(String(x.name||'')); });
@@ -30,23 +42,28 @@ function hasQty(o){ return o && o.quantity!==undefined && o.quantity!==null && o
 // Інакше вважаємо, що товар є (як і старий бот без даних про залишки).
 var stockTracked = offers.some(function(o){ return Number(o.quantity) > 0; });
 if(!stockTracked){
-  var okNoStock={ available: true, availReason: '' };
+  var okNoStock=Object.assign({ available: true, availReason: '' }, unitsOut);
   if(sizeOverride && sizeOverride!==context.recommendedSize){ okNoStock.recommendedSize=sizeOverride; okNoStock.sizeSource='client'; }
   return okNoStock;
 }
-if(chosenColor){
-  var candidates=offers.filter(function(o){ var pr=o.properties||[]; return pr.some(function(x){ return String(x.value)===String(chosenColor); }); });
-  if(candidates.length){
+if(colorsList.length){
+  // Перевіряємо КОЖЕН обраний колір; перший відсутній → та сама гілка «варіант розібрали» (n_avail_no).
+  var distinct=colorsList.filter(function(c,i){ return colorsList.indexOf(c)===i; });
+  var missing=null;
+  for(var ci=0; ci<distinct.length && !missing; ci++){
+    var cc=distinct[ci];
+    var candidates=offers.filter(function(o){ var pr=o.properties||[]; return pr.some(function(x){ return String(x.value)===String(cc); }); });
+    if(!candidates.length) continue;
     var withSize = candidates.filter(sizeOk);
     var pool = withSize.length ? withSize : candidates;
-    avail = pool.some(function(o){ return Number(o.quantity) > 0; });
+    if(!pool.some(function(o){ return Number(o.quantity) > 0; })) missing=cc;
   }
-  if (!avail) {
+  if (missing) {
     var _unavail = Array.isArray(context.unavailableColors) ? context.unavailableColors.slice() : [];
-    if (_unavail.indexOf(chosenColor) < 0) _unavail.push(chosenColor);
-    return { available: false, availReason: 'color', colorChoice: null, unavailableColors: _unavail };
+    if (_unavail.indexOf(missing) < 0) _unavail.push(missing);
+    return { available: false, availReason: 'color', colorChoice: null, unavailableColors: _unavail, orderUnits: null, orderQty: 0, orderUnitsText: '' };
   }
-  var okOut={ available: true, availReason: '' };
+  var okOut=Object.assign({ available: true, availReason: '' }, unitsOut);
   if(sizeOverride && sizeOverride!==context.recommendedSize){ okOut.recommendedSize=sizeOverride; okOut.sizeSource='client'; }
   return okOut;
 }
@@ -57,4 +74,4 @@ if (qtyOffers.length) {
   if (!pool2.length) pool2 = qtyOffers;
   avail = pool2.some(function(o){ return Number(o.quantity) > 0; });
 }
-return { available: avail, availReason: avail ? '' : 'no_stock' };
+return Object.assign({ available: avail, availReason: avail ? '' : 'no_stock' }, avail ? unitsOut : {});

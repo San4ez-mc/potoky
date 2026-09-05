@@ -75,23 +75,41 @@ try {
     } catch (e) { /* best-effort */ }
   }
 
-  // 2) підбір offerId за обраним кольором/розміром (той самий принцип, що KeyCRM-версія)
-  var offerId = null, sku = null; var offers = p.offers || [];
-  for (var i = 0; i < offers.length; i++) {
-    var props = offers[i].properties || [];
-    var okC = !col || props.some(function (x) { return String(x.value) === String(col); });
-    var hasSizeProp = props.some(function (x) { return /розмір|размер/i.test(String(x.name || '')); });
-    var okS = !size || !hasSizeProp || props.some(function (x) { return /розмір|размер/i.test(String(x.name || '')) && String(x.value) === String(size); });
-    if (okC && okS) { offerId = offers[i].id; sku = offers[i].sku; break; }
+  // 2) підбір offerId за кольором/розміром позиції (той самий принцип, що KeyCRM-версія)
+  var offers = p.offers || [];
+  function findOffer(c, s) {
+    for (var i = 0; i < offers.length; i++) {
+      var props = offers[i].properties || [];
+      var okC = !c || props.some(function (x) { return String(x.value) === String(c); });
+      var hasSizeProp = props.some(function (x) { return /розмір|размер/i.test(String(x.name || '')); });
+      var okS = !s || !hasSizeProp || props.some(function (x) { return /розмір|размер/i.test(String(x.name || '')) && String(x.value) === String(s); });
+      if (okC && okS) return offers[i];
+    }
+    return null;
   }
-
-  var propsOut = []; if (size) propsOut.push({ name: 'Розмір', value: size }); if (col) propsOut.push({ name: 'Колір', value: col });
   var payTxt = (method === 'cod') ? 'накладений + 200 передоплата' : (method === 'full' ? 'повна передоплата' : '—');
   var supplierName = (p.supplier || '').trim() || (context.supplier || '').trim() || '';
   var shopTag = (keys.SHOP_TAG || '').trim();
 
-  var item = { productId: p.id || null, offerId: offerId, name: (p.customerName || p.name || 'Товар'), price: (p.price || 0), quantity: 1, properties: propsOut.length ? propsOut : null, isUpsell: false };
-  var items = [item];
+  // v8: кілька штук одного товару (кольори/розміри) — позиції з context.orderUnits (n_pay_amount),
+  // згруповані за колір+розмір у quantity; ціна за штуку = загальна за кількість (акція) / кількість.
+  var units = (Array.isArray(context.orderUnits) && context.orderUnits.length) ? context.orderUnits : [{ color: col, size: size }];
+  var qtyAll = units.length;
+  var mainTotal = Number(context.orderUnitsTotal) || (Number(p.price) || 0) * qtyAll;
+  var unitPrice = qtyAll > 1 ? Math.round((mainTotal / qtyAll) * 100) / 100 : (p.price || 0);
+  var groups = [];
+  units.forEach(function (u) {
+    var c = String((u && u.color) || '').trim(), s = String((u && u.size) || size || '').trim();
+    var g = groups.filter(function (x) { return x.color === c && x.size === s; })[0];
+    if (g) g.quantity += 1; else groups.push({ color: c, size: s, quantity: 1 });
+  });
+  var sku = null; var offerId = null;
+  var items = groups.map(function (g) {
+    var of = findOffer(g.color, g.size); if (of && !sku) { sku = of.sku; offerId = of.id; }
+    var propsOut = []; if (g.size) propsOut.push({ name: 'Розмір', value: g.size }); if (g.color) propsOut.push({ name: 'Колір', value: g.color });
+    return { productId: p.id || null, offerId: of ? of.id : null, name: (p.customerName || p.name || 'Товар'), price: unitPrice, quantity: g.quantity, properties: propsOut.length ? propsOut : null, isUpsell: false };
+  });
+  var unitsText = String(context.orderUnitsText || '').trim() || (qtyAll + ' шт: ' + groups.map(function (g) { return [g.color, g.size].filter(Boolean).join(' ') + (g.quantity > 1 ? ' ×' + g.quantity : ''); }).join(', '));
   // Допродаж: клієнт погодився в n_order_intent (json_output {"addUpsell":true}) — додаємо
   // ДРУГОЮ позицією замовлення (структуровано, isUpsell:true), а не лише текстом у коментарі.
   var upItems = (p.upsellItems || []);
@@ -106,7 +124,7 @@ try {
   var body = {
     buyerId: buyerId,
     sourceName: 'Instagram' + (shopTag ? (' ' + shopTag) : ''),
-    managerComment: 'Товар: ' + (p.customerName || p.name || '') + ' | Розмір: ' + size + ' | Колір: ' + col + ' | Оплата: ' + payTxt + (supplierName ? (' | Постачальник: ' + supplierName) : '') + (items.length > 1 ? (' | + допродаж: ' + items[1].name + ' × ' + items[1].quantity) : '') + ' | Перевірити оплату.',
+    managerComment: 'Товар: ' + (p.customerName || p.name || '') + ' | Позиції: ' + unitsText + ' | Оплата: ' + payTxt + (supplierName ? (' | Постачальник: ' + supplierName) : '') + (items.some(function (it) { return it.isUpsell; }) ? (' | + допродаж: ' + items.filter(function (it) { return it.isUpsell; })[0].name + ' × ' + items.filter(function (it) { return it.isUpsell; })[0].quantity) : '') + ' | Перевірити оплату.',
     shipping: { shippingService: 'Нова Пошта', city: (od.city || ''), branch: (od.branch || ''), recipientFullName: (od.fullName || ''), recipientPhone: phone },
     items: items
   };

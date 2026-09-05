@@ -1,9 +1,21 @@
 // n_pay_amount — джерело істини (goverla/covercar CRM-клони, патч patch-goverla-crm-audit-2026-09-04.js).
 var method=(context.paymentInfo&&context.paymentInfo.method)||'cod';
-var qty=Number((context.orderIntent&&context.orderIntent.qty)||1); if(!(qty>=1)) qty=1;
+// v8: позиції замовлення — кілька штук одного товару (кольори/розміри). Джерела за пріоритетом:
+// orderIntent.units (клієнт додав/змінив на кроці «Оформляємо?») → context.orderUnits (з n_avail за
+// colors з кроку кольору) → одна позиція з colorChoice/recommendedSize. qty з orderIntent — множник.
+var oi=context.orderIntent||{};
+var baseUnits=(Array.isArray(context.orderUnits)&&context.orderUnits.length)?context.orderUnits:[{ color:String((context.colorChoice&&context.colorChoice.color)||'').trim(), size:String(context.recommendedSize||'').trim() }];
+var units=(Array.isArray(oi.units)&&oi.units.length)
+  ? oi.units.map(function(u){ return { color:String((u&&u.color)||'').trim(), size:String((u&&u.size)||context.recommendedSize||'').trim() }; })
+  : baseUnits.map(function(u){ return { color:String((u&&u.color)||'').trim(), size:String((u&&u.size)||context.recommendedSize||'').trim() }; });
+var qty=Number(oi.qty)||units.length; if(!(qty>=1)) qty=units.length||1;
+if(qty>units.length&&units.length===1){ while(units.length<qty) units.push({ color:units[0].color, size:units[0].size }); }
+if(qty<units.length) qty=units.length;
+var orderUnitsText=qty+' шт: '+units.map(function(u){ return [u.color,u.size].filter(Boolean).join(' ')||'—'; }).join(', ');
 var qp=(context.product&&context.product.qtyPrices)||{}; var tierPrice=qp[String(qty)];
 var unit=(context.product&&context.product.price)||0;
 var full=tierPrice!=null?Number(tierPrice):(unit*qty);
+var mainTotal=full;
 // Аудит 2026-09-04 (живий кейс власника, сесія 7944d0c6): клієнт погодився на допродаж, бот
 // підсумував 2177 грн, а інвойс створився на 1279 — допродаж не входив у суму. Додаємо ціну
 // погодженого допродажу (та сама позиція, яку n_crm_order кладе другим item-ом).
@@ -51,7 +63,7 @@ var haveAddr = !!(context.recalledDeliveryReady || (od0.fullName && od0.phone &&
 var addressAskLine = haveAddr
   ? '📦 Дані для відправки у нас уже є ✅ ('+(od0.city||'')+(od0.branch?(', '+od0.branch):'')+') — якщо щось змінилось, напишіть.'
   : '📦 Дані для відправки (ПІБ, телефон, місто, № відділення або поштомата Нової Пошти) можна написати прямо зараз одним повідомленням 🙂';
-var out={ orderRef:ref, orderRefAt:refAt, orderQty:qty, fop:fop, upsellSum:upsellSum, upsellQty:upsellQty, addressAskLine:addressAskLine };
+var out={ orderRef:ref, orderRefAt:refAt, orderQty:qty, orderUnits:units, orderUnitsText:orderUnitsText, orderUnitsTotal:mainTotal, fop:fop, upsellSum:upsellSum, upsellQty:upsellQty, addressAskLine:addressAskLine };
 if(method==='cod_trust'){ out.payAmount=0; out.payLabel='без передоплати (виняток за домовленістю, накладений платіж повністю)'; return out; }
 out.payAmount = method==='cod'?200:full;
 out.payLabel = method==='cod'?('передоплата 200 грн, решта '+(full-200)+' грн при отриманні'):('повна оплата, '+full+' грн');

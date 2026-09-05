@@ -82,6 +82,7 @@ const PAY_INTL_LINE = '\n\n🌍 Доставка за кордон? Напиші
 
 const ORDER_INTENT_PROMPT = `Ти — {{env.PERSONA_NAME}}, тепла консультантка {{env.SHOP_TAG}}. Товар: {{context.product.customerName}} (артикул {{context.product.sku}}) — {{context.product.price}} грн. Це ТОЙ САМИЙ товар, який клієнт назвав/відкрив — він уже визначений системою, не шукай його і не пиши "не знаходжу". Опис (для контексту, не цитуй списком): {{context.product.desc}}
 Колір, ЯКЩО узгоджено: «{{context.colorChoice.color}}» (порожньо = у товару нема вибору кольору, просто не згадуй). Розмір, ЯКЩО визначено: «{{context.recommendedSize}}» (порожньо = не згадуй).
+ПОЗИЦІЇ ЗАМОВЛЕННЯ (кількість і кольори/розміри, вже узгоджені з клієнтом): {{context.orderUnitsText}}; сума за них: {{context.orderUnitsTotal}} грн. Якщо позицій більше однієї — у підсумку перелічи ВСІ і назви саме цю суму, а не ціну однієї штуки.
 {{context.product.matchNote}}
 {{context.product.qtyPromoText}}
 ВАЖЛИВІ НЮАНСИ ТОВАРУ (лише для тебе, не цитуй списком): {{context.product.aiInfo}}
@@ -95,6 +96,7 @@ const ORDER_INTENT_PROMPT = `Ти — {{env.PERSONA_NAME}}, тепла конс�
 - ДОПРОДАЖ є → «Оформляємо? І підкажіть: додати ще {{context.product.upsell}} до цієї ж посилки, чи лише основний товар?» (одне рішення з двома варіантами, НЕ два окремі питання).
 Акцію за кількість (якщо рядок вище непорожній і клієнт не називав кількість) згадай ОДИН раз у підсумку, ненав'язливо. Розмір у підсумку лише називай — НЕ пояснюй заново, чому саме такий (це вже сказано попереднім повідомленням).
 ЯКЩО клієнт погоджується на допродаж: коли він назвав кількість/кольори («так, біла 1 і чорна 1», «дві футболки») — додай "upsellQty":<число> і "upsellNote":"<як сказав клієнт: кольори/розміри>" (ціну за кількість порахує система за акцією). Коли допродаж має кольори, а клієнт їх не назвав — РІВНО ОДНЕ уточнення одним реченням («Яку футболку додати — білу чи чорну, і скільки?»), БЕЗ JSON; після відповіді — {"ready":"yes","addUpsell":true,"upsellQty":…,"upsellNote":"…"}. Якщо клієнт на уточнення каже «будь-яку/на ваш розсуд/не важливо» — беремо 1 шт, upsellNote:"колір на розсуд менеджера", далі ready:yes.
+ЯКЩО клієнт хоче ЩЕ одну або кілька штук ЦЬОГО Ж товару в іншому кольорі чи розмірі («ще синій хочу», «дві: чорну і сіру», «і хакі теж», «а можна два?») — це ШТАТНО, менеджера НЕ питай і НЕ кажи, що можна лише один. Якщо колір є у списку кольорів товару — ОДНИМ повідомленням дай оновлений підсумок: усі позиції (розмір той самий, якщо клієнт не назвав інший), сума = ціна × кількість або акційна ціна за кількість із рядка акції вище, і знову «Оформляємо?». Якщо назва кольору неоднозначна («сірий» при світло-сірому і графітовому) — одне уточнення з конкретною пропозицією. Кольору нема у списку — чесно скажи і запропонуй наявні. При фінальній згоді → {"ready":"yes","units":[{"color":"<колір>","size":"<розмір>"},…],"qty":<кількість>} — units ЗАВЖДИ повний список усіх позицій, включно з першою.
 ЯКЩО клієнт замість відповіді одразу надсилає дані доставки (є телефон / місто / відділення / ПІБ) — це ЗГОДА, НЕ перепитуй «оформляємо?» і НЕ пиши тексту: поверни ТІЛЬКИ json_output {"ready":"yes","prefill":{"fullName":"...","phone":"...","city":"...","branch":"..."}} (лише ті поля, що є). Дані не губляться — наступні кроки їх підхоплять.
 Ти НЕ вітаєшся («Привіт», «Доброго дня») — клієнта вже привітали. Розмір/параметри згадуй ЛИШЕ з поля «Розмір» вище; якщо воно порожнє — не пиши розмір узагалі (не бери цифри з повідомлень клієнта). Якщо клієнт надіслав фото (текст "[фото]") — одне речення: для оформлення фото не потрібне, і знову «Оформляємо?».
 ДОВІДКА МАГАЗИНУ (відповідай з неї на питання про виробника, склад, примірку, терміни): {{context.shop.faq}}
@@ -317,6 +319,23 @@ const UNKNOWN_PROMPT_V5 = `Ти — {{env.PERSONA_NAME}}, продавчиня {
 4. Інакше (клієнт має на увазі конкретний товар, якого ти не знаєш) — тепло скажи, що не впевнена, про який саме товар мова, і попроси скинути пост чи рілс з Instagram або назвати артикул.
 
 СУВОРО ЗАБОРОНЕНО вигадувати товари, ціни, наявність, умови поза підказкою і довідкою. Без JSON, без службових токенів.`;
+// v8 (тест Олексія 2026-09-05 16:43, сесія 5a542121): «Сірий і Синій» на кроці кольору → бот змусив обрати
+// один; «Я ще синій хочу» на «Оформляємо?» → питання менеджеру. Кілька штук одного товару в різних
+// кольорах/розмірах — штатний сценарій: n_color повертає colors[]+qty, n_avail будує orderUnits,
+// n_order_intent сама перераховує підсумок і віддає units у json, n_pay_amount/n_crm_order рахують
+// суму (акція за кількість) і кладуть позиції в CRM, сповіщення показують позиції, постачальнику
+// при кількох позиціях — лише вручну (manual).
+const COLOR_MULTI_RULE = '\nЯКЩО клієнт хоче КІЛЬКА штук у різних кольорах («сірий і синій», «дві — чорну і хакі», «два костюми») — це МОЖНА, НІКОЛИ не кажи «оформити можемо лише один». Кожну назву зістав зі списком доступних кольорів; якщо якась неоднозначна («сірий» при світло-сірому і графітовому) — ОДНЕ уточнення саме по ній із конкретною пропозицією («Світло-сірий і темно-синій — вірно?»); відповідь «так/обидва/вірно» = підтвердження запропонованого. Коли всі кольори зрозумілі — поверни ТІЛЬКИ json_output {"color":"<перший колір>","colors":["<колір 1>","<колір 2>"],"qty":<кількість штук>} без тексту. Кількість одного кольору («дві чорні») → {"color":"Чорний","colors":["Чорний","Чорний"],"qty":2}.';
+const SUPPLIER_MULTI_GUARD = "// v8: кілька позицій одного товару — авто-замовлення постачальнику не робимо, менеджер оформлює вручну.\nif (Number(context.orderQty) > 1) return { supplierMechanism: 'manual', supplierCfg: {}, supplierSetBreakdown: 'Кілька позицій: ' + String(context.orderUnitsText || '') };\n";
+function applyV8(nodes, edges, notes) {
+    const byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
+    if (byId.n_color && !/КІЛЬКА штук у різних кольорах/.test(byId.n_color.data.systemPrompt || '')) { byId.n_color.data.systemPrompt = String(byId.n_color.data.systemPrompt || '') + COLOR_MULTI_RULE; notes.push('n_color multi-color rule'); }
+    if (byId.n_supplier_route && !/v8: кілька позицій/.test(byId.n_supplier_route.data.code || '')) { byId.n_supplier_route.data.code = SUPPLIER_MULTI_GUARD + String(byId.n_supplier_route.data.code || ''); notes.push('n_supplier_route multi guard'); }
+    if (byId.n_create && !/orderUnitsText/.test(byId.n_create.data.message || '')) { byId.n_create.data.message = String(byId.n_create.data.message || '').replace('📏 Розмір: {{context.recommendedSize}} | 🎨 Колір: {{context.colorChoice.color}}', '🧾 Позиції: {{context.orderUnitsText}}'); notes.push('n_create units line'); }
+    if (byId.n_supplier_hold && !/orderUnitsText/.test(byId.n_supplier_hold.data.message || '')) { byId.n_supplier_hold.data.message = String(byId.n_supplier_hold.data.message || '').replace('📏 {{context.recommendedSize}} | 🎨 {{context.colorChoice.color}}', '🧾 {{context.orderUnitsText}}'); notes.push('n_supplier_hold units line'); }
+    return { nodes, edges };
+}
+
 // v7 (2026-09-05, база знань перенесена в CRM): профіль магазину з CRM у context.shop (нода n_shop_profile
 // після n_route), промпти читають {{context.shop.faq}}/{{context.shop.terms}}; вектор-база (useKb) вимкнена,
 // натомість пошук по базі знань CRM (useCrmKb) на діалогових нодах; ключі SHOP_FAQ/ORDER_TERMS_LINE/VECTOR_*
@@ -424,7 +443,8 @@ function refresh(flow, opts) {
     const v3raw = applyV3(v2.nodes, v2.edges, notes);
     const v4 = applyV4(v3raw.nodes, v3raw.edges, notes);
     const v5 = applyV5(v4.nodes, v4.edges, notes);
-    const v3 = applyV7(v5.nodes, v5.edges, notes);
+    const v7 = applyV7(v5.nodes, v5.edges, notes);
+    const v3 = applyV8(v7.nodes, v7.edges, notes);
     return { nodes: v3.nodes, edges: v3.edges, notes, keyUpdates: [], keyDeletes: KB_KEY_DELETES.slice() };
 }
 
@@ -618,7 +638,7 @@ function transform(flow, keysMap, opts) {
     { const n = byId()['n_ttn_sync_crm']; if (n) { placer.free('n_ttn_sync_crm'); n.position = placer.place(n.position.x, n.position.y); } }
 
     REMOVE.forEach(removeNode);
-    { const v2 = applyV2(nodes, edges, notes); const v3 = applyV3(v2.nodes, v2.edges, notes); const v4 = applyV4(v3.nodes, v3.edges, notes); const v5 = applyV5(v4.nodes, v4.edges, notes); const v7 = applyV7(v5.nodes, v5.edges, notes); nodes = v7.nodes; edges = v7.edges; }
+    { const v2 = applyV2(nodes, edges, notes); const v3 = applyV3(v2.nodes, v2.edges, notes); const v4 = applyV4(v3.nodes, v3.edges, notes); const v5 = applyV5(v4.nodes, v4.edges, notes); const v7 = applyV7(v5.nodes, v5.edges, notes); const v8 = applyV8(v7.nodes, v7.edges, notes); nodes = v8.nodes; edges = v8.edges; }
 
     // ── ключі ──
     const keyUpdates = [

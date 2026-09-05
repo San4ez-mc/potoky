@@ -432,7 +432,8 @@ function refresh(flow, opts) {
 // довідка/умови переносяться у профіль магазину CRM, якщо він порожній (migrateProfileToCrm).
 const KB_KEY_DELETES = ['SHOP_FAQ', 'ORDER_TERMS_LINE', 'VECTOR_URL', 'VECTOR_TOKEN'];
 function splitFaqToProfile(faq) {
-    const s = String(faq || '').split(/(?<=\.)\s+/).map((x) => x.trim()).filter(Boolean);
+    // «м. Дніпро», «вул. …» — скорочення з крапкою не є кінцем речення.
+    const s = String(faq || '').replace(/\b(м|вул|смт|обл|р)\.\s+/g, '$1. ').split(/(?<=\.)\s+/).map((x) => x.replace(/ /g, ' ').trim()).filter(Boolean);
     const pick = (re) => s.filter((x) => re.test(x)).join(' ');
     return { producerLine: pick(/виробник|від виробника/i), shippingLine: pick(/відправ|склад|нов(а|ою) пошт/i), fittingLine: pick(/примірк|самовивіз|обмін|поверненн|розмір/i), paymentLine: pick(/оплат|передоплат/i) };
 }

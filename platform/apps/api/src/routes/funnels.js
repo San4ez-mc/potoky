@@ -20,6 +20,67 @@ const { guardBotParam, allowedProjectIds, requireCanEdit } = require('../middlew
 router.param('botId', guardBotParam);
 router.use(authMiddleware);
 
+// POST /api/funnels/crm-secrets-sync — CRM → ключі воронки (2026-09-05, запит власника: «коли міняю
+// ключ у CRM, у воронках має оновитись автоматично»). CRM шле свій tenant apiKey + {key: value};
+// воронки цього магазину знаходимо за funnelKey CRM_API_KEY == apiKey (без ручного мапінгу botId).
+// Оновлюємо ЛИШЕ білий список ключів, ЛИШЕ непорожні значення, нічого не видаляємо. Банківські
+// секрети (MONO_*) свідомо поза списком — вони беруться з активного ФОП у CRM під час роботи.
+// Авторизація: тільки системний X-Api-Secret (server-to-server), не сесія користувача.
+const CRM_SYNC_KEYS = new Set([
+    'INSTAGRAM_ACCESS_TOKEN', 'INSTAGRAM_BUSINESS_ID', 'INSTAGRAM_USERNAME', 'INSTAGRAM_VERIFY_TOKEN',
+    'META_SYSTEM_USER_TOKEN', 'META_AD_ACCOUNT_ID',
+    'ZERNIO_ACCOUNT_ID', 'ZERNIO_API_TOKEN', 'ZERNIO_SEND_URL',
+    'IBANOPLATA_API_KEY', 'TELEGRAM_BOT_TOKEN', 'ADMIN_TELEGRAM_ID', 'GEMINI_API_KEY',
+    'BREWDROP_TOKEN', 'EASYDROP_LOGIN', 'EASYDROP_PASS',
+]);
+const CRM_SYNC_SECRET_RE = /TOKEN|KEY|PASS|SECRET/;
+router.post('/crm-secrets-sync',
+    validateParams({
+        body: z.object({
+            crmApiKey: z.string().min(8),
+            secrets: z.record(z.string(), z.any()),
+            dryRun: z.boolean().optional(),
+        }),
+    }),
+    asyncHandler(async (req, res) => {
+        const apiSecret = req.headers['x-api-secret'];
+        if (!apiSecret || !process.env.API_SECRET || apiSecret !== process.env.API_SECRET) {
+            return res.status(403).json({ ok: false, error: { code: 'FORBIDDEN', message: 'crm-secrets-sync: лише системний X-Api-Secret' } });
+        }
+        const { crmApiKey, secrets, dryRun } = req.body;
+        const rows = await db.funnelKey.findMany({ where: { key: 'CRM_API_KEY', value: crmApiKey }, select: { botId: true } });
+        const botIds = [...new Set(rows.map((r) => r.botId))];
+        const bots = botIds.length ? await db.bot.findMany({ where: { id: { in: botIds }, isActive: true }, select: { id: true, name: true } }) : [];
+        const skipped = Object.keys(secrets).filter((k) => !CRM_SYNC_KEYS.has(k));
+        const report = [];
+        for (const bot of bots) {
+            const existing = await db.funnelKey.findMany({ where: { botId: bot.id }, select: { key: true, value: true, isSecret: true } });
+            const km = Object.fromEntries(existing.map((k) => [k.key, k]));
+            // Синхронізуємо лише у воронки продажів (є канал Instagram/Zernio), не в крон-боти з тим самим CRM-ключем.
+            if (!km.INSTAGRAM_USERNAME && !km.ZERNIO_API_TOKEN && !km.SHOP_TAG) { report.push({ botId: bot.id, name: bot.name, skippedBot: 'не воронка продажів' }); continue; }
+            const updated = []; const created = []; const unchanged = [];
+            for (const [key, raw] of Object.entries(secrets)) {
+                if (!CRM_SYNC_KEYS.has(key)) continue;
+                const value = raw === null || raw === undefined ? '' : String(raw).trim();
+                if (!value) continue;
+                const cur = km[key];
+                if (cur && cur.value === value) { unchanged.push(key); continue; }
+                (cur ? updated : created).push(key);
+                if (dryRun) continue;
+                await db.funnelKey.upsert({
+                    where: { botId_key: { botId: bot.id, key } },
+                    create: { botId: bot.id, key, value, label: 'Синхронізовано з CRM', isSecret: CRM_SYNC_SECRET_RE.test(key) },
+                    update: { value, label: 'Синхронізовано з CRM ' + new Date().toISOString().slice(0, 16).replace('T', ' ') },
+                });
+            }
+            let channelSync = null;
+            if (!dryRun && (updated.length || created.length)) channelSync = await syncChannelsForBot(bot.id).catch((e) => ({ error: e.message }));
+            report.push({ botId: bot.id, name: bot.name, updated, created, unchanged, channelSync });
+        }
+        res.json({ ok: true, data: { dryRun: !!dryRun, bots: report, skippedKeys: skipped } });
+    })
+);
+
 // GET /api/funnels/:botId — get flow definition + keys
 router.get('/:botId',
     validateParams({ params: z.object({ botId: z.string().uuid() }) }),

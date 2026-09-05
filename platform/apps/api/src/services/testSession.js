@@ -3799,9 +3799,11 @@ ${_baseUrl}/legal/terms — Правила використання`;
                     // ФОП) — платіж "не знайдено" ніколи. Пріоритет: monobankToken активного ФОП у CRM
                     // (той самий, з якого ibanoplata бере IBAN), рахунок — через client-info (кеш у
                     // context.fop.monoAccountId); фолбек — ключі воронки.
-                    let token = (funnelEnv.MONO_TOKEN || config.token || config.api_key || '').trim();
-                    let account = (renderTemplate(data.accountId || funnelEnv.MONO_ACCOUNT_ID || config.account_id || '0', scope) || '0').trim() || '0';
-                    let monoFopSource = 'funnelKey';
+                    // Мультитенантність (рішення власника 2026-09-05): банківські секрети живуть ТІЛЬКИ в CRM
+                    // (активний ФОП), у ключах воронки їх нема і фолбеку на них нема.
+                    let token = '';
+                    let account = (renderTemplate(data.accountId || '0', scope) || '0').trim() || '0';
+                    let monoFopSource = 'none';
                     try {
                         const _mRawBase = String(funnelEnv.CRM_API_URL || funnelEnv.CRM_API_BASE || '').trim().replace(/\/$/, '');
                         const _mApiUrl = _mRawBase && !_mRawBase.endsWith('/api') ? `${_mRawBase}/api` : _mRawBase;
@@ -3833,7 +3835,16 @@ ${_baseUrl}/legal/terms — Правила використання`;
                                 }
                             }
                         }
-                    } catch (_e) { /* best-effort — фолбек на ключі воронки */ }
+                    } catch (_e) { /* best-effort */ }
+                    if (!token) {
+                        // Немає активного ФОП з monobank-токеном у CRM — виписки нема, звірка дасть not_found,
+                        // менеджер отримає штатний сигнал; у логах API видно причину.
+                        ctx.monoStatement = [];
+                        if (outputVar) setByPath(ctx, outputVar, []);
+                        db.apiCall.create({ data: { sessionId: session.id, service: 'monobank', method: 'get_statement', requestData: { fopSource: 'none' }, responseData: { error: 'у CRM немає активного ФОП з monobankToken' }, statusCode: 0, durationMs: 0 } }).catch(() => {});
+                        runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
+                        continue;
+                    }
                     const windowHours = parseInt(data.windowHours || 48, 10) || 48;
                     const monoStart = Date.now();
                     const { items, fromCache, status: monoStatus } = await getMonoStatement({ redisClient, token, account, windowHours });

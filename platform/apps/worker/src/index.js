@@ -408,10 +408,11 @@ const MONO_PENDING_WINDOW_MS = 6 * 60 * 60 * 1000; // 6 год — далі ра
 // кеш 30 хв на токен) → фолбек на ключі воронки MONO_TOKEN/MONO_ACCOUNT_ID.
 const _monoAccountCache = new Map(); // tokenHint → { account, at }
 async function resolveMonoCredsForBot(botId) {
-    const rows = await db.funnelKey.findMany({ where: { botId, key: { in: ['MONO_TOKEN', 'MONO_ACCOUNT_ID', 'CRM_API_BASE', 'CRM_API_URL', 'CRM_API_KEY'] } }, select: { key: true, value: true } });
+    // Мультитенантність: токен ТІЛЬКИ з активного ФОП у CRM, без фолбеку на ключі воронки.
+    const rows = await db.funnelKey.findMany({ where: { botId, key: { in: ['CRM_API_BASE', 'CRM_API_URL', 'CRM_API_KEY'] } }, select: { key: true, value: true } });
     const km = Object.fromEntries(rows.map((k) => [k.key, (k.value || '').trim()]));
-    let token = km.MONO_TOKEN || '';
-    let account = km.MONO_ACCOUNT_ID || '0';
+    let token = '';
+    let account = '0';
     try {
         const rawBase = String(km.CRM_API_URL || km.CRM_API_BASE || '').replace(/\/$/, '');
         const apiUrl = rawBase && !rawBase.endsWith('/api') ? `${rawBase}/api` : rawBase;
@@ -441,7 +442,7 @@ async function resolveMonoCredsForBot(botId) {
 async function refreshMonoIfPending() {
     try {
         const botsWithMono = await db.funnelKey.findMany({
-            where: { key: { in: ['MONO_TOKEN', 'CRM_API_KEY'] }, value: { not: '' } },
+            where: { key: 'CRM_API_KEY', value: { not: '' } },
             select: { botId: true },
         });
         const botIds = [...new Set(botsWithMono.map((b) => b.botId))];

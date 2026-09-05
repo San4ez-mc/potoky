@@ -404,10 +404,44 @@ setTimeout(() => { resetStaleOrCompletedSessions(); setInterval(resetStaleOrComp
 const MONO_REFRESH_INTERVAL_MS = 45 * 1000; // з запасом під ліміт 1/60c
 const MONO_PENDING_WINDOW_MS = 6 * 60 * 60 * 1000; // 6 год — далі рахуємо кинутим кошиком
 
+// Токен/рахунок Mono для бота: активний ФОП у CRM (monobankToken + рахунок за IBAN через client-info,
+// кеш 30 хв на токен) → фолбек на ключі воронки MONO_TOKEN/MONO_ACCOUNT_ID.
+const _monoAccountCache = new Map(); // tokenHint → { account, at }
+async function resolveMonoCredsForBot(botId) {
+    const rows = await db.funnelKey.findMany({ where: { botId, key: { in: ['MONO_TOKEN', 'MONO_ACCOUNT_ID', 'CRM_API_BASE', 'CRM_API_URL', 'CRM_API_KEY'] } }, select: { key: true, value: true } });
+    const km = Object.fromEntries(rows.map((k) => [k.key, (k.value || '').trim()]));
+    let token = km.MONO_TOKEN || '';
+    let account = km.MONO_ACCOUNT_ID || '0';
+    try {
+        const rawBase = String(km.CRM_API_URL || km.CRM_API_BASE || '').replace(/\/$/, '');
+        const apiUrl = rawBase && !rawBase.endsWith('/api') ? `${rawBase}/api` : rawBase;
+        if (apiUrl && km.CRM_API_KEY) {
+            const fr = await fetch(`${apiUrl}/fops`, { headers: { Authorization: `Bearer ${km.CRM_API_KEY}` } });
+            const fj = fr.ok ? await fr.json().catch(() => ({})) : {};
+            const fop = (Array.isArray(fj.data) ? fj.data : []).find((f) => f && f.isActive === true && f.monobankToken) || null;
+            if (fop) {
+                token = String(fop.monobankToken).trim();
+                const hint = token.slice(0, 8);
+                const cached = _monoAccountCache.get(hint);
+                if (cached && Date.now() - cached.at < 30 * 60 * 1000) account = cached.account;
+                else {
+                    const ci = await fetch('https://api.monobank.ua/personal/client-info', { headers: { 'X-Token': token } });
+                    const cij = ci.ok ? await ci.json().catch(() => ({})) : {};
+                    const iban = String(fop.iban || '').replace(/\s/g, '');
+                    const accs = Array.isArray(cij.accounts) ? cij.accounts : [];
+                    const pick = accs.find((a) => iban && String(a.iban || '').replace(/\s/g, '') === iban) || accs.find((a) => String(a.type || '').toLowerCase() === 'fop' && Number(a.currencyCode) === 980) || accs.find((a) => String(a.type || '').toLowerCase() === 'fop');
+                    if (pick && pick.id) { account = pick.id; _monoAccountCache.set(hint, { account: pick.id, at: Date.now() }); }
+                }
+            }
+        }
+    } catch (e) { logger.warn('[mono-refresh] CRM active FOP resolve failed, fallback to funnel keys', { botId, error: e.message }); }
+    return token ? { token, account } : null;
+}
+
 async function refreshMonoIfPending() {
     try {
         const botsWithMono = await db.funnelKey.findMany({
-            where: { key: 'MONO_TOKEN', value: { not: '' } },
+            where: { key: { in: ['MONO_TOKEN', 'CRM_API_KEY'] }, value: { not: '' } },
             select: { botId: true },
         });
         const botIds = [...new Set(botsWithMono.map((b) => b.botId))];
@@ -429,13 +463,14 @@ async function refreshMonoIfPending() {
         if (!pendingBotIds.size) return; // нікого не чекаємо — не смикаємо Mono взагалі
 
         for (const botId of pendingBotIds) {
-            const rows = await db.funnelKey.findMany({ where: { botId, key: { in: ['MONO_TOKEN', 'MONO_ACCOUNT_ID'] } }, select: { key: true, value: true } });
-            const km = Object.fromEntries(rows.map((k) => [k.key, (k.value || '').trim()]));
-            if (!km.MONO_TOKEN) continue;
-            const account = km.MONO_ACCOUNT_ID || '0';
-            const fresh = await hasFreshCache({ redisClient: monoRedisClient, token: km.MONO_TOKEN, account });
+            // 2026-09-05 (запит власника: перемкнув ФОП у CRM → воронка має підхопити сама): токен і рахунок
+            // беремо з АКТИВНОГО ФОП у CRM (той самий, що двигун для виписки/ibanoplata); ключі
+            // MONO_TOKEN/MONO_ACCOUNT_ID воронки — лише фолбек, коли CRM недоступна або ФОП без токена.
+            const creds = await resolveMonoCredsForBot(botId);
+            if (!creds || !creds.token) continue;
+            const fresh = await hasFreshCache({ redisClient: monoRedisClient, token: creds.token, account: creds.account });
             if (fresh) continue; // вже свіжо (можливо, хтось інший щойно оновив) — не дублюємо запит
-            await getMonoStatement({ redisClient: monoRedisClient, token: km.MONO_TOKEN, account, windowHours: 48 }).catch((e) => {
+            await getMonoStatement({ redisClient: monoRedisClient, token: creds.token, account: creds.account, windowHours: 48 }).catch((e) => {
                 logger.warn('[mono-refresh] fetch failed', { botId, error: e.message });
             });
             logger.info('[mono-refresh] statement refreshed', { botId, pendingSessions: sessions.filter((s) => s.botId === botId).length });

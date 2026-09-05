@@ -69,6 +69,7 @@ const CODE = {
     n_supplier_order_ed: () => readCode('easydrop-offline-code.js'),
     n_supplier_order_cart: () => readCode('easydrop-cart-code.js'),
     n_catalog_hint: () => readCode('n_catalog_hint-code.js'),
+    n_shop_profile: () => readCode('n_shop_profile-code.js'),
 };
 
 const MATCH_NOTE_OLD = '⚠️ Товар вище вже ОДНОЗНАЧНО підтверджено системою за артикулом/кодом, який назвав клієнт — НІКОЛИ не пиши, що товар/артикул "не знайдено" чи "немає в каталозі", навіть якщо точний код не видно в описі нижче. Завжди довіряй даним про товар вище.';
@@ -87,7 +88,7 @@ const ORDER_INTENT_PROMPT = `Ти — {{env.PERSONA_NAME}}, тепла конс�
 КОРОТКИЙ СТАН ДІАЛОГУ: {{context.dialogStateText}}
 ДОПРОДАЖ (порожньо = нема): «{{context.product.upsell}}». {{context.product.upsellPhotoNote}}
 
-УМОВИ (додай ОДНИМ рядком у підсумок, дослівно): {{env.ORDER_TERMS_LINE}}
+УМОВИ (додай ОДНИМ рядком у підсумок, дослівно; порожньо = не додавай): {{context.shop.terms}}
 
 ТВОЯ ЗАДАЧА: підвести до оформлення. Коли ти починаєш першою (система просить "почни діалог сам"): ОДНЕ повідомлення — короткий підсумок (товар, колір/розмір якщо є, ціна, рядок УМОВ) і РІВНО ОДНЕ питання, яке ОБОВʼЯЗКОВО містить слово «Оформляємо»:
 - ДОПРОДАЖ порожній → «Оформляємо замовлення? 🙂»
@@ -96,7 +97,7 @@ const ORDER_INTENT_PROMPT = `Ти — {{env.PERSONA_NAME}}, тепла конс�
 ЯКЩО клієнт погоджується на допродаж: коли він назвав кількість/кольори («так, біла 1 і чорна 1», «дві футболки») — додай "upsellQty":<число> і "upsellNote":"<як сказав клієнт: кольори/розміри>" (ціну за кількість порахує система за акцією). Коли допродаж має кольори, а клієнт їх не назвав — РІВНО ОДНЕ уточнення одним реченням («Яку футболку додати — білу чи чорну, і скільки?»), БЕЗ JSON; після відповіді — {"ready":"yes","addUpsell":true,"upsellQty":…,"upsellNote":"…"}. Якщо клієнт на уточнення каже «будь-яку/на ваш розсуд/не важливо» — беремо 1 шт, upsellNote:"колір на розсуд менеджера", далі ready:yes.
 ЯКЩО клієнт замість відповіді одразу надсилає дані доставки (є телефон / місто / відділення / ПІБ) — це ЗГОДА, НЕ перепитуй «оформляємо?» і НЕ пиши тексту: поверни ТІЛЬКИ json_output {"ready":"yes","prefill":{"fullName":"...","phone":"...","city":"...","branch":"..."}} (лише ті поля, що є). Дані не губляться — наступні кроки їх підхоплять.
 Ти НЕ вітаєшся («Привіт», «Доброго дня») — клієнта вже привітали. Розмір/параметри згадуй ЛИШЕ з поля «Розмір» вище; якщо воно порожнє — не пиши розмір узагалі (не бери цифри з повідомлень клієнта). Якщо клієнт надіслав фото (текст "[фото]") — одне речення: для оформлення фото не потрібне, і знову «Оформляємо?».
-ДОВІДКА МАГАЗИНУ (відповідай з неї на питання про виробника, склад, примірку, терміни): {{env.SHOP_FAQ}}
+ДОВІДКА МАГАЗИНУ (відповідай з неї на питання про виробника, склад, примірку, терміни): {{context.shop.faq}}
 Якщо питання є в даних вище або в ДОВІДЦІ — відповідай сам. Якщо відповіді НЕМА (нестандартне питання, індивідуальне пошиття, знижка, претензія) — НЕ handoff: чесно скажи «уточню в менеджера і напишу сюди», додай json_output {"askManager":"<питання клієнта>"} і повертайся до «Оформляємо?». handoff — ЛИШЕ коли клієнт явно просить живу людину.
 
 ФОРМАТ json_output (СУВОРО, лише коли клієнт ВІДПОВІВ на твоє питання):
@@ -216,13 +217,15 @@ const ADDRESS_ASK = '\n\n📦 Дані для відправки (ПІБ, тел
 const SIZE_FIRST_MSG_RE = '\\d{2,3}\\s*[\\/,\\s\\-]\\s*\\d{2,3}|зр[іо]ст|ріст|ваг[аи]|\\bсм\\b|\\bкг\\b|розмір\\s*[SMLX]{1,4}\\b|\\b[SMLX]{1,4}\\s*розмір';
 const SIZE_PROMPT_V3 = '\nДОДАТКОВО: (а) зріст у метрах («1,78», «1.78 м») = 178 см — переводь сам; (б) якщо клієнт разом із параметрами назвав КОЛІР зі списку кольорів товару («чорний 182/100», «S в графітному») — додай у той самий json_output поле "color":"<колір як у списку>", щоб не перепитувати; (в) якщо клієнт надіслав фото (текст "[фото]") — по фото розмір не визначаю, скажи це одним реченням і попроси зріст і вагу (товар НЕ змінюй); (г) якщо клієнт назвав власні заміри (плечі/рукав/ширина) — подякуй і скажи, що підбір іде за зростом і вагою, попроси їх.';
 const ORDER_TERMS_DEFAULT = 'Обмін/повернення 14 днів ✅ Відправка Новою поштою 📦 Відправка до 5 робочих днів 🚚';
-// Довідка магазину — з реальних відповідей менеджерів (2026-09-04); власник редагує ключ у налаштуваннях воронки.
+// Довідка магазину — з реальних відповідей менеджерів (2026-09-04). З v7 (2026-09-05) живе в CRM
+// (База знань → Профіль магазину, GET/PUT /knowledge/profile); ці дефолти — лише для одноразової міграції
+// в порожній профіль (migrateProfileToCrm), ключі SHOP_FAQ/ORDER_TERMS_LINE з воронки видаляються.
 const SHOP_FAQ_DEFAULT = {
     GOVERLA: 'Виробник — Україна. Відправка зі складу в Харкові Новою Поштою, до 5 робочих днів. Примірка/самовивіз неможливі — але є обмін/повернення 14 днів. Розмір підбираємо за зростом і вагою; при сумнівах між двома розмірами радимо більший. Оплата: 200 грн передоплата + решта при отриманні, або повна.',
     covercar: 'Накидки від виробника (м. Дніпро), відправка Новою Поштою до 5 робочих днів. Примірка/самовивіз неможливі — є обмін/повернення 14 днів. Накидки універсальні, підходять на будь-які сидіння. Оплата: 200 грн передоплата + решта при отриманні, або повна.',
 };
 // Заміна "поза даними → handoff" на askManager у n_size/n_color (бот не спиняється, менеджер отримує питання).
-const ASK_MANAGER_RULE = '\nДОВІДКА МАГАЗИНУ (відповідай з неї на питання про виробника, склад, примірку, терміни): {{env.SHOP_FAQ}}\nЯКЩО питання поза даними товару і ДОВІДКОЮ (гарантія, індивідуальне пошиття, знижки, нестандартна оплата) — НЕ клич менеджера: чесно скажи «уточню в менеджера і напишу сюди», додай json_output {"askManager":"<питання клієнта>"} і повертайся до питання цього кроку. handoff — ЛИШЕ на явне прохання живої людини, претензію чи скаргу.';
+const ASK_MANAGER_RULE = '\nДОВІДКА МАГАЗИНУ (відповідай з неї на питання про виробника, склад, примірку, терміни): {{context.shop.faq}}\nЯКЩО питання поза даними товару і ДОВІДКОЮ (гарантія, індивідуальне пошиття, знижки, нестандартна оплата) — НЕ клич менеджера: чесно скажи «уточню в менеджера і напишу сюди», додай json_output {"askManager":"<питання клієнта>"} і повертайся до питання цього кроку. handoff — ЛИШЕ на явне прохання живої людини, претензію чи скаргу.';
 const HANDOFF_UNKNOWN_OLD_COLOR = 'ЯКЩО питання поза твоїми даними (гарантія, доставка за кордон, нестандартна оплата, знижки, претензія) — НЕ вигадуй: поверни json_output {"handoff":true}.';
 const HANDOFF_UNKNOWN_OLD_SET = 'ЯКЩО питання СПРАВДІ поза твоїми даними (гарантія на ІНШИЙ товар не з нашого каталогу, доставка за кордон, нестандартна оплата, знижки, претензія, скарга) — поверни json_output {"handoff":true}.';
 const PREFILL_CODE = `// n_order_prefill (v3): клієнт надіслав дані доставки ще на кроці "Оформляємо?" — n_order_intent
@@ -304,7 +307,7 @@ const UNKNOWN_PROMPT_V5 = `Ти — {{env.PERSONA_NAME}}, продавчиня {
 КАТЕГОРІЇ МАГАЗИНУ з CRM (з кількістю товарів; порожньо = недоступно): {{context.catalogCategories}}
 ПІДКАЗКА З КАТАЛОГУ (порожньо = нема; це РЕАЛЬНІ товари, знайдені системою за категорією з повідомлення):
 {{context.catalogHint}}
-ДОВІДКА МАГАЗИНУ: {{env.SHOP_FAQ}}
+ДОВІДКА МАГАЗИНУ: {{context.shop.faq}}
 
 Це повідомлення №{{context.unknownTurns}} у цій розмові без визначеного товару. Вітайся ЛИШЕ якщо це №1 або клієнт сам щойно привітався; інакше без «Привіт», одразу по суті.
 ПРАВИЛА (одне коротке повідомлення, 2-4 речення, закінчується питанням):
@@ -314,6 +317,33 @@ const UNKNOWN_PROMPT_V5 = `Ти — {{env.PERSONA_NAME}}, продавчиня {
 4. Інакше (клієнт має на увазі конкретний товар, якого ти не знаєш) — тепло скажи, що не впевнена, про який саме товар мова, і попроси скинути пост чи рілс з Instagram або назвати артикул.
 
 СУВОРО ЗАБОРОНЕНО вигадувати товари, ціни, наявність, умови поза підказкою і довідкою. Без JSON, без службових токенів.`;
+// v7 (2026-09-05, база знань перенесена в CRM): профіль магазину з CRM у context.shop (нода n_shop_profile
+// після n_route), промпти читають {{context.shop.faq}}/{{context.shop.terms}}; вектор-база (useKb) вимкнена,
+// натомість пошук по базі знань CRM (useCrmKb) на діалогових нодах; ключі SHOP_FAQ/ORDER_TERMS_LINE/VECTOR_*
+// видаляються (значення профілю мігруються в CRM у CLI перед видаленням).
+const KB_NODES = ['n_size', 'n_color', 'n_set_choice', 'n_order_intent'];
+function applyV7(nodes, edges, notes) {
+    const byId = () => Object.fromEntries(nodes.map((n) => [n.id, n]));
+    if (!byId().n_shop_profile && byId().n_route) {
+        const placer = makePlacer(nodes);
+        const r0 = byId().n_route; const p = placer.place(r0.position.x + GX, r0.position.y);
+        nodes.push({ id: 'n_shop_profile', type: 'js', position: p, data: { label: '0.2 Профіль магазину з бази знань CRM', code: CODE.n_shop_profile(), description: 'GET /knowledge/profile → context.shop (faq, terms, producer, shipping, fitting, payment), кеш 10 хв.' } });
+        // goverla: n_route → n_signal_check; covercar: n_route → n_prev_match_snapshot — вставляємось між ними.
+        const out = edges.find((e) => e.source === 'n_route' && !e.sourceHandle);
+        const nextId = out ? out.target : 'n_prev_match_snapshot';
+        edges = edges.map((e) => (e.source === 'n_route' && !e.sourceHandle ? { ...e, target: 'n_shop_profile' } : e));
+        edges.push({ id: 'e_n_shop_profile_next', source: 'n_shop_profile', target: nextId });
+        notes.push('+ нода n_shop_profile @' + p.x + ',' + p.y);
+    } else if (byId().n_shop_profile) { byId().n_shop_profile.data.code = CODE.n_shop_profile(); }
+    for (const n of nodes) {
+        if (n.type !== 'claude' || !n.data.systemPrompt) continue;
+        n.data.systemPrompt = n.data.systemPrompt.split('{{env.SHOP_FAQ}}').join('{{context.shop.faq}}').split('{{env.ORDER_TERMS_LINE}}').join('{{context.shop.terms}}');
+        if (n.data.useKb) { n.data.useKb = false; notes.push('useKb off ' + n.id); }
+        if (KB_NODES.includes(n.id) && n.data.useCrmKb !== true) { n.data.useCrmKb = true; notes.push('useCrmKb on ' + n.id); }
+    }
+    return { nodes, edges };
+}
+
 function applyV5(nodes, edges, notes) {
     const byId = () => Object.fromEntries(nodes.map((n) => [n.id, n]));
     if (!byId().n_unknown_msg) return { nodes, edges };
@@ -393,11 +423,32 @@ function refresh(flow, opts) {
     const v2 = applyV2(nodes, flow.edges.map((e) => ({ ...e })), notes);
     const v3raw = applyV3(v2.nodes, v2.edges, notes);
     const v4 = applyV4(v3raw.nodes, v3raw.edges, notes);
-    const v3 = applyV5(v4.nodes, v4.edges, notes);
-    return { nodes: v3.nodes, edges: v3.edges, notes, keyUpdates: [
-        { key: 'ORDER_TERMS_LINE', value: ORDER_TERMS_DEFAULT, label: 'Рядок умов у підсумку перед "Оформляємо?" (n_order_intent)', onlyIfMissing: true },
-        { key: 'SHOP_FAQ', value: SHOP_FAQ_DEFAULT[opts.shop] || SHOP_FAQ_DEFAULT.GOVERLA, label: 'Довідка магазину для бота (виробник, склад, примірка, терміни) — редагуй тут', onlyIfMissing: true },
-    ] };
+    const v5 = applyV5(v4.nodes, v4.edges, notes);
+    const v3 = applyV7(v5.nodes, v5.edges, notes);
+    return { nodes: v3.nodes, edges: v3.edges, notes, keyUpdates: [], keyDeletes: KB_KEY_DELETES.slice() };
+}
+
+// v7: ключі старої бази знань (Google-документ → вектор) і довідки з воронки видаляються; перед тим
+// довідка/умови переносяться у профіль магазину CRM, якщо він порожній (migrateProfileToCrm).
+const KB_KEY_DELETES = ['SHOP_FAQ', 'ORDER_TERMS_LINE', 'VECTOR_URL', 'VECTOR_TOKEN'];
+function splitFaqToProfile(faq) {
+    const s = String(faq || '').split(/(?<=\.)\s+/).map((x) => x.trim()).filter(Boolean);
+    const pick = (re) => s.filter((x) => re.test(x)).join(' ');
+    return { producerLine: pick(/виробник|від виробника/i), shippingLine: pick(/відправ|склад|нов(а|ою) пошт/i), fittingLine: pick(/примірк|самовивіз|обмін|поверненн|розмір/i), paymentLine: pick(/оплат|передоплат/i) };
+}
+async function migrateProfileToCrm(keysMap, opts) {
+    const base = String(keysMap.CRM_API_BASE || keysMap.CRM_API_URL || '').trim().replace(/\/$/, '');
+    const apiUrl = base && !base.endsWith('/api') ? base + '/api' : base;
+    const apiKey = String(keysMap.CRM_API_KEY || '').trim();
+    if (!apiUrl || !apiKey) return 'CRM ключів нема — профіль не мігровано';
+    const h = { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json' };
+    const cur = await fetch(apiUrl + '/knowledge/profile', { headers: h }).then((r) => r.json()).catch(() => ({}));
+    const p = (cur && cur.data) || {};
+    if (p.producerLine || p.shippingLine || p.fittingLine || p.paymentLine || p.termsLine) return 'профіль у CRM вже заповнений — лишаємо';
+    const faq = String(keysMap.SHOP_FAQ || '').trim() || SHOP_FAQ_DEFAULT[opts.shop] || SHOP_FAQ_DEFAULT.GOVERLA;
+    const body = Object.assign(splitFaqToProfile(faq), { termsLine: String(keysMap.ORDER_TERMS_LINE || '').trim() || ORDER_TERMS_DEFAULT });
+    const put = await fetch(apiUrl + '/knowledge/profile', { method: 'PUT', headers: h, body: JSON.stringify(body) });
+    return 'профіль мігровано в CRM: HTTP ' + put.status;
 }
 
 function transform(flow, keysMap, opts) {
@@ -566,17 +617,15 @@ function transform(flow, keysMap, opts) {
     { const n = byId()['n_ttn_sync_crm']; if (n) { placer.free('n_ttn_sync_crm'); n.position = placer.place(n.position.x, n.position.y); } }
 
     REMOVE.forEach(removeNode);
-    { const v2 = applyV2(nodes, edges, notes); const v3 = applyV3(v2.nodes, v2.edges, notes); const v4 = applyV4(v3.nodes, v3.edges, notes); const v5 = applyV5(v4.nodes, v4.edges, notes); nodes = v5.nodes; edges = v5.edges; }
+    { const v2 = applyV2(nodes, edges, notes); const v3 = applyV3(v2.nodes, v2.edges, notes); const v4 = applyV4(v3.nodes, v3.edges, notes); const v5 = applyV5(v4.nodes, v4.edges, notes); const v7 = applyV7(v5.nodes, v5.edges, notes); nodes = v7.nodes; edges = v7.edges; }
 
     // ── ключі ──
     const keyUpdates = [
         { key: 'BREWDROP_DRY_RUN', value: '1', label: 'DRY-RUN замовлень brewdrop (1 = не відправляти; у бій лише з дозволу власника)' },
         { key: 'EASYDROP_DRY_RUN', value: '1', label: 'DRY-RUN easydrop офлайн-форма' },
         { key: 'EASYDROP_CART_DRY_RUN', value: '1', label: 'DRY-RUN easydrop-кошик' },
-        { key: 'ORDER_TERMS_LINE', value: ORDER_TERMS_DEFAULT, label: 'Рядок умов у підсумку перед "Оформляємо?" (n_order_intent)', onlyIfMissing: true },
-        { key: 'SHOP_FAQ', value: SHOP_FAQ_DEFAULT[opts.shop] || SHOP_FAQ_DEFAULT.GOVERLA, label: 'Довідка магазину для бота (виробник, склад, примірка, терміни) — редагуй тут', onlyIfMissing: true },
     ];
-    const keyDeletes = ['DEFAULT_AD_ID', 'EASYDROP_SUPPLIER_ID', 'EASYDROP_SUPPLIER_NAME'].filter((k) => keysMap && k in keysMap && !String(keysMap[k] || '').trim());
+    const keyDeletes = ['DEFAULT_AD_ID', 'EASYDROP_SUPPLIER_ID', 'EASYDROP_SUPPLIER_NAME'].filter((k) => keysMap && k in keysMap && !String(keysMap[k] || '').trim()).concat(KB_KEY_DELETES);
 
     const description = 'Instagram/Zernio-воронка продажів (' + (opts.shop || 'GOVERLA') + '), переведена на нову Fineko CRM (ключі CRM_API_*). Станом на 2026-09-04 ще НЕ підключений до реального трафіку; постачальники у DRY-RUN (BREWDROP_DRY_RUN / EASYDROP_*_DRY_RUN = 1) до явного дозволу власника. Аудит-фікси 2026-09-04 (patch-goverla-crm-audit-2026-09-04.js): гейт оплати перед постачальником, квитанція до адреси, cod_trust без звірки, нагадування після покупки прибрано, петля «З поверненням», тихі кроки (speakFirst), colorUnavailable, розмір поза літерною сіткою, фолбеки постачальників.';
 
@@ -618,6 +667,7 @@ async function patchBot(db, cfg, APPLY) {
             await db.funnelKey.upsert({ where: { botId_key: { botId: BOT_ID, key: row.key } }, update: { value: row.value, label: row.label }, create: { botId: BOT_ID, key: row.key, value: row.value, label: row.label, isSecret: false } });
             console.log('  key', row.key, '=', row.value.slice(0, 40));
         }
+        await deleteKbKeys(db, BOT_ID, keysMap, cfg, r.keyDeletes || []);
         console.log('REFRESHED');
         return;
     }
@@ -633,9 +683,17 @@ async function patchBot(db, cfg, APPLY) {
         if (row.onlyIfMissing && keysMap[row.key] !== undefined && String(keysMap[row.key] || '').trim()) continue;
         await db.funnelKey.upsert({ where: { botId_key: { botId: BOT_ID, key: row.key } }, update: { value: row.value, label: row.label }, create: { botId: BOT_ID, key: row.key, value: row.value, label: row.label, isSecret: false } });
     }
-    for (const k of r.keyDeletes) await db.funnelKey.deleteMany({ where: { botId: BOT_ID, key: k } });
+    await deleteKbKeys(db, BOT_ID, keysMap, cfg, r.keyDeletes);
     await db.bot.update({ where: { id: BOT_ID }, data: { description: r.description } }).catch((e) => console.log('bot.description not updated:', e.message));
     console.log('APPLIED (бекап у backups/).');
+}
+
+// Видалення ключів; для ключів бази знань — спершу міграція довідки у профіль CRM (v7).
+async function deleteKbKeys(db, BOT_ID, keysMap, cfg, keyDeletes) {
+    const present = keyDeletes.filter((k) => k in keysMap);
+    if (!present.length) return;
+    if (present.some((k) => KB_KEY_DELETES.includes(k))) console.log('  KB →', await migrateProfileToCrm(keysMap, cfg).catch((e) => 'міграція профілю не вдалась: ' + e.message));
+    for (const k of present) { await db.funnelKey.deleteMany({ where: { botId: BOT_ID, key: k } }); console.log('  key deleted', k); }
 }
 
 module.exports = { transform, refresh, BOT_ID, BOTS, optsForBot };

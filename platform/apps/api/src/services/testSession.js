@@ -1843,6 +1843,29 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
             let systemPrompt = renderTemplate(data.systemPrompt || 'You are a helpful assistant.', claudeScope);
             // RAG: якщо нода з useKb — шукаємо у вектор-базі за повідомленням клієнта й
             // додаємо топ-результати у системний промпт (FAQ/заперечення з Google Doc).
+            // База знань у CRM (2026-09-05, замість вектор-бази з Google-документа): пошук лише коли
+            // повідомлення схоже на питання, лише на нодах з data.useCrmKb, у скоупі поточного товару.
+            if (data.useCrmKb && runtime.lastUserMessage && ctx.product !== undefined) {
+                try {
+                    const _q = String(runtime.lastUserMessage).trim();
+                    const _looksLikeQuestion = _q.length >= 6 && (/\?/.test(_q) || /^(чи|як|коли|де|скільки|чому|можна|є\s|який|яка|які|що|а\s)/i.test(_q));
+                    const _kRawBase = String(funnelEnv.CRM_API_URL || funnelEnv.CRM_API_BASE || '').trim().replace(/\/$/, '');
+                    const _kApiUrl = _kRawBase && !_kRawBase.endsWith('/api') ? `${_kRawBase}/api` : _kRawBase;
+                    const _kApiKey = String(funnelEnv.CRM_API_KEY || '').trim();
+                    if (_looksLikeQuestion && _kApiUrl && _kApiKey) {
+                        const _scope = ctx.product && ctx.product.id ? 'product:' + ctx.product.id : 'shop';
+                        const _kStart = Date.now();
+                        const _kr = await fetch(`${_kApiUrl}/knowledge/search?q=${encodeURIComponent(_q.slice(0, 200))}&scope=${encodeURIComponent(_scope)}&limit=3`, { headers: { Authorization: `Bearer ${_kApiKey}` } });
+                        const _kj = _kr.ok ? await _kr.json().catch(() => ({})) : {};
+                        const _hits = Array.isArray(_kj.data) ? _kj.data : [];
+                        if (_hits.length) {
+                            systemPrompt += '\n\n=== ДОВІДКА ПО ПИТАННЮ (база знань магазину в CRM — відповідай СПИРАЮЧИСЬ на неї, своїми словами, без вигадок) ===\n'
+                                + _hits.map((h) => '• ' + (h.question ? ('Питання: ' + String(h.question).slice(0, 200) + ' → ') : '') + 'Відповідь: ' + String(h.answer || '').slice(0, 600)).join('\n');
+                        }
+                        db.apiCall.create({ data: { sessionId: session.id, service: 'crm_kb', method: 'search', requestData: { query: _q.slice(0, 120), scope: _scope }, responseData: { count: _hits.length }, statusCode: _kr.status, durationMs: Date.now() - _kStart } }).catch(() => {});
+                    }
+                } catch (_kbErr2) { /* best-effort — база знань не блокує діалог */ }
+            }
             if (data.useKb && runtime.lastUserMessage) {
                 try {
                     const vURL = (funnelEnv.VECTOR_URL || 'http://127.0.0.1:4500').replace(/\/$/, '');
@@ -2092,6 +2115,15 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                             pushDelivery(runtime, 'telegram_notify', false, ctx.testMode ? 'testMode' : 'немає ADMIN_TELEGRAM_ID або TELEGRAM_BOT_TOKEN', { nodeId: node.id, reason: 'ask_manager' });
                         }
                     } catch (_e) { /* сигнал не має ламати діалог */ }
+                    // База знань CRM: питання без відповіді → чернетка (from_dialog), менеджер дописує в CRM.
+                    try {
+                        const _fdRawBase = String(funnelEnv.CRM_API_URL || funnelEnv.CRM_API_BASE || '').trim().replace(/\/$/, '');
+                        const _fdApiUrl = _fdRawBase && !_fdRawBase.endsWith('/api') ? `${_fdRawBase}/api` : _fdRawBase;
+                        const _fdApiKey = String(funnelEnv.CRM_API_KEY || '').trim();
+                        if (_fdApiUrl && _fdApiKey && !ctx.testMode) {
+                            await fetch(`${_fdApiUrl}/knowledge/from-dialog`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${_fdApiKey}` }, body: JSON.stringify({ question: String(exit.parsed.askManager).slice(0, 500), sessionId: session.id, productId: (ctx.product && ctx.product.id) || null }) }).catch(() => {});
+                        }
+                    } catch (_e) { /* best-effort */ }
                     const otherKeys = Object.keys(exit.parsed).filter((k) => k !== 'askManager' && k !== 'wantsPhoto' && k !== 'photoArticle');
                     if (otherKeys.length === 0) exit.done = false;
                 }

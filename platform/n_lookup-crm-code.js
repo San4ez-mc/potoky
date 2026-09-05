@@ -158,6 +158,11 @@ try {
         var __m = await __gget(__pid + '?fields=caption,media_url,thumbnail_url,permalink', __igTok);
         if (__m && (__m.caption || __m.media_url)) { __adCaption = String(__m.caption || ''); __adImage = String(__m.thumbnail_url || __m.media_url || ''); }
       }
+      // 2026-09-05: системний токен (з CRM, має instagram_basic) — фолбек для post_id, коли IG-токена нема або він невалідний.
+      if (!__adCaption && __pid && __muTok) {
+        var __m2 = await __gget(__pid + '?fields=caption,media_url,thumbnail_url', __muTok);
+        if (__m2 && (__m2.caption || __m2.media_url)) { __adCaption = String(__m2.caption || ''); __adImage = String(__m2.thumbnail_url || __m2.media_url || ''); }
+      }
       if (!__adCaption && __aid && __muTok) {
         var __ad = await __gget(__aid + '?fields=creative{effective_object_story_id,body,thumbnail_url,object_story_spec}', __muTok);
         var __cr = (__ad && __ad.creative) || null;
@@ -171,7 +176,8 @@ try {
     if (__adCaption) context.adCaption = __adCaption;
     if (__adImage) context.adImage = __adImage;
     if (typeof __gErr !== 'undefined' && __gErr.length) context.adCaptionError = __gErr.join(' | ').slice(0, 400);
-    if (!__igTok && !__muTok) context.adCaptionError = 'немає INSTAGRAM_ACCESS_TOKEN/META_SYSTEM_USER_TOKEN у ключах воронки';
+    if (__adCaption) context.adCaptionError = ''; // текст отримано — старі помилки проміжних запитів не показуємо
+    if (!__igTok && !__muTok) context.adCaptionError = 'немає META_SYSTEM_USER_TOKEN (задається в CRM → Автоматизації, передається у воронку автоматично)';
   }
 
   // ПРІОРИТЕТ 2: артикул (з тексту клієнта / підпису поста / adTitle / повного тексту реклами)

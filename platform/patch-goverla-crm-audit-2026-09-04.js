@@ -83,7 +83,7 @@ const PAY_INTL_LINE = '\n\n🌍 Доставка за кордон? Напиші
 const ORDER_INTENT_PROMPT = `Ти — {{env.PERSONA_NAME}}, тепла консультантка {{env.SHOP_TAG}}. Товар: {{context.product.customerName}} (артикул {{context.product.sku}}) — {{context.product.price}} грн. Це ТОЙ САМИЙ товар, який клієнт назвав/відкрив — він уже визначений системою, не шукай його і не пиши "не знаходжу". Опис (для контексту, не цитуй списком): {{context.product.desc}}
 Колір, ЯКЩО узгоджено: «{{context.colorChoice.color}}» (порожньо = у товару нема вибору кольору, просто не згадуй). Розмір, ЯКЩО визначено: «{{context.recommendedSize}}» (порожньо = не згадуй).
 ПОЗИЦІЇ ЗАМОВЛЕННЯ (кількість і кольори/розміри, вже узгоджені з клієнтом): {{context.orderUnitsText}}; сума за них: {{context.orderUnitsTotal}} грн. Якщо позицій більше однієї — у підсумку перелічи ВСІ і назви саме цю суму, а не ціну однієї штуки.
-ЗМІНА ЗАМОВЛЕННЯ З КРОКУ ОПЛАТИ (порожньо = нема): «{{context.orderChangeNote}}» — якщо непорожньо, клієнт повернувся сюди, щоб змінити склад замовлення (додати допродаж/позицію, інший колір чи кількість): врахуй це або уточни ОДНИМ питанням, дай оновлений підсумок і знову «Оформляємо?».
+ЗМІНА ЗАМОВЛЕННЯ З КРОКУ ОПЛАТИ (порожньо = нема): «{{context.orderChangeNote}}». ЯКЩО непорожньо — клієнт уже погодився оформити і повернувся сюди ЛИШЕ щоб змінити склад замовлення; це НЕ звичайний старт: (а) ОБОВʼЯЗКОВО застосуй зміну в підсумку — додай допродаж як окрему позицію з ціною і новою загальною сумою (кількість/колір беруться з примітки; неясно — ОДНЕ уточнення), або додай/зміни позицію товару; (б) спитай «Оформляємо так?»; (в) при згоді json ОБОВʼЯЗКОВО містить цю зміну: для допродажу {"ready":"yes","addUpsell":true,"upsellQty":<n>,"upsellNote":"<колір/розмір>"}, для позицій товару — "units"/"qty". Не повторюй старий підсумок без зміни.
 {{context.product.matchNote}}
 {{context.product.qtyPromoText}}
 ВАЖЛИВІ НЮАНСИ ТОВАРУ (лише для тебе, не цитуй списком): {{context.product.aiInfo}}
@@ -244,6 +244,9 @@ if (context.crmOrderId || context.orderRef) {
   prev.push({ crmOrderId: context.crmOrderId || null, orderRef: context.orderRef || null, payStatus: context.payStatus || null, payAmount: context.payAmount || null, product: (context.product && (context.product.customerName || context.product.name)) || null, at: Date.now() });
   out0.prevOrders = prev;
   ['crmOrderId', 'crmClientId', 'orderRef', 'orderRefAt', 'orderSku', 'payStatus', 'payVia', 'payTxId', 'payAmount', 'payLabel', 'orderTotal', 'ibanPayUrl', 'ibanInvoiceUid', 'ibanLinkFailed', 'crmPaymentPosted', 'createAlertTitle', 'supplier', 'supplierMechanism', 'supplierCfg', 'supplierSetBreakdown', 'supplierOrderResult', 'supplierOrderId', 'supplierOrderStatus', 'supplierNeedsManual', 'supplierTtn', 'payNotFoundNotified', 'postOrderNotifiedAt', 'upsell2', 'ttnLine', 'confirmLead', 'payConfirmedLine', 'lastReceiptImageUrl'].forEach(function (k) { out0[k] = null; });
+  // адреса з попереднього замовлення повна → n_collect не перепитує (той самий шлях, що для повторного клієнта)
+  var od0 = context.orderData || {};
+  if (od0.fullName && od0.phone && od0.city && od0.branch) out0.recalledDeliveryReady = true;
 }
 var pf = (context.orderIntent && context.orderIntent.prefill) || null;
 if (!pf || typeof pf !== 'object') return out0;
@@ -396,7 +399,7 @@ function applyV9(nodes, edges, notes) {
         if (m !== hold.data.message) { hold.data.message = m; notes.push('n_supplier_hold client/units'); }
     }
     // (4) n_order_prefill: код із константи (applyV3 створює ноду лише раз — оновлюємо код тут)
-    if (byId().n_order_prefill && !/prevOrders/.test(byId().n_order_prefill.data.code || '')) { byId().n_order_prefill.data.code = PREFILL_CODE; notes.push('n_order_prefill prevOrders'); }
+    if (byId().n_order_prefill && byId().n_order_prefill.data.code !== PREFILL_CODE) { byId().n_order_prefill.data.code = PREFILL_CODE; notes.push('n_order_prefill code'); }
     return { nodes, edges };
 }
 

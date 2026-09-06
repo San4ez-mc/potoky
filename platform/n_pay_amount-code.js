@@ -66,7 +66,7 @@ var addressAskLine = haveAddr
 // v8.1: інший товар, який клієнт попросив додати посеред оформлення — рядок для сповіщень менеджеру (n_create/n_supplier_hold) і коментаря в CRM.
 var extraProducts=String((oi.extraProducts)||'').trim();
 var extraProductsLine=extraProducts?('➕ ДОДАТКОВО просить (додати в цю ж посилку вручну, ціну/розмір узгодити): '+extraProducts+'\n'):'';
-var out={ orderRef:ref, orderRefAt:refAt, orderQty:qty, orderUnits:units, orderUnitsText:orderUnitsText, orderUnitsTotal:mainTotal, extraProducts:extraProducts, extraProductsLine:extraProductsLine, fop:fop, upsellSum:upsellSum, upsellQty:upsellQty, addressAskLine:addressAskLine };
+var out={ orderRef:ref, orderRefAt:refAt, orderQty:qty, orderUnits:units, orderUnitsText:orderUnitsText, orderUnitsTotal:mainTotal, extraProducts:extraProducts, extraProductsLine:extraProductsLine, orderChangeNote:'', fop:fop, upsellSum:upsellSum, upsellQty:upsellQty, addressAskLine:addressAskLine };
 if(method==='cod_trust'){ out.payAmount=0; out.payLabel='без передоплати (виняток за домовленістю, накладений платіж повністю)'; return out; }
 out.payAmount = method==='cod'?200:full;
 out.payLabel = method==='cod'?('передоплата 200 грн, решта '+(full-200)+' грн при отриманні'):('повна оплата, '+full+' грн');

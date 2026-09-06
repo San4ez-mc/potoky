@@ -540,7 +540,7 @@ async function notifyAdminPaymentLinkMissing(session, ctx, funnelEnv, runtime, w
             pushDelivery(runtime, 'telegram_notify', false, 'немає ADMIN_TELEGRAM_ID або валідного TELEGRAM_BOT_TOKEN', { reason: 'payment_link_missing' });
             return;
         }
-        const txt = shopPrefix(funnelEnv) + '💳 <b>Не вдалось згенерувати ' + whatLabel + '</b> — клієнту наступним кроком обіцяно посилання, якого немає\n\n⚠️ Надішліть, будь ласка, реквізити/посилання вручну\n\n👤 Клієнт: ' + (ctx.senderName || '') + ' (' + (ctx.igUsername || '') + ')\n🔗 Сесія: ' + session.id;
+        const txt = shopPrefix(funnelEnv) + '💳 <b>Не вдалось згенерувати ' + whatLabel + '</b>\n\n⚠️ Перевірте, чи клієнт оплатив за реквізитами; за потреби надішліть посилання вручну\n\n👤 Клієнт: ' + (ctx.senderName || '') + ' — https://instagram.com/' + (ctx.igUsername || '') + '\n🧾 Замовлення: ' + (ctx.orderRef || '—') + ' | сума ' + (ctx.payAmount != null ? ctx.payAmount + ' грн' : '—') + '\n🔗 Сесія: ' + session.id;
         const r = await fetch('https://api.telegram.org/bot' + tok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(adminId), text: txt, parse_mode: 'HTML', disable_web_page_preview: true }) }).catch(() => null);
         const j = r ? await r.json().catch(() => ({})) : {};
         pushDelivery(runtime, 'telegram_notify', !!j.ok, j.ok ? null : (j.description || 'fetch failed'), { chatId: String(adminId), reason: 'payment_link_missing' });
@@ -1219,7 +1219,12 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
     // джерелом товару був KeyCRM (_source==='keycrm'). Нова СРМ віддає _source==='crm' —
     // без цього уточнення "клієнт назвав інший товар" мовчки НЕ спрацьовувало на клонах,
     // товар залишався "застряглим" на першому визначеному.
-    if (ctx.product && (ctx.product._source === 'keycrm' || ctx.product._source === 'crm') && !ctx.adminEngaged && !ctx.crmOrderId
+    // v9 (тест Олексія 2026-09-06 15:17): ПІСЛЯ оформленого замовлення (crmOrderId є) клієнт переслав рілс іншого
+    // товару (F0029, A0165) — раніше `!ctx.crmOrderId` блокував перемикання, бот показував старий костюм і слав
+    // «уточню в менеджера». Тепер новий товар після покупки = нове замовлення: товар перемикається тут,
+    // а n_order_prefill архівує попереднє замовлення (prevOrder) перед створенням нового. Фото після
+    // замовлення й далі НЕ перемикає (це квитанція — гард !ctx.orderRef нижче).
+    if (ctx.product && (ctx.product._source === 'keycrm' || ctx.product._source === 'crm') && !ctx.adminEngaged
         && runtime.currentNodeId !== 'n_comment_entry' && (incomingUserMessage || incomingImageUrl)) {
         const _extractArticleCandidates = (txt) => {
             const out = [];
@@ -3789,39 +3794,41 @@ ${_baseUrl}/legal/terms — Правила використання`;
                     };
                     const ibStart = Date.now();
                     let ibJson = {}; let ibStatus = null;
-                    try {
-                        const r = await fetch('https://api.ibanoplata.com/v2/iban-invoice', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-Api-Key': apiKey },
-                            body: JSON.stringify(reqBody),
-                        });
-                        ibStatus = r.status;
-                        ibJson = await r.json().catch(() => ({}));
-                    } catch (e) { ibJson = { errorMessage: e.message }; }
+                    // Тест Олексія 2026-09-06 (17:11 і 22:24): двічі «fetch failed» рівно за ~10.4 с — це дефолтний
+                    // connect-timeout undici, api.ibanoplata.com не відповів на зʼєднання (з сервера потім усе
+                    // відкривалось за 0.1 с — перебій мережі/DNS). Робимо 2 спроби з явним таймаутом 15 с.
+                    for (let _attempt = 1; _attempt <= 2 && !ibJson.ibanInvoiceUrl; _attempt++) {
+                        if (_attempt > 1) await new Promise((res) => setTimeout(res, 1500));
+                        const _ibAc = new AbortController();
+                        const _ibTo = setTimeout(() => { try { _ibAc.abort(); } catch (_e) { /* noop */ } }, 15000);
+                        try {
+                            const r = await fetch('https://api.ibanoplata.com/v2/iban-invoice', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-Api-Key': apiKey },
+                                body: JSON.stringify(reqBody), signal: _ibAc.signal,
+                            });
+                            ibStatus = r.status;
+                            ibJson = await r.json().catch(() => ({}));
+                            if (!ibJson.ibanInvoiceUrl && r.status >= 400 && r.status < 500 && r.status !== 429) break; // 4xx (крім 429) — повтор не допоможе
+                        } catch (e) { ibJson = { errorMessage: e.message + (_attempt > 1 ? ' (2 спроби)' : '') }; } finally { clearTimeout(_ibTo); }
+                    }
                     const payUrl = ibJson.ibanInvoiceUrl || '';
                     if (payUrl) {
                         ctx.ibanPayUrl = payUrl;
                         ctx.ibanInvoiceUid = ibJson.ibanInvoiceUid || '';
+                        ctx.ibanLinkFailed = false;
                         if (outputVar) setByPath(ctx, outputVar, payUrl);
                     } else {
-                        // Проблема В (аудит 2026-09-01): без цього наступна статична нода
-                        // (n_requisites) все одно каже клієнту "оплатіть за посиланням 👇" з
-                        // ПОРОЖНІМ рядком замість лінка ("Не бачу посилання" — живий кейс).
-                        // ctx.ibanPayUrl тут — НЕ справжній URL, а чесна фраза-заглушка САМЕ
-                        // в тому місці шаблону, де мав бути лінк, щоб повідомлення НЕ виглядало
-                        // порожнім/зламаним, поки менеджер (сповіщений нижче) не надішле вручну.
-                        ctx.ibanPayUrl = '(посилання ще генерується — за хвилину надішлемо окремо, або просто напишіть — одразу скинемо реквізити вручну)';
+                        // Посилання не створилось. Раніше (2026-09-01/02): фраза-заглушка «посилання ще генерується»
+                        // + adminEngaged=true (бот зупинявся). Живий тест 2026-09-06: клієнт двічі питав «є посилання?
+                        // надішли ще раз», одне повідомлення (18:20) лишилось без відповіді через паузу, менеджер
+                        // посилання так і не надіслав. Тепер: бот НЕ зупиняється, ctx.ibanLinkFailed=true — воронка
+                        // (n_iban_ok_cond) одразу віддає реквізити для ручної оплати; менеджера лише сповіщаємо.
+                        ctx.ibanPayUrl = '';
+                        ctx.ibanInvoiceUid = '';
+                        ctx.ibanLinkFailed = true;
                         pushDelivery(runtime, 'ibanoplata_create_invoice', false, ibJson.errorMessage || ('HTTP ' + ibStatus), { nodeId: node.id });
-                        notifyAdminPaymentLinkMissing(session, ctx, funnelEnv, runtime, 'посилання на оплату (ibanoplata)').catch(() => {});
-                        // Аудит 2026-09-02 (запит власника): раніше бот ПРОДОВЖУВАВ діалог із
-                        // фразою-заглушкою замість лінка — клієнт міг далі писати, поки менеджер
-                        // ще не бачив сповіщення. Тепер це справжній handoff (як і решта хендофів
-                        // у двигуні): adminEngaged=true зупиняє бота на цьому кроці, а вже наявний
-                        // "Загальне відновлення після БУДЬ-ЯКОГО хендофу" (нижче в executeFlowStep)
-                        // сам підхопить розмову, щойно клієнт напише знову — не новий механізм,
-                        // той самий, що вже працює для size_oor/"хочу менеджера" тощо.
-                        ctx.adminEngaged = true;
-                        ctx.handoffReason = 'payment_link_missing';
+                        notifyAdminPaymentLinkMissing(session, ctx, funnelEnv, runtime, 'посилання на оплату (ibanoplata) — клієнту автоматично надіслано реквізити для ручної оплати').catch(() => {});
                     }
                     db.apiCall.create({ data: {
                         sessionId: session.id, service: 'ibanoplata', method: 'create_invoice',

@@ -83,6 +83,7 @@ const PAY_INTL_LINE = '\n\n🌍 Доставка за кордон? Напиші
 const ORDER_INTENT_PROMPT = `Ти — {{env.PERSONA_NAME}}, тепла консультантка {{env.SHOP_TAG}}. Товар: {{context.product.customerName}} (артикул {{context.product.sku}}) — {{context.product.price}} грн. Це ТОЙ САМИЙ товар, який клієнт назвав/відкрив — він уже визначений системою, не шукай його і не пиши "не знаходжу". Опис (для контексту, не цитуй списком): {{context.product.desc}}
 Колір, ЯКЩО узгоджено: «{{context.colorChoice.color}}» (порожньо = у товару нема вибору кольору, просто не згадуй). Розмір, ЯКЩО визначено: «{{context.recommendedSize}}» (порожньо = не згадуй).
 ПОЗИЦІЇ ЗАМОВЛЕННЯ (кількість і кольори/розміри, вже узгоджені з клієнтом): {{context.orderUnitsText}}; сума за них: {{context.orderUnitsTotal}} грн. Якщо позицій більше однієї — у підсумку перелічи ВСІ і назви саме цю суму, а не ціну однієї штуки.
+ЗМІНА ЗАМОВЛЕННЯ З КРОКУ ОПЛАТИ (порожньо = нема): «{{context.orderChangeNote}}» — якщо непорожньо, клієнт повернувся сюди, щоб змінити склад замовлення (додати допродаж/позицію, інший колір чи кількість): врахуй це або уточни ОДНИМ питанням, дай оновлений підсумок і знову «Оформляємо?».
 {{context.product.matchNote}}
 {{context.product.qtyPromoText}}
 ВАЖЛИВІ НЮАНСИ ТОВАРУ (лише для тебе, не цитуй списком): {{context.product.aiInfo}}
@@ -109,7 +110,7 @@ const ORDER_INTENT_PROMPT = `Ти — {{env.PERSONA_NAME}}, тепла конс�
 - Вагається («подумаю», «пізніше», «пораджусь», «якщо встигнете відправити») — це НЕ відмова: БЕЗ JSON, тепло наведи ОДИН реальний аргумент оформити сьогодні (черга на відправку, раніше отримаєте, акція діє зараз) і знову спитай «Оформляємо сьогодні?».
 - Інше питання (доставка, склад, розмір, оплата) → відповідай ЗВИЧАЙНИМ ТЕКСТОМ з даних вище, потім знову «Оформляємо?». Без JSON.
 - Просить фото допродажу → {"wantsUpsellPhoto":true} (можна разом з іншими полями), лише якщо фото є за нотаткою вище.
-ЗАБОРОНЕНО писати {"ready":"pending"}, {"ready":"waiting"} чи інші значення ready — їх не існує. Коротке «так/+» у відповідь на «Оформляємо?» = yes.
+ЗАБОРОНЕНО писати {"ready":"pending"}, {"ready":"waiting"} чи інші значення ready — їх не існує. Коротке «так/+/ок» у відповідь на «Оформляємо?» = yes. ВИНЯТОК: якщо в тому самому питанні ти пропонувала ДОПРОДАЖ, а клієнт відповів лише «так/ок/давайте» і не сказав, з допродажем чи без (тест 2026-09-06: «Так» означало «так, футболку», а бот оформив без неї) — ОДНЕ уточнення БЕЗ JSON: «Оформляю [товар]. Футболку додаємо (яку і скільки) чи без неї?»; відповідь → json як зазвичай.
 Про СПОСІБ оплати відповідай РІВНО одним реченням, без списку й цифр: «Оплата гнучка — можна частину зараз і решту при отриманні, або одразу повністю; на наступному кроці зручно оберете 🙂». Деталі дає наступний крок.
 Просить живу людину/менеджера явно («покличте менеджера», «ви бот?») → {"handoff":true} (без ready). Міжнародна доставка → відповідай, що підкажеш умови на кроці оплати (там є вибір країни).
 НЕ вигадуй розміри/характеристики/колір, яких немає вище. Не згадуй сайтів/кошиків. Кожне повідомлення закінчуй питанням або чітким наступним кроком. Українською, на «ви», тепло і по справі.`;
@@ -123,7 +124,7 @@ const COLLECT_PROMPT = `Ти — {{env.PERSONA_NAME}}, консультантк�
 Посилання на оплату, реквізити (IBAN/ЄДРПОУ/назва), суму і прохання написати дані система ВЖЕ надіслала окремими повідомленнями ДО тебе — ти їх НІКОЛИ не пишеш, не повторюєш і не вигадуєш (ніяких «UA1234…», «12345678», «ПриватБанк», «надішле окремим повідомленням»). Твоя робота — лише прийняти дані доставки.
 Одне повідомлення — одне прохання. Якщо чогось бракує — тепло попроси саме це (лише відсутні поля).
 Коли відомі ВСІ 4 поля (з повідомлення клієнта або з блоку ВЖЕ ВІДОМО плюс його відповідь) — НЕ перепитуй підтвердження, НЕ пиши видимого тексту, одразу поверни ТІЛЬКИ json_output {"fullName":"...","phone":"...","city":"...","branch":"..."}; якщо клієнт назвав область — додай "region":"...". Відповідь на УТОЧНЕННЯ (область / точна назва / номер) → той самий JSON з оновленими city/region/branch.
-Просить реквізити вручну (IBAN/ЄДРПОУ/«як оплатити вручну») → РІВНО {"wantsManualReq":true}, без тексту.
+Просить реквізити вручну (IBAN/ЄДРПОУ/«як оплатити вручну»), АБО каже, що посилання на оплату немає/не прийшло, АБО просить надіслати посилання ще раз → РІВНО {"wantsManualReq":true}, без тексту (реквізити надішле система; ти сама посилань не маєш і НЕ кажеш «перевірте вище в чаті»).
 Пише, що оплатив, або описує чек текстом → подякуй, скажи, що звіримо після отримання даних, і попроси відсутні поля (без JSON, поки полів бракує).
 Передумав спосіб оплати («краще 1», «хочу повністю», «краще накладений») → РІВНО {"paymentMethodChange":"cod"} або {"paymentMethodChange":"full"}, БЕЗ тексту. НІКОЛИ не вигадуй посилання на оплату, суми чи реквізити — нове посилання надішле система сама.
 Інше питання → коротко відповідай текстом з відомих даних, потім знову попроси відсутні поля.
@@ -234,12 +235,22 @@ const HANDOFF_UNKNOWN_OLD_SET = 'ЯКЩО питання СПРАВДІ поза
 const PREFILL_CODE = `// n_order_prefill (v3): клієнт надіслав дані доставки ще на кроці "Оформляємо?" — n_order_intent
 // поклав їх у orderIntent.prefill. Переносимо в orderData; якщо є всі 4 поля — n_collect пропускається
 // (recalledDeliveryReady, той самий шлях, що для повторного клієнта).
+// v9 (тест Олексія 2026-09-06 21:42): повторне замовлення в тій самій сесії (після оформленого) перевикористовувало
+// orderRef/crmOrderId — звірка могла зарахувати стару оплату, а n_crm_order не створив би нове замовлення.
+// Архівуємо попереднє замовлення і чистимо його поля; адреса доставки (orderData) лишається.
+var out0 = {};
+if (context.crmOrderId || context.orderRef) {
+  var prev = Array.isArray(context.prevOrders) ? context.prevOrders.slice(-4) : [];
+  prev.push({ crmOrderId: context.crmOrderId || null, orderRef: context.orderRef || null, payStatus: context.payStatus || null, payAmount: context.payAmount || null, product: (context.product && (context.product.customerName || context.product.name)) || null, at: Date.now() });
+  out0.prevOrders = prev;
+  ['crmOrderId', 'crmClientId', 'orderRef', 'orderRefAt', 'orderSku', 'payStatus', 'payVia', 'payTxId', 'payAmount', 'payLabel', 'orderTotal', 'ibanPayUrl', 'ibanInvoiceUid', 'ibanLinkFailed', 'crmPaymentPosted', 'createAlertTitle', 'supplier', 'supplierMechanism', 'supplierCfg', 'supplierSetBreakdown', 'supplierOrderResult', 'supplierOrderId', 'supplierOrderStatus', 'supplierNeedsManual', 'supplierTtn', 'payNotFoundNotified', 'postOrderNotifiedAt', 'upsell2', 'ttnLine', 'confirmLead', 'payConfirmedLine', 'lastReceiptImageUrl'].forEach(function (k) { out0[k] = null; });
+}
 var pf = (context.orderIntent && context.orderIntent.prefill) || null;
-if (!pf || typeof pf !== 'object') return {};
+if (!pf || typeof pf !== 'object') return out0;
 var od = Object.assign({}, context.orderData || {});
 ['fullName', 'phone', 'city', 'branch'].forEach(function (k) { if (pf[k] && String(pf[k]).trim()) od[k] = String(pf[k]).trim(); });
 var ready = !!(od.fullName && od.phone && od.city && od.branch);
-return { orderData: od, recalledDeliveryReady: ready };`;
+return Object.assign(out0, { orderData: od, recalledDeliveryReady: ready });`;
 function applyV3(nodes, edges, notes) {
     const byId = () => Object.fromEntries(nodes.map((n) => [n.id, n]));
     const has = (id) => !!byId()[id];
@@ -337,6 +348,55 @@ function applyV8(nodes, edges, notes) {
     // v8.1: інший товар посеред чекауту не перемикає замовлення (двигун: data.lockProduct), менеджер бачить «додатково просить».
     for (const id of ['n_order_intent', 'n_pay_collect', 'n_collect']) { if (byId[id] && byId[id].data.lockProduct !== true) { byId[id].data.lockProduct = true; notes.push('lockProduct ' + id); } }
     for (const id of ['n_create', 'n_supplier_hold']) { if (byId[id] && !/extraProductsLine/.test(byId[id].data.message || '')) { byId[id].data.message = String(byId[id].data.message || '').replace('🧾 ', '{{context.extraProductsLine}}🧾 '); notes.push('extraProductsLine ' + id); } }
+    return { nodes, edges };
+}
+
+// v9 (тести Олексія 2026-09-06): (1) ibanoplata не створив посилання (двічі connect-timeout) → клієнт отримував
+// «посилання генерується», бот ставав на паузу, повідомлення 18:20 без відповіді. Тепер n_iban_ok_cond: без
+// посилання одразу реквізити вручну (існуючий ланцюжок n_req_iban_l…n_req_sum), без паузи. (2) На кроці оплати
+// клієнт хотів змінити склад замовлення («це я за футболку писав») — n_pay_collect вигадувала умови акції й
+// губила допродаж → json {"backToOrder":true,"note"} повертає в n_order_intent з приміткою. (3) Сповіщення
+// n_supplier_hold: посилання на Instagram клієнта + позиції. (4) n_order_prefill архівує попереднє замовлення.
+const PAY_BACK_RULE = '\nЯКЩО клієнт замість вибору способу оплати хоче ЗМІНИТИ склад замовлення (додати футболку/допродаж, інший колір або кількість, ще один товар, «це я за футболку писав», «а можна ще…») — НЕ обговорюй ціни й НЕ вигадуй умов акцій: поверни ТІЛЬКИ json_output {"backToOrder":true,"note":"<що саме хоче змінити, словами клієнта>"} без тексту — попередній крок сам оновить підсумок і перепитає спосіб оплати.';
+function applyV9(nodes, edges, notes) {
+    const byId = () => Object.fromEntries(nodes.map((n) => [n.id, n]));
+    const placer = makePlacer(nodes);
+    const pos = (id) => (byId()[id] || { position: { x: 0, y: 0 } }).position;
+    // (1) посилання ibanoplata не створилось → реквізити вручну
+    if (!byId().n_iban_ok_cond && byId().n_iban_invoice && byId().n_req_iban_l) {
+        const p = placer.place(pos('n_iban_invoice').x + GX, pos('n_iban_invoice').y + GY);
+        nodes.push({ id: 'n_iban_ok_cond', type: 'condition', position: p, data: { label: '11.1 Посилання на оплату створено?', condition: "/^https?:\\/\\//.test(String(context.ibanPayUrl || ''))", description: 'TRUE → n_requisites (посилання). FALSE (ibanoplata недоступний) → реквізити для ручної оплати одразу, без паузи бота.' } });
+        nodes.push({ id: 'n_req_fallback_msg', type: 'message', position: placer.place(p.x + GX, p.y + GY), data: { label: '11.2 Посилання нема — реквізити вручну', text: '💰 До сплати зараз: {{context.payAmount}} грн ({{context.payLabel}}).\n\nПосилання на оплату зараз не створюється, тому надсилаю реквізити для оплати вручну — кожен рядок окремо, натисніть, щоб скопіювати 👇', variants: [], description: 'Фолбек, коли ibanoplata не відповів: далі стандартний ланцюжок реквізитів n_req_iban_l … n_req_sum.' } });
+        edges = edges.map((e) => (e.source === 'n_iban_invoice' && e.target === 'n_requisites' ? { ...e, target: 'n_iban_ok_cond' } : e));
+        edges.push({ id: 'e_n_iban_ok_cond_true', source: 'n_iban_ok_cond', target: 'n_requisites', sourceHandle: 'true' });
+        edges.push({ id: 'e_n_iban_ok_cond_false', source: 'n_iban_ok_cond', target: 'n_req_fallback_msg', sourceHandle: 'false' });
+        edges.push({ id: 'e_n_req_fallback_msg_next', source: 'n_req_fallback_msg', target: 'n_req_iban_l' });
+        notes.push('+ n_iban_ok_cond / n_req_fallback_msg');
+    }
+    // (2) зміна складу замовлення з кроку оплати → назад у n_order_intent
+    if (!byId().n_pay_back_cond && byId().n_pay_collect && byId().n_order_intent) {
+        const p = placer.place(pos('n_pay_collect').x + GX, pos('n_pay_collect').y - GY);
+        nodes.push({ id: 'n_pay_back_cond', type: 'condition', position: p, data: { label: '10.5 Клієнт хоче змінити замовлення?', condition: '!!(context.paymentInfo && context.paymentInfo.backToOrder === true)', description: 'TRUE → n_pay_back_clear → n_order_intent (оновлений підсумок). FALSE → n_fs4 як зазвичай.' } });
+        nodes.push({ id: 'n_pay_back_clear', type: 'js', position: placer.place(p.x + GX, p.y - GY), data: { label: '10.6 Скинути вибір оплати, передати примітку', code: "// v9: назад до підсумку — примітка клієнта для n_order_intent, вибір оплати і намір скидаємо.\nvar note = String((context.paymentInfo && context.paymentInfo.note) || context.lastUserMessage || '').trim();\nreturn { orderChangeNote: note || 'клієнт хоче змінити склад замовлення', paymentInfo: null, orderIntent: null };", description: 'Кладе orderChangeNote (промпт n_order_intent її бачить), чистить paymentInfo/orderIntent.' } });
+        const outEdge = edges.find((e) => e.source === 'n_pay_collect' && !e.sourceHandle);
+        const nextId = outEdge ? outEdge.target : 'n_fs4';
+        edges = edges.map((e) => (e.source === 'n_pay_collect' && !e.sourceHandle ? { ...e, target: 'n_pay_back_cond' } : e));
+        edges.push({ id: 'e_n_pay_back_cond_true', source: 'n_pay_back_cond', target: 'n_pay_back_clear', sourceHandle: 'true' });
+        edges.push({ id: 'e_n_pay_back_cond_false', source: 'n_pay_back_cond', target: nextId, sourceHandle: 'false' });
+        edges.push({ id: 'e_n_pay_back_clear_next', source: 'n_pay_back_clear', target: 'n_order_intent' });
+        notes.push('+ n_pay_back_cond / n_pay_back_clear');
+    }
+    if (byId().n_pay_collect && !/backToOrder/.test(byId().n_pay_collect.data.systemPrompt || '')) { byId().n_pay_collect.data.systemPrompt = String(byId().n_pay_collect.data.systemPrompt || '') + PAY_BACK_RULE; notes.push('n_pay_collect backToOrder rule'); }
+    // (3) сповіщення «постачальнику не відправлено»: клієнт з посиланням на Instagram + позиції
+    const hold = byId().n_supplier_hold;
+    if (hold) {
+        let m = String(hold.data.message || '');
+        m = m.replace('📏 Розмір: {{context.recommendedSize}} | 🎨 Колір: {{context.colorChoice.color}}', '🧾 Позиції: {{context.orderUnitsText}}');
+        if (!/instagram\.com/.test(m)) m = m.replace('👤 {{context.orderData.fullName}}', '👤 Клієнт: {{context.senderName}} — https://instagram.com/{{context.igUsername}}\n📦 Отримувач: {{context.orderData.fullName}}');
+        if (m !== hold.data.message) { hold.data.message = m; notes.push('n_supplier_hold client/units'); }
+    }
+    // (4) n_order_prefill: код із константи (applyV3 створює ноду лише раз — оновлюємо код тут)
+    if (byId().n_order_prefill && !/prevOrders/.test(byId().n_order_prefill.data.code || '')) { byId().n_order_prefill.data.code = PREFILL_CODE; notes.push('n_order_prefill prevOrders'); }
     return { nodes, edges };
 }
 
@@ -448,7 +508,8 @@ function refresh(flow, opts) {
     const v4 = applyV4(v3raw.nodes, v3raw.edges, notes);
     const v5 = applyV5(v4.nodes, v4.edges, notes);
     const v7 = applyV7(v5.nodes, v5.edges, notes);
-    const v3 = applyV8(v7.nodes, v7.edges, notes);
+    const v8 = applyV8(v7.nodes, v7.edges, notes);
+    const v3 = applyV9(v8.nodes, v8.edges, notes);
     return { nodes: v3.nodes, edges: v3.edges, notes, keyUpdates: [], keyDeletes: KB_KEY_DELETES.slice() };
 }
 
@@ -642,7 +703,7 @@ function transform(flow, keysMap, opts) {
     { const n = byId()['n_ttn_sync_crm']; if (n) { placer.free('n_ttn_sync_crm'); n.position = placer.place(n.position.x, n.position.y); } }
 
     REMOVE.forEach(removeNode);
-    { const v2 = applyV2(nodes, edges, notes); const v3 = applyV3(v2.nodes, v2.edges, notes); const v4 = applyV4(v3.nodes, v3.edges, notes); const v5 = applyV5(v4.nodes, v4.edges, notes); const v7 = applyV7(v5.nodes, v5.edges, notes); const v8 = applyV8(v7.nodes, v7.edges, notes); nodes = v8.nodes; edges = v8.edges; }
+    { const v2 = applyV2(nodes, edges, notes); const v3 = applyV3(v2.nodes, v2.edges, notes); const v4 = applyV4(v3.nodes, v3.edges, notes); const v5 = applyV5(v4.nodes, v4.edges, notes); const v7 = applyV7(v5.nodes, v5.edges, notes); const v8 = applyV8(v7.nodes, v7.edges, notes); const v9 = applyV9(v8.nodes, v8.edges, notes); nodes = v9.nodes; edges = v9.edges; }
 
     // ── ключі ──
     const keyUpdates = [

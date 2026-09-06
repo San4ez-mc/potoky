@@ -357,6 +357,15 @@ try {
   var bulk = Array.isArray(found.bulkPricing) ? found.bulkPricing : [];
   var __qtyPrices = {};
   for (var bi = 0; bi < bulk.length; bi++) { var bp2 = bulk[bi]; if (bp2 && bp2.quantity && bp2.price) { __qtyPrices[String(bp2.quantity)] = Number(bp2.price); __qtyPromoParts.push(bp2.quantity + ' шт — ' + Number(bp2.price) + ' грн'); } }
+  // v8.1 (прогін 2026-09-06: дві кофти A0187 порахувались 2558, хоча в описі «(2 шт: 2199 ₴)»): якщо в CRM
+  // bulkPricing не заповнено, а в описі/презентації є «N шт: ЦІНА ₴/грн» — беремо звідти (це той самий текст,
+  // який бот показує клієнту, тож ціна в підсумку/інвойсі збігається з обіцянкою). Власнику варто заповнити
+  // «Акції за кількість» у картці товару — тоді описовий фолбек не потрібен.
+  if (!__qtyPromoParts.length) {
+    var __promoSrc = String(found.presentationText || '') + '\n' + String(found.description || '');
+    var __promoRe = /(\d{1,2})\s*шт\.?\s*[:—–-]\s*(\d[\d\s]{2,7})\s*(?:₴|грн)/gi; var __pm;
+    while ((__pm = __promoRe.exec(__promoSrc))) { var __pq = Number(__pm[1]); var __pp = Number(String(__pm[2]).replace(/\s/g, '')); if (__pq > 1 && __pp > 0 && !__qtyPrices[String(__pq)]) { __qtyPrices[String(__pq)] = __pp; __qtyPromoParts.push(__pq + ' шт — ' + __pp + ' грн'); } }
+  }
   var __qtyPromoText = __qtyPromoParts.length ? ('Акція за кількість: ' + __qtyPromoParts.join(', ') + '.') : '';
 
   // ── набір: setComponents вже структуровані (productId/name/sku/qty) — довантажуємо

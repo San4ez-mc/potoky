@@ -1291,6 +1291,16 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
         if (!_isDifferentProduct && incomingImageUrl && !ctx.orderRef && !_keepOnImage) {
             _isDifferentProduct = true;
         }
+        // v8.1 (прогін 2026-09-06, «і ще хочу кофту A0187 до цього ж замовлення» на кроці «Оформляємо?»):
+        // на нодах чекауту з data.lockProduct===true (n_order_intent/n_pay_collect/n_collect) інший
+        // артикул/пост НЕ перемикає товар і не стирає замовлення — інакше костюм мовчки замінювався на
+        // кофту, а бот обіцяв «спільне замовлення», якого система не створить. Натомість позначаємо
+        // context.extraProductMention — промпт ноди пояснює, що другий товар додасть менеджер у ту ж посилку.
+        const _lockNode = runtime.currentNodeId ? nodesById.get(runtime.currentNodeId) : null;
+        if (_isDifferentProduct && _lockNode && _lockNode.data && _lockNode.data.lockProduct === true) {
+            ctx.extraProductMention = _candidates.length ? _candidates.join(', ') : (incomingImageUrl ? 'фото' : 'пост/рілс');
+            _isDifferentProduct = false;
+        }
         if (_isDifferentProduct) {
             delete ctx.product;
             delete ctx.colorChoice;

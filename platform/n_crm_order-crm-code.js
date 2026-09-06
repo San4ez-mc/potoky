@@ -124,7 +124,7 @@ try {
   var body = {
     buyerId: buyerId,
     sourceName: 'Instagram' + (shopTag ? (' ' + shopTag) : ''),
-    managerComment: 'Товар: ' + (p.customerName || p.name || '') + ' | Позиції: ' + unitsText + ' | Оплата: ' + payTxt + (supplierName ? (' | Постачальник: ' + supplierName) : '') + (items.some(function (it) { return it.isUpsell; }) ? (' | + допродаж: ' + items.filter(function (it) { return it.isUpsell; })[0].name + ' × ' + items.filter(function (it) { return it.isUpsell; })[0].quantity) : '') + ' | Перевірити оплату.',
+    managerComment: 'Товар: ' + (p.customerName || p.name || '') + ' | Позиції: ' + unitsText + ' | Оплата: ' + payTxt + (supplierName ? (' | Постачальник: ' + supplierName) : '') + (items.some(function (it) { return it.isUpsell; }) ? (' | + допродаж: ' + items.filter(function (it) { return it.isUpsell; })[0].name + ' × ' + items.filter(function (it) { return it.isUpsell; })[0].quantity) : '') + (String(context.extraProducts || '').trim() ? (' | ДОДАТКОВО ПРОСИТЬ (додати вручну): ' + String(context.extraProducts).trim()) : '') + ' | Перевірити оплату.',
     shipping: { shippingService: 'Нова Пошта', city: (od.city || ''), branch: (od.branch || ''), recipientFullName: (od.fullName || ''), recipientPhone: phone },
     items: items
   };

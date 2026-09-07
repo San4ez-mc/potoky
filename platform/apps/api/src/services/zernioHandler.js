@@ -1056,7 +1056,9 @@ async function handleIncomingMessage(botId, body) {
 
 // sessionId -> { timer, texts:[], imageUrl, botId, contactId, conversationId, contactName }
 const _pendingFlowRuns = new Map();
-const FLOW_DEBOUNCE_MS = 1200;
+// 2026-09-07 (тест Олексія 11:14): «Так що? 😡» і «Буде відповідь?» за 3.2 с → два окремі прогони, дві майже
+// однакові відповіді. Вікно 2.5 с склеює такі «дуплети» в одне повідомлення; затримка для клієнта непомітна.
+const FLOW_DEBOUNCE_MS = 2500;
 
 // Проблема Д (аудит 2026-09-01, живий кейс F0029 — фото+презентація надіслані
 // повторно кілька разів поспіль): дебаунс вище зливає повідомлення, що прийшли

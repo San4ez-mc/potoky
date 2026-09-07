@@ -225,7 +225,8 @@ const ADDRESS_ASK = '\n\n📦 Дані для відправки (ПІБ, тел
 // фото своєї речі посеред підбору не скидає товар; адреса "наперед" не губиться; умови в підсумку.
 // v10: «В наявності цей товар ще??» разом із рілсом лишалось без відповіді (тест 09-07) — питання про наявність
 // теж проходить до n_size, яка відповідає «так, є» і просить параметри.
-const SIZE_FIRST_MSG_RE = '\\d{2,3}\\s*[\\/,\\s\\-]\\s*\\d{2,3}|зр[іо]ст|ріст|ваг[аи]|\\bсм\\b|\\bкг\\b|розмір\\s*[SMLX]{1,4}\\b|\\b[SMLX]{1,4}\\s*розмір|наявн|є ще|актуальн|залишил';
+// v12: «джинси 31 размера и кофта М», «футболку S» — розміри в першому повідомленні теж не чекають.
+const SIZE_FIRST_MSG_RE = '\\d{2,3}\\s*[\\/,\\s\\-]\\s*\\d{2,3}|зр[іо]ст|ріст|ваг[аи]|\\bсм\\b|\\bкг\\b|розмір|размер|\\b(xs|s|m|l|xl|xxl|xxxl|2xl|3xl)\\b|\\b(хс|м|л|хл|ххл)\\b(?!\\.)|наявн|є ще|актуальн|залишил';
 const SIZE_PROMPT_V3 = '\nДОДАТКОВО: (а) зріст у метрах («1,78», «1.78 м») = 178 см — переводь сам; (б) якщо клієнт разом із параметрами назвав КОЛІР зі списку кольорів товару («чорний 182/100», «S в графітному») — додай у той самий json_output поле "color":"<колір як у списку>", щоб не перепитувати; (в) якщо клієнт надіслав фото (текст "[фото]") — по фото розмір не визначаю, скажи це одним реченням і попроси зріст і вагу (товар НЕ змінюй); (г) якщо клієнт назвав власні заміри (плечі/рукав/ширина) — подякуй і скажи, що підбір іде за зростом і вагою, попроси їх.';
 const ORDER_TERMS_DEFAULT = 'Обмін/повернення 14 днів ✅ Відправка Новою поштою 📦 Відправка до 5 робочих днів 🚚';
 // Довідка магазину — з реальних відповідей менеджерів (2026-09-04). З v7 (2026-09-05) живе в CRM
@@ -472,6 +473,60 @@ function applyV11(nodes, edges, notes) {
     return { nodes, edges };
 }
 
+// v12 (бойовий старт 2026-09-07, баги від власника 20:12–20:43): (1) alsoWants — інші речі з першого повідомлення
+// та з кроків розміру/кольору не губляться, допродаж включається з названим кольором; (2) silentOnExit на n_size/
+// n_color (дубль «підійде XL»); (3) фото допродажу автоматично перед «Оформляємо?»; (4) коротке «ціна?/привіт»
+// одразу після презентації — без відповіді; (5) SIZE_FIRST_MSG_RE ловить «31 размера», «кофта М», S/M/L;
+// (6) n_unknown_admin шле саме фото клієнта; (7) розбіжність привʼязки реклами → у деталі n_create.
+const ALSO_WANTS_RULE = '\nЯКЩО клієнт згадує ІНШІ речі (кофта, футболка, лофери, куртка…), їхні кольори чи розміри — НЕ ігноруй і НЕ відмовляй: одним реченням скажи, що це теж підберемо/додамо після поточного товару, і додай у той самий json_output поле "alsoWants":"<що саме: річ, колір, розмір, кількість>" (разом із параметрами/кольором, коли вони є). На «спершу поточний товар» не наполягай зайвий раз.';
+const ALSO_WANTS_INTENT = '\nКЛІЄНТ ТАКОЖ ХОЧЕ (з попередніх кроків; порожньо = нічого): «{{context.alsoWants}}». ЯКЩО непорожньо: те, що є допродажем зі списку (футболка) з названим кольором/кількістю — ОДРАЗУ включи в підсумок як позицію допродажу і при згоді поверни addUpsell/upsellQty/upsellNote з цими даними, НЕ перепитуй колір; інші речі (кофта, лофери, інший товар) — скажи одним реченням, що менеджер додасть їх у цю ж посилку і напише ціну, і при згоді поверни їх у "extraProducts".';
+const PRICE_AFTER_PRESENTATION_RE = '^(вітаю|привіт|здрастуйте|добр(ий|ого)\\s+\\w+)?[\\s,!.)]*((яка|скільки|сколько|какая)\\s+)?(ціна|цена|коштує|стоит|вартість)\\??[\\s!.)]*$';
+function applyV12(nodes, edges, notes) {
+    const byId = () => Object.fromEntries(nodes.map((n) => [n.id, n]));
+    const placer = makePlacer(nodes);
+    const pos = (id) => (byId()[id] || { position: { x: 0, y: 0 } }).position;
+    for (const id of ['n_size', 'n_color']) {
+        const n = byId()[id]; if (!n) continue;
+        if (!/"alsoWants"/.test(n.data.systemPrompt || '')) { n.data.systemPrompt = String(n.data.systemPrompt || '') + ALSO_WANTS_RULE; notes.push('alsoWants ' + id); }
+        if (n.data.silentOnExit !== true) { n.data.silentOnExit = true; notes.push('silentOnExit ' + id); }
+    }
+    if (byId().n_size && byId().n_size.data.ignoreRightAfterPresentationRe !== PRICE_AFTER_PRESENTATION_RE) { byId().n_size.data.ignoreRightAfterPresentationRe = PRICE_AFTER_PRESENTATION_RE; notes.push('n_size ignore price-after-presentation'); }
+    if (byId().n_order_intent && !/КЛІЄНТ ТАКОЖ ХОЧЕ/.test(byId().n_order_intent.data.systemPrompt || '')) { byId().n_order_intent.data.systemPrompt = String(byId().n_order_intent.data.systemPrompt || '') + ALSO_WANTS_INTENT; notes.push('alsoWants n_order_intent'); }
+    // фото допродажу перед «Оформляємо?» (один раз на сесію)
+    if (!byId().n_upsell_photo_cond && byId().n_order_intent) {
+        const p = placer.place(pos('n_order_intent').x - GX, pos('n_order_intent').y - GY);
+        nodes.push({ id: 'n_upsell_photo_cond', type: 'condition', position: p, data: { label: '8.9 Є фото допродажу і ще не показували?', condition: "!!(context.product && /^https?:/.test(String(context.product.upsellPhotoUrl || ''))) && !context.upsellPhotoSent", description: 'TRUE → надіслати фото допродажу перед підсумком (скрін власника 20:19: «мало ще футболок фото скинути»).' } });
+        nodes.push({ id: 'n_upsell_photo', type: 'sendPhoto', position: placer.place(p.x, p.y - GY), data: { label: '8.91 Фото допродажу', photoVar: 'product.upsellPhotoUrl', caption: '', description: 'Фото першого допродажу (футболка) — без підпису, підсумок іде наступним повідомленням.' } });
+        nodes.push({ id: 'n_upsell_photo_mark', type: 'js', position: placer.place(p.x + GX, p.y - GY), data: { label: '8.92 Позначити: фото допродажу показано', code: 'return { upsellPhotoSent: true };', description: 'Щоб не слати фото допродажу повторно (повернення з кроку оплати тощо).' } });
+        edges = edges.map((e) => (e.target === 'n_order_intent' && e.source !== 'n_upsell_photo_cond' && e.source !== 'n_upsell_photo_mark' ? { ...e, target: 'n_upsell_photo_cond' } : e));
+        edges.push({ id: 'e_n_upsell_photo_cond_true', source: 'n_upsell_photo_cond', target: 'n_upsell_photo', sourceHandle: 'true' });
+        edges.push({ id: 'e_n_upsell_photo_cond_false', source: 'n_upsell_photo_cond', target: 'n_order_intent', sourceHandle: 'false' });
+        edges.push({ id: 'e_n_upsell_photo_next', source: 'n_upsell_photo', target: 'n_upsell_photo_mark' });
+        edges.push({ id: 'e_n_upsell_photo_mark_next', source: 'n_upsell_photo_mark', target: 'n_order_intent' });
+        notes.push('+ n_upsell_photo_cond / n_upsell_photo / n_upsell_photo_mark');
+    }
+    const ua = byId().n_unknown_admin;
+    if (ua && ua.data.alertPhoto !== '{{context.lastUserImageUrl}}') { ua.data.alertPhoto = '{{context.lastUserImageUrl}}'; notes.push('n_unknown_admin alertPhoto'); }
+    // розмірна сітка на запит (Купцова 21:44: «зараз покажу сітку» — і нічого)
+    for (const id of ['n_size', 'n_color']) {
+        const n = byId()[id]; if (!n || /"wantsSizeChart"/.test(n.data.systemPrompt || '')) continue;
+        n.data.systemPrompt = String(n.data.systemPrompt || '') + '\nЯКЩО клієнт просить РОЗМІРНУ СІТКУ/таблицю розмірів: коли у нотатці про сітку вище сказано, що картинка Є — додай у json_output {"wantsSizeChart":true} (можна з іншими полями) і одним реченням скажи, що надсилаєш сітку та за потреби підбереш розмір за зростом і вагою; коли картинки НЕМА — чесно скажи, що сітки нема, і запропонуй підбір за зростом/вагою або обхватом грудей. НІКОЛИ не пиши «ось сітка»/«зараз покажу», якщо не повертаєш wantsSizeChart.';
+        notes.push('sizeChart rule ' + id);
+    }
+    // той самий товар презентовано < 30 хв тому (коментар → приватна відповідь → DM з реклами) — без повтору картки
+    if (!byId().n_presented_recently_cond && byId().n_have_product && byId().n_has_photo && byId().n_fs1) {
+        const p = placer.place(pos('n_has_photo').x, pos('n_has_photo').y - GY);
+        nodes.push({ id: 'n_presented_recently_cond', type: 'condition', position: p, data: { label: '1.75 Цей товар щойно презентували?', condition: 'context.skipPresentation === true', description: 'TRUE → без фото і картки (n_lookup: той самий sku < 30 хв тому), одразу далі. FALSE → звичайна презентація.' } });
+        edges = edges.map((e) => (e.source === 'n_have_product' && (e.sourceHandle || null) === 'true' ? { ...e, target: 'n_presented_recently_cond' } : e));
+        edges.push({ id: 'e_n_presented_recently_true', source: 'n_presented_recently_cond', target: 'n_fs1', sourceHandle: 'true' });
+        edges.push({ id: 'e_n_presented_recently_false', source: 'n_presented_recently_cond', target: 'n_has_photo', sourceHandle: 'false' });
+        notes.push('+ n_presented_recently_cond');
+    }
+    const cr = byId().n_create;
+    if (cr && !/adLinkMismatch/.test(cr.data.alertDetails || '')) { cr.data.alertDetails = String(cr.data.alertDetails || '') + '\n{{context.adLinkMismatchLine}}'; notes.push('n_create adLinkMismatch'); }
+    return { nodes, edges };
+}
+
 // v7 (2026-09-05, база знань перенесена в CRM): профіль магазину з CRM у context.shop (нода n_shop_profile
 // після n_route), промпти читають {{context.shop.faq}}/{{context.shop.terms}}; вектор-база (useKb) вимкнена,
 // натомість пошук по базі знань CRM (useCrmKb) на діалогових нодах; ключі SHOP_FAQ/ORDER_TERMS_LINE/VECTOR_*
@@ -583,7 +638,8 @@ function refresh(flow, opts) {
     const v8 = applyV8(v7.nodes, v7.edges, notes);
     const v9 = applyV9(v8.nodes, v8.edges, notes);
     const v10 = applyV10(v9.nodes, v9.edges, notes);
-    const v3 = applyV11(v10.nodes, v10.edges, notes);
+    const v11 = applyV11(v10.nodes, v10.edges, notes);
+    const v3 = applyV12(v11.nodes, v11.edges, notes);
     return { nodes: v3.nodes, edges: v3.edges, notes, keyUpdates: [], keyDeletes: KB_KEY_DELETES.slice() };
 }
 
@@ -777,7 +833,7 @@ function transform(flow, keysMap, opts) {
     { const n = byId()['n_ttn_sync_crm']; if (n) { placer.free('n_ttn_sync_crm'); n.position = placer.place(n.position.x, n.position.y); } }
 
     REMOVE.forEach(removeNode);
-    { const v2 = applyV2(nodes, edges, notes); const v3 = applyV3(v2.nodes, v2.edges, notes); const v4 = applyV4(v3.nodes, v3.edges, notes); const v5 = applyV5(v4.nodes, v4.edges, notes); const v7 = applyV7(v5.nodes, v5.edges, notes); const v8 = applyV8(v7.nodes, v7.edges, notes); const v9 = applyV9(v8.nodes, v8.edges, notes); const v10 = applyV10(v9.nodes, v9.edges, notes); const v11 = applyV11(v10.nodes, v10.edges, notes); nodes = v11.nodes; edges = v11.edges; }
+    { const v2 = applyV2(nodes, edges, notes); const v3 = applyV3(v2.nodes, v2.edges, notes); const v4 = applyV4(v3.nodes, v3.edges, notes); const v5 = applyV5(v4.nodes, v4.edges, notes); const v7 = applyV7(v5.nodes, v5.edges, notes); const v8 = applyV8(v7.nodes, v7.edges, notes); const v9 = applyV9(v8.nodes, v8.edges, notes); const v10 = applyV10(v9.nodes, v9.edges, notes); const v11 = applyV11(v10.nodes, v10.edges, notes); const v12 = applyV12(v11.nodes, v11.edges, notes); nodes = v12.nodes; edges = v12.edges; }
 
     // ── ключі ──
     const keyUpdates = [

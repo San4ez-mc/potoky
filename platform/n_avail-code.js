@@ -31,6 +31,8 @@ function unitsText(us){ return us.length+' шт: '+us.map(function(u){ return [u
 // = 799 + 449. Раніше tier лише при точному збігу (3 → 3×449), а бот у підсумку обіцяв 799 за три (тест 09-07).
 function unitsTotal(n){ var qp=(context.product&&context.product.qtyPrices)||{}; var unit=Number(context.product&&context.product.price)||0; var tiers=Object.keys(qp).map(Number).filter(function(t){ return t>1&&Number(qp[t])>0; }).sort(function(a,b){ return b-a; }); var left=n,total=0; for(var i=0;i<tiers.length;i++){ while(left>=tiers[i]){ total+=Number(qp[tiers[i]]); left-=tiers[i]; } } return total+left*unit; }
 var unitsOut={ orderUnits:units, orderQty:units.length, orderUnitsText:unitsText(units), orderUnitsTotal:unitsTotal(units.length) };
+var __alsoC=[String(context.alsoWants||'').trim(), String((context.colorChoice&&context.colorChoice.alsoWants)||'').trim()].filter(Boolean).join('; ');
+if(__alsoC) unitsOut.alsoWants=__alsoC;
 function sizeOk(o){
   var pr=o.properties||[];
   var hasSizeProp = pr.some(function(x){ return /розмір|размер/i.test(String(x.name||'')); });
@@ -38,6 +40,8 @@ function sizeOk(o){
   return pr.some(function(x){ return /розмір|размер/i.test(String(x.name||'')) && String(x.value).toUpperCase()===String(chosenSize).toUpperCase(); });
 }
 function hasQty(o){ return o && o.quantity!==undefined && o.quantity!==null && o.quantity!==''; }
+// CRM f50aba5: offer.inStock рахує бекенд (враховує alwaysAvailable) — якщо є, він головний.
+function offerOk(o){ if(o&&o.inStock!==undefined&&o.inStock!==null) return !!o.inStock; return Number(o&&o.quantity)>0; }
 // Живий прогін 2026-09-04: у новій CRM залишки по offers НЕ ведуться (43/43 offers quantity=0) —
 // перевірка "quantity>0" блокувала КОЖЕН колір ("варіант закінчився"). Тому наявність по
 // залишках перевіряємо ЛИШЕ якщо товар реально веде облік: хоча б один offer із quantity>0.
@@ -68,7 +72,7 @@ if(colorsList.length){
     var withSize = candidates.filter(sizeOk);
     // суворий режим (кількості ведуться по розмірах): нема offer саме цього розміру → нема в наявності
     var pool = withSize.length ? withSize : ((context.product&&context.product.stockTracked===true&&chosenSize) ? [] : candidates);
-    if(!pool.some(function(o){ return Number(o.quantity) > 0; })) missing=cc;
+    if(!pool.some(offerOk)) missing=cc;
   }
   if (missing) {
     var _unavail = Array.isArray(context.unavailableColors) ? context.unavailableColors.slice() : [];

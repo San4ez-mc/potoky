@@ -67,7 +67,8 @@ var addressAskLine = haveAddr
 var upsellLine = upsellSum>0 ? (' + допродаж: '+String(((context.product&&context.product.upsellItems)||[])[0]&&((context.product.upsellItems)[0].name)||'допродаж')+' ×'+upsellQty+' ('+upsellSum+' грн)') : '';
 var extraProducts=String((oi.extraProducts)||'').trim();
 var extraProductsLine=extraProducts?('➕ ДОДАТКОВО просить (додати в цю ж посилку вручну, ціну/розмір узгодити): '+extraProducts+'\n'):'';
-var out={ orderRef:ref, orderRefAt:refAt, orderQty:qty, orderUnits:units, orderUnitsText:orderUnitsText, orderUnitsTotal:mainTotal, extraProducts:extraProducts, extraProductsLine:extraProductsLine, upsellLine:upsellLine, orderChangeNote:'', fop:fop, upsellSum:upsellSum, upsellQty:upsellQty, addressAskLine:addressAskLine };
+var adLinkMismatchLine=String(context.adLinkMismatch||'').trim()?('⚠️ '+String(context.adLinkMismatch).trim()):'';
+var out={ orderRef:ref, orderRefAt:refAt, orderQty:qty, orderUnits:units, orderUnitsText:orderUnitsText, orderUnitsTotal:mainTotal, extraProducts:extraProducts, extraProductsLine:extraProductsLine, upsellLine:upsellLine, adLinkMismatchLine:adLinkMismatchLine, orderChangeNote:'', fop:fop, upsellSum:upsellSum, upsellQty:upsellQty, addressAskLine:addressAskLine };
 if(method==='cod_trust'){ out.payAmount=0; out.payLabel='без передоплати (виняток за домовленістю, накладений платіж повністю)'; return out; }
 out.payAmount = method==='cod'?200:full;
 out.payLabel = method==='cod'?('передоплата 200 грн, решта '+(full-200)+' грн при отриманні'):('повна оплата, '+full+' грн');

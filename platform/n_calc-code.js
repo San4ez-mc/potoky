@@ -94,13 +94,18 @@ if (s0.color && context.product && String(context.product.colors || '').trim()) 
   __colorPick = __list.filter(function (c) { var l = c.toLowerCase(); return l === __want || l.indexOf(__want) === 0 || __want.indexOf(l) === 0; })[0] || null;
 }
 if (__colorPick) { __needsColorAsk = false; __sizeColorFollowup = '\n\n🎨 Колір: ' + __colorPick + ' — зафіксувала 👍'; }
+// «також хоче» (інші речі, названі на кроці розміру) — зливаємо з тим, що вже було з першого повідомлення
+var __alsoMerged = [String(context.alsoWants || '').trim(), String(s0.alsoWants || '').trim()].filter(Boolean).join('; ');
 function done(size, source) {
   var out = { recommendedSize: size, sizeSource: source, sizeReplyText: replyFor(source, size), sizeOutOfRange: false, sizeColorFollowup: __sizeColorFollowup, sizeAskedFor: __askedFor, knownMeasurementsToSave: __kmSave };
   if (__colorPick) out.colorChoice = { color: __colorPick, _fromSizeStep: true };
+  if (__alsoMerged) out.alsoWants = __alsoMerged;
   return out;
 }
 function oor(reason, size) {
-  return { sizeOutOfRange: true, sizeOorReason: reason, recommendedSize: size || '', sizeAskedFor: __askedFor, knownMeasurementsToSave: __kmSave };
+  var o = { sizeOutOfRange: true, sizeOorReason: reason, recommendedSize: size || '', sizeAskedFor: __askedFor, knownMeasurementsToSave: __kmSave };
+  if (__alsoMerged) o.alsoWants = __alsoMerged;
+  return o;
 }
 
 // Реальні розміри товару з offers (порожньо = у CRM розмірів по офферах нема — тоді НЕ
@@ -190,6 +195,10 @@ if (avail.length && avail.indexOf(size) < 0) {
   // SIZE_CHART до неї не застосовна, чесно ескалюємо (раніше мовчки брався перший розмір).
   var letterAvail = avail.filter(function (a) { return order.indexOf(a) >= 0; });
   if (!letterAvail.length) return oor('за сіткою виходить ' + size + ', але у товару числова/нестандартна сітка: ' + avail.join(', '), size);
+  // 2026-09-07 (Олена, 185/120, куртка S–XXL): за сіткою XXXL, найбільший наявний XXL — раніше мовчки брали XXL
+  // («буде точно мала», менеджер). Більший за наявні → ескалація до менеджера, а не менший розмір.
+  var __maxIdx = Math.max.apply(null, letterAvail.map(function (a) { return order.indexOf(a); }));
+  if (order.indexOf(size) > __maxIdx) return oor('за параметрами (' + h + ' см / ' + w + ' кг) виходить ' + size + ', а найбільший наявний розмір — ' + order[__maxIdx] + ' (буде малий)', size);
   var idx = order.indexOf(size), best = letterAvail[0], bestd = 999;
   for (var i = 0; i < letterAvail.length; i++){ var dd = Math.abs(order.indexOf(letterAvail[i]) - idx); if (dd < bestd){ bestd = dd; best = letterAvail[i]; } }
   size = best;

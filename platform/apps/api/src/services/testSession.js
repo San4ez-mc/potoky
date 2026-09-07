@@ -424,10 +424,15 @@ function buildAdminAlert({ funnelEnv, title, main, details, ctx, sessionId }) {
     const crmBase = String(env.CRM_PUBLIC_URL || 'https://pcrm.fineko.space').replace(/\/$/, '');
     const ig = String(c.igUsername || '').trim().replace(/^@/, '');
     const who = _escHtml(c.senderName || ig || 'клієнт');
+    // Побажання власника 20:15: кожне посилання з нового рядка, з іконкою; + товар у CRM і пост/рілс, з якого прийшов.
     const links = [];
-    links.push(ig ? `<a href="https://instagram.com/${encodeURIComponent(ig)}">${who}</a>` : who);
-    if (sessionId) links.push(`<a href="${adminBase}/sessions/${sessionId}">сесія</a>`);
-    if (c.crmOrderId && !String(c.crmOrderId).startsWith('TEST-')) links.push(`<a href="${crmBase}/orders?open=${encodeURIComponent(c.crmOrderId)}">замовлення в CRM</a>`);
+    links.push('👤 ' + (ig ? `<a href="https://instagram.com/${encodeURIComponent(ig)}">${who}</a>` : who));
+    if (sessionId) links.push(`🔗 <a href="${adminBase}/sessions/${sessionId}">Сесія у Flows</a>`);
+    if (c.crmOrderId && !String(c.crmOrderId).startsWith('TEST-')) links.push(`🧾 <a href="${crmBase}/orders?open=${encodeURIComponent(c.crmOrderId)}">Замовлення в CRM</a>`);
+    if (c.product && c.product.id && c.product._source === 'crm') links.push(`🛍️ <a href="${crmBase}/products?open=${encodeURIComponent(c.product.id)}">Товар у CRM: ${_escHtml(String(c.product.customerName || c.product.name || c.product.sku || '').slice(0, 60))}</a>`);
+    const postUrl = (c.sharedPost && c.sharedPost.url) || c.adPermalink || '';
+    if (/^https?:/.test(String(postUrl))) links.push(`📣 <a href="${postUrl}">Пост/рілс, з якого прийшов клієнт</a>`);
+    else if (c.entryAd) links.push('📣 Реклама ' + _escHtml(String(c.entryAd)) + (c.adTitle ? ' · ' + _escHtml(String(c.adTitle).replace(/_group_\d+/i, '').slice(0, 60)) : ''));
     const lines = [];
     lines.push('<b>' + String(title || 'Сповіщення').trim() + '</b>' + shopPart);
     if (main && String(main).trim()) { lines.push(''); lines.push(String(main).trim()); }
@@ -435,10 +440,11 @@ function buildAdminAlert({ funnelEnv, title, main, details, ctx, sessionId }) {
     const detClean = det.map((d) => String(d || '').replace(/\s+$/, '')).filter((d, i, arr) => d || (arr[i - 1] && arr[i + 1]));
     if (detClean.length) { lines.push(''); lines.push(...detClean); }
     lines.push('');
-    lines.push('👤 ' + links.join(' · '));
+    lines.push(...links);
     return lines.join('\n');
 }
-async function sendAdminAlert({ session, ctx, funnelEnv, runtime, title, main, details, reason, nodeId }) {
+// photoUrl — надіслати як фото з підписом (клієнт скинув скрін/фото, менеджеру треба бачити саме його, а не «[фото]»).
+async function sendAdminAlert({ session, ctx, funnelEnv, runtime, title, main, details, reason, nodeId, photoUrl }) {
     const adminId = funnelEnv.ADMIN_TELEGRAM_ID || await getSystemKeyValue('ADMIN_TELEGRAM_ID');
     const tok = funnelEnv.TELEGRAM_BOT_TOKEN || '';
     if (!adminId || !/^\d+:[A-Za-z0-9_-]{20,}$/.test(tok)) {
@@ -446,8 +452,16 @@ async function sendAdminAlert({ session, ctx, funnelEnv, runtime, title, main, d
         return false;
     }
     const txt = buildAdminAlert({ funnelEnv, title, main, details, ctx, sessionId: session && session.id });
-    const r = await fetch('https://api.telegram.org/bot' + tok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(adminId), text: txt, parse_mode: 'HTML', disable_web_page_preview: true }) }).catch(() => null);
-    const j = r ? await r.json().catch(() => ({})) : {};
+    let j = {};
+    const _photo = /^https?:\/\//.test(String(photoUrl || '')) ? String(photoUrl) : '';
+    if (_photo && txt.length <= 1000) {
+        const rp = await fetch('https://api.telegram.org/bot' + tok + '/sendPhoto', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(adminId), photo: _photo, caption: txt, parse_mode: 'HTML' }) }).catch(() => null);
+        j = rp ? await rp.json().catch(() => ({})) : {};
+    }
+    if (!j.ok) {
+        const r = await fetch('https://api.telegram.org/bot' + tok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(adminId), text: txt + (_photo ? '\n🖼 ' + _photo : ''), parse_mode: 'HTML', disable_web_page_preview: true }) }).catch(() => null);
+        j = r ? await r.json().catch(() => ({})) : {};
+    }
     pushDelivery(runtime, 'telegram_notify', !!j.ok, j.ok ? null : (j.description || 'fetch failed'), { chatId: String(adminId), reason, nodeId });
     return !!j.ok;
 }
@@ -1851,6 +1865,26 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
             // speakFirst: нода-діалог сама починає розмову (пропонує/питає), не чекаючи вводу.
             // Тільки на ПЕРШОМУ вході (нема lastUserMessage); далі — звичайний діалог.
             const speakFirstNow = data.speakFirst === true && mode === 'dialog' && !runtime.lastUserMessage;
+            // 2026-09-07 (бойовий старт, скрін власника «По фото, на жаль, розмір не визначу…» — зайве): на кроках
+            // з keepProductOnImage (розмір/колір) фото БЕЗ тексту не викликає модель — питання кроку вже поставлено,
+            // клієнт відповість текстом. Мовчимо і чекаємо далі.
+            // 20:43 (скрін власника): «Вітаю, ціна?» одразу після презентації, де ціна вже є, → бот повторив ціну.
+            // data.ignoreRightAfterPresentationRe — такі короткі репліки протягом 5 хв після презентації без відповіді.
+            if (mode === 'dialog' && data.ignoreRightAfterPresentationRe && runtime.lastUserMessage && ctx.presentedAt && (Date.now() - Number(ctx.presentedAt)) < 5 * 60 * 1000 && !speakFirstNow) {
+                let _ign = false; try { _ign = new RegExp(String(data.ignoreRightAfterPresentationRe), 'i').test(String(runtime.lastUserMessage).trim()); } catch (_e) { _ign = false; }
+                if (_ign) {
+                    pushDelivery(runtime, 'message_ignored', true, null, { nodeId: node.id, reason: 'коротке «ціна?/привіт» одразу після презентації — відповідь уже в картці', text: String(runtime.lastUserMessage).slice(0, 60) });
+                    runtime.lastUserMessage = '';
+                    runtime.waitingForUser = true;
+                    break;
+                }
+            }
+            if (mode === 'dialog' && data.keepProductOnImage === true && runtime.lastUserMessage === '[фото]' && !speakFirstNow) {
+                pushDelivery(runtime, 'photo_ignored', true, null, { nodeId: node.id, reason: 'фото без тексту на кроці розміру/кольору — мовчимо, чекаємо текст' });
+                runtime.lastUserMessage = '';
+                runtime.waitingForUser = true;
+                break;
+            }
             // Детермінована зміна способу оплати (data.detectPaymentChange) — ДО виклику моделі,
             // лише коли інвойс уже є (paymentInfo.method) і нода не n_pay_collect (там це штатний вибір).
             if (data.detectPaymentChange === true && mode === 'dialog' && node.id !== 'n_pay_collect' && runtime.lastUserMessage
@@ -2175,16 +2209,34 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                             await fetch(`${_fdApiUrl}/knowledge/from-dialog`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${_fdApiKey}` }, body: JSON.stringify({ question: String(exit.parsed.askManager).slice(0, 500), sessionId: session.id, productId: (ctx.product && ctx.product.id) || null }) }).catch(() => {});
                         }
                     } catch (_e) { /* best-effort */ }
-                    const otherKeys = Object.keys(exit.parsed).filter((k) => k !== 'askManager' && k !== 'wantsPhoto' && k !== 'photoArticle');
+                    const otherKeys = Object.keys(exit.parsed).filter((k) => k !== 'askManager' && k !== 'wantsPhoto' && k !== 'photoArticle' && k !== 'wantsSizeChart');
                     if (otherKeys.length === 0) exit.done = false;
+                }
+                // 2026-09-07 (Купцова: «Зараз покажу розмірну сітку» — і нічого): {"wantsSizeChart":true} → картинка
+                // сітки з CRM (product.sizeChartUrl); нема картинки → менеджеру сигнал, нода не виходить.
+                if (exit.parsed && exit.parsed.wantsSizeChart === true && !exit.parsed.askManager) {
+                    const _scKeys = Object.keys(exit.parsed).filter((k) => k !== 'wantsSizeChart' && k !== 'wantsPhoto' && k !== 'photoArticle');
+                    if (_scKeys.length === 0) exit.done = false;
+                    const _scUrl = (ctx.product && ctx.product.sizeChartUrl) || '';
+                    if (/^https?:\/\//.test(String(_scUrl))) {
+                        await persistAssistantMessage(session.id, '', { nodeId: node.id, nodeType: 'size_chart_on_demand', attachment: { type: 'photo', url: _scUrl, caption: '' } });
+                        pushDelivery(runtime, 'size_chart_on_demand', true, null, { nodeId: node.id });
+                    } else {
+                        pushDelivery(runtime, 'size_chart_on_demand', false, 'немає product.sizeChartUrl', { nodeId: node.id });
+                        await notifyAdminPhotoMissing(session, ctx, funnelEnv, runtime, 'розмірної сітки (у CRM нема картинки сітки)');
+                    }
                 }
 
                 const isJsonExit = String(exitCondition).trim() === 'json_output';
                 // Використовуємо jsonStart (а не exit.done) — інакше форсований wantsPhoto-only
                 // "continue" (див. вище) показав би клієнту сирий ```json{"wantsPhoto":true}``` блок.
-                const visibleAssistantText = (isJsonExit && typeof exit.jsonStart === 'number')
-                    ? stripJsonAndTrailingText(responseText, exit.jsonStart)
-                    : responseText;
+                // data.silentOnExit (2026-09-07, дубль «підійде XL» від моделі + n_size_reply): при json-виході
+                // видимий текст моделі не показуємо — підтвердження пише наступна детермінована нода.
+                const visibleAssistantText = (data.silentOnExit === true && exit.done && exit.parsed)
+                    ? ''
+                    : ((isJsonExit && typeof exit.jsonStart === 'number')
+                        ? stripJsonAndTrailingText(responseText, exit.jsonStart)
+                        : responseText);
 
                 if (visibleAssistantText) {
                     await persistAssistantMessage(session.id, visibleAssistantText, { nodeId: node.id, nodeType: node.type });
@@ -3386,9 +3438,13 @@ ${sourceContent || '(немає даних)'}
                 const _chat = funnelEnv[data.targetKey || 'ADMIN_TELEGRAM_ID'] || '';
                 const _tok = funnelEnv.TELEGRAM_BOT_TOKEN || '';
                 // Структуровані поля (alertTitle/alertMain/alertDetails) → єдиний формат; інакше legacy message.
-                const _msg = data.alertTitle
-                    ? buildAdminAlert({ funnelEnv, ctx, sessionId: session.id, title: renderTemplate(data.alertTitle, scope), main: renderTemplate(data.alertMain || '', scope), details: renderTemplate(data.alertDetails || '', scope) })
-                    : shopPrefix(funnelEnv) + renderTemplate(data.message || '', scope);
+                if (data.alertTitle) {
+                    // Структуровані поля → єдиний формат (+ фото клієнта підписом, якщо alertPhoto дає URL).
+                    await sendAdminAlert({ session, ctx, funnelEnv, runtime, reason: 'notifyTg', nodeId: node.id, title: renderTemplate(data.alertTitle, scope), main: renderTemplate(data.alertMain || '', scope), details: renderTemplate(data.alertDetails || '', scope), photoUrl: data.alertPhoto ? renderTemplate(data.alertPhoto, scope) : '' });
+                    runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
+                    continue;
+                }
+                const _msg = shopPrefix(funnelEnv) + renderTemplate(data.message || '', scope);
                 if (_chat && _tok && /^\d+:[A-Za-z0-9_-]{20,}$/.test(_tok) && _msg) {
                     const _r = await fetch('https://api.telegram.org/bot' + _tok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(_chat), text: _msg, parse_mode: 'HTML', disable_web_page_preview: true }) }).catch(function(e){ console.error('[notifyTg] ' + e.message); return null; });
                     const _j = _r ? await _r.json().catch(() => ({})) : {};

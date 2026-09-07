@@ -414,7 +414,13 @@ router.patch('/:id/flags',
         if (!session) throw new NotFoundError('Session', req.params.id);
         const ctx = { ...(session.context || {}) };
         if (req.body.adminEngaged !== undefined) ctx.adminEngaged = req.body.adminEngaged;
-        if (req.body.funnelPaused !== undefined) ctx.funnelPaused = req.body.funnelPaused;
+        if (req.body.funnelPaused !== undefined) {
+            ctx.funnelPaused = req.body.funnelPaused;
+            // Ручне перемикання менеджером: pausedBy 'manual' — авто-відновлення (resumeAfterManagerSilence)
+            // чіпає лише паузи від повідомлення менеджера, ручну ніколи не знімає.
+            if (req.body.funnelPaused) { ctx.pausedBy = 'manual'; ctx.pausedAt = new Date().toISOString(); }
+            else { delete ctx.pausedBy; delete ctx.pausedAt; ctx.resumedBy = 'manual'; ctx.resumedAt = new Date().toISOString(); }
+        }
 
         const data = { context: ctx };
         // «Запустити бота» (знімаємо паузу) має реально повертати бота в діалог:

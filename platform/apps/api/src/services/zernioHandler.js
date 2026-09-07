@@ -936,7 +936,11 @@ async function handleIncomingMessage(botId, body) {
     }).filter(Boolean);
     const attachment = mappedAtts[0] || null;
     const imgCount = mappedAtts.filter((a) => a.type === 'photo').length;
-    const mediaLabel = !attachment ? '[порожнє повідомлення]'
+    // 2026-09-07 (OsmanoV поділився сторіс «Переглянути світлину» — до нас дійшов лише текст): фіксуємо СИРІ типи
+    // вкладень і ключі payload у метаданих, щоб бачити, що саме Zernio (не) передає; вкладення без url → мітка.
+    const rawAttTypes = rawAtts.map((a) => String((a && (a.type || a.mimeType || a.contentType)) || 'unknown')).slice(0, 10);
+    const unknownAtts = rawAtts.filter((a) => !(a && (a.url || (a.payload && a.payload.url) || a.src || a.mediaUrl || a.link)));
+    const mediaLabel = !attachment ? (unknownAtts.length ? ('[вкладення без файлу: ' + rawAttTypes.join(', ') + ']') : '[порожнє повідомлення]')
         : mappedAtts.length > 1 ? `[${mappedAtts.length} медіа]`
         : attachment.type === 'video' ? '[відео]' : attachment.type === 'photo' ? '[фото]' : '[вкладення]';
 
@@ -1001,6 +1005,8 @@ async function handleIncomingMessage(botId, body) {
             metadata: {
                 source: 'zernio', zernioMessageId: zMsgId, platformMessageId, messageId: zMsgId,
                 ...(msgCreatedAt ? { channelCreatedAt: msgCreatedAt.toISOString(), channelLatencyMs } : {}),
+                ...(rawAttTypes.length ? { rawAttachmentTypes: rawAttTypes } : {}),
+                rawKeys: Object.keys(msg || {}).slice(0, 25),
                 ...(staleInbound ? { stale: true, staleReason: 'older than last bot reply by >90s (channel delay)' } : {}),
                 ...(adId ? { adId } : {}),
                 ...(attachment ? { attachment, attachments: mappedAtts } : {}),
@@ -1368,6 +1374,45 @@ async function handleSideEvent(botId, event, body) {
     logger.info('[zernioHandler] side event stored', { botId, event, sessionId: session.id });
     return { ok: true, processed: 1 };
 }
+
+// ── Авто-відновлення після втручання менеджера (2026-09-07 21:17, Валерій) ────────────────────────────
+// Бот вів діалог, менеджер вставив «готову відповідь» з Instagram (→ пауза manager_message) і замовк;
+// клієнт написав «Часткова», «Скільки буде доставка?» — тиша. Правило: якщо ДО повідомлення менеджера
+// розмову вів бот (є повідомлення з nodeId), менеджер мовчить ≥10 хв після ОСТАННЬОГО повідомлення клієнта,
+// а клієнт після менеджера писав — знімаємо паузу, бот відповідає на все накопичене, менеджеру — сигнал.
+// Розмови, які менеджер вів від початку (бекфіл 20:23 і нові без bot-nodeId), НЕ відновлюються.
+const MANAGER_SILENCE_RESUME_MS = 10 * 60 * 1000;
+async function resumeAfterManagerSilence() {
+    try {
+        const since = new Date(Date.now() - 24 * 3600 * 1000);
+        const sessions = await db.session.findMany({ where: { isActive: true, isTest: false, lastActive: { gte: since }, context: { path: ['pausedBy'], equals: 'manager_message' } }, select: { id: true, botId: true, context: true }, take: 200 });
+        for (const s of sessions) {
+            try {
+                const ctx = s.context || {};
+                if (!ctx.funnelPaused || !ctx.conversationId) continue;
+                const msgs = await db.message.findMany({ where: { sessionId: s.id, createdAt: { gte: since } }, orderBy: { createdAt: 'asc' }, select: { role: true, content: true, createdAt: true, metadata: true } });
+                let lastManagerIdx = -1; for (let i = msgs.length - 1; i >= 0; i--) { if (((msgs[i].metadata || {}).source) === 'zernio_inbox') { lastManagerIdx = i; break; } }
+                if (lastManagerIdx < 0) continue;
+                const botDroveBefore = msgs.slice(0, lastManagerIdx).some((m) => m.role !== 'user' && !!((m.metadata || {}).nodeId));
+                if (!botDroveBefore) continue;
+                const after = msgs.slice(lastManagerIdx + 1).filter((m) => m.role === 'user');
+                if (!after.length) continue;
+                const lastClientAt = after[after.length - 1].createdAt.getTime();
+                if (Date.now() - lastClientAt < MANAGER_SILENCE_RESUME_MS) continue;
+                const fresh = await db.session.findUnique({ where: { id: s.id }, select: { context: true } });
+                const fc = (fresh && fresh.context) || {};
+                await db.session.update({ where: { id: s.id }, data: { context: { ...fc, funnelPaused: false, pausedBy: null, resumedBy: 'manager_silence', resumedAt: new Date().toISOString() } } });
+                const text = after.map((m) => String(m.content || '')).filter((t) => t && !/^\[порожнє/.test(t)).join('\n').trim();
+                const att = after.map((m) => (m.metadata || {}).attachment).find((a) => a && a.type === 'photo' && /^http/.test(a.url || ''));
+                await logDelivery(s.id, s.botId, 'zernio_inbound', true, null, { reason: 'manager_silence_resume: менеджер мовчить 10 хв — бот відновив і відповідає на накопичене', text: text.slice(0, 80) });
+                logger.info('[zernioHandler] resumed after manager silence', { sessionId: s.id });
+                if (text || att) scheduleFlowRun(s.id, { botId: s.botId, contactId: ctx.contactId || ctx.psid, conversationId: ctx.conversationId, contactName: ctx.senderName, text, imageUrl: att ? att.url : null });
+                sendTelegramAlert(s.botId, '↩️ Бот відновив розмову після 10 хв тиші менеджера\n\nКлієнт: ' + (ctx.senderName || ctx.igUsername || '') + '\nОстаннє: «' + text.slice(0, 120) + '»\nЩоб зупинити бота — пауза в адмінці: https://flows.fineko.space/sessions/' + s.id, s.id).catch(() => {});
+            } catch (e) { logger.warn('[zernioHandler] resumeAfterManagerSilence session error', { sessionId: s.id, error: e.message }); }
+        }
+    } catch (e) { logger.warn('[zernioHandler] resumeAfterManagerSilence error: ' + e.message); }
+}
+setTimeout(() => { resumeAfterManagerSilence(); setInterval(resumeAfterManagerSilence, 60 * 1000); }, 90 * 1000);
 
 // ensurePostAutomation/scheduleFlowRun експортовано для живого тестування (напр.
 // живий кейс mediaId без артикулу; Проблема Д — race condition у серіалізації

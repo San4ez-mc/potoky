@@ -145,7 +145,11 @@ try {
   // реклами) — беруться з ключів воронки, якщо є. Best-effort, 4 с на запит.
   var __adCaption = String(context.adCaption || '');
   var __adImage = '';
-  if (!found && !__adCaption) {
+  // 2026-09-07 (Віталій, реклама 120250869745720329): ручна привʼязка в CRM вела на 234286, а в пості реклами
+  // «Артикул: sh667999» — бот показав не той товар. Текст реклами тягнемо і коли товар знайдено ЧЕРЕЗ рекламу,
+  // щоб звірити артикул (див. override нижче).
+  var __viaAd = /^ad_/.test(via);
+  if ((!found || __viaAd) && !__adCaption) {
     try {
       var __acd0 = (context.lastReferral && context.lastReferral.ads_context_data) || {};
       var __pid = String(__acd0.post_id || context.postId || '').trim();
@@ -178,6 +182,21 @@ try {
     if (typeof __gErr !== 'undefined' && __gErr.length) context.adCaptionError = __gErr.join(' | ').slice(0, 400);
     if (__adCaption) context.adCaptionError = ''; // текст отримано — старі помилки проміжних запитів не показуємо
     if (!__igTok && !__muTok) context.adCaptionError = 'немає META_SYSTEM_USER_TOKEN (задається в CRM → Автоматизації, передається у воронку автоматично)';
+  }
+
+  // Звірка привʼязки реклами з артикулом у самому пості/рілсі: артикул із тексту реклами або пересланого поста
+  // сильніший за ручну привʼязку (це те, що клієнт реально бачив). Розбіжність → context.adLinkMismatch (менеджеру).
+  if (found && __viaAd) {
+    var __capArts = extractArticles(__adCaption || '').concat(extractArticles((context.sharedPost && context.sharedPost.caption) || ''));
+    for (var __ca = 0; __ca < __capArts.length; __ca++) {
+      var __capProd = matchArticle(all, __capArts[__ca]);
+      if (__capProd && String(__capProd.id) !== String(found.id)) {
+        context.adLinkMismatch = 'реклама ' + (context.entryAd || __adExternalId || '') + ' у CRM привʼязана до ' + (found.sku || found.name) + ', а в тексті поста артикул ' + __capArts[__ca] + ' — показано товар за артикулом; перевірте привʼязку в CRM';
+        found = __capProd; via = 'ad_caption_override:' + __capArts[__ca]; mk = 'art_' + __capArts[__ca];
+        break;
+      }
+      if (__capProd) break; // артикул у пості збігається з привʼязкою — все гаразд
+    }
   }
 
   // ПРІОРИТЕТ 2: артикул (з тексту клієнта / підпису поста / adTitle / повного тексту реклами)
@@ -265,6 +284,37 @@ try {
       }) });
     } catch (e) { /* best-effort */ }
   }
+
+  // ── Намір клієнта за категорією (бойовий старт 2026-09-07): Артур з реклами комплекту «кофта, джинси…»
+  // (привʼязка → джинси) написав «Цікавить кофта»; Ігор без ad_id/рілса написав «Яка ціна куртки?».
+  // Слово-категорія з повідомлення клієнта звіряється з назвою знайденого товару.
+  context.setComponentHint = '';
+  try {
+    var __stemRe2 = /(кофт|футболк|джинс|бомбер|куртк|вітровк|костюм|штан|лофер|кросівк|худі|светр|шапк|туфл|черевик|кед|накидк|підголівник)/i;
+    var __uTxt = String(context.lastUserMessage || input || '').replace(/\[переслав[^\]]*\][^\n]*/gi, ' ');
+    var __uStemM = __uTxt.match(__stemRe2); var __uStem = __uStemM ? __uStemM[1].toLowerCase() : '';
+    var __SYN2 = { 'куртк': ['куртк', 'вітровк'], 'вітровк': ['вітровк', 'куртк'], 'светр': ['светр', 'кофт'], 'штан': ['штан', 'джинс'], 'кед': ['кед', 'кросівк'] };
+    function __hasStem(p, s) { var h = (String(p.customerName || '') + ' ' + String(p.name || '')).toLowerCase(); return (__SYN2[s] || [s]).some(function (x) { return h.indexOf(x) >= 0; }); }
+    function __compId(c) { return String(c.productId || c.componentProductId || c.componentId || ''); }
+    if (__uStem && found && /^ad_/.test(via) && !__hasStem(found, __uStem)) {
+      // реклама комплекту/колажу: компоненти наборів, що містять знайдений товар, з категорії, яку назвав клієнт
+      var __comp = [];
+      all.forEach(function (s) {
+        if (!s.isSet) return;
+        var cs = s.setComponents || s.setOf || [];
+        if (!cs.some(function (c) { return __compId(c) === String(found.id) || (c.sku && found.sku && String(c.sku).toUpperCase() === String(found.sku).toUpperCase()); })) return;
+        cs.forEach(function (c) { var cp = all.filter(function (x) { return String(x.id) === __compId(c) || (c.sku && x.sku && String(x.sku).toUpperCase() === String(c.sku).toUpperCase()); })[0]; if (cp && !cp.isSet && __hasStem(cp, __uStem) && __comp.indexOf(cp) < 0) __comp.push(cp); });
+      });
+      if (__comp.length === 1) { context.adSetNote = 'реклама комплекту (привʼязка ' + (found.sku || '') + '), клієнт спитав про «' + __uStem + '» → показано ' + __comp[0].sku; found = __comp[0]; via = 'ad_set_component'; mk = 'setcomp_' + String(found.sku || found.id); }
+      else if (__comp.length > 1) {
+        context.setComponentHint = __comp.slice(0, 4).map(function (p) { return (p.sku ? ('Артикул ' + p.sku + ' — ') : '') + String(p.customerName || p.name || '').replace(/\.?\s*Артикул:.*$/i, '').trim() + (Number(p.price) ? (' — ' + Number(p.price) + ' грн') : ''); }).join('\n');
+        found = null; via = ''; mk = '';
+      }
+    } else if (__uStem && !found) {
+      var __byStem = all.filter(function (p) { return !p.isSet && __hasStem(p, __uStem); });
+      if (__byStem.length === 1) { found = __byStem[0]; via = 'user_keyword:' + __uStem; mk = 'kw_' + String(found.sku || found.id); }
+    }
+  } catch (e) { /* best-effort */ }
 
   if (!found) return fallback('Жоден пріоритет матчингу не спрацював (ad_id/артикул/keyword/vision)');
 
@@ -506,13 +556,35 @@ try {
       isClothing: __isClothing, supplierArticle: found.supplierArticle || '', footwearNote: __footwearNote,
       qtyPrices: __qtyPrices, qtyPromoText: __qtyPromoText,
       // v10 (CRM 2026-09-07): «доступно завжди» і кількості по розмірах — n_avail читає ці прапорці
-      alwaysAvailable: !!(found.alwaysAvailable || found.isAlwaysAvailable || found.availableAlways),
-      stockTracked: (Array.isArray(found.offers) ? found.offers : []).some(function (o) { return o && o.quantity !== null && o.quantity !== undefined && Number(o.quantity) > 0; }),
+      // CRM f50aba5: Product.alwaysAvailable (дефолт true) — кількості враховуються ЛИШЕ коли вимкнено; offer.inStock рахує бекенд.
+      alwaysAvailable: found.alwaysAvailable !== false,
+      stockTracked: found.alwaysAvailable === false && (Array.isArray(found.offers) ? found.offers : []).some(function (o) { return o && o.quantity !== null && o.quantity !== undefined; }),
       sizeChartUrl: __sizeChartUrl, aiInfo: __aiInfo, sizeChartNote: __sizeChartNote, sizeChartData: __sizeChartData,
       // §3 ТЗ — динамічні параметри підбору розміру з CRM Category.requiredParams:
       categoryParams: categoryParams, categoryParamsPrompt: __paramsPrompt, categoryParamsIsHeightWeight: __isHeightWeight
     }
   };
+  // 2026-09-07 («джинси 31 і кофта М, футболку білу S»): інші речі з першого повідомлення запамʼятовуємо в
+  // context.alsoWants — n_size/n_color/n_order_intent їх не ігнорують (допродаж включається одразу, решту додає менеджер).
+  try {
+    var __itemRe = /(кофт\w*|футболк\w*|джинс\w*|бомбер\w*|куртк\w*|костюм\w*|штан\w*|лофер\w*|кросівк\w*|худі|светр\w*|вітровк\w*|шапк\w*|туфл\w*|черевик\w*|кед\w*|накидк\w*|підголівник\w*)/i;
+    var __firstText = String(context.lastUserMessage || input || '').replace(/\[переслав[^\]]*\][^\n]*/gi, ' ');
+    var __ownWords = (String(found.customerName || '') + ' ' + String(found.name || '') + ' ' + String((categoryFull && categoryFull.name) || '')).toLowerCase();
+    var __segs = __firstText.split(/[\n,;]+|\s+(?:і|та|и|а також|також|плюс|ще)\s+/i).map(function (s) { return s.trim(); }).filter(Boolean);
+    var __also = [];
+    for (var __si = 0; __si < __segs.length; __si++) {
+      var __m = __segs[__si].match(__itemRe); if (!__m) continue;
+      var __stem = __m[1].toLowerCase().slice(0, 5);
+      if (__ownWords.indexOf(__stem) >= 0) continue;
+      __also.push(__segs[__si].replace(/[?!.]+$/, '').replace(/^(добрий день|доброго дня|привіт|здравствуйте|добрый день)[,!.\s]*/i, '').trim());
+    }
+    result.alsoWants = __also.filter(Boolean).slice(0, 4).join('; ');
+  } catch (e) { result.alsoWants = ''; }
+  // Той самий товар уже презентували < 30 хв тому (коментар → приватна відповідь, потім DM з реклами; Купцова 21:44):
+  // n_presented_recently_cond пропускає фото+картку, далі одразу крок розміру.
+  var __prevSku = String((context.product && context.product.sku) || ''); var __prevAt = Number(context.presentedAt) || 0;
+  result.skipPresentation = !!(__prevSku && found.sku && __prevSku.toUpperCase() === String(found.sku).toUpperCase() && (Date.now() - __prevAt) < 30 * 60 * 1000);
+  result.presentedAt = result.skipPresentation ? __prevAt : Date.now(); // для ignoreRightAfterPresentationRe у n_size
   if (preColor && preFromUser) { result.colorChoice = { color: preColor, _pre: true }; }
   if (preColor) result.product.preColor = preColor;
   if (preSize) { result.product.preSize = preSize; }

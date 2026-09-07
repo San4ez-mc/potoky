@@ -26,6 +26,8 @@ var active = all.filter(function (p) { return p.isActive !== false && !p.archive
 var counts = {};
 active.forEach(function (p) { var n = cats[p.categoryId]; if (n) counts[n] = (counts[n] || 0) + 1; });
 var catList = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a]; }).map(function (n) { return n.toLowerCase() + ' (' + counts[n] + ')'; }).join(', ');
+// Підказка від n_lookup: реклама комплекту, клієнт назвав категорію, у наборах кілька таких компонентів — питаємо, який.
+if (context.setComponentHint) { var __scn = String(context.setComponentHint).split('\n').length; return { catalogHint: context.setComponentHint, catalogHintCount: __scn, catalogHintTotal: __scn, catalogCategories: catList, unknownTurns: unknownTurns }; }
 if (!msg) return out('', 0, catList);
 // стем → корені для пошуку в назві товару/категорії
 var STEMS = [

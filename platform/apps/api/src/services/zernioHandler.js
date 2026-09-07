@@ -1047,21 +1047,9 @@ async function handleIncomingMessage(botId, body) {
     // Уточнення 19:58 (скрін власника: бот відповів «Так, це джинси j0032» у розмові, яку менеджер уже забрав):
     // менеджер написав ПІСЛЯ останнього повідомлення бота → розмова менеджерська, доки адмін не зробить
     // рестарт сесії (запис admin_restart новіший за повідомлення менеджера повертає бота).
-    let managerOwned = false;
-    try {
-        const _since12 = new Date(Date.now() - 12 * 60 * 60 * 1000);
-        const _recent = await db.message.findMany({ where: { sessionId: session.id, createdAt: { gte: _since12 }, role: { not: 'user' } }, select: { metadata: true, createdAt: true }, orderBy: { createdAt: 'desc' }, take: 80 });
-        const _ts = (pred) => { const r = _recent.find(pred); return r ? r.createdAt.getTime() : 0; };
-        const _lastManager = _ts((r) => ((r.metadata || {}).source) === 'zernio_inbox');
-        const _lastBot = _ts((r) => !!((r.metadata || {}).nodeId));
-        const _lastRestart = _ts((r) => /admin_restart|restart/i.test(String((r.metadata || {}).source || '')));
-        managerOwned = _lastManager > 0 && _lastManager > _lastBot && _lastManager > _lastRestart;
-    } catch (_e) { managerOwned = false; }
-    if (managerOwned) {
-        await logDelivery(session.id, botId, 'zernio_inbound', true, null, { reason: 'manager_owned: skipped flow (менеджер веде розмову, бот її ще не вів)', text: String(text || '').slice(0, 80) });
-        logger.info('[zernioHandler] manager-owned conversation — stored, flow not run', { botId, sessionId: session.id });
-        return { ok: true, processed: 1, managerOwned: true };
-    }
+    // Рішення власника 20:05: без прихованого гейту — повідомлення менеджера (message.sent не від бота) ставить
+    // ЗВИЧАЙНУ паузу сесії (funnelPaused, та сама іконка в адмінці), менеджер сам знімає її, коли віддає розмову боту.
+    // Див. handleMessageSent нижче (pausedBy: 'manager_message'). Тут лише стандартна перевірка funnelPaused.
     if (!testModeBlocked && !ctxNow.funnelPaused) {
         // Аудит 2026-08-27 (антипатерн A12, реальний кейс Сіразетдінова): рілс/пост і
         // підпис-текст до нього іноді приходять ДВОМА окремими webhook-подіями за
@@ -1360,6 +1348,17 @@ async function handleSideEvent(botId, event, body) {
         }
         const _label = _sentText || (_sentAtts.length ? ('[' + (_sentAtts.length > 1 ? 'фото ×' + _sentAtts.length : ((_sentAtts[0] && /video/i.test(String(_sentAtts[0].type || ''))) ? 'відео' : 'фото')) + ' від менеджера]') : '[повідомлення від менеджера]');
         await db.message.create({ data: { sessionId: session.id, role: 'assistant', content: _label, metadata: { source: 'zernio_inbox', zernioMessageId: msg.id || null, platformMessageId: msg.platformMessageId || null, status: 'sent', ...(_sentAtts.length ? { attachments: _sentAtts.slice(0, 10) } : {}) } } });
+        // 2026-09-07 20:05 (рішення власника, бойовий старт): менеджер написав клієнту з інбокса → сесія стає на
+        // ЗВИЧАЙНУ паузу (funnelPaused — та сама іконка в адмінці). Бот мовчить, доки менеджер сам не зніме паузу.
+        try {
+            const _fresh = await db.session.findUnique({ where: { id: session.id }, select: { context: true } });
+            const _pc = (_fresh && _fresh.context) || {};
+            if (!_pc.funnelPaused) {
+                await db.session.update({ where: { id: session.id }, data: { context: { ..._pc, funnelPaused: true, pausedBy: 'manager_message', pausedAt: new Date().toISOString() } } });
+                await logDelivery(session.id, botId, 'zernio_inbound', true, null, { reason: 'manager_message → funnelPaused (бот на паузі, зняти можна в адмінці)' });
+                logger.info('[zernioHandler] manager wrote — session paused', { botId, sessionId: session.id });
+            }
+        } catch (_e) { logger.warn('[zernioHandler] pause on manager message failed: ' + _e.message); }
         return { ok: true, processed: 1 };
     }
 

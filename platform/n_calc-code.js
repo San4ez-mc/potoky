@@ -161,9 +161,23 @@ var oorW = w > 0 && isFinite(wMin) && (w < wMin - TOL_W || w > wMax + TOL_W);
 if (oorH || oorW) {
   return oor((oorH?('зріст '+h+' см поза сіткою ('+hMin+'-'+hMax+')'):'') + (oorH&&oorW?'; ':'') + (oorW?('вага '+w+' кг поза сіткою ('+wMin+'-'+wMax+')'):''), '');
 }
+// v10 (фідбек власника 2026-09-07: 190/63 бот дав XXL, 180/65 — L; правильно M і M): ВАГА — головний
+// критерій, зріст — поправка. Серед розмірів, куди влучає вага, беремо той, чий діапазон зросту містить
+// зріст; якщо зріст вищий за всі такі — на розмір більше (високий і худий → M, не XXL за зростом);
+// якщо нижчий — лишаємо найменший за вагою. Без збігу за вагою — старий фолбек.
 var byW = pick(w, 'weight'), byH = pick(h, 'height');
 var size = null;
-if (byW && byH) { size = order.indexOf(byW) >= order.indexOf(byH) ? byW : byH; }
+var wMatches = []; for (var wk in chart) { if (inRange(w, chart[wk] && chart[wk].weight)) wMatches.push(wk); }
+wMatches.sort(function (a, b) { return order.indexOf(a) - order.indexOf(b); });
+if (w && h && wMatches.length) {
+  var hOk = wMatches.filter(function (k) { return inRange(h, chart[k] && chart[k].height); });
+  if (hOk.length) size = hOk[0];
+  else {
+    var hMaxOfW = Math.max.apply(null, wMatches.map(function (k) { return Number((chart[k].height || [0, 0])[1]); }));
+    if (h > hMaxOfW) { var big = wMatches[wMatches.length - 1]; var nx = order[order.indexOf(big) + 1]; size = (nx && chart[nx]) ? nx : big; }
+    else size = wMatches[0];
+  }
+} else if (byW && byH) { size = order.indexOf(byW) >= order.indexOf(byH) ? byW : byH; }
 else { size = byW || byH; }
 if (!size && clientSize) {
   if (avail.length && avail.indexOf(clientSize) < 0) return oor('клієнт просить розмір ' + clientSize + ', а в товарі є лише: ' + avail.join(', '), clientSize);

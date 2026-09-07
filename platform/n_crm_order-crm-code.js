@@ -5,7 +5,17 @@
 //      → { ok:true, data:{ id, ... } }  (stageId необов'язковий — бекенд бере першу стадію першого pipeline)
 // testMode — та сама поведінка, що в KeyCRM-версії (n_crm_order-code.js): фейковий TEST-... id,
 // реального виклику немає (правило §0.8 fineko-funnel-standard: зовнішні мутації під testMode-гард).
-if (context.testMode) return { crmOrderId: ('TEST-' + Date.now()), orderSku: '', supplier: '' };
+// v10 (тест Олексія 2026-09-07 11:45): кожен чек після замовлення повторно проганяв n_create/n_supplier_hold/
+// n_confirm — менеджер отримував дублі, клієнт — повторне «Дякуємо, дані отримали». Повторний прохід без
+// підтвердженої оплати → repeatPass:true (граф пропускає сповіщення й підтвердження), новий чек → receiptNew.
+var __isRepeat = !!(context.crmOrderId);
+var __receiptUrl = String(context.lastReceiptImageUrl || '').trim();
+var __receiptNew = !!(__receiptUrl && __receiptUrl !== String(context.receiptAlertedUrl || ''));
+var __repeatFlags = { repeatPass: __isRepeat, receiptNew: __receiptNew, receiptAlertedUrl: __receiptNew ? __receiptUrl : (context.receiptAlertedUrl || null) };
+if (context.testMode) {
+  if (__isRepeat) return Object.assign({ crmOrderId: context.crmOrderId, createAlertTitle: context.payStatus === 'confirmed' ? 'ОПЛАТА ПІДТВЕРДЖЕНА' : 'ЗАМОВЛЕННЯ (повторно, без оплати)' }, __repeatFlags);
+  return Object.assign({ crmOrderId: ('TEST-' + Date.now()), orderSku: '', supplier: '', createAlertTitle: 'НОВЕ ЗАМОВЛЕННЯ', createAlertMain: context.payStatus === 'confirmed' ? 'Оплату підтверджено — постачальнику оформляється автоматично.' : 'Оплату у виписці ще не знайдено — постачальнику не відправлено. Після оплати (чек або авто-звірка) оформимо; якщо клієнт платив не через mono — звірте вручну.' }, __repeatFlags);
+}
 try {
   var base = (keys.CRM_API_BASE || 'http://127.0.0.1:4700/api').replace(/\/$/, '');
   var apiKey = (keys.CRM_API_KEY || '').trim();
@@ -45,7 +55,7 @@ try {
   if (context.crmOrderId && String(context.crmOrderId).indexOf('TEST-') !== 0) {
     var posted = await postPayment(context.crmOrderId);
     if (context.payStatus === 'confirmed') await setStage(context.crmOrderId, 'замовлення прийняте');
-    return { crmOrderId: context.crmOrderId, crmPaymentPosted: posted || !!context.crmPaymentPosted, createAlertTitle: context.payStatus === 'confirmed' ? 'ОПЛАТА ПІДТВЕРДЖЕНА' : 'ЗАМОВЛЕННЯ (повторно, без оплати)' };
+    return Object.assign({ crmOrderId: context.crmOrderId, crmPaymentPosted: posted || !!context.crmPaymentPosted, createAlertTitle: context.payStatus === 'confirmed' ? 'ОПЛАТА ПІДТВЕРДЖЕНА' : 'ЗАМОВЛЕННЯ (повторно, без оплати)', createAlertMain: context.payStatus === 'confirmed' ? 'Оплату підтверджено ✅ — постачальнику оформляється автоматично.' : '' }, __repeatFlags);
   }
 
   var phone = String(od.phone).replace(/[^0-9]/g, '');
@@ -140,7 +150,8 @@ try {
   var d = await r.json().catch(function () { return {}; });
   if (r.ok && d && d.ok && d.data && d.data.id) {
     var postedNow = await postPayment(d.data.id);
-    return { crmOrderId: d.data.id, crmClientId: buyerId, supplier: supplierName, orderSku: (sku || ''), crmPaymentPosted: postedNow, createAlertTitle: 'НОВЕ ЗАМОВЛЕННЯ' };
+    var __paidNow = context.payStatus === 'confirmed' || Number(context.payAmount) === 0;
+    return Object.assign({ crmOrderId: d.data.id, crmClientId: buyerId, supplier: supplierName, orderSku: (sku || ''), crmPaymentPosted: postedNow, createAlertTitle: 'НОВЕ ЗАМОВЛЕННЯ', createAlertMain: __paidNow ? 'Оплату підтверджено ✅ — постачальнику оформляється автоматично.' : 'Оплату у виписці ще не знайдено — постачальнику не відправлено. Після оплати (чек або авто-звірка) оформимо; якщо клієнт платив не через mono — звірте вручну.' }, __repeatFlags);
   }
   return { crmOrderError: ((d && d.error && d.error.message) || (d && d.message) || ('HTTP ' + r.status)) };
 } catch (e) { return { crmOrderError: e.message }; }

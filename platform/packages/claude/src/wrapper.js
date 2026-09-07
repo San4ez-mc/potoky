@@ -42,8 +42,10 @@ function isTransientClaudeError(error) {
     if (status === 401) return true;
     // Timeout (set by our own timer)
     if (msg.includes('timeout')) return true;
-    // Network-level errors
+    // Network-level errors. 2026-09-07 (тест Олексія, 11:06): SDK кинув "Connection error." без status —
+    // не вважалось transient → без фолбеку, клієнт без відповіді, менеджеру алерт «закінчився баланс».
     if (msg.includes('econnrefused') || msg.includes('enotfound') || msg.includes('network')) return true;
+    if (msg.includes('connection error') || msg.includes('fetch failed') || msg.includes('econnreset') || msg.includes('etimedout') || msg.includes('eai_again') || msg.includes('socket hang up') || msg.includes('und_err')) return true;
     // Explicit overload message
     if (msg.includes('overloaded')) return true;
     // Billing/payment messages from Anthropic
@@ -419,21 +421,26 @@ async function notifyAdminOfServiceOutage(sessionId, serviceLabel, errorMessage,
         const { chatId, token } = await resolveAdminAlertTarget(botId);
         if (!chatId || !token) return;
 
-        const text = `⚠️ ${serviceLabel} — можливо, закінчився баланс/квота!\n`
-            + `Помилка: ${String(errorMessage || '').slice(0, 400)}\n\n`
-            + 'Перевірте баланс/статус сервісу якнайшвидше.';
+        // Єдиний формат сповіщень (2026-09-07): назва → головне → деталі. Без «закінчився баланс» —
+        // мережева помилка (Connection error) трапляється частіше за баланс; менеджер бачить помилку і сесію.
+        const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const adminBase = String(process.env.ADMIN_PUBLIC_URL || 'https://flows.fineko.space').replace(/\/$/, '');
+        const text = `<b>⚠️ ${esc(serviceLabel)}</b>\n\n`
+            + 'Бот не зміг відповісти клієнту (повторна спроба і резервні провайдери не допомогли). Якщо повторюється — перевірте статус сервісу та баланс.\n\n'
+            + `❗ ${esc(String(errorMessage || '').slice(0, 300))}`
+            + (sessionId ? `\n\n👤 <a href="${adminBase}/sessions/${sessionId}">сесія</a>` : '');
 
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ chat_id: String(chatId), text, disable_web_page_preview: true }),
+            body: JSON.stringify({ chat_id: String(chatId), text, parse_mode: 'HTML', disable_web_page_preview: true }),
         }).catch(() => {});
     } catch { /* найгірше — просто не сповістили, не ламаємо основний потік */ }
 }
 
 // Збережено стару назву для існуючих викликів у цьому файлі — Claude-специфічний текст.
 async function notifyAdminOfAiOutage(sessionId, errorMessage) {
-    return notifyAdminOfServiceOutage(sessionId, 'ШІ (Claude) недоступний — бот НЕ відповідає клієнтам', errorMessage);
+    return notifyAdminOfServiceOutage(sessionId, 'ШІ (Claude) не відповів', errorMessage);
 }
 
 // ---------------------------------------------------------------------------
@@ -521,9 +528,10 @@ async function callClaude({ sessionId, systemPrompt, messages, options = {} }) {
     let errorMessage = null;
     let claudeError = null;
 
-    try {
-        // Streaming mode: TIMEOUT_MS = first-chunk timeout; full response has no hard cap.
-        await new Promise((resolve, reject) => {
+    // Streaming mode: TIMEOUT_MS = first-chunk timeout; full response has no hard cap.
+    // 2026-09-07: одна повторна спроба до Claude при мережевій/транзитній помилці (крім таймауту) — перш ніж
+    // йти на резервних провайдерів (на goverla є лише Gemini) і слати алерт менеджеру.
+    const _runStream = () => new Promise((resolve, reject) => {
             let firstChunkReceived = false;
             let firstChunkTimer = setTimeout(
                 () => reject(new ClaudeError(`Claude timeout after ${TIMEOUT_MS}ms (no first chunk)`)),
@@ -561,6 +569,20 @@ async function callClaude({ sessionId, systemPrompt, messages, options = {} }) {
                 resolve();
             });
         });
+    try {
+        try {
+            await _runStream();
+        } catch (firstErr) {
+            const _m = String(firstErr && firstErr.message || '').toLowerCase();
+            if (isTransientClaudeError(firstErr) && !_m.includes('timeout') && !responseText) {
+                logger.warn('Claude transient error — retrying once', { sessionId, error: firstErr.message, status: firstErr && firstErr.status });
+                await new Promise((r) => setTimeout(r, 1500));
+                responseText = '';
+                await _runStream();
+            } else {
+                throw firstErr;
+            }
+        }
 
     } catch (error) {
         statusCode = error.status || 500;

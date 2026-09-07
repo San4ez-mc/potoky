@@ -505,6 +505,9 @@ try {
       upsell: upsell.join('; '), upsellItems: upsellItems, upsellPhotoUrl: __upsellPhoto, upsellPhotoNote: __upsellPhotoNote,
       isClothing: __isClothing, supplierArticle: found.supplierArticle || '', footwearNote: __footwearNote,
       qtyPrices: __qtyPrices, qtyPromoText: __qtyPromoText,
+      // v10 (CRM 2026-09-07): «доступно завжди» і кількості по розмірах — n_avail читає ці прапорці
+      alwaysAvailable: !!(found.alwaysAvailable || found.isAlwaysAvailable || found.availableAlways),
+      stockTracked: (Array.isArray(found.offers) ? found.offers : []).some(function (o) { return o && o.quantity !== null && o.quantity !== undefined && Number(o.quantity) > 0; }),
       sizeChartUrl: __sizeChartUrl, aiInfo: __aiInfo, sizeChartNote: __sizeChartNote, sizeChartData: __sizeChartData,
       // §3 ТЗ — динамічні параметри підбору розміру з CRM Category.requiredParams:
       categoryParams: categoryParams, categoryParamsPrompt: __paramsPrompt, categoryParamsIsHeightWeight: __isHeightWeight

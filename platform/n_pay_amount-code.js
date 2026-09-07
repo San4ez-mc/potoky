@@ -12,9 +12,10 @@ var qty=Number(oi.qty)||units.length; if(!(qty>=1)) qty=units.length||1;
 if(qty>units.length&&units.length===1){ while(units.length<qty) units.push({ color:units[0].color, size:units[0].size }); }
 if(qty<units.length) qty=units.length;
 var orderUnitsText=qty+' шт: '+units.map(function(u){ return [u.color,u.size].filter(Boolean).join(' ')||'—'; }).join(', ');
-var qp=(context.product&&context.product.qtyPrices)||{}; var tierPrice=qp[String(qty)];
-var unit=(context.product&&context.product.price)||0;
-var full=tierPrice!=null?Number(tierPrice):(unit*qty);
+// Ціна за N шт: набори за акцією (найбільший підходящий tier повторно) + решта поштучно (3 шт при «2 — 799» = 799+449).
+function tierTotal(qp,unit,n){ qp=qp||{}; var tiers=Object.keys(qp).map(Number).filter(function(t){ return t>1&&Number(qp[t])>0; }).sort(function(a,b){ return b-a; }); var left=n,total=0; for(var i=0;i<tiers.length;i++){ while(left>=tiers[i]){ total+=Number(qp[tiers[i]]); left-=tiers[i]; } } return total+left*unit; }
+var unit=Number(context.product&&context.product.price)||0;
+var full=tierTotal(context.product&&context.product.qtyPrices, unit, qty);
 var mainTotal=full;
 // Аудит 2026-09-04 (живий кейс власника, сесія 7944d0c6): клієнт погодився на допродаж, бот
 // підсумував 2177 грн, а інвойс створився на 1279 — допродаж не входив у суму. Додаємо ціну
@@ -24,8 +25,7 @@ if(context.orderIntent&&context.orderIntent.addUpsell){
   var up=(context.product&&context.product.upsellItems)||[];
   if(up[0]&&Number(up[0].price)){
     upsellQty=Number(context.orderIntent.upsellQty)||1; if(!(upsellQty>=1)) upsellQty=1;
-    var uqp=(up[0].qtyPrices||{})[String(upsellQty)];
-    upsellSum = uqp!=null ? Number(uqp) : Number(up[0].price)*upsellQty;   // v3: "Біла-1 Чорна-1" = 2 шт за акційною 799
+    upsellSum = tierTotal(up[0].qtyPrices, Number(up[0].price)||0, upsellQty);   // 2 шт → 799; 3 шт → 799+449 (v10)
   }
 }
 full=full+upsellSum;
@@ -64,9 +64,10 @@ var addressAskLine = haveAddr
   ? '📦 Дані для відправки у нас уже є ✅ ('+(od0.city||'')+(od0.branch?(', '+od0.branch):'')+') — якщо щось змінилось, напишіть.'
   : '📦 Дані для відправки (ПІБ, телефон, місто, № відділення або поштомата Нової Пошти) можна написати прямо зараз одним повідомленням 🙂';
 // v8.1: інший товар, який клієнт попросив додати посеред оформлення — рядок для сповіщень менеджеру (n_create/n_supplier_hold) і коментаря в CRM.
+var upsellLine = upsellSum>0 ? (' + допродаж: '+String(((context.product&&context.product.upsellItems)||[])[0]&&((context.product.upsellItems)[0].name)||'допродаж')+' ×'+upsellQty+' ('+upsellSum+' грн)') : '';
 var extraProducts=String((oi.extraProducts)||'').trim();
 var extraProductsLine=extraProducts?('➕ ДОДАТКОВО просить (додати в цю ж посилку вручну, ціну/розмір узгодити): '+extraProducts+'\n'):'';
-var out={ orderRef:ref, orderRefAt:refAt, orderQty:qty, orderUnits:units, orderUnitsText:orderUnitsText, orderUnitsTotal:mainTotal, extraProducts:extraProducts, extraProductsLine:extraProductsLine, orderChangeNote:'', fop:fop, upsellSum:upsellSum, upsellQty:upsellQty, addressAskLine:addressAskLine };
+var out={ orderRef:ref, orderRefAt:refAt, orderQty:qty, orderUnits:units, orderUnitsText:orderUnitsText, orderUnitsTotal:mainTotal, extraProducts:extraProducts, extraProductsLine:extraProductsLine, upsellLine:upsellLine, orderChangeNote:'', fop:fop, upsellSum:upsellSum, upsellQty:upsellQty, addressAskLine:addressAskLine };
 if(method==='cod_trust'){ out.payAmount=0; out.payLabel='без передоплати (виняток за домовленістю, накладений платіж повністю)'; return out; }
 out.payAmount = method==='cod'?200:full;
 out.payLabel = method==='cod'?('передоплата 200 грн, решта '+(full-200)+' грн при отриманні'):('повна оплата, '+full+' грн');

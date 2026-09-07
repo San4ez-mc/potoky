@@ -96,6 +96,8 @@ const ORDER_INTENT_PROMPT = `Ти — {{env.PERSONA_NAME}}, тепла конс�
 - ДОПРОДАЖ порожній → «Оформляємо замовлення? 🙂»
 - ДОПРОДАЖ є → «Оформляємо? І підкажіть: додати ще {{context.product.upsell}} до цієї ж посилки, чи лише основний товар?» (одне рішення з двома варіантами, НЕ два окремі питання).
 Акцію за кількість (якщо рядок вище непорожній і клієнт не називав кількість) згадай ОДИН раз у підсумку, ненав'язливо. Розмір у підсумку лише називай — НЕ пояснюй заново, чому саме такий (це вже сказано попереднім повідомленням).
+ЦІНА ЗА КІЛЬКІСТЬ (і для товару, і для допродажу) рахується так: набори за акцією + решта поштучно. Приклад: футболка 449 грн, акція «2 шт — 799»: 1 шт = 449, 2 шт = 799, 3 шт = 799 + 449 = 1248, 4 шт = 1598. НІКОЛИ не поширюй акцію на третю штуку («три за 799») і не вигадуй умов акції (напр. «лише однакові кольори»). Систему цю ж формулу застосовує в реквізитах — суми мають збігатися.
+Якщо клієнт лише підганяє («ау», «так що?», «буде відповідь?», «є чи нема?»), а ти щойно відповіла — ОДНА коротка фраза по суті («Так, є в наявності 🙂 Оформляємо?»), без повторення підсумку.
 ЯКЩО клієнт погоджується на допродаж: коли він назвав кількість/кольори («так, біла 1 і чорна 1», «дві футболки») — додай "upsellQty":<число> і "upsellNote":"<як сказав клієнт: кольори/розміри>" (ціну за кількість порахує система за акцією). Коли допродаж має кольори, а клієнт їх не назвав — РІВНО ОДНЕ уточнення одним реченням («Яку футболку додати — білу чи чорну, і скільки?»), БЕЗ JSON; після відповіді — {"ready":"yes","addUpsell":true,"upsellQty":…,"upsellNote":"…"}. Якщо клієнт на уточнення каже «будь-яку/на ваш розсуд/не важливо» — беремо 1 шт, upsellNote:"колір на розсуд менеджера", далі ready:yes.
 ЯКЩО клієнт хоче ЩЕ одну або кілька штук ЦЬОГО Ж товару в іншому кольорі чи розмірі («ще синій хочу», «дві: чорну і сіру», «і хакі теж», «а можна два?») — це ШТАТНО, менеджера НЕ питай і НЕ кажи, що можна лише один. Якщо колір є у списку кольорів товару — ОДНИМ повідомленням дай оновлений підсумок: усі позиції (розмір той самий, якщо клієнт не назвав інший), сума = ціна × кількість або акційна ціна за кількість із рядка акції вище, і знову «Оформляємо?». Якщо назва кольору неоднозначна («сірий» при світло-сірому і графітовому) — одне уточнення з конкретною пропозицією. Кольору нема у списку — чесно скажи і запропонуй наявні. При фінальній згоді → {"ready":"yes","units":[{"color":"<колір>","size":"<розмір>"},…],"qty":<кількість>} — units ЗАВЖДИ повний список усіх позицій, включно з першою.
 ЯКЩО клієнт хоче ІНШИЙ товар (інший артикул, назва іншої речі — не допродаж зі списку вище і не ще одна штука цього ж товару): НЕ показуй його картку, НЕ вигадуй його ціну/розмір і НЕ обіцяй спільну суму. Скажи одним реченням: це замовлення оформимо зараз, а другий товар менеджер додасть у цю ж посилку і напише ціну/розмір; підсумок лишається як був, спитай «Оформляємо?». При згоді → {"ready":"yes","extraProducts":"<що саме просить: артикул/назва, колір, розмір, кількість>"} разом із units/qty як зазвичай.
@@ -120,6 +122,9 @@ const COLLECT_PROMPT = `Ти — {{env.PERSONA_NAME}}, консультантк�
 ВЖЕ ВІДОМО (порожнє = ще нема, не вигадуй): ПІБ «{{context.orderData.fullName}}», телефон «{{context.orderData.phone}}», місто «{{context.orderData.city}}», відділення «{{context.orderData.branch}}».
 СТАТУС ОПЛАТИ (виставляє код): «{{context.payStatus}}» — "confirmed" = оплату вже отримали; порожньо або not_found = ще не бачимо. Сума: {{context.payAmount}} грн ({{context.payLabel}}).
 УТОЧНЕННЯ ВІД НОВОЇ ПОШТИ (порожньо = нема): «{{context.np.askMsg}}»
+СКЛАД ЗАМОВЛЕННЯ (рахує система): {{context.orderUnitsText}}{{context.upsellLine}} — до сплати {{context.payAmount}} грн.
+НОМЕР ВІДДІЛЕННЯ/ПОШТОМАТА: 1–3 цифри = відділення, 4+ цифр = поштомат — НЕ перепитуй «відділення чи поштомат?», просто бери номер (у branch пиши як клієнт: «14» або «поштомат 12345»); Нова Пошта перевірить сама.
+Якщо клієнт питає, чому така сума, або бачить розбіжність із раніше названою — НЕ вибачайся за «неправильну ціну» і НЕ обіцяй «уточнити в менеджера»: коротко поясни склад суми з даних вище (позиції, допродаж, акційні набори); правильна сума — та, що в реквізитах. Потім знову попроси відсутні поля.
 
 Посилання на оплату, реквізити (IBAN/ЄДРПОУ/назва), суму і прохання написати дані система ВЖЕ надіслала окремими повідомленнями ДО тебе — ти їх НІКОЛИ не пишеш, не повторюєш і не вигадуєш (ніяких «UA1234…», «12345678», «ПриватБанк», «надішле окремим повідомленням»). Твоя робота — лише прийняти дані доставки.
 Одне повідомлення — одне прохання. Якщо чогось бракує — тепло попроси саме це (лише відсутні поля).
@@ -218,7 +223,9 @@ const ADDRESS_ASK = '\n\n📦 Дані для відправки (ПІБ, тел
 // v3 (реальні переписки 2026-09-04): параметри/колір у першому ж повідомленні ("Чорний колір Параметри 182/100",
 // "яка ціна кофти Параметри ріст 167 Вага 75", "Потрібен розмір S в графітному") — не перепитувати; "1,78" = 178 см;
 // фото своєї речі посеред підбору не скидає товар; адреса "наперед" не губиться; умови в підсумку.
-const SIZE_FIRST_MSG_RE = '\\d{2,3}\\s*[\\/,\\s\\-]\\s*\\d{2,3}|зр[іо]ст|ріст|ваг[аи]|\\bсм\\b|\\bкг\\b|розмір\\s*[SMLX]{1,4}\\b|\\b[SMLX]{1,4}\\s*розмір';
+// v10: «В наявності цей товар ще??» разом із рілсом лишалось без відповіді (тест 09-07) — питання про наявність
+// теж проходить до n_size, яка відповідає «так, є» і просить параметри.
+const SIZE_FIRST_MSG_RE = '\\d{2,3}\\s*[\\/,\\s\\-]\\s*\\d{2,3}|зр[іо]ст|ріст|ваг[аи]|\\bсм\\b|\\bкг\\b|розмір\\s*[SMLX]{1,4}\\b|\\b[SMLX]{1,4}\\s*розмір|наявн|є ще|актуальн|залишил';
 const SIZE_PROMPT_V3 = '\nДОДАТКОВО: (а) зріст у метрах («1,78», «1.78 м») = 178 см — переводь сам; (б) якщо клієнт разом із параметрами назвав КОЛІР зі списку кольорів товару («чорний 182/100», «S в графітному») — додай у той самий json_output поле "color":"<колір як у списку>", щоб не перепитувати; (в) якщо клієнт надіслав фото (текст "[фото]") — по фото розмір не визначаю, скажи це одним реченням і попроси зріст і вагу (товар НЕ змінюй); (г) якщо клієнт назвав власні заміри (плечі/рукав/ширина) — подякуй і скажи, що підбір іде за зростом і вагою, попроси їх.';
 const ORDER_TERMS_DEFAULT = 'Обмін/повернення 14 днів ✅ Відправка Новою поштою 📦 Відправка до 5 робочих днів 🚚';
 // Довідка магазину — з реальних відповідей менеджерів (2026-09-04). З v7 (2026-09-05) живе в CRM
@@ -403,6 +410,54 @@ function applyV9(nodes, edges, notes) {
     return { nodes, edges };
 }
 
+// v10 (2026-09-07, запит власника): (1) ЄДИНИЙ ФОРМАТ сповіщень — notifyTg-ноди отримують alertTitle/alertMain/
+// alertDetails, двигун збирає «назва · магазин / головне / деталі / клієнт · сесія · CRM» з прихованими
+// посиланнями; (2) МЕНШЕ сповіщень: n_supplier_hold і n_pay_notfound_admin прибрано (їх суть — у n_create:
+// createAlertMain каже, чи оформлено постачальнику і що робити), повторний прохід після чека без оплати НЕ
+// дублює n_create/n_confirm — лише один алерт «чек отримано, у виписці не знайдено» на новий чек.
+const ALERTS = {
+    n_create: { alertTitle: '🎉 {{context.createAlertTitle}} · {{context.orderRef}}', alertMain: '{{context.createAlertMain}}', alertDetails: '🛍️ {{context.product.name}} · арт. {{context.orderSku}}\n{{context.extraProductsLine}}🧾 {{context.orderUnitsText}}{{context.upsellLine}}\n💳 {{context.payLabel}} · у виписці: {{context.payStatus}}\n📦 {{context.orderData.fullName}}, {{context.orderData.phone}}\n📍 {{context.orderData.city}}, НП {{context.orderData.branch}}\n🏭 Постачальник: {{context.supplier}}' },
+    n_receipt_alert: { alertTitle: '🧾 Чек отримано — у виписці не знайдено · {{context.orderRef}}', alertMain: 'Клієнт надіслав чек, але автозвірка з mono платіж не знайшла (не mono, інша сума або ще не надійшов). Перевірте вручну; якщо все гаразд — підтвердіть оплату в CRM.', alertDetails: '💰 {{context.payAmount}} грн ({{context.payLabel}})\n🛍️ {{context.product.name}} · {{context.orderUnitsText}}\n🖼 {{context.lastReceiptImageUrl}}' },
+    n_unknown_admin: { alertTitle: '🔔 Бот не визначив товар', alertMain: 'Клієнт пише, але бот не зрозумів, про який товар мова, і попросив пост/артикул. Якщо бачите товар — підкажіть у чаті.', alertDetails: '💬 «{{context.lastCustomerMessage}}»' },
+    n_size_oor_admin: { alertTitle: '📏 Розмір поза сіткою', alertMain: 'Бот не зміг підібрати розмір і попросив клієнта зачекати — підкажіть розмір у чаті.', alertDetails: '🛍️ {{context.product.name}}\n📐 зріст {{context.sizeInput.height}} см, вага {{context.sizeInput.weight}} кг\n❗ {{context.sizeOorReason}}' },
+    n_supplier_manual: { alertTitle: '📦 Оформіть постачальнику вручну · {{context.orderRef}}', alertMain: 'Для цього постачальника/комплекту авто-замовлення не передбачене — оформіть вручну.', alertDetails: '🏭 {{context.supplier}} ({{context.supplierMechanism}})\n🛍️ {{context.product.name}} · {{context.orderUnitsText}}\n📦 {{context.orderData.fullName}}, {{context.orderData.phone}} — {{context.orderData.city}}, {{context.orderData.branch}}\n{{context.supplierSetBreakdown}}' },
+    n_supplier_notify: { alertTitle: '🏭 Постачальник · {{context.orderRef}}', alertMain: '{{context.supplierOrderResult}}', alertDetails: '' },
+    n_crm_order_failed_admin: { alertTitle: '❌ Замовлення не створено в CRM', alertMain: 'Оформіть вручну. Причина: {{context.crmOrderError}}', alertDetails: '🛍️ {{context.product.name}} · {{context.orderUnitsText}}\n💳 {{context.payLabel}}\n📦 {{context.orderData.fullName}}, {{context.orderData.phone}}\n📍 {{context.orderData.city}}, НП {{context.orderData.branch}}' },
+    n_post_order_admin: { alertTitle: '💬 Клієнт написав після оформлення', alertMain: 'Відповідайте в чаті — бот лише подякував і далі діалог не веде.', alertDetails: '🧾 {{context.orderRef}}\n💬 «{{context.lastCustomerMessage}}»' },
+    n_avail_stock_admin: { alertTitle: '📦 Товар закінчився', alertMain: 'За залишками в CRM цього варіанту немає; клієнт чекає — підкажіть альтернативу або дату поставки.', alertDetails: '🛍️ {{context.product.name}} · {{context.recommendedSize}} · {{context.colorChoice.color}}' },
+};
+function applyV10(nodes, edges, notes) {
+    const byId = () => Object.fromEntries(nodes.map((n) => [n.id, n]));
+    const placer = makePlacer(nodes);
+    const pos = (id) => (byId()[id] || { position: { x: 0, y: 0 } }).position;
+    const dropNode = (id) => {
+        const n = byId()[id]; if (!n) return;
+        const out = edges.find((e) => e.source === id); const nextId = out ? out.target : null;
+        edges = edges.filter((e) => e.source !== id).map((e) => (e.target === id && nextId ? { ...e, target: nextId } : e)).filter((e) => e.target !== id);
+        nodes = nodes.filter((x) => x.id !== id); notes.push('− ' + id);
+    };
+    // (2) менше сповіщень
+    dropNode('n_supplier_hold');
+    dropNode('n_pay_notfound_admin');
+    // повторний прохід після чека: n_crm_order_cond[true] → n_repeat_cond → [true] n_receipt_cond → [true] n_receipt_alert → n_upsell2_wait; [false] → n_upsell2_wait; n_repeat_cond[false] → n_create
+    if (!byId().n_repeat_cond && byId().n_crm_order_cond && byId().n_create) {
+        const p = placer.place(pos('n_create').x - GX, pos('n_create').y - GY);
+        nodes.push({ id: 'n_repeat_cond', type: 'condition', position: p, data: { label: '12.9 Повторний прохід без оплати?', condition: "context.repeatPass === true && context.payStatus !== 'confirmed'", description: 'Чек/«оплатив» після вже створеного замовлення, оплату не підтверджено → без дублів сповіщень/підтвердження.' } });
+        nodes.push({ id: 'n_receipt_cond', type: 'condition', position: placer.place(p.x, p.y - GY), data: { label: '12.91 Новий чек?', condition: 'context.receiptNew === true', description: 'TRUE → один алерт менеджеру про чек, який не звірився.' } });
+        nodes.push({ id: 'n_receipt_alert', type: 'notifyTg', position: placer.place(p.x + GX, p.y - GY), data: Object.assign({ label: '12.92 Чек не звірився — сигнал', targetKey: 'ADMIN_TELEGRAM_ID', message: '', description: 'Клієнт надіслав чек, автозвірка mono не знайшла платіж.' }, ALERTS.n_receipt_alert) });
+        edges = edges.map((e) => (e.source === 'n_crm_order_cond' && (e.sourceHandle || null) === 'true' ? { ...e, target: 'n_repeat_cond' } : e));
+        edges.push({ id: 'e_n_repeat_cond_false', source: 'n_repeat_cond', target: 'n_create', sourceHandle: 'false' });
+        edges.push({ id: 'e_n_repeat_cond_true', source: 'n_repeat_cond', target: 'n_receipt_cond', sourceHandle: 'true' });
+        edges.push({ id: 'e_n_receipt_cond_true', source: 'n_receipt_cond', target: 'n_receipt_alert', sourceHandle: 'true' });
+        edges.push({ id: 'e_n_receipt_cond_false', source: 'n_receipt_cond', target: 'n_upsell2_wait', sourceHandle: 'false' });
+        edges.push({ id: 'e_n_receipt_alert_next', source: 'n_receipt_alert', target: 'n_upsell2_wait' });
+        notes.push('+ n_repeat_cond / n_receipt_cond / n_receipt_alert');
+    }
+    // (1) єдиний формат
+    for (const [id, a] of Object.entries(ALERTS)) { const n = byId()[id]; if (!n) continue; if (n.data.alertTitle !== a.alertTitle || n.data.alertMain !== a.alertMain || n.data.alertDetails !== a.alertDetails) { Object.assign(n.data, a); notes.push('alert ' + id); } }
+    return { nodes, edges };
+}
+
 // v7 (2026-09-05, база знань перенесена в CRM): профіль магазину з CRM у context.shop (нода n_shop_profile
 // після n_route), промпти читають {{context.shop.faq}}/{{context.shop.terms}}; вектор-база (useKb) вимкнена,
 // натомість пошук по базі знань CRM (useCrmKb) на діалогових нодах; ключі SHOP_FAQ/ORDER_TERMS_LINE/VECTOR_*
@@ -512,7 +567,8 @@ function refresh(flow, opts) {
     const v5 = applyV5(v4.nodes, v4.edges, notes);
     const v7 = applyV7(v5.nodes, v5.edges, notes);
     const v8 = applyV8(v7.nodes, v7.edges, notes);
-    const v3 = applyV9(v8.nodes, v8.edges, notes);
+    const v9 = applyV9(v8.nodes, v8.edges, notes);
+    const v3 = applyV10(v9.nodes, v9.edges, notes);
     return { nodes: v3.nodes, edges: v3.edges, notes, keyUpdates: [], keyDeletes: KB_KEY_DELETES.slice() };
 }
 
@@ -706,7 +762,7 @@ function transform(flow, keysMap, opts) {
     { const n = byId()['n_ttn_sync_crm']; if (n) { placer.free('n_ttn_sync_crm'); n.position = placer.place(n.position.x, n.position.y); } }
 
     REMOVE.forEach(removeNode);
-    { const v2 = applyV2(nodes, edges, notes); const v3 = applyV3(v2.nodes, v2.edges, notes); const v4 = applyV4(v3.nodes, v3.edges, notes); const v5 = applyV5(v4.nodes, v4.edges, notes); const v7 = applyV7(v5.nodes, v5.edges, notes); const v8 = applyV8(v7.nodes, v7.edges, notes); const v9 = applyV9(v8.nodes, v8.edges, notes); nodes = v9.nodes; edges = v9.edges; }
+    { const v2 = applyV2(nodes, edges, notes); const v3 = applyV3(v2.nodes, v2.edges, notes); const v4 = applyV4(v3.nodes, v3.edges, notes); const v5 = applyV5(v4.nodes, v4.edges, notes); const v7 = applyV7(v5.nodes, v5.edges, notes); const v8 = applyV8(v7.nodes, v7.edges, notes); const v9 = applyV9(v8.nodes, v8.edges, notes); const v10 = applyV10(v9.nodes, v9.edges, notes); nodes = v10.nodes; edges = v10.edges; }
 
     // ── ключі ──
     const keyUpdates = [

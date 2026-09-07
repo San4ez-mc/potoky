@@ -404,6 +404,54 @@ function shopPrefix(env) {
     return linked + '\n\n';
 }
 
+// ЄДИНИЙ ФОРМАТ сповіщень менеджеру в Telegram (запит власника 2026-09-07):
+//   <b>назва</b> · магазин (прихована лінка на Instagram)
+//   (порожній рядок)
+//   головне повідомлення — що робити / що сталось
+//   (порожній рядок)
+//   решта деталей
+//   👤 клієнт (лінка на Instagram) · сесія (лінка в адмінку) · CRM (лінка на замовлення)
+// Використовується нодами notifyTg (data.alertTitle/alertMain/alertDetails) і всіма внутрішніми
+// сповіщеннями двигуна. HTML parse_mode, посилання приховані в тексті.
+const _escHtml = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+function buildAdminAlert({ funnelEnv, title, main, details, ctx, sessionId }) {
+    const env = funnelEnv || {};
+    const c = ctx || {};
+    const shop = String(env.SHOP_TAG || env.SHOP_NAME || '').trim();
+    const shopIg = String(env.INSTAGRAM_USERNAME || '').trim().replace(/^@/, '');
+    const shopPart = shop ? (' · ' + (shopIg && shopIg.toUpperCase() !== 'REPLACE_ME' ? `<a href="https://instagram.com/${encodeURIComponent(shopIg)}">${_escHtml(shop)}</a>` : _escHtml(shop))) : '';
+    const adminBase = String(process.env.ADMIN_PUBLIC_URL || 'https://flows.fineko.space').replace(/\/$/, '');
+    const crmBase = String(env.CRM_PUBLIC_URL || 'https://pcrm.fineko.space').replace(/\/$/, '');
+    const ig = String(c.igUsername || '').trim().replace(/^@/, '');
+    const who = _escHtml(c.senderName || ig || 'клієнт');
+    const links = [];
+    links.push(ig ? `<a href="https://instagram.com/${encodeURIComponent(ig)}">${who}</a>` : who);
+    if (sessionId) links.push(`<a href="${adminBase}/sessions/${sessionId}">сесія</a>`);
+    if (c.crmOrderId && !String(c.crmOrderId).startsWith('TEST-')) links.push(`<a href="${crmBase}/orders?open=${encodeURIComponent(c.crmOrderId)}">замовлення в CRM</a>`);
+    const lines = [];
+    lines.push('<b>' + String(title || 'Сповіщення').trim() + '</b>' + shopPart);
+    if (main && String(main).trim()) { lines.push(''); lines.push(String(main).trim()); }
+    const det = Array.isArray(details) ? details : String(details || '').split('\n');
+    const detClean = det.map((d) => String(d || '').replace(/\s+$/, '')).filter((d, i, arr) => d || (arr[i - 1] && arr[i + 1]));
+    if (detClean.length) { lines.push(''); lines.push(...detClean); }
+    lines.push('');
+    lines.push('👤 ' + links.join(' · '));
+    return lines.join('\n');
+}
+async function sendAdminAlert({ session, ctx, funnelEnv, runtime, title, main, details, reason, nodeId }) {
+    const adminId = funnelEnv.ADMIN_TELEGRAM_ID || await getSystemKeyValue('ADMIN_TELEGRAM_ID');
+    const tok = funnelEnv.TELEGRAM_BOT_TOKEN || '';
+    if (!adminId || !/^\d+:[A-Za-z0-9_-]{20,}$/.test(tok)) {
+        pushDelivery(runtime, 'telegram_notify', false, 'немає ADMIN_TELEGRAM_ID або валідного TELEGRAM_BOT_TOKEN', { reason, nodeId });
+        return false;
+    }
+    const txt = buildAdminAlert({ funnelEnv, title, main, details, ctx, sessionId: session && session.id });
+    const r = await fetch('https://api.telegram.org/bot' + tok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(adminId), text: txt, parse_mode: 'HTML', disable_web_page_preview: true }) }).catch(() => null);
+    const j = r ? await r.json().catch(() => ({})) : {};
+    pushDelivery(runtime, 'telegram_notify', !!j.ok, j.ok ? null : (j.description || 'fetch failed'), { chatId: String(adminId), reason, nodeId });
+    return !!j.ok;
+}
+
 // Лог доставки у runtime (видно у вкладці «Ноди» → «Доставка повідомлень»).
 // Кап 100 записів; старіші за 14 днів відсікаються — щоб context не роздувався.
 function pushDelivery(runtime, channel, ok, error, extra) {
@@ -434,10 +482,7 @@ async function notifyAdminPhotoMissing(session, ctx, funnelEnv, runtime, whatLab
             pushDelivery(runtime, 'telegram_notify', false, 'немає ADMIN_TELEGRAM_ID або валідного TELEGRAM_BOT_TOKEN', { reason: 'photo_missing' });
             return;
         }
-        const txt = shopPrefix(funnelEnv) + '📸 <b>Клієнт просить фото ' + whatLabel + '</b> — автоматично надіслати не вдалось (немає фото в CRM)\n\n⚠️ Бот уже пообіцяв клієнту фото — надішліть, будь ласка, вручну\n\n👤 Клієнт: ' + (ctx.senderName || '') + ' (' + (ctx.igUsername || '') + ')\n🔗 Сесія: ' + session.id;
-        const r = await fetch('https://api.telegram.org/bot' + tok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(adminId), text: txt, parse_mode: 'HTML', disable_web_page_preview: true }) }).catch(() => null);
-        const j = r ? await r.json().catch(() => ({})) : {};
-        pushDelivery(runtime, 'telegram_notify', !!j.ok, j.ok ? null : (j.description || 'fetch failed'), { chatId: String(adminId), reason: 'photo_missing' });
+        await sendAdminAlert({ session, ctx, funnelEnv, runtime, reason: 'photo_missing', title: '📸 Клієнт просить фото', main: 'Бот уже пообіцяв фото ' + whatLabel + ', але в CRM його немає — надішліть, будь ласка, вручну.', details: ['🛍️ ' + ((ctx.product && (ctx.product.customerName || ctx.product.name)) || '')] });
     } catch (_e) { /* сповіщення не має ламати потік */ }
 }
 
@@ -540,10 +585,7 @@ async function notifyAdminPaymentLinkMissing(session, ctx, funnelEnv, runtime, w
             pushDelivery(runtime, 'telegram_notify', false, 'немає ADMIN_TELEGRAM_ID або валідного TELEGRAM_BOT_TOKEN', { reason: 'payment_link_missing' });
             return;
         }
-        const txt = shopPrefix(funnelEnv) + '💳 <b>Не вдалось згенерувати ' + whatLabel + '</b>\n\n⚠️ Перевірте, чи клієнт оплатив за реквізитами; за потреби надішліть посилання вручну\n\n👤 Клієнт: ' + (ctx.senderName || '') + ' — https://instagram.com/' + (ctx.igUsername || '') + '\n🧾 Замовлення: ' + (ctx.orderRef || '—') + ' | сума ' + (ctx.payAmount != null ? ctx.payAmount + ' грн' : '—') + '\n🔗 Сесія: ' + session.id;
-        const r = await fetch('https://api.telegram.org/bot' + tok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(adminId), text: txt, parse_mode: 'HTML', disable_web_page_preview: true }) }).catch(() => null);
-        const j = r ? await r.json().catch(() => ({})) : {};
-        pushDelivery(runtime, 'telegram_notify', !!j.ok, j.ok ? null : (j.description || 'fetch failed'), { chatId: String(adminId), reason: 'payment_link_missing' });
+        await sendAdminAlert({ session, ctx, funnelEnv, runtime, reason: 'payment_link_missing', title: '💳 Посилання на оплату не створилось', main: 'ibanoplata не відповів; клієнту автоматично надіслано реквізити для ручної оплати. Якщо оплатить не через mono — звірте вручну.', details: ['🧾 Замовлення: ' + (ctx.orderRef || '—') + ' · сума ' + (ctx.payAmount != null ? ctx.payAmount + ' грн' : '—'), '🛍️ ' + ((ctx.product && (ctx.product.customerName || ctx.product.name)) || '')] });
     } catch (_e) { /* сповіщення не має ламати потік */ }
 }
 
@@ -1146,10 +1188,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
             const _admin = funnelEnv.ADMIN_TELEGRAM_ID || await getSystemKeyValue('ADMIN_TELEGRAM_ID');
             const _tok = funnelEnv.TELEGRAM_BOT_TOKEN || '';
             if (_admin && /^\d+:[A-Za-z0-9_-]{20,}$/.test(_tok) && !ctx.testMode) {
-                const _txt = shopPrefix(funnelEnv) + '↩️ <b>Клієнт написав ще раз, поки чекав на менеджера</b> — бот автоматично відновив роботу\n\n👤 Клієнт: ' + (ctx.senderName || '') + ' (' + (ctx.igUsername || '') + ')\n💬 Повідомлення: «' + String(incomingUserMessage || '[фото]').slice(0, 160) + '»\n\n🔗 Сесія: ' + session.id;
-                const _r = await fetch('https://api.telegram.org/bot' + _tok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(_admin), text: _txt, parse_mode: 'HTML', disable_web_page_preview: true }) }).catch(() => null);
-                const _j = _r ? await _r.json().catch(() => ({})) : {};
-                pushDelivery(runtime, 'telegram_notify', !!_j.ok, _j.ok ? null : (_j.description || 'fetch failed'), { chatId: String(_admin), reason: 'handoff_auto_resume' });
+                await sendAdminAlert({ session, ctx, funnelEnv, runtime, reason: 'handoff_auto_resume', title: '↩️ Клієнт написав, поки чекав менеджера', main: 'Бот автоматично відновив роботу і відповідає далі сам.', details: ['💬 «' + _escHtml(String(incomingUserMessage || '[фото]').slice(0, 160)) + '»'] });
             } else {
                 pushDelivery(runtime, 'telegram_notify', false, 'немає ADMIN_TELEGRAM_ID або валідного TELEGRAM_BOT_TOKEN', { reason: 'handoff_auto_resume' });
             }
@@ -2122,10 +2161,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                         const _amAdmin = funnelEnv.ADMIN_TELEGRAM_ID || await getSystemKeyValue('ADMIN_TELEGRAM_ID');
                         const _amTok = funnelEnv.TELEGRAM_BOT_TOKEN || '';
                         if (_amAdmin && /^\d+:[A-Za-z0-9_-]{20,}$/.test(_amTok) && !ctx.testMode) {
-                            const _amText = shopPrefix(funnelEnv) + '❓ <b>Клієнт спитав те, чого бот не знає</b> (бот продовжує діалог, відповідь можна дописати в чат)\n\n👤 ' + (ctx.senderName || '') + ' (' + (ctx.igUsername || '') + ')\n💬 «' + String(exit.parsed.askManager).slice(0, 200) + '»\n🛍️ ' + ((ctx.product && ctx.product.customerName) || '') + '\n🔗 Сесія: ' + session.id;
-                            const _amR = await fetch('https://api.telegram.org/bot' + _amTok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(_amAdmin), text: _amText, parse_mode: 'HTML', disable_web_page_preview: true }) }).catch(() => null);
-                            const _amJ = _amR ? await _amR.json().catch(() => ({})) : {};
-                            pushDelivery(runtime, 'telegram_notify', !!_amJ.ok, _amJ.ok ? null : (_amJ.description || 'fetch failed'), { nodeId: node.id, chatId: String(_amAdmin), reason: 'ask_manager' });
+                            await sendAdminAlert({ session, ctx, funnelEnv, runtime, reason: 'ask_manager', nodeId: node.id, title: '❓ Клієнт спитав те, чого бот не знає', main: 'Бот продовжує діалог; відповідь допишіть у чат — вона також потрапить у Базу знань CRM.', details: ['💬 «' + _escHtml(String(exit.parsed.askManager).slice(0, 200)) + '»', '🛍️ ' + ((ctx.product && (ctx.product.customerName || ctx.product.name)) || '')] });
                         } else {
                             pushDelivery(runtime, 'telegram_notify', false, ctx.testMode ? 'testMode' : 'немає ADMIN_TELEGRAM_ID або TELEGRAM_BOT_TOKEN', { nodeId: node.id, reason: 'ask_manager' });
                         }
@@ -2280,12 +2316,9 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                             // "Forbidden: bot can't initiate conversation with a user", менеджер
                             // НІКОЛИ не дізнається про хендоф, а клієнт лишається в тиші назавжди.
                             const adminId = funnelEnv.ADMIN_TELEGRAM_ID || await getSystemKeyValue('ADMIN_TELEGRAM_ID');
-                            const hoText = shopPrefix(funnelEnv) + '🙋 <b>Бот передав діалог людині</b> (низька впевненість)\n\n👤 Клієнт: ' + (ctx.senderName || '') + ' (' + (ctx.igUsername || '') + ')\n💬 Останнє: «' + String(ctx.lastCustomerMessage || runtime.lastUserMessage || '').slice(0, 160) + '»\n\n🔗 Сесія: ' + session.id;
                             const hoTok = funnelEnv.TELEGRAM_BOT_TOKEN || '';
                             if (adminId && /^\d+:[A-Za-z0-9_-]{20,}$/.test(hoTok)) {
-                                const _hr = await fetch('https://api.telegram.org/bot' + hoTok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(adminId), text: hoText, parse_mode: 'HTML', disable_web_page_preview: true }) }).catch(() => null);
-                                const _hj = _hr ? await _hr.json().catch(() => ({})) : {};
-                                pushDelivery(runtime, 'telegram_notify', !!_hj.ok, _hj.ok ? null : (_hj.description || 'fetch failed'), { nodeId: node.id, chatId: String(adminId), reason: 'handoff' });
+                                await sendAdminAlert({ session, ctx, funnelEnv, runtime, reason: 'handoff', nodeId: node.id, title: '🙋 Бот передав діалог людині', main: 'Відповідайте клієнту в чаті — бот на паузі, доки клієнт не напише знову.', details: ['💬 Останнє: «' + _escHtml(String(ctx.lastCustomerMessage || runtime.lastUserMessage || '').slice(0, 160)) + '»', '🛍️ ' + ((ctx.product && (ctx.product.customerName || ctx.product.name)) || '')] });
                             } else {
                                 pushDelivery(runtime, 'telegram_notify', false, 'немає ADMIN_TELEGRAM_ID або валідного TELEGRAM_BOT_TOKEN', { nodeId: node.id, reason: 'handoff' });
                             }
@@ -3352,7 +3385,10 @@ ${sourceContent || '(немає даних)'}
             try {
                 const _chat = funnelEnv[data.targetKey || 'ADMIN_TELEGRAM_ID'] || '';
                 const _tok = funnelEnv.TELEGRAM_BOT_TOKEN || '';
-                const _msg = shopPrefix(funnelEnv) + renderTemplate(data.message || '', scope);
+                // Структуровані поля (alertTitle/alertMain/alertDetails) → єдиний формат; інакше legacy message.
+                const _msg = data.alertTitle
+                    ? buildAdminAlert({ funnelEnv, ctx, sessionId: session.id, title: renderTemplate(data.alertTitle, scope), main: renderTemplate(data.alertMain || '', scope), details: renderTemplate(data.alertDetails || '', scope) })
+                    : shopPrefix(funnelEnv) + renderTemplate(data.message || '', scope);
                 if (_chat && _tok && /^\d+:[A-Za-z0-9_-]{20,}$/.test(_tok) && _msg) {
                     const _r = await fetch('https://api.telegram.org/bot' + _tok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(_chat), text: _msg, parse_mode: 'HTML', disable_web_page_preview: true }) }).catch(function(e){ console.error('[notifyTg] ' + e.message); return null; });
                     const _j = _r ? await _r.json().catch(() => ({})) : {};
@@ -4741,4 +4777,5 @@ module.exports = {
     getTestSessionState,
     endTestSession,
     executeFlowStep,
+    buildAdminAlert,
 };

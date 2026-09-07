@@ -27,7 +27,9 @@ var wantQty=Number(context.colorChoice&&context.colorChoice.qty)||0;
 if(wantQty>1&&colorsList.length===1){ while(colorsList.length<wantQty) colorsList.push(colorsList[0]); }
 var units=(colorsList.length?colorsList:['']).map(function(c){ return { color:c, size:chosenSize||'' }; });
 function unitsText(us){ return us.length+' шт: '+us.map(function(u){ return [u.color,u.size].filter(Boolean).join(' ')||'—'; }).join(', '); }
-function unitsTotal(n){ var qp=(context.product&&context.product.qtyPrices)||{}; var t=qp[String(n)]; return t!=null?Number(t):(Number(context.product&&context.product.price)||0)*n; }
+// Ціна за N шт = набори за акцією (найбільший підходящий tier повторно) + решта поштучно: 3 шт при «2 шт — 799»
+// = 799 + 449. Раніше tier лише при точному збігу (3 → 3×449), а бот у підсумку обіцяв 799 за три (тест 09-07).
+function unitsTotal(n){ var qp=(context.product&&context.product.qtyPrices)||{}; var unit=Number(context.product&&context.product.price)||0; var tiers=Object.keys(qp).map(Number).filter(function(t){ return t>1&&Number(qp[t])>0; }).sort(function(a,b){ return b-a; }); var left=n,total=0; for(var i=0;i<tiers.length;i++){ while(left>=tiers[i]){ total+=Number(qp[tiers[i]]); left-=tiers[i]; } } return total+left*unit; }
 var unitsOut={ orderUnits:units, orderQty:units.length, orderUnitsText:unitsText(units), orderUnitsTotal:unitsTotal(units.length) };
 function sizeOk(o){
   var pr=o.properties||[];
@@ -41,6 +43,15 @@ function hasQty(o){ return o && o.quantity!==undefined && o.quantity!==null && o
 // залишках перевіряємо ЛИШЕ якщо товар реально веде облік: хоча б один offer із quantity>0.
 // Інакше вважаємо, що товар є (як і старий бот без даних про залишки).
 var stockTracked = offers.some(function(o){ return Number(o.quantity) > 0; });
+// v10 (CRM 2026-09-07: кількості на кожен розмір кожного кольору + галочка «доступно завжди»):
+// alwaysAvailable → не перевіряємо залишки взагалі; якщо CRM віддає stockTracked:true (є хоч одна
+// заповнена кількість) — перевірка суворо по offer з тим самим кольором І розміром.
+if(context.product&&context.product.alwaysAvailable===true){
+  var okAlways=Object.assign({ available: true, availReason: '' }, unitsOut);
+  if(sizeOverride && sizeOverride!==context.recommendedSize){ okAlways.recommendedSize=sizeOverride; okAlways.sizeSource='client'; }
+  return okAlways;
+}
+if(context.product&&context.product.stockTracked===true) stockTracked=true;
 if(!stockTracked){
   var okNoStock=Object.assign({ available: true, availReason: '' }, unitsOut);
   if(sizeOverride && sizeOverride!==context.recommendedSize){ okNoStock.recommendedSize=sizeOverride; okNoStock.sizeSource='client'; }
@@ -52,10 +63,11 @@ if(colorsList.length){
   var missing=null;
   for(var ci=0; ci<distinct.length && !missing; ci++){
     var cc=distinct[ci];
-    var candidates=offers.filter(function(o){ var pr=o.properties||[]; return pr.some(function(x){ return String(x.value)===String(cc); }); });
+    var candidates=offers.filter(function(o){ var pr=o.properties||[]; return pr.some(function(x){ return String(x.value).toLowerCase()===String(cc).toLowerCase(); }); });
     if(!candidates.length) continue;
     var withSize = candidates.filter(sizeOk);
-    var pool = withSize.length ? withSize : candidates;
+    // суворий режим (кількості ведуться по розмірах): нема offer саме цього розміру → нема в наявності
+    var pool = withSize.length ? withSize : ((context.product&&context.product.stockTracked===true&&chosenSize) ? [] : candidates);
     if(!pool.some(function(o){ return Number(o.quantity) > 0; })) missing=cc;
   }
   if (missing) {

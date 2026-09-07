@@ -1044,13 +1044,18 @@ async function handleIncomingMessage(botId, body) {
     // платили), а бот на перше ж повідомлення після увімкнення слав презентацію з нуля. Правило: якщо за останні
     // 12 год у розмові писав менеджер (zernio_inbox), а бот жодного разу ще не вів цю розмову (нема повідомлень з
     // nodeId) — розмова «менеджерська», бот мовчить. Менеджер може віддати її боту кнопкою рестарту в адмінці.
+    // Уточнення 19:58 (скрін власника: бот відповів «Так, це джинси j0032» у розмові, яку менеджер уже забрав):
+    // менеджер написав ПІСЛЯ останнього повідомлення бота → розмова менеджерська, доки адмін не зробить
+    // рестарт сесії (запис admin_restart новіший за повідомлення менеджера повертає бота).
     let managerOwned = false;
     try {
         const _since12 = new Date(Date.now() - 12 * 60 * 60 * 1000);
-        const _recentAsst = await db.message.findMany({ where: { sessionId: session.id, role: 'assistant', createdAt: { gte: _since12 } }, select: { metadata: true }, take: 60 });
-        const _managerWrote = _recentAsst.some((r) => ((r.metadata || {}).source) === 'zernio_inbox');
-        const _botDrove = _recentAsst.some((r) => !!((r.metadata || {}).nodeId));
-        managerOwned = _managerWrote && !_botDrove;
+        const _recent = await db.message.findMany({ where: { sessionId: session.id, createdAt: { gte: _since12 }, role: { not: 'user' } }, select: { metadata: true, createdAt: true }, orderBy: { createdAt: 'desc' }, take: 80 });
+        const _ts = (pred) => { const r = _recent.find(pred); return r ? r.createdAt.getTime() : 0; };
+        const _lastManager = _ts((r) => ((r.metadata || {}).source) === 'zernio_inbox');
+        const _lastBot = _ts((r) => !!((r.metadata || {}).nodeId));
+        const _lastRestart = _ts((r) => /admin_restart|restart/i.test(String((r.metadata || {}).source || '')));
+        managerOwned = _lastManager > 0 && _lastManager > _lastBot && _lastManager > _lastRestart;
     } catch (_e) { managerOwned = false; }
     if (managerOwned) {
         await logDelivery(session.id, botId, 'zernio_inbound', true, null, { reason: 'manager_owned: skipped flow (менеджер веде розмову, бот її ще не вів)', text: String(text || '').slice(0, 80) });

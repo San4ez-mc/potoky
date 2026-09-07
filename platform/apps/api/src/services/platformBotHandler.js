@@ -1247,20 +1247,35 @@ async function _handlePlatformBotUpdateInner(botId, update) {
             targetBotId, sessionId: session.id, error: err.message, stack: err.stack,
         });
 
-        // Notify the owner with the REAL error so failures are diagnosable at a
-        // glance — instead of only the friendly "щось пішло не так" and digging
-        // through server logs every time.
+        // Сповіщення власнику зі справжньою помилкою — інакше він бачить лише
+        // ввічливе «щось пішло не так» і щоразу лізе в логи сервера.
+        //
+        // Іде окремим каналом (ALERT_CONNECTOR_ID / ALERT_CHAT_ID), бо бот клієнта
+        // не може писати власнику, поки той сам із ним не заговорив, — а виявляти
+        // це саме в момент падіння найгірше.
         let ownerId = '';
         try {
-            const ownerRow = await db.funnelKey.findFirst({
-                where: { botId: targetBotId, key: 'OWNER_TELEGRAM_ID' }, select: { value: true },
+            const { sendAlert } = require('../routes/alerts');
+            const r = await sendAlert({
+                botId: targetBotId,
+                sessionId: session.id,
+                kind: 'error',
+                text: String(err.message || 'unknown error'),
+                details: `Останнє повідомлення: ${String(text || '').slice(0, 200)}`,
             });
-            ownerId = (ownerRow?.value || '').trim() || '345126254';
-            const ownerMsg = '⚠️ Помилка у боті\n'
-                + `bot: ${targetBotId}\nsession: ${session.id}\n`
-                + `повідомлення: ${String(text || '').slice(0, 200)}\n\n`
-                + String(err.message || 'unknown error').slice(0, 1200);
-            await sendTelegramMessage(token, ownerId, ownerMsg);
+
+            // Канал сповіщень не налаштований — не мовчимо, а пишемо старим шляхом.
+            if (!r.sent && r.reason === 'no-channel') {
+                const ownerRow = await db.funnelKey.findFirst({
+                    where: { botId: targetBotId, key: 'OWNER_TELEGRAM_ID' }, select: { value: true },
+                });
+                ownerId = (ownerRow?.value || '').trim() || '345126254';
+                const ownerMsg = '⚠️ Помилка у боті\n'
+                    + `bot: ${targetBotId}\nsession: ${session.id}\n`
+                    + `повідомлення: ${String(text || '').slice(0, 200)}\n\n`
+                    + String(err.message || 'unknown error').slice(0, 1200);
+                await sendTelegramMessage(token, ownerId, ownerMsg);
+            }
         } catch (notifyErr) {
             logger.warn('[platformBotHandler] owner notify failed', { error: notifyErr.message });
         }

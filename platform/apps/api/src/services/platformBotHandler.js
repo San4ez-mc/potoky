@@ -420,14 +420,42 @@ async function getNewAssistantMessages(sessionId, since) {
     return msgs.filter(m => !m.metadata?.hidden);
 }
 
-async function persistUserMessage(sessionId, content) {
+/**
+ * Зберегти те, що надіслав користувач, ДО того як воронка почне це обробляти.
+ *
+ * Записуємо навіть коли тексту нема: голосове без транскрипції або документ
+ * лишали в базі порожнечу, і після збою в потоці не було чого відновлювати —
+ * ні відповіді, ні сліду, що людина взагалі щось надсилала.
+ *
+ * `fileUrl` сюди НЕ кладемо: телеграмівське посилання на файл містить токен
+ * бота, і в історії сесії він став би видимим кожному, хто її відкриє.
+ */
+async function persistUserMessage(sessionId, content, media) {
+    const text = String(content ?? '').trim();
+    const label = media
+        ? `[${media.type}${media.fileName ? ` · ${media.fileName}` : ''}${media.transcript ? '' : ' — без розшифровки'}]`
+        : '';
+    const stored = text || label || '[порожнє повідомлення]';
+
     await Promise.all([
         db.message.create({
             data: {
                 sessionId,
                 role: 'user',
-                content,
-                metadata: { source: 'telegram-platform-bot' },
+                content: stored,
+                metadata: {
+                    source: 'telegram-platform-bot',
+                    ...(media && {
+                        media: {
+                            type: media.type,
+                            fileId: media.fileId || null,
+                            fileName: media.fileName || null,
+                            mimeType: media.mimeType || null,
+                            transcribed: Boolean(media.transcript),
+                        },
+                    }),
+                    ...(text ? {} : { emptyText: true }),
+                },
             },
         }),
         db.session.update({
@@ -1089,7 +1117,7 @@ async function _handlePlatformBotUpdateInner(botId, update) {
             return;
         }
 
-        await persistUserMessage(session.id, text);
+        await persistUserMessage(session.id, text, incomingMedia);
 
         // Notify admin if they previously engaged in this session manually
         if (session.context?.adminEngaged) {

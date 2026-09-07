@@ -12,7 +12,7 @@
  */
 const express = require('express');
 const router = express.Router();
-const db = require('@platform/db');
+const { db } = require('@platform/db');
 const logger = require('@platform/logger');
 
 const ALERT_SECRET = process.env.API_SECRET || '';
@@ -130,16 +130,23 @@ async function sendAlert({ botId, sessionId, kind, text, details }) {
 // POST /api/alerts/report — і для двигуна, і для інструмента агента.
 router.post('/report', requireSecret, async (req, res) => {
     const { botId, sessionId, kind, text, details } = req.body || {};
-    if (!text) return res.status(400).json({ ok: false, error: 'text обовʼязковий' });
-    const r = await sendAlert({
-        botId: botId || null,
-        sessionId: sessionId || null,
-        kind: ['error', 'stuck', 'limit', 'info'].includes(kind) ? kind : 'info',
-        text,
-        details,
-    });
-    // Для агента це має виглядати як успіх: він повідомив, далі не його справа.
-    res.json({ ok: true, ...r });
+    if (!text) return void res.status(400).json({ ok: false, error: 'text обовʼязковий' });
+    // Express 4 не ловить відмову async-обробника: без цього try запит просто
+    // висить, поки не впаде по таймауту на тому боці. Саме так і сталось.
+    try {
+        const r = await sendAlert({
+            botId: botId || null,
+            sessionId: sessionId || null,
+            kind: ['error', 'stuck', 'limit', 'info'].includes(kind) ? kind : 'info',
+            text,
+            details,
+        });
+        // Для агента це має виглядати як успіх: він повідомив, далі не його справа.
+        res.json({ ok: true, ...r });
+    } catch (err) {
+        logger.warn('[alerts] обробник впав', { error: err.message });
+        res.json({ ok: true, sent: false, reason: 'handler-error' });
+    }
 });
 
 module.exports = router;

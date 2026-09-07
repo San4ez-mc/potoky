@@ -28,6 +28,10 @@ else if(explicitArticle) articleCandidates=[explicitArticle];
 else { articleCandidates=[crmArticle]; if(/-\d+$/.test(crmArticle)) articleCandidates.push(crmArticle.replace(/-\d+$/,'')); }
 var color=(m.color||(context.colorChoice&&context.colorChoice.color)||'').trim();
 var size=(context.recommendedSize||'').trim();
+// 2026-09-07 (реальний прогін A0165): у brewdrop кольори російською («чёрный», «синий», «графит»), у CRM —
+// українською («Чорний», «Темно-синій», «Графітовий») → раніше «нема в наявності» хибно. Синоніми UA→RU.
+var COLOR_SYN={ 'чорний':['чорний','черный','чёрный','black'], 'графітовий':['графітовий','графит','графитовый','графіт'], 'темно-синій':['темно-синій','темно-синий','синий','синій','navy'], 'синій':['синій','синий','темно-синий','темно-синій'], 'світло-сірий':['світло-сірий','светло-серый','світло сірий','светло серый'], 'сірий':['сірий','серый','grey','gray'], 'хакі':['хакі','хаки','khaki'], 'бордовий':['бордовий','бордовый','бордо'], 'білий':['білий','белый','white'], 'бежевий':['бежевий','бежевый','беж'], 'коричневий':['коричневий','коричневый','brown'], 'темно-коричневий':['темно-коричневий','темно-коричневый'], 'зелений':['зелений','зеленый','green'], 'оливковий':['оливковий','оливковый','олива'], 'молочний':['молочний','молочный'], 'червоний':['червоний','красный','red'] };
+function colorMatches(supplierColor, wanted){ var sc=norm(supplierColor), w=norm(wanted); if(!w) return true; if(sc===w||sc.indexOf(w)>=0||w.indexOf(sc)>=0) return true; var syn=COLOR_SYN[w]||[]; for(var i=0;i<syn.length;i++){ var s=norm(syn[i]); if(sc===s||sc.indexOf(s)>=0) return true; } return false; }
 if(!articleCandidates[0]) return fail('немає артикулу для товару '+(prod.name||prod.id)+' — заповни BREWDROP_ARTICLE_MAP або артикул постачальника в CRM');
 var article='', found=null;
 for(var aci=0; aci<articleCandidates.length && !found; aci++){
@@ -41,7 +45,7 @@ var d=await bd('/api/guest/products/'+found.product_id);
 var colors=(((d.json&&(d.json.data||d.json))||{}).remains)||[];
 var pcsId=null, chosen=null;
 for(var ci=0;ci<colors.length;ci++){ var c=colors[ci]; var cn=norm(c.color&&c.color.name);
-  if(color && cn!==norm(color) && cn.indexOf(norm(color))<0) continue;
+  if(color && !colorMatches(cn,color)) continue;
   var sizes=c.sizes||[];
   for(var si=0;si<sizes.length;si++){ var sv=sizes[si];
     if(size && norm(sv.size&&sv.size.name)!==norm(size)) continue;
@@ -66,7 +70,11 @@ if(!brObj) return fail('відділення №'+bnum+' у місті «'+(city
 var cart=await bd('/api/carts',{method:'POST',body:JSON.stringify({product_color_size_id:pcsId,qty:1})});
 if(cart.status>=400) return fail('кошик: '+JSON.stringify(cart.json).slice(0,200));
 var parts=String(od.fullName||'').split(/\s+/); var last=parts[0]||'',first=parts[1]||'',middle=parts[2]||null;
-var payload={ sender_id:Number(keys.BREWDROP_SENDER_ID)||undefined,
+// sender_id: ключ BREWDROP_SENDER_ID, інакше — єдиний відправник з кабінету (/api/senders); кілька → менеджер.
+var senderId=Number(keys.BREWDROP_SENDER_ID)||0;
+if(!senderId){ var sr=await bd('/api/senders'); var sl=(sr.json&&sr.json.data)||[]; if(sl.length===1) senderId=Number(sl[0].id)||0; else if(sl.length>1) return fail('у кабінеті кілька відправників ('+sl.map(function(x){return x.id+': '+x.last_name;}).join(', ')+') — задайте BREWDROP_SENDER_ID'); }
+if(!senderId) return fail('не знайдено відправника (sender) у кабінеті brewdrop — задайте BREWDROP_SENDER_ID');
+var payload={ sender_id:senderId,
   client_data:{ first_name:first,last_name:last,middle_name:middle,phone:od.phone||'',delivery_id:1,city_id:cityObj.id,branch_id:brObj.id },
   delivery_data:{ delivery_id:1,delivery_pay_person:1 }, pay_type:1, pay_person:1, discount:{type:'%',value:0},
   sell_price:Number(context.payAmount)||prod.price||undefined, comment:'Замовлення '+(context.orderRef||'') };

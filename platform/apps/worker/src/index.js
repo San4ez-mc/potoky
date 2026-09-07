@@ -118,6 +118,9 @@ async function checkInactiveSessions() {
                 const runtime = ctx.flowRuntime || {};
 
                 if (!runtime.waitingForUser) continue;
+                // 2026-09-07: Telegram-фолоу-апи (24 год / 7 днів) — лише для Telegram-сесій. Instagram/Zernio-сесії
+                // мають синтетичний telegramId; писати їм через 24+ год заборонено політикою Meta, та й канал інший.
+                if (ctx.channel === 'zernio' || ctx.channel === 'instagram' || ctx.igUsername || ctx.conversationId) continue;
 
                 const followUpCount = ctx.followUpCount || 0;
                 // Max 2 follow-ups: #1 after 24h, #2 after 7 days, then stop
@@ -260,7 +263,9 @@ async function checkZernioReminders() {
             where: {
                 isActive: true, isTest: false,
                 state: { notIn: ['completed', 'unsubscribed'] },
-                lastActive: { lte: new Date(now - 10 * 60 * 1000), gte: new Date(now - 26 * 60 * 60 * 1000) },
+                // 2026-09-07 (безпековий аудит перед бойовим режимом): вікно Meta 24 год від останнього
+                // повідомлення КЛІЄНТА — нагадування лише в межах 23 год (запас на затримку каналу).
+                lastActive: { lte: new Date(now - 10 * 60 * 1000), gte: new Date(now - 23 * 60 * 60 * 1000) },
                 context: { path: ['channel'], equals: 'zernio' },
             },
             select: { id: true, botId: true, context: true, lastActive: true },
@@ -301,7 +306,9 @@ async function checkZernioReminders() {
                 if (now - (rem.lastAt || 0) < 10 * 60 * 1000) continue;
 
                 // поважати «напишу після HH:MM» з останніх повідомлень користувача
-                const lastUser = await db.message.findFirst({ where: { sessionId: s.id, role: 'user' }, orderBy: { createdAt: 'desc' }, select: { content: true } });
+                const lastUser = await db.message.findFirst({ where: { sessionId: s.id, role: 'user' }, orderBy: { createdAt: 'desc' }, select: { content: true, createdAt: true } });
+                // Жорсткий гард 24 год саме від останнього ПОВІДОМЛЕННЯ клієнта (lastActive може оновити й наш крок).
+                if (!lastUser || (now - new Date(lastUser.createdAt).getTime()) > 23 * 60 * 60 * 1000) continue;
                 const after = parseAfterTime(lastUser && lastUser.content);
                 if (after && now < after + 30 * 60 * 1000) continue;
 

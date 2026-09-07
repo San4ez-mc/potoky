@@ -458,6 +458,20 @@ function applyV10(nodes, edges, notes) {
     return { nodes, edges };
 }
 
+// v11 (безпековий аудит 2026-09-07 перед бойовим режимом): статичні message-ноди без варіантів отримують ≥3 варіанти
+// (антиспам Instagram — однакові тексти різним людям).
+const STATIC_VARIANTS = {
+    n_pay_notfound_msg: ['Дякую! 🙌 Оплату поки не бачу у виписці — щойно надійде, підтверджу і передам у відправку. Якщо вже оплатили — скиньте, будь ласка, чек або скрін, так швидше 🙂', 'Дякую 🙂 У виписці оплати поки немає — як тільки зʼявиться, підтверджу і передам у відправку. Якщо вже оплатили, надішліть чек або скрін — так знайдемо швидше 🙌', 'Прийняла, дякую! 🙌 Оплату ще не бачу — щойно надійде, одразу підтверджу. Якщо вже платили — киньте, будь ласка, чек чи скрін 🙂'],
+    n_req_ref_l: ['📌 Призначення платежу — скопіюйте як є, так ми одразу знайдемо вашу оплату 👇', '📌 Призначення платежу (скопіюйте без змін, щоб оплата знайшлась одразу) 👇', '📌 У призначенні платежу вкажіть рівно це — так ми миттєво побачимо вашу оплату 👇'],
+    n_avail_stock_msg: ['Ой, саме цей товар зараз закінчився 😔 Покличу менеджера — він уточнить, коли буде поставка, і напише сюди. Якщо тим часом цікавить щось інше — скиньте пост або артикул 🙂', 'На жаль, саме цей товар щойно закінчився 😔 Передам менеджеру — він уточнить поставку і напише вам сюди. Якщо цікавить щось інше — надішліть пост або артикул 🙂', 'Шкода, цей товар зараз розібрали 😔 Менеджер уточнить, коли буде наступна поставка, і напише сюди. А поки — може, скинете пост або артикул іншої речі? 🙂'],
+    n_req_fallback_msg: ['💰 До сплати зараз: {{context.payAmount}} грн ({{context.payLabel}}).\n\nПосилання на оплату зараз не створюється, тому надсилаю реквізити для оплати вручну — кожен рядок окремо, натисніть, щоб скопіювати 👇', '💰 До сплати: {{context.payAmount}} грн ({{context.payLabel}}).\n\nПосилання на оплату тимчасово недоступне — тому одразу реквізити для ручної оплати, кожен рядок окремо, щоб зручно копіювати 👇', '💰 Сума до сплати: {{context.payAmount}} грн ({{context.payLabel}}).\n\nЗамість посилання надсилаю реквізити — кожне значення окремим повідомленням, натисніть, щоб скопіювати 👇'],
+};
+function applyV11(nodes, edges, notes) {
+    const byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
+    for (const [id, v] of Object.entries(STATIC_VARIANTS)) { const n = byId[id]; if (!n) continue; if (!(Array.isArray(n.data.variants) && n.data.variants.length >= 2)) { n.data.text = v[0]; n.data.variants = v.slice(1); notes.push('variants ' + id); } }
+    return { nodes, edges };
+}
+
 // v7 (2026-09-05, база знань перенесена в CRM): профіль магазину з CRM у context.shop (нода n_shop_profile
 // після n_route), промпти читають {{context.shop.faq}}/{{context.shop.terms}}; вектор-база (useKb) вимкнена,
 // натомість пошук по базі знань CRM (useCrmKb) на діалогових нодах; ключі SHOP_FAQ/ORDER_TERMS_LINE/VECTOR_*
@@ -568,7 +582,8 @@ function refresh(flow, opts) {
     const v7 = applyV7(v5.nodes, v5.edges, notes);
     const v8 = applyV8(v7.nodes, v7.edges, notes);
     const v9 = applyV9(v8.nodes, v8.edges, notes);
-    const v3 = applyV10(v9.nodes, v9.edges, notes);
+    const v10 = applyV10(v9.nodes, v9.edges, notes);
+    const v3 = applyV11(v10.nodes, v10.edges, notes);
     return { nodes: v3.nodes, edges: v3.edges, notes, keyUpdates: [], keyDeletes: KB_KEY_DELETES.slice() };
 }
 
@@ -762,7 +777,7 @@ function transform(flow, keysMap, opts) {
     { const n = byId()['n_ttn_sync_crm']; if (n) { placer.free('n_ttn_sync_crm'); n.position = placer.place(n.position.x, n.position.y); } }
 
     REMOVE.forEach(removeNode);
-    { const v2 = applyV2(nodes, edges, notes); const v3 = applyV3(v2.nodes, v2.edges, notes); const v4 = applyV4(v3.nodes, v3.edges, notes); const v5 = applyV5(v4.nodes, v4.edges, notes); const v7 = applyV7(v5.nodes, v5.edges, notes); const v8 = applyV8(v7.nodes, v7.edges, notes); const v9 = applyV9(v8.nodes, v8.edges, notes); const v10 = applyV10(v9.nodes, v9.edges, notes); nodes = v10.nodes; edges = v10.edges; }
+    { const v2 = applyV2(nodes, edges, notes); const v3 = applyV3(v2.nodes, v2.edges, notes); const v4 = applyV4(v3.nodes, v3.edges, notes); const v5 = applyV5(v4.nodes, v4.edges, notes); const v7 = applyV7(v5.nodes, v5.edges, notes); const v8 = applyV8(v7.nodes, v7.edges, notes); const v9 = applyV9(v8.nodes, v8.edges, notes); const v10 = applyV10(v9.nodes, v9.edges, notes); const v11 = applyV11(v10.nodes, v10.edges, notes); nodes = v11.nodes; edges = v11.edges; }
 
     // ── ключі ──
     const keyUpdates = [

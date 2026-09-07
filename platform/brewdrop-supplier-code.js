@@ -56,7 +56,8 @@ if(!pcsId) return fail('нема в наявності '+article+' / '+(color||'
 var cityRaw=String(np.city||od.city||'');
 var cityQ=cityRaw.replace(/^(м|с|смт|сел|селище)\.?\s+/i,'').split(',')[0].split('(')[0].trim();
 if(!cityQ) return fail('не вказано місто доставки');
-var cy=await bd('/api/cities?search='+encodeURIComponent(cityQ)+'&per_page=10');
+// 2026-09-07 (реальний прогін): /api/cities ігнорує search= (віддає алфавітний список), фільтрує лише name= (укр. назва).
+var cy=await bd('/api/cities?name='+encodeURIComponent(cityQ)+'&per_page=10');
 var cyList=(cy.json&&cy.json.data)||[];
 var cityObj=cyList.find(function(c){ return norm(c.name)===norm(cityQ) || norm(c.name_ua)===norm(cityQ); })||null;
 if(!cityObj) return fail('місто «'+cityQ+'» не знайдено точним збігом (варіанти: '+(cyList.map(function(c){return c.name_ua||c.name;}).slice(0,5).join(', ')||'—')+')');

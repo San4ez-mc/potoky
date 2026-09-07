@@ -1040,6 +1040,23 @@ async function handleIncomingMessage(botId, body) {
         logger.info('[zernioHandler] stale inbound — stored, flow not run', { botId, sessionId: session.id });
         return { ok: true, processed: 1, stale: true };
     }
+    // 2026-09-07 (бойовий старт goverla, 19:45): десятки розмов у цей момент вели МЕНЕДЖЕРИ вручну (клієнти вже
+    // платили), а бот на перше ж повідомлення після увімкнення слав презентацію з нуля. Правило: якщо за останні
+    // 12 год у розмові писав менеджер (zernio_inbox), а бот жодного разу ще не вів цю розмову (нема повідомлень з
+    // nodeId) — розмова «менеджерська», бот мовчить. Менеджер може віддати її боту кнопкою рестарту в адмінці.
+    let managerOwned = false;
+    try {
+        const _since12 = new Date(Date.now() - 12 * 60 * 60 * 1000);
+        const _recentAsst = await db.message.findMany({ where: { sessionId: session.id, role: 'assistant', createdAt: { gte: _since12 } }, select: { metadata: true }, take: 60 });
+        const _managerWrote = _recentAsst.some((r) => ((r.metadata || {}).source) === 'zernio_inbox');
+        const _botDrove = _recentAsst.some((r) => !!((r.metadata || {}).nodeId));
+        managerOwned = _managerWrote && !_botDrove;
+    } catch (_e) { managerOwned = false; }
+    if (managerOwned) {
+        await logDelivery(session.id, botId, 'zernio_inbound', true, null, { reason: 'manager_owned: skipped flow (менеджер веде розмову, бот її ще не вів)', text: String(text || '').slice(0, 80) });
+        logger.info('[zernioHandler] manager-owned conversation — stored, flow not run', { botId, sessionId: session.id });
+        return { ok: true, processed: 1, managerOwned: true };
+    }
     if (!testModeBlocked && !ctxNow.funnelPaused) {
         // Аудит 2026-08-27 (антипатерн A12, реальний кейс Сіразетдінова): рілс/пост і
         // підпис-текст до нього іноді приходять ДВОМА окремими webhook-подіями за

@@ -166,6 +166,8 @@ try {
       if (!__adCaption && __pid && __muTok) {
         var __m2 = await __gget(__pid + '?fields=caption,media_url,thumbnail_url', __muTok);
         if (__m2 && (__m2.caption || __m2.media_url)) { __adCaption = String(__m2.caption || ''); __adImage = String(__m2.thumbnail_url || __m2.media_url || ''); }
+        // post_id з referral буває постом Facebook-сторінки (не IG-медіа): «nonexisting field (caption)» → message/full_picture
+        if (!__adCaption) { var __m3 = await __gget(__pid + '?fields=message,full_picture', __muTok); if (__m3 && (__m3.message || __m3.full_picture)) { __adCaption = String(__m3.message || ''); __adImage = __adImage || String(__m3.full_picture || ''); } }
       }
       if (!__adCaption && __aid && __muTok) {
         var __ad = await __gget(__aid + '?fields=creative{effective_object_story_id,body,thumbnail_url,object_story_spec}', __muTok);
@@ -314,7 +316,7 @@ try {
       var __byStem = all.filter(function (p) { return !p.isSet && __hasStem(p, __uStem); });
       if (__byStem.length === 1) { found = __byStem[0]; via = 'user_keyword:' + __uStem; mk = 'kw_' + String(found.sku || found.id); }
     }
-  } catch (e) { /* best-effort */ }
+  } catch (e) { context.__dbg = 'category-intent: ' + String(e && e.message); }
 
   if (!found) return fallback('Жоден пріоритет матчингу не спрацював (ad_id/артикул/keyword/vision)');
 

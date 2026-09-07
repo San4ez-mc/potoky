@@ -179,7 +179,8 @@ if (w && h && wMatches.length) {
   if (hOk.length) size = hOk[0];
   else {
     var hMaxOfW = Math.max.apply(null, wMatches.map(function (k) { return Number((chart[k].height || [0, 0])[1]); }));
-    if (h > hMaxOfW) { var big = wMatches[wMatches.length - 1]; var nx = order[order.indexOf(big) + 1]; size = (nx && chart[nx]) ? nx : big; }
+    // 187/85 (Олена, 09-07): вага на межі L/XL, зріст вищий за обидва → бамп від МЕНШОГО (L→XL), а не від XL→XXL (менеджер: XL).
+    if (h > hMaxOfW) { var baseW = wMatches[0]; var nx = order[order.indexOf(baseW) + 1]; size = (nx && chart[nx]) ? nx : baseW; }
     else size = wMatches[0];
   }
 } else if (byW && byH) { size = order.indexOf(byW) >= order.indexOf(byH) ? byW : byH; }

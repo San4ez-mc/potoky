@@ -507,6 +507,11 @@ function applyV12(nodes, edges, notes) {
     }
     const ua = byId().n_unknown_admin;
     if (ua && ua.data.alertPhoto !== '{{context.lastUserImageUrl}}') { ua.data.alertPhoto = '{{context.lastUserImageUrl}}'; notes.push('n_unknown_admin alertPhoto'); }
+    // числові розміри (джинси 29–36, взуття 40–45): «джинси 31 размера» — приймаємо одразу, без зросту/ваги
+    if (byId().n_size && !/ЧИСЛОВІ розміри/.test(byId().n_size.data.systemPrompt || '')) {
+        byId().n_size.data.systemPrompt = String(byId().n_size.data.systemPrompt || '') + '\nВИНЯТОК до 3c — ЧИСЛОВІ розміри: якщо у товару розміри числові (джинси 29–36, штани 46–54, взуття 39–45) і клієнт назвав число з цього ряду («31 размера», «джинси 32», «42 розмір») — це його розмір: одразу поверни ТІЛЬКИ json_output {"clothingSize":"<число>"} (можна разом із "color"/"alsoWants"), зріст і вагу НЕ вимагай.';
+        notes.push('n_size numeric sizes rule');
+    }
     // розмірна сітка на запит (Купцова 21:44: «зараз покажу сітку» — і нічого)
     for (const id of ['n_size', 'n_color']) {
         const n = byId()[id]; if (!n || /"wantsSizeChart"/.test(n.data.systemPrompt || '')) continue;

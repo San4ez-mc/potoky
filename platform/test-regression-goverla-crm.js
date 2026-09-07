@@ -224,6 +224,8 @@ async function runNode(id, context, extra) {
     ok('B-C13', 'n_calc 190/63 (високий, худий) → M, не XXL (фідбек власника)', x.recommendedSize === 'M' && !x.sizeOutOfRange, JSON.stringify([x.recommendedSize, x.sizeOorReason]));
     x = await runNode('n_calc', { testMode: true, product: prodHW, sizeInput: { height: 180, weight: 65 } });
     ok('B-C14', 'n_calc 180/65 → M (між S і M — беремо M)', x.recommendedSize === 'M', x.recommendedSize);
+    x = await runNode('n_calc', { testMode: true, product: { ...prodHW, sizes: ['S', 'M', 'L', 'XL', 'XXL'] }, sizeInput: { height: 187, weight: 85 } });
+    ok('B-C17', 'n_calc 187/85 (вага на межі L/XL, високий) → XL, не XXL (менеджер: XL)', x.recommendedSize === 'XL', x.recommendedSize);
     x = await runNode('n_calc', { testMode: true, product: { ...prodHW, sizes: ['S', 'M', 'L', 'XL', 'XXL'] }, sizeInput: { height: 170, weight: 90 } });
     ok('B-C15', 'n_calc 170/90 (низький, важкий) → за вагою XL, не менше', x.recommendedSize === 'XL', x.recommendedSize);
     x = await runNode('n_avail', { product: { alwaysAvailable: true, offers: [{ properties: [{ name: 'Колір', value: 'чорний' }], quantity: 0 }] }, colorChoice: { color: 'чорний' } });

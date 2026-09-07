@@ -1393,8 +1393,17 @@ async function resumeAfterManagerSilence() {
                 const msgs = await db.message.findMany({ where: { sessionId: s.id, createdAt: { gte: since } }, orderBy: { createdAt: 'asc' }, select: { role: true, content: true, createdAt: true, metadata: true } });
                 let lastManagerIdx = -1; for (let i = msgs.length - 1; i >= 0; i--) { if (((msgs[i].metadata || {}).source) === 'zernio_inbox') { lastManagerIdx = i; break; } }
                 if (lastManagerIdx < 0) continue;
-                const botDroveBefore = msgs.slice(0, lastManagerIdx).some((m) => m.role !== 'user' && !!((m.metadata || {}).nodeId));
-                if (!botDroveBefore) continue;
+                // 23:13 (Людмила): відновлення влізло в розмову, яку менеджер вів ГОДИНАМИ (бот там лише один раз
+                // встряв 19:46) і обійшло тестовий режим. Умови: (а) НЕ testMode/allowlist-блок; (б) до менеджера
+                // розмову вів бот, і ЖОДНОГО повідомлення менеджера перед першим повідомленням бота за добу не було;
+                // (в) менеджер написав лише 1–2 повідомлення (готова відповідь), а не веде діалог.
+                if (await isBlockedByTestMode(s.botId, [ctx.igUsername, ctx.senderName])) continue;
+                const firstBotIdx = msgs.findIndex((m) => m.role !== 'user' && !!((m.metadata || {}).nodeId));
+                if (firstBotIdx < 0 || firstBotIdx > lastManagerIdx) continue;
+                const managerBeforeBot = msgs.slice(0, firstBotIdx).some((m) => ((m.metadata || {}).source) === 'zernio_inbox');
+                if (managerBeforeBot) continue;
+                const managerMsgsAfterBot = msgs.slice(firstBotIdx).filter((m) => ((m.metadata || {}).source) === 'zernio_inbox').length;
+                if (managerMsgsAfterBot > 2) continue;
                 const after = msgs.slice(lastManagerIdx + 1).filter((m) => m.role === 'user');
                 if (!after.length) continue;
                 const lastClientAt = after[after.length - 1].createdAt.getTime();

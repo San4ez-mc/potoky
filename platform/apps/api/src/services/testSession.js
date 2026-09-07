@@ -2209,8 +2209,17 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                             await fetch(`${_fdApiUrl}/knowledge/from-dialog`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${_fdApiKey}` }, body: JSON.stringify({ question: String(exit.parsed.askManager).slice(0, 500), sessionId: session.id, productId: (ctx.product && ctx.product.id) || null }) }).catch(() => {});
                         }
                     } catch (_e) { /* best-effort */ }
-                    const otherKeys = Object.keys(exit.parsed).filter((k) => k !== 'askManager' && k !== 'wantsPhoto' && k !== 'photoArticle' && k !== 'wantsSizeChart');
+                    const otherKeys = Object.keys(exit.parsed).filter((k) => k !== 'askManager' && k !== 'wantsPhoto' && k !== 'photoArticle' && k !== 'wantsSizeChart' && k !== 'alsoWants');
                     if (otherKeys.length === 0) exit.done = false;
+                }
+                // alsoWants посеред діалогу («Футболочку білу тоже, S» на кроці розміру): накопичуємо в context, нода
+                // НЕ виходить, якщо інших полів нема. При виході разом з параметрами — підхопить n_calc/n_avail.
+                if (exit.parsed && typeof exit.parsed.alsoWants === 'string' && exit.parsed.alsoWants.trim()) {
+                    const _aw = exit.parsed.alsoWants.trim();
+                    const _prev = String(ctx.alsoWants || '').trim();
+                    if (!_prev.toLowerCase().includes(_aw.toLowerCase())) ctx.alsoWants = _prev ? (_prev + '; ' + _aw) : _aw;
+                    const _awKeys = Object.keys(exit.parsed).filter((k) => !['alsoWants', 'askManager', 'wantsPhoto', 'photoArticle', 'wantsSizeChart'].includes(k));
+                    if (_awKeys.length === 0) exit.done = false;
                 }
                 // 2026-09-07 (Купцова: «Зараз покажу розмірну сітку» — і нічого): {"wantsSizeChart":true} → картинка
                 // сітки з CRM (product.sizeChartUrl); нема картинки → менеджеру сигнал, нода не виходить.

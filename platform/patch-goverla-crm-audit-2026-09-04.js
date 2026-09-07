@@ -480,6 +480,7 @@ function applyV11(nodes, edges, notes) {
 // (6) n_unknown_admin шле саме фото клієнта; (7) розбіжність привʼязки реклами → у деталі n_create.
 const ALSO_WANTS_RULE = '\nЯКЩО клієнт згадує ІНШІ речі (кофта, футболка, лофери, куртка…), їхні кольори чи розміри — НЕ ігноруй і НЕ відмовляй: одним реченням скажи, що це теж підберемо/додамо після поточного товару, і додай у той самий json_output поле "alsoWants":"<що саме: річ, колір, розмір, кількість>" (разом із параметрами/кольором, коли вони є). На «спершу поточний товар» не наполягай зайвий раз.';
 const ALSO_WANTS_INTENT = '\nКЛІЄНТ ТАКОЖ ХОЧЕ (з попередніх кроків; порожньо = нічого): «{{context.alsoWants}}». ЯКЩО непорожньо: те, що є допродажем зі списку (футболка) з названим кольором/кількістю — ОДРАЗУ включи в підсумок як позицію допродажу і при згоді поверни addUpsell/upsellQty/upsellNote з цими даними, НЕ перепитуй колір; інші речі (кофта, лофери, інший товар) — скажи одним реченням, що менеджер додасть їх у цю ж посилку і напише ціну, і при згоді поверни їх у "extraProducts".';
+const UPSELL_SAME_MSG = '\nЯКЩО в ОДНОМУ повідомленні клієнт і погоджується оформити («так», «давай», «оформляємо»), і називає допродаж з кількістю/кольорами («так, і дві футболки: білу і чорну») — це ФІНАЛЬНА згода: поверни ТІЛЬКИ json_output {"ready":"yes","addUpsell":true,"upsellQty":<n>,"upsellNote":"<кольори/розміри>"} БЕЗ тексту і БЕЗ повторного підсумку (підсумок із допродажем і сумою покаже наступний крок). Повторний підсумок з «Оформляємо?» — лише коли згоди ще НЕ було.';
 const PRICE_AFTER_PRESENTATION_RE = '^(вітаю|привіт|здрастуйте|добр(ий|ого)\\s+\\w+)?[\\s,!.)]*((яка|скільки|сколько|какая)\\s+)?(ціна|цена|коштує|стоит|вартість)\\??[\\s!.)]*$';
 function applyV12(nodes, edges, notes) {
     const byId = () => Object.fromEntries(nodes.map((n) => [n.id, n]));
@@ -491,6 +492,7 @@ function applyV12(nodes, edges, notes) {
         if (n.data.silentOnExit !== true) { n.data.silentOnExit = true; notes.push('silentOnExit ' + id); }
     }
     if (byId().n_size && byId().n_size.data.ignoreRightAfterPresentationRe !== PRICE_AFTER_PRESENTATION_RE) { byId().n_size.data.ignoreRightAfterPresentationRe = PRICE_AFTER_PRESENTATION_RE; notes.push('n_size ignore price-after-presentation'); }
+    if (byId().n_order_intent && !/ФІНАЛЬНА згода/.test(byId().n_order_intent.data.systemPrompt || '')) { byId().n_order_intent.data.systemPrompt = String(byId().n_order_intent.data.systemPrompt || '') + UPSELL_SAME_MSG; notes.push('upsellSameMsg n_order_intent'); }
     if (byId().n_order_intent && !/КЛІЄНТ ТАКОЖ ХОЧЕ/.test(byId().n_order_intent.data.systemPrompt || '')) { byId().n_order_intent.data.systemPrompt = String(byId().n_order_intent.data.systemPrompt || '') + ALSO_WANTS_INTENT; notes.push('alsoWants n_order_intent'); }
     // фото допродажу перед «Оформляємо?» (один раз на сесію)
     if (!byId().n_upsell_photo_cond && byId().n_order_intent) {

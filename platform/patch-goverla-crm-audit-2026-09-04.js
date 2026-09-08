@@ -798,6 +798,8 @@ function transform(flow, keysMap, opts) {
     setData('n_req_name_v', { text: '{{context.fop.name}}', description: 'Назва активного ФОП з CRM (context.fop).' });
     { const n = byId()['n_requisites']; if (n) { const AMT = '💰 До сплати зараз: {{context.payAmount}} грн ({{context.payLabel}}).\n\n'; n.data.text = AMT + String(n.data.text || ''); n.data.variants = (n.data.variants || []).map((v) => (v.includes('До сплати зараз') ? v : AMT + v)); } }
     setData('n_size_photo', { caption: 'Ось розмірна сітка 📏 Якщо потрібно, підкажіть зріст і вагу — підберу точно 🙂' });
+    // 2026-09-08 (vya.cheslav76: сітка тричі): двигун шле сітку на wantsSizeChart сам і ставить sizeChartSentAt — нода не дублює.
+    setData('n_size_photo_cond', { condition: 'context.sizeInput && context.sizeInput.wantsSizeChart === true && context.product && context.product.sizeChartUrl && !context.sizeChartSentAt' });
     setData('n_size_reply', { text: '{{context.sizeReplyText}}{{context.sizeColorFollowup}}', variants: [], description: 'Текст готує n_calc (sizeReplyText: за сіткою / клієнт назвав сам / точний вимір) + питання про колір, якщо є вибір.' });
 
     // ── В7 повернення / після замовлення ──

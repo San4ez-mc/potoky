@@ -333,7 +333,12 @@ try {
         var __hintProds = __hintSkus.length ? all.filter(function (p) { return __hintSkus.indexOf(String(p.sku || '').toUpperCase()) >= 0; }) : [];
         var __nh = __nameHits(__hintProds);
         if (__nh.length === 1) { found = __nh[0]; via = 'user_name_from_list'; mk = 'kw_' + String(found.sku || found.id); }
-        else if (!__nh.length) { var __na = __nameHits(all.filter(function (p) { return !p.isSet; })); if (__na.length === 1) { found = __na[0]; via = 'user_name'; mk = 'kw_' + String(found.sku || found.id); } }
+        else if (!__nh.length) {
+          var __na = __nameHits(all.filter(function (p) { return !p.isSet; }));
+          // «костюм мажор» / «кофта мажор»: кілька збігів за словом → звужуємо категорією з повідомлення
+          if (__na.length > 1 && __uStem) __na = __na.filter(function (p) { return __hasStem(p, __uStem); });
+          if (__na.length === 1) { found = __na[0]; via = 'user_name'; mk = 'kw_' + String(found.sku || found.id); }
+        }
       }
     }
   } catch (e) { context.__dbg = 'category-intent: ' + String(e && e.message); }

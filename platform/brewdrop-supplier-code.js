@@ -95,7 +95,10 @@ if(!cityQ) return fail('не вказано місто доставки');
 var cy=await bd('/api/cities?name='+encodeURIComponent(cityQ)+'&per_page=10');
 var cyList=(cy.json&&cy.json.data)||[];
 var cityObj=cyList.find(function(c){ return norm(c.name)===norm(cityQ) || norm(c.name_ua)===norm(cityQ); })||null;
-if(!cityObj){ var byBase=cyList.filter(function(c){ return normCity(c.name)===normCity(cityQ) || normCity(c.name_ua)===normCity(cityQ); }); if(byBase.length===1) cityObj=byBase[0]; }
+if(!cityObj){ var byBase=cyList.filter(function(c){ return normCity(c.name)===normCity(cityQ) || normCity(c.name_ua)===normCity(cityQ); }); if(byBase.length===1) cityObj=byBase[0];
+  // 2026-09-08 (Пашковський: «Біла Криниця» — Рівненська/Херсонська): звужуємо областю/районом з адреси клієнта.
+  if(!cityObj && byBase.length>1){ var regSrc=norm([od.region, np.region, od.branch, od.city, cityRaw].filter(Boolean).join(' ')); var regStems=(regSrc.match(/[а-яіїєґ]{5,}/g)||[]).map(function(w){return w.slice(0,5);}).filter(function(w){return !/^(облас|район|відді|поштом|нова|пошта|село|селищ)/.test(w);});
+    var byReg=byBase.filter(function(c){ var paren=norm(String(c.name_ua||c.name||'').split('(')[1]||''); return regStems.some(function(st){ return paren.indexOf(st)>=0; }); }); if(byReg.length===1) cityObj=byReg[0]; } }
 if(!cityObj) return fail('місто «'+cityQ+'» не знайдено точним збігом (варіанти: '+(cyList.map(function(c){return c.name_ua||c.name;}).slice(0,5).join(', ')||'—')+')');
 var bnum=(String(np.warehouse||od.branch||'').match(/№\s*(\d+)/)||String(od.branch||'').match(/(\d+)/)||[])[1]||'';
 if(!bnum) return fail('не вказано номер відділення/поштомата');

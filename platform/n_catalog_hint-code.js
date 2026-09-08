@@ -66,6 +66,10 @@ var STEMS = [
 var wants = [];
 for (var i = 0; i < STEMS.length; i++) { if (msg.indexOf(STEMS[i][0]) >= 0) { for (var j2 = 0; j2 < STEMS[i][1].length; j2++) { if (wants.indexOf(STEMS[i][1][j2]) < 0) wants.push(STEMS[i][1][j2]); } } }
 if (!wants.length) return out('', 0, catList);
+// 2026-09-08 (mykola: підпис поста «кофта, джинси, футболка, лофери» = три однакові комплекти в каталозі, n_lookup не обрав):
+// три і більше категорій в одному повідомленні/підписі — це комплект, показуємо й комплекти.
+var __catStems = ['кофт', 'джинс', 'футболк', 'лофер', 'бомбер', 'куртк', 'костюм', 'кросів', 'черевик', 'штан'].filter(function (st) { return msg.indexOf(st) >= 0; });
+if (__catStems.length >= 3 && wants.indexOf('комплект') < 0) wants.push('комплект');
 function hay(p) { return (String(p.name || '') + ' ' + String(p.customerName || '') + ' ' + (cats[p.categoryId] || '')).toLowerCase(); }
 var pool = wants.indexOf('комплект') >= 0 ? all : active;
 var hits = pool.filter(function (p) { var h = hay(p); return wants.some(function (w) { return h.indexOf(w) >= 0; }); });

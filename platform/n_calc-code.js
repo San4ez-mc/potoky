@@ -215,6 +215,13 @@ if (!size && clientSize) {
 }
 if (!size) return oor('не вдалося визначити розмір за зростом ' + h + ' / вагою ' + w + ' (SIZE_CHART не покриває)', '');
 size = String(size).toUpperCase();
+// 2026-09-08 (Мирошниченко: «в чоловіка обхват талії 113 см, є животик» — бот проігнорував, взяв L): талія ≥ 105 см або
+// згадка про живіт → на розмір більше за сіткою (якщо він є у товару), і кажемо про це клієнту.
+var __waist = Number(s0.waist) || 0; var __bellyNote = '';
+if ((s0.belly === true || __waist >= 105) && order.indexOf(size) >= 0) {
+  var __nx = order[order.indexOf(size) + 1];
+  if (__nx && (!avail.length || avail.indexOf(__nx) >= 0)) { size = __nx; __bellyNote = ' (з урахуванням ' + (__waist ? 'талії ' + __waist + ' см' : 'животика') + ' взяла на розмір більше)'; }
+}
 if (avail.length && avail.indexOf(size) < 0) {
   // Сітка товару літерна — беремо найближчий наявний. Числова (46/48, 40/41) — універсальна
   // SIZE_CHART до неї не застосовна, чесно ескалюємо (раніше мовчки брався перший розмір).
@@ -228,4 +235,6 @@ if (avail.length && avail.indexOf(size) < 0) {
   for (var i = 0; i < letterAvail.length; i++){ var dd = Math.abs(order.indexOf(letterAvail[i]) - idx); if (dd < bestd){ bestd = dd; best = letterAvail[i]; } }
   size = best;
 }
-return done(size, 'chart');
+var __resChart = done(size, 'chart');
+if (typeof __bellyNote === 'string' && __bellyNote) __resChart.sizeReplyText = String(__resChart.sizeReplyText || '').replace(/\s*📏/, __bellyNote + ' 📏');
+return __resChart;

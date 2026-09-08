@@ -561,6 +561,10 @@ function applyV12(nodes, edges, notes) {
         n.data.missingKeyPrompts = { phone: 'Дякую! Підкажіть, будь ласка, ваш номер телефону 📱', fullName: 'Підкажіть, будь ласка, ваше імʼя та прізвище для відправки 😊', city: 'Підкажіть, будь ласка, місто доставки 📍', branch: 'І номер відділення або поштомата Нової Пошти 📦' };
     } }
     { const n = byId().n_order_intent; if (n && n.data.silentOnExit !== true) { n.data.silentOnExit = true; notes.push('silentOnExit n_order_intent'); } }
+    // 2026-09-08 21:05 (власник: «як справи по статусах у CRM» — усі 26 замовлень на «Замовлення прийняте», хоча 3 вже
+    // оформлені у BrewDrop автоматично): n_ttn_sync_crm шукав стадію за /відправлено/, а у воронці CRM вона зветься
+    // «Замовлення оформлене в постачальника» → stageId не знаходився, рухалась лише ТТН. Шукаємо спершу «постачальник».
+    { const n = byId().n_ttn_sync_crm; const OLD = "return /відправлено/i.test(s.name || '');"; const NEW = "return /оформлен\\w* в постачальника|постачальник/i.test(s.name || '') || /відправлено/i.test(s.name || '');"; if (n && String(n.data.code || '').includes(OLD)) { n.data.code = String(n.data.code).replace(OLD, NEW); notes.push('n_ttn_sync_crm stage=постачальник'); } }
     // Аналітика «Помилки бота» (2026-09-08): універсальні позначки нод для будь-якої воронки — errorMetric у data.
     { const u = byId().n_unknown_msg; if (u && u.data.errorMetric !== 'unknown_product') { u.data.errorMetric = 'unknown_product'; notes.push('errorMetric n_unknown_msg'); } const w = byId().n_welcome; if (w && w.data.errorMetric !== 'presentation') { w.data.errorMetric = 'presentation'; notes.push('errorMetric n_welcome'); } }
     // v12.9 (скан: fatieieva_olya отримала «Ваше замовлення в роботі…» тричі за 3 хв): після оформлення — цей текст не частіше ніж раз на 30 хв;

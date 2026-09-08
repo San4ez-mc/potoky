@@ -320,6 +320,22 @@ try {
       var __byStem = all.filter(function (p) { return !p.isSet && __hasStem(p, __uStem); });
       if (__byStem.length === 1) { found = __byStem[0]; via = 'user_keyword:' + __uStem; mk = 'kw_' + String(found.sku || found.id); }
     }
+    // 2026-09-08 04:54 (_grigoriy_): бот показав список костюмів, клієнт відповів «надішліть зображення костюму (мажор)» —
+    // «Мажор» є і в костюма A0114, і в кофти D0050, тож за назвою не визначили. Слово з повідомлення звіряємо СПОЧАТКУ
+    // з товарами щойно показаного списку (context.catalogHintSkus від n_catalog_hint), потім — з усім каталогом; беремо,
+    // лише коли збіг рівно один. Знайдений товар презентується з фото — це й відповідь на «надішліть зображення».
+    if (!found) {
+      var __STOPW = { 'надіслати': 1, 'надішліть': 1, 'зображення': 1, 'могли': 1, 'можете': 1, 'будь': 1, 'ласка': 1, 'дякую': 1, 'ціна': 1, 'ціну': 1, 'розмір': 1, 'колір': 1, 'фото': 1, 'скиньте': 1, 'скинути': 1, 'підберіть': 1, 'зріст': 1, 'вага': 1, 'чорний': 1, 'чорну': 1, 'сірий': 1, 'білий': 1, 'синій': 1, 'хочу': 1, 'цікавить': 1, 'артикул': 1, 'костюм': 1, 'костюму': 1, 'кофта': 1, 'кофту': 1, 'куртка': 1, 'куртку': 1, 'бомбер': 1, 'джинси': 1, 'футболка': 1, 'лофери': 1, 'товар': 1, 'товару': 1, 'пост': 1, 'який': 1, 'яка': 1, 'можна': 1, 'вітаю': 1, 'привіт': 1, 'добрий': 1, 'день': 1, 'вечір': 1, 'ранок': 1, 'наявності': 1, 'наявність': 1 };
+      var __uw = __uTxt.toLowerCase().replace(/[^a-zа-яіїєґ0-9\s]/gi, ' ').split(/\s+/).filter(function (w) { return w.length >= 4 && !__STOPW[w]; });
+      function __nameHits(list) { return list.filter(function (p) { var h = (String(p.name || '') + ' ' + String(p.customerName || '')).toLowerCase(); return __uw.some(function (w) { return h.indexOf(w) >= 0; }); }); }
+      if (__uw.length) {
+        var __hintSkus = String(context.catalogHintSkus || '').toUpperCase().split(',').filter(Boolean);
+        var __hintProds = __hintSkus.length ? all.filter(function (p) { return __hintSkus.indexOf(String(p.sku || '').toUpperCase()) >= 0; }) : [];
+        var __nh = __nameHits(__hintProds);
+        if (__nh.length === 1) { found = __nh[0]; via = 'user_name_from_list'; mk = 'kw_' + String(found.sku || found.id); }
+        else if (!__nh.length) { var __na = __nameHits(all.filter(function (p) { return !p.isSet; })); if (__na.length === 1) { found = __na[0]; via = 'user_name'; mk = 'kw_' + String(found.sku || found.id); } }
+      }
+    }
   } catch (e) { context.__dbg = 'category-intent: ' + String(e && e.message); }
 
   if (!found) return fallback('Жоден пріоритет матчингу не спрацював (ad_id/артикул/keyword/vision)');

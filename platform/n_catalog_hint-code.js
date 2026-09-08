@@ -5,7 +5,7 @@
 // catalogHint — до 4 товарів названої категорії (артикул, назва, ціна). Best-effort: помилка → порожньо.
 var msg = String(context.lastUserMessage || input || '').toLowerCase();
 var unknownTurns = (Number(context.unknownTurns) || 0) + 1;
-function out(hint, cnt, cats) { return { catalogHint: hint || '', catalogHintCount: cnt || 0, catalogCategories: cats || '', unknownTurns: unknownTurns }; }
+function out(hint, cnt, cats) { return { catalogHint: hint || '', catalogHintCount: cnt || 0, catalogHintSkus: '', catalogCategories: cats || '', unknownTurns: unknownTurns }; }
 if (context.product) return out('', 0, '');
 var base = (keys.CRM_API_BASE || 'http://127.0.0.1:4700/api').replace(/\/$/, '');
 var apiKey = (keys.CRM_API_KEY || '').trim();
@@ -44,7 +44,11 @@ function hay(p) { return (String(p.name || '') + ' ' + String(p.customerName || 
 var pool = wants.indexOf('комплект') >= 0 ? all : active;
 var hits = pool.filter(function (p) { var h = hay(p); return wants.some(function (w) { return h.indexOf(w) >= 0; }); });
 if (!hits.length) return out('', 0, catList);
-hits.sort(function (a, b) { return (Number(a.price) || 0) - (Number(b.price) || 0); });
+// 2026-09-08 (_grigoriy_: «чорний замшевий костюм» → у списку з 4 не було замшевого): спершу товари, чиї назви
+// перетинаються з іншими словами повідомлення (замшев, плюш, мажор…), далі — за ціною.
+var __mw = msg.replace(/[^a-zа-яіїєґ0-9\s]/gi, ' ').split(/\s+/).filter(function (w) { return w.length >= 4; }).map(function (w) { return w.slice(0, 5); });
+function __ov(p) { var h = hay(p); var n = 0; __mw.forEach(function (w) { if (h.indexOf(w) >= 0 && !wants.some(function (s) { return w.indexOf(s.slice(0, 4)) === 0; })) n++; }); return n; }
+hits.sort(function (a, b) { return (__ov(b) - __ov(a)) || ((Number(a.price) || 0) - (Number(b.price) || 0)); });
 var top = hits.slice(0, 4);
 var lines = top.map(function (p) { return (p.sku ? ('Артикул ' + p.sku + ' — ') : '') + String(p.name || '').trim() + (Number(p.price) ? (' — ' + Number(p.price) + ' грн') : ''); });
-return { catalogHint: lines.join('\n'), catalogHintCount: top.length, catalogHintTotal: hits.length, catalogCategories: catList, unknownTurns: unknownTurns };
+return { catalogHint: lines.join('\n'), catalogHintCount: top.length, catalogHintTotal: hits.length, catalogHintSkus: top.map(function (p) { return String(p.sku || ''); }).filter(Boolean).join(','), catalogCategories: catList, unknownTurns: unknownTurns };

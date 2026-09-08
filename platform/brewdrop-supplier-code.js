@@ -72,13 +72,14 @@ var cart=await bd('/api/carts',{method:'POST',body:JSON.stringify({product_color
 if(cart.status>=400) return fail('кошик: '+JSON.stringify(cart.json).slice(0,200));
 var parts=String(od.fullName||'').split(/\s+/); var last=parts[0]||'',first=parts[1]||'',middle=parts[2]||null;
 // sender_id: ключ BREWDROP_SENDER_ID, інакше — єдиний відправник з кабінету (/api/senders); кілька → менеджер.
+// 2026-09-08 (питання власника «де ти заповнюєш відправника — вручну такого нема»): /api/senders для продавця
+// повертає 403 «Admin only» (список із 15 прізвищ 07.09 був чужими профілями). Продавець відправника не обирає —
+// кабінет бере його з акаунта. sender_id шлемо ЛИШЕ якщо явно заданий ключ BREWDROP_SENDER_ID; інакше без нього.
 var senderId=Number(keys.BREWDROP_SENDER_ID)||0;
-if(!senderId){ var sr=await bd('/api/senders'); var sl=(sr.json&&sr.json.data)||[]; if(sl.length===1) senderId=Number(sl[0].id)||0; else if(sl.length>1) return fail('у кабінеті кілька відправників ('+sl.map(function(x){return x.id+': '+x.last_name;}).join(', ')+') — задайте BREWDROP_SENDER_ID'); }
-if(!senderId) return fail('не знайдено відправника (sender) у кабінеті brewdrop — задайте BREWDROP_SENDER_ID');
-var payload={ sender_id:senderId,
+var payload=Object.assign(senderId?{ sender_id:senderId }:{}, {
   client_data:{ first_name:first,last_name:last,middle_name:middle,phone:od.phone||'',delivery_id:1,city_id:cityObj.id,branch_id:brObj.id },
   delivery_data:{ delivery_id:1,delivery_pay_person:1 }, pay_type:1, pay_person:1, discount:{type:'%',value:0},
-  sell_price:Number(context.payAmount)||prod.price||undefined, comment:'Замовлення '+(context.orderRef||'') };
+  sell_price:Number(context.payAmount)||prod.price||undefined, comment:'Замовлення '+(context.orderRef||'') });
 var summary='🧾 brewdrop '+(dryRun?'(DRY-RUN)':'СТВОРЕНО')+':\nТовар: '+article+' / '+(chosen&&chosen.color)+' / '+(chosen&&chosen.size)+' (pcsId '+pcsId+', залишок '+(chosen&&chosen.remains)+')\nОтримувач: '+last+' '+first+' '+(od.phone||'')+'\nНП: '+(cityObj.name_ua||cityObj.name)+' / '+(brObj.name_ua||brObj.name)+'\nЦіна продажу: '+payload.sell_price+' | sender_id: '+(payload.sender_id||'—');
 if(dryRun) return { supplierOrderResult:summary+'\n\n⚠️ DRY-RUN: НЕ відправлено (BREWDROP_DRY_RUN=1).', supplierOrderStatus:'dry_run', supplierOrderPayload:JSON.stringify(payload) };
 var o=await bd('/api/orders',{method:'POST',body:JSON.stringify(payload)});

@@ -4679,6 +4679,11 @@ async function startTestSession({ botId, botSlug, userId, contextOverride }) {
         const user = await findOrCreateTestUser(bot, identity);
         await ensurePrerequisiteFiles(user.id, bot);
         const overrideContext = normalizeContextOverride(contextOverride);
+        // 2026-09-09 (власник, п.7 аудиту): стенд запускав воронку ДО першого повідомлення клієнта, тому сценарії «перше
+        // повідомлення = реклама/пост» не відтворювались (регресія v12.7 пройшла повз тести). contextOverride.noPrerun=true →
+        // сесія створюється на старті, а воронка стартує лише з першим /send — як реальний вхідний у каналі.
+        const noPrerun = overrideContext && overrideContext.noPrerun === true;
+        if (overrideContext && 'noPrerun' in overrideContext) delete overrideContext.noPrerun;
 
         const startNode = findStartNode(flow.nodes);
         const created = await db.session.create({
@@ -4701,6 +4706,18 @@ async function startTestSession({ botId, botSlug, userId, contextOverride }) {
             },
         });
 
+        if (noPrerun) {
+            return {
+                sessionId: created.id,
+                firstMessage: null,
+                currentState: created.state,
+                contextSnapshot: created.context,
+                slotsSnapshot: {},
+                testUser: { id: user.id, telegramId: identity.telegramId, username: identity.username },
+                warning: null,
+                noPrerun: true,
+            };
+        }
         const stepped = await executeFlowStep({ sessionId: created.id });
         const firstMessage = await getLatestAssistantMessage(created.id);
 

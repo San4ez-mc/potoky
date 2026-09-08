@@ -1542,6 +1542,49 @@ async function resumeAfterManagerSilence() {
 }
 setTimeout(() => { resumeAfterManagerSilence(); setInterval(resumeAfterManagerSilence, 60 * 1000); }, 90 * 1000);
 
+// 2026-09-09 (власник, п.7 аудиту після регресії v12.7, коли 2 год нові сесії лишались без картки): сторож мовчання бота.
+// Раз на 10 хв: нові живі сесії за 30 хв, у яких є повідомлення клієнта (старше 3 хв), нема жодної відповіді бота (message з
+// metadata.nodeId), нема паузи і блоку тестового режиму. ≥ BOT_SILENCE_MIN таких → Telegram (OWNER_TELEGRAM_ID, інакше
+// ADMIN_TELEGRAM_ID), не частіше ніж раз на годину на бота.
+const BOT_SILENCE_MIN = 5;
+const _silenceAlertAt = {};
+async function checkBotSilence() {
+    try {
+        const since = new Date(Date.now() - 30 * 60 * 1000);
+        const sessions = await db.session.findMany({ where: { isTest: false, startedAt: { gte: since } }, select: { id: true, botId: true, context: true } });
+        if (!sessions.length) return;
+        const msgs = await db.message.findMany({ where: { sessionId: { in: sessions.map((s) => s.id) } }, select: { sessionId: true, role: true, createdAt: true, metadata: true } });
+        const bySess = {}; for (const m of msgs) (bySess[m.sessionId] ||= []).push(m);
+        const silent = {};
+        for (const s of sessions) {
+            const c = s.context || {};
+            if (c.funnelPaused || c.testBlocked || c.paused) continue;
+            const list = bySess[s.id] || [];
+            const users = list.filter((m) => m.role === 'user');
+            if (!users.length) continue;
+            if (Date.now() - Math.min(...users.map((m) => m.createdAt.getTime())) < 3 * 60 * 1000) continue;
+            const botReplied = list.some((m) => m.role === 'assistant' && (m.metadata || {}).nodeId);
+            if (botReplied) continue;
+            (silent[s.botId] ||= []).push({ id: s.id, ig: c.igUsername || c.senderName || '' });
+        }
+        for (const [botId, arr] of Object.entries(silent)) {
+            if (arr.length < BOT_SILENCE_MIN) continue;
+            if (Date.now() - (_silenceAlertAt[botId] || 0) < 60 * 60 * 1000) continue;
+            _silenceAlertAt[botId] = Date.now();
+            const rows = await db.funnelKey.findMany({ where: { botId, key: { in: ['OWNER_TELEGRAM_ID', 'TELEGRAM_BOT_TOKEN', 'SHOP_TAG'] } }, select: { key: true, value: true } });
+            const m = Object.fromEntries(rows.map((r) => [r.key, (r.value || '').trim()]));
+            const text = '🚨 БОТ МОВЧИТЬ: за останні 30 хв ' + arr.length + ' нових розмов без жодної відповіді бота (не на паузі, не тест).\nМожлива поломка воронки після правки — перевірте сесії:\n' + arr.slice(0, 6).map((x) => '• ' + (x.ig || x.id.slice(0, 8)) + ' — https://flows.fineko.space/sessions/' + x.id).join('\n') + (arr.length > 6 ? '\n… і ще ' + (arr.length - 6) : '');
+            if (m.OWNER_TELEGRAM_ID && m.TELEGRAM_BOT_TOKEN) {
+                await fetch('https://api.telegram.org/bot' + m.TELEGRAM_BOT_TOKEN + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: m.OWNER_TELEGRAM_ID, text: (m.SHOP_TAG ? '🏪 ' + m.SHOP_TAG + '\n' : '') + text, disable_web_page_preview: true }) }).catch(() => null);
+            } else {
+                await sendTelegramAlert(botId, text, null);
+            }
+            logger.warn('[zernioHandler] bot silence alert', { botId, count: arr.length });
+        }
+    } catch (e) { logger.warn('[zernioHandler] checkBotSilence error: ' + e.message); }
+}
+setTimeout(() => { checkBotSilence(); setInterval(checkBotSilence, 10 * 60 * 1000); }, 120 * 1000);
+
 // ensurePostAutomation/scheduleFlowRun експортовано для живого тестування (напр.
 // живий кейс mediaId без артикулу; Проблема Д — race condition у серіалізації
 // runFlowAndDeliver) і майбутніх регресійних тестів — не викликаються поза

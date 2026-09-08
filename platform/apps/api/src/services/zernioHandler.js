@@ -953,8 +953,15 @@ async function handleIncomingMessage(botId, body) {
     // самий текст із referral → комплект). Для коротких «рекламних» питань без referral беремо meta_ad_id із самої розмови Zernio.
     // 17:30 (mrs_fox_28 «З реклами» → referral прийшов лише за 90 с у conversation.started): короткі відкриваючі
     // повідомлення без referral (до 40 символів) теж перевіряємо через метадані розмови.
-    if (!adId && !postId && conversationId && ((/^(яка ціна|скільки кошту|як підібрати|як замовити|чи є в наявн|хочу замовити|перевір(те|ити) ціну|цікавить|з реклами|по рекламі|реклам)/i.test(String(text || '').trim()) && String(text || '').length <= 80) || (String(text || '').trim().length > 0 && String(text || '').trim().length <= 40 && !/\d{3,}/.test(String(text || ''))))) {
+    // 18:21 (dk7777dk «Вага 93 зріст 188» без referral, реклама привʼязана): будь-яке повідомлення без referral і без
+    // пересланого поста — перевіряємо метадані розмови; продукт у сесії (якщо вже є) звіряється нижче після створення сесії.
+    if (!adId && !postId && conversationId && !(Array.isArray(msg.attachments) && msg.attachments.some((a) => /ig_post|ig_reel|share/i.test(String((a && (a.originalType || a.type)) || ''))))) {
         try {
+            // Лише для НОВОЇ розмови (у сесії ще нема товару і воронка ще не йшла) — інакше старий meta_ad_id зі сторінки
+            // розмови перетворив би «Дякую за посилку» на повторну презентацію старого товару.
+            const _prev = contactId ? await db.session.findFirst({ where: { botId, isActive: true, context: { path: ['psid'], equals: String(contactId) } }, orderBy: { lastActive: 'desc' }, select: { context: true } }) : null;
+            const _pc = (_prev && _prev.context) || {};
+            if (_pc.product || ((_pc.flowRuntime || {}).currentNodeId)) throw new Error('skip: session already has product/flow');
             const zk = await getZernioKeys(botId);
             if (isReal(zk.ZERNIO_API_TOKEN)) {
                 const cr = await fetch('https://zernio.com/api/v1/inbox/conversations/' + encodeURIComponent(conversationId), { headers: { Authorization: 'Bearer ' + zk.ZERNIO_API_TOKEN } });
@@ -1506,7 +1513,10 @@ async function resumeAfterManagerSilence() {
                 if (managerBeforeBot) continue;
                 const managerMsgsAfterBot = msgs.slice(firstBotIdx).filter((m) => ((m.metadata || {}).source) === 'zernio_inbox').length;
                 if (managerMsgsAfterBot > 2) continue;
-                const after = msgs.slice(lastManagerIdx + 1).filter((m) => m.role === 'user');
+                // 2026-09-08 18:46 (Бой Бой: «Зріст 1.75 вага 85» написав ДО відповіді менеджера, бот після відновлення параметрів не бачив):
+                // накопичене = усі повідомлення клієнта після ОСТАННЬОЇ відповіді бота (включно з тими, що були до репліки менеджера).
+                let lastBotIdx = -1; msgs.forEach((m, idx) => { if (m.role === 'assistant' && (m.metadata || {}).nodeId) lastBotIdx = idx; });
+                const after = msgs.slice(Math.min(lastManagerIdx, lastBotIdx) + 1).filter((m) => m.role === 'user');
                 if (!after.length) continue;
                 const lastClientAt = after[after.length - 1].createdAt.getTime();
                 if (Date.now() - lastClientAt < MANAGER_SILENCE_RESUME_MS) continue;

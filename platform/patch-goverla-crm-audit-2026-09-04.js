@@ -561,6 +561,18 @@ function applyV12(nodes, edges, notes) {
         n.data.missingKeyPrompts = { phone: 'Дякую! Підкажіть, будь ласка, ваш номер телефону 📱', fullName: 'Підкажіть, будь ласка, ваше імʼя та прізвище для відправки 😊', city: 'Підкажіть, будь ласка, місто доставки 📍', branch: 'І номер відділення або поштомата Нової Пошти 📦' };
     } }
     { const n = byId().n_order_intent; if (n && n.data.silentOnExit !== true) { n.data.silentOnExit = true; notes.push('silentOnExit n_order_intent'); } }
+    // v12.9 (скан: fatieieva_olya отримала «Ваше замовлення в роботі…» тричі за 3 хв): після оформлення — цей текст не частіше ніж раз на 30 хв;
+    // менеджеру алерт іде як і раніше (n_post_order_admin).
+    if (!byId().n_post_order_once_cond && byId().n_post_order_cond && byId().n_post_order_msg && byId().n_post_order_admin) {
+        const p = placer.place(pos('n_post_order_msg').x - GX, pos('n_post_order_msg').y);
+        nodes.push({ id: 'n_post_order_once_cond', type: 'condition', position: p, data: { label: '16.05 Уже писали «в роботі» < 30 хв?', condition: '!!(context.postOrderMsgAt && (Date.now() - Number(context.postOrderMsgAt)) < 30 * 60 * 1000)', description: 'TRUE → клієнту не дублюємо, лише алерт менеджеру. FALSE → позначка часу і повідомлення.' } });
+        nodes.push({ id: 'n_post_order_mark', type: 'js', position: placer.place(p.x, p.y - GY), data: { label: '16.06 Позначка: написали «в роботі»', code: 'return { postOrderMsgAt: Date.now() };', description: 'Щоб n_post_order_once_cond не слав той самий текст на кожне повідомлення клієнта.' } });
+        edges = edges.map((e) => (e.source === 'n_post_order_cond' && (e.sourceHandle || null) === 'true' ? { ...e, target: 'n_post_order_once_cond' } : e));
+        edges.push({ id: 'e_n_post_order_once_true', source: 'n_post_order_once_cond', target: 'n_post_order_admin', sourceHandle: 'true' });
+        edges.push({ id: 'e_n_post_order_once_false', source: 'n_post_order_once_cond', target: 'n_post_order_mark', sourceHandle: 'false' });
+        edges.push({ id: 'e_n_post_order_mark_msg', source: 'n_post_order_mark', target: 'n_post_order_msg' });
+        notes.push('+ n_post_order_once_cond');
+    }
     // v12.8.2 (Пашковський 17:57: оплату вже звірено, а бот після оформлення написав «Чекаємо на оплату 200 грн»): статус оплати у промпт.
     { const n = byId().n_upsell2_wait; if (n && !/СТАТУС ОПЛАТИ \(система\)/.test(n.data.systemPrompt || '')) { n.data.systemPrompt = String(n.data.systemPrompt || '') + '\nСТАТУС ОПЛАТИ (система, не вигадуй інший): «{{context.payStatus}}». confirmed = оплату ВЖЕ отримали — на фото/чек/питання про оплату відповідай «Оплату отримали ✅, замовлення в роботі», НІКОЛИ не пиши «чекаємо на оплату» і не називай суму до сплати. not_found/порожньо = «чек отримали, команда звірить і напише». Фото після оформлення — це квитанція, не адреса.'; notes.push('payStatus n_upsell2_wait'); } }
     { const n = byId().n_set_choice; if (n) { if (n.data.waitAfterPresentation !== true) { n.data.waitAfterPresentation = true; notes.push('waitAfterPresentation n_set_choice'); } n.data.waitAfterPresentationUnless = 'кофт|джинс|футбол|лофер|окрем|лише|тільки|только|весь|все|комплект|набір|розмір|размер|\\d{2,3}\\s*[\\/,\\s\\-]\\s*\\d{2,3}|колір|цвет|\\b(xs|s|m|l|xl|xxl)\\b'; } }

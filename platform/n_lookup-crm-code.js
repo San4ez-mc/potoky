@@ -32,7 +32,9 @@
 //
 // ⚠️ displayName (=customerName||name) — це те, що бачить клієнт. Внутрішнє product.name
 // лишається тільки для полів, які клієнт не читає напряму (розширений матчинг/лог).
-if (context.product && context.product._source === 'crm' && (String(context.product._matchKey) === String(context.entryAd || context.__lk || '') || !context.hasFreshSignalThisTurn)) return {};
+// 2026-09-08 (скан 367 сесій: картка двічі у 12 розмовах — пост, а за кілька секунд «Яка ціна кофти?» окремим повідомленням):
+// ранній вихід «товар той самий» має нести skipPresentation, інакше лишається старе false з першого показу → картка знову.
+if (context.product && context.product._source === 'crm' && (String(context.product._matchKey) === String(context.entryAd || context.__lk || '') || !context.hasFreshSignalThisTurn)) return { skipPresentation: !!(context.product.sku && context.presentedAt && (Date.now() - Number(context.presentedAt)) < 30 * 60 * 1000) };
 
 function fallback(reason) { return { product: null, productUnknown: true, productUnknownReason: reason || '' }; }
 
@@ -200,10 +202,21 @@ try {
     for (var __ca = 0; __ca < __capArts.length; __ca++) {
       var __capProd = matchArticle(all, __capArts[__ca]);
       if (__capProd && String(__capProd.id) !== String(found.id)) {
-        // 2026-09-08 (Босий 14:24: у CRM реклама привʼязана до C0043 — саме те, що у відео; у тексті поста помилково A0187):
-        // привʼязка в CRM — рішення власника, вона головна; артикул з тексту лише сигналить менеджеру про розбіжність.
-        // Нові реклами n_lookup більше НЕ привʼязує сам (productId:null) — тож привʼязка в CRM завжди ручна.
-        context.adLinkMismatch = 'реклама ' + (context.entryAd || __adExternalId || '') + ' у CRM привʼязана до ' + (found.sku || found.name) + ', а в тексті поста артикул ' + __capArts[__ca] + ' — показано товар за привʼязкою CRM; якщо помилка — перепривʼяжіть';
+        // 2026-09-08: Босий 14:24 — у CRM привʼязка C0043 вірна, у тексті поста A0187 помилково; Tyurin 19:01 — навпаки: привʼязка A0182
+        // (куртка) хибна, у тексті D0050 (кофта) вірно. Арбітр — слова клієнта: категорія з його повідомлення («ціна КОФТИ»)
+        // збігається лише з одним із двох → беремо його. Без категорії або збіг в обох → привʼязка CRM (рішення власника).
+        // Розбіжність у будь-якому разі йде менеджеру (adLinkMismatch). Нові реклами n_lookup не привʼязує сам (productId:null).
+        var __ovTxt = String(context.lastUserMessage || input || '').replace(/\[переслав[^\]]*\][^\n]*/gi, ' ').toLowerCase();
+        var __ovStemM = __ovTxt.match(/(кофт|светр|футболк|джинс|бомбер|куртк|вітровк|костюм|штан|лофер|кросівк|черевик|худі|шапк|туфл|кед|накидк|підголівник)/); var __ovStem = __ovStemM ? __ovStemM[1] : '';
+        var __ovSyn = { 'куртк': ['куртк', 'вітровк'], 'вітровк': ['вітровк', 'куртк'], 'светр': ['светр', 'кофт'], 'штан': ['штан', 'джинс'], 'кед': ['кед', 'кросівк'] };
+        var __ovHas = function (p) { var h = (String(p.customerName || '') + ' ' + String(p.name || '')).toLowerCase(); return (__ovSyn[__ovStem] || [__ovStem]).some(function (x) { return h.indexOf(x) >= 0; }); };
+        var __capWins = !!(__ovStem && __ovHas(__capProd) && !__ovHas(found));
+        if (__capWins) {
+          context.adLinkMismatch = 'реклама ' + (context.entryAd || __adExternalId || '') + ' у CRM привʼязана до ' + (found.sku || found.name) + ', а в тексті поста артикул ' + __capArts[__ca] + ' — клієнт питав про «' + __ovStem + '», показано ' + (__capProd.sku || __capProd.name) + ' за текстом поста; перевірте привʼязку в CRM';
+          found = __capProd; via = 'ad_caption_override:' + __capArts[__ca]; mk = 'art_' + __capArts[__ca];
+        } else {
+          context.adLinkMismatch = 'реклама ' + (context.entryAd || __adExternalId || '') + ' у CRM привʼязана до ' + (found.sku || found.name) + ', а в тексті поста артикул ' + __capArts[__ca] + ' — показано товар за привʼязкою CRM; якщо помилка — перепривʼяжіть';
+        }
         break;
       }
       if (false) {
@@ -672,6 +685,8 @@ try {
       var __clist = (result.product && result.product.colorsList) || [];
       var __hitC = __clist.filter(function (cn) { var st = String(cn).toLowerCase().replace(/ий$|а$|у$|ого$|ому$/,'').slice(0, 6); return st.length >= 4 && __umsg.indexOf(st) >= 0; });
       if (__hitC.length === 1) result.colorChoice = { color: __hitC[0], _fromFirstMsg: true };
+      // 2026-09-08 (власник, F0029 шкіряний бомбер лише чорний): один колір — не питаємо, фіксуємо одразу.
+      if (!(result.colorChoice && result.colorChoice.color) && __clist.length === 1) result.colorChoice = { color: __clist[0], _single: true };
     }
   } catch (e) { }
   if (preColor) result.product.preColor = preColor;

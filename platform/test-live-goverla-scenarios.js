@@ -1,0 +1,57 @@
+// Живі сценарії v12.3 на goverla (testMode-сесії): підказка товару з коментар-автоматизації; «Яка ціна кофти?» після картки;
+// реклама комплекту + «Яка ціна товарів?» без дубля цін; допродаж в одному повідомленні.
+const SEC = process.argv[2]; const pick = (process.argv[3] || 'all').split(','); const BASE = 'https://flows.fineko.space/api';
+const H = { 'x-api-secret': SEC, 'Content-Type': 'application/json', Accept: 'application/json' };
+async function api(m, p, b) { const r = await fetch(BASE + p, { method: m, headers: H, body: b ? JSON.stringify(b) : undefined }); const j = await r.json(); if (!r.ok || j.ok === false) throw new Error(m + ' ' + p + ' ' + JSON.stringify(j).slice(0, 200)); return j.data; }
+const BOMBER_CAPTION = 'Розпродаж чоловічих осінніх бомберів🔥\nВстигніть придбати за акційною ціною до початку сезону 🍂\n\n📌 Характеристики:\n✔️ Матеріал бомбера: еко замш\n✔️ Розміри: S, M, L, XL, XXL (до 110 кг.)\n✔️ Колір бомбера: чорний, графітовий, темно-синій';
+const S = {
+  comment_hint: { over: { commentProductArticle: 'A0165', commentProductName: 'Бомбер замш Хьюстон', commentProductAt: new Date().toISOString(), sharedPost: { kind: 'post', caption: BOMBER_CAPTION, mediaId: '18108870742947242' } }, msgs: ['180-88', 'XL'], check: (c, log, x) => c.product && c.product.sku === 'A0165' && x.photos === 0 && /розмір|XL/i.test(log.join(' ')) && !/артикул чи розмір/i.test(log.join(' ')) },
+  price_after_kofta: { over: {}, msgs: ['[переслав reel] Вʼязана чоловіча кофта. Артикул: A0187\nЯка ціна кофти?', 'Яка ціна кофти?', '180 71'], check: (c, log) => !log[1] && /розмір/i.test(log[2] || '') },
+  set_price: { over: { entryAdId: '120250562440600329', entryAd: '120250562440600329', lastReferral: { type: 'OPEN_THREAD', ad_id: '120250562440600329', source: 'ADS' } }, msgs: ['Яка ціна товарів?', 'Цікавить кофта'], check: (c, log) => !/Ось ціни|Бажаєте замовити/i.test(log[0] || '') && /кофт/i.test(log[1] || '') },
+  name_from_list: { over: {}, msgs: ['Добрий вечір', 'Підберіть будь ласка для чоловіка чорний замшевий костюм під зріст: 1.72-1.75 Вага 72-75 кг.', 'А Ви моглиб Надіслати зображення костюму (мажор)'], check: (c, log, x) => c.product && c.product.sku === 'A0114' && x.photos > 0 && /Артикул/.test(log[1] || '') },
+  set_post_pick: { over: {}, msgs: ['Добрий вечір', '[переслав post] Осіння вʼязана кофта, джинси, футболка, лофери🔥\nВстигніть придбати до подорожчання в сезон', 'Комплект 4 в 1 з кофтою Сейн ангора'], check: (c, log) => /set1112/i.test(log[1] || '') },
+  ad_two_suits: { over: { entryAdId: '120250869833990329', entryAd: '120250869833990329', adTitle: 'Допис в Instagram: Чоловічий замшевий костюм...._Group_1', lastReferral: { type: 'OPEN_THREAD', ad_id: '120250869833990329', source: 'ADS', ads_context_data: { ad_title: 'Допис в Instagram: Чоловічий замшевий костюм...._Group_1' } } }, msgs: ['Добрий вечір', 'Чи можете перевірити ціну товару?'], check: (c, log, x) => c.product && c.product.sku === 'sh667999' && x.photos >= 1 }, // 2026-09-08 19:20 власник привʼязав рекламу до sh667999
+  cyr_article: { over: {}, msgs: ['[переслав reel] Чоловіча осіння куртка. Артикул: D0005', 'Клієнт шукає куртку водонепроникну, артикул А0182, чорний колір'], check: (c) => c.product && c.product.sku === 'A0182' },
+  waist_bump: { over: {}, msgs: ['[переслав reel] Чоловічий замшевий бомбер. Артикул: A0165', 'Зріст 178, вага 88, талія 113 см, є животик'], check: (c, log) => c.recommendedSize === 'XXL' && /талії|животик/i.test(log[1] || '') },
+  partial_address: { over: {}, msgs: ['[переслав reel] Чоловічий замшевий бомбер. Артикул: A0165', '180 80', 'Чорний', 'Так, лише бомбер', '1', 'Краще реквізити', 'Іван Тестовий Київ відділення 5', '0671234567'], check: (c, log) => /телефон/i.test(log[6] || '') && !/одним повідомленням/i.test(log[6] || '') && /Дякуємо|оформ|зафіксували/i.test(log[7] || '') },
+  first_msg_color: { over: { entryAdId: '120250342796200329', entryAd: '120250342796200329', lastReferral: { type: 'OPEN_THREAD', ad_id: '120250342796200329', source: 'ADS' } }, msgs: ['Добрий день', 'Добрий день, хочу замовити (графітову ) кофту, розмір XXL, дякую', '180 109'], check: (c, log) => c.colorChoice && /графіт/i.test(c.colorChoice.color || '') && !/оберіть колір/i.test(log[2] || '') },
+  cta_after_card: { over: { entryAdId: '120250570961890329', entryAd: '120250570961890329', lastReferral: { type: 'OPEN_THREAD', ad_id: '120250570961890329', source: 'ADS' } }, msgs: ['Добрий день', 'Як підібрати розмір?', 'Ріст 168, вага 52кг'], check: (c, log) => !/зріст і вагу|зріст \(см\)/i.test(log[1] || '') && c.recommendedSize === 'S' },
+  set_desc_no_dup: { over: { entryAdId: '120250562440600329', entryAd: '120250562440600329', lastReferral: { type: 'OPEN_THREAD', ad_id: '120250562440600329', source: 'ADS' } }, msgs: ['Добрий вечір', 'Яка ціна товарів?'], check: (c, log) => { const m = (log[1] || '').match(/Комплект 4 в 1/g) || []; return c.product && c.product.sku === 'set1112' && m.length <= 2; } },
+  range_weight: { over: {}, msgs: ['[переслав reel] Чоловіча вʼязана кофта. Артикул: A0187', 'Мабуть чорного кольору\nЗріст 183\nВага 90-95 кг'], check: (c, log) => c.recommendedSize && /XL|L/.test(c.recommendedSize) && !/підкажіть.*зріст/i.test(log[1] || '') },
+  ad_link_wins: { over: { entryAdId: '120250342790830329', entryAd: '120250342790830329', lastReferral: { type: 'OPEN_THREAD', ad_id: '120250342790830329', source: 'ADS' } }, msgs: ['Добрий день', 'Яка ціна кофти?'], check: (c) => c.product && c.product.sku === 'C0043' },
+  post_then_icebreaker: { over: {}, msgs: ['[переслав post] Останні дні розпродажу. Осіння чоловіча вʼязана кофта🔥 Артикул: A0187', 'Яка ціна кофти?', '180 80'], check: (c, log, x) => x.photos === 1 && !log[1] && c.recommendedSize },
+  single_colour: { over: {}, msgs: ['[переслав reel] Чоловічий осінній бомбер. Артикул: F0029', '175 85'], check: (c, log) => !/оберіть колір/i.test(log[1] || '') && /Оформляємо/i.test(log[1] || '') },
+  ad_conflict_client_word: { over: { entryAdId: '120250167738960329', entryAd: '120250167738960329', lastReferral: { type: 'OPEN_THREAD', ad_id: '120250167738960329', source: 'ADS' } }, msgs: ['Яка ціна кофти?'], check: (c, log) => !!c.adLinkMismatch && ((c.product && /^(D0050|A0187|C0043)$/.test(c.product.sku)) || /D0050|A0187|C0043/.test(log[0] || '')) }, // Tyurin: перше повідомлення «кофти» при рекламі куртки → кофта/список кофт + конфлікт менеджеру
+  ad_post_then_price: { over: { entryAdId: '120250549942150329', entryAd: '120250549942150329', lastReferral: { type: 'OPEN_THREAD', ad_id: '120250549942150329', source: 'ADS' } }, msgs: ['[переслав post] Чоловіча вʼязана кофта, артикул C0043\nВстигніть придбати до подорожчання в сезон', 'Яка ціна кофти?', '180 80'], check: (c, log, x) => x.photos <= 1 && !log[1] },
+  post_then_ad_price: { over: {}, msgs: ['[переслав post] Чоловіча вʼязана кофта, артикул C0043\nВстигніть придбати до подорожчання в сезон', '__AD__Яка ціна кофти?', '180 80'], check: (c, log, x) => x.photos <= 1 && !log[1] },
+  size_cm_kg: { over: { entryAdId: '120250745483390329', entryAd: '120250745483390329', lastReferral: { type: 'OPEN_THREAD', ad_id: '120250745483390329', source: 'ADS' } }, msgs: ['187см,87кг\nЭто кожа натуральная?'], check: (c, log) => /XL|L\b/.test(log[0] || '') && /екошкір|шкір/i.test(log[0] || '') },
+  size_client_override: { over: {}, msgs: ['[переслав reel] Чоловіча вʼязана кофта. Артикул: C0043', 'Мені потрібно розмір хл вага 81 ріст 174'], check: (c, log) => c.recommendedSize === 'XL' && /порадила L/.test(log[1] || '') && /фіксую XL/.test(log[1] || '') },
+  ad_conflict_caption: { over: { entryAdId: '120250167738960329', entryAd: '120250167738960329', lastReferral: { type: 'OPEN_THREAD', ad_id: '120250167738960329', source: 'ADS' }, sharedPost: { kind: 'reel', caption: 'Вʼязана чоловіча кофта. Артикул: A0187', mediaId: '18108870742947299' } }, msgs: ['Яка ціна кофти?'], check: (c) => !!c.adLinkMismatch && !!c.adLinkMismatchAlertedAt }, // харнес: пре-ран до першого повідомлення → показ за привʼязкою CRM (A0182); перевіряємо лише алерт
+  separate_q: { over: {}, msgs: ['[переслав reel] Чоловічий замшевий костюм. Артикул: sh667999\nЗдравствуйте, возможно получить куртку отдельно?'], check: (c, log) => /окремо|отдельно|лише|тільки|комплект|костюм/i.test(log[0] || '') && (log[0] || '').split('||').length >= 2 },
+};
+async function run(id) {
+  const sc = S[id]; const out = ['', '=== ' + id]; const log = []; let photos = 0;
+  const s = await api('POST', '/sessions/test/start', { botId: 'fcdee415-bef2-4a74-a650-e6e4b5a12322', contextOverride: Object.assign({ channel: 'zernio', igUsername: 'rg_v13_' + id + '_' + Date.now().toString(36), senderName: 'Regress V13', psid: String(Date.now()), testMode: true, noPrerun: process.env.PRERUN === '1' ? false : true }, sc.over) });
+  let c = {};
+  for (let t of sc.msgs) {
+    if (t.startsWith('__AD__')) { // сервер: реферал реклами приходить з ДРУГИМ повідомленням (twisti13.14 19:31) — патчимо контекст напряму в БД
+      t = t.slice(6); require('dotenv').config({ path: 'apps/api/.env' }); require('dotenv').config(); const { db } = require('@platform/db');
+      const cur = await db.session.findUnique({ where: { id: s.sessionId }, select: { context: true } });
+      await db.session.update({ where: { id: s.sessionId }, data: { context: { ...(cur.context || {}), entryAdId: '120250549942150329', entryAd: '120250549942150329', lastReferral: { type: 'OPEN_THREAD', ad_id: '120250549942150329', source: 'ADS' } } } });
+    }
+    await api('POST', '/sessions/test/' + s.sessionId + '/send', { message: t });
+    const st = await api('GET', '/sessions/test/' + s.sessionId + '/state');
+    const h = st.history || []; let li = -1; h.forEach((m, i) => { if (m.role === 'user') li = i; });
+    const bot = h.slice(li + 1).filter((m) => m.role === 'assistant');
+    photos += bot.filter((m) => m.attachment || (m.metadata && m.metadata.attachment)).length;
+    const texts = bot.map((m) => String(m.content || '').replace(/\n/g, ' | ')).filter(Boolean);
+    log.push(texts.join(' || '));
+    out.push('👤 ' + t.replace(/\n/g, ' | ')); texts.forEach((b) => out.push('🤖 ' + b.slice(0, 240))); if (!texts.length) out.push('🤖 (мовчить)');
+    c = st.context || {};
+    out.push('   [' + (c.flowRuntime && c.flowRuntime.currentNodeId) + '] product=' + (c.product && c.product.sku) + ' via=' + (c.product && c.product._via) + ' skipPres=' + c.skipPresentation + ' photos=' + photos + ' photoColor=' + JSON.stringify(c.photoColor || ''));
+  }
+  await api('POST', '/sessions/test/' + s.sessionId + '/end');
+  out.push((sc.check(c, log, { photos }) ? '✅ PASS' : '❌ FAIL') + ' | ' + s.sessionId);
+  return out.join('\n');
+}
+(async () => { const ids = pick[0] === 'all' ? Object.keys(S) : pick; console.log((await Promise.all(ids.map((id) => run(id).catch((e) => '=== ' + id + ' ERR ' + e.message)))).join('\n')); })();

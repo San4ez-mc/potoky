@@ -1535,7 +1535,7 @@ async function resumeAfterManagerSilence() {
                 await logDelivery(s.id, s.botId, 'zernio_inbound', true, null, { reason: 'manager_silence_resume: менеджер мовчить 10 хв — бот відновив і відповідає на накопичене', text: text.slice(0, 80) });
                 logger.info('[zernioHandler] resumed after manager silence', { sessionId: s.id });
                 if (text || att) scheduleFlowRun(s.id, { botId: s.botId, contactId: ctx.contactId || ctx.psid, conversationId: ctx.conversationId, contactName: ctx.senderName, text, imageUrl: att ? att.url : null });
-                sendTelegramAlert(s.botId, '↩️ Бот відновив розмову після 10 хв тиші менеджера\n\nКлієнт: ' + (ctx.senderName || ctx.igUsername || '') + '\nОстаннє: «' + text.slice(0, 120) + '»\nЩоб зупинити бота — пауза в адмінці: https://flows.fineko.space/sessions/' + s.id, s.id).catch(() => {});
+                // 2026-09-08 (власник): Telegram-сповіщення про відновлення не потрібне — лише лог доставки вище.
             } catch (e) { logger.warn('[zernioHandler] resumeAfterManagerSilence session error', { sessionId: s.id, error: e.message }); }
         }
     } catch (e) { logger.warn('[zernioHandler] resumeAfterManagerSilence error: ' + e.message); }

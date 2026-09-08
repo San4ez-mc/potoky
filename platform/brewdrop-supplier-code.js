@@ -60,9 +60,11 @@ async function resolvePcs(bdp, color, size){
 // ── 1) спосіб оплати: накладений платіж на решту; повна передоплата — вручну ──
 var payMethod=String((context.paymentInfo&&context.paymentInfo.method)||'cod');
 var orderTotal=Number(context.orderTotal)||0; var prepaid=Number(context.payAmount)||0;
-if(payMethod==='full') return fail('повна передоплата ('+orderTotal+' грн) — тип оплати «з балансу» для API ще не підтверджено, оформіть вручну');
-var codAmount=payMethod==='cod_trust'?orderTotal:Math.max(0,orderTotal-prepaid);
-if(!(codAmount>0)) return fail('не визначено суму накладеного платежу (orderTotal='+orderTotal+', передоплата='+prepaid+')');
+// 2026-09-08 (власник: повна передоплата = «з балансу»): у ручних замовленнях менеджера з повною передоплатою
+// pay_type=3 («з балансу»), pay_person=2, total_final=0, total_check = сума замовлення (15 замовлень 07–08.09).
+var fullPrepay=payMethod==='full';
+var codAmount=fullPrepay?0:(payMethod==='cod_trust'?orderTotal:Math.max(0,orderTotal-prepaid));
+if(!fullPrepay&&!(codAmount>0)) return fail('не визначено суму накладеного платежу (orderTotal='+orderTotal+', передоплата='+prepaid+')');
 // ── 2) позиції: усі одиниці основного товару (кілька штук/розмірів/кольорів — одним замовленням) ──
 var units=(Array.isArray(context.orderUnits)&&context.orderUnits.length)?context.orderUnits:[{ color:String((context.colorChoice&&context.colorChoice.color)||'').trim(), size:String(context.recommendedSize||'').trim() }];
 var fp=await findBdProduct(prod); if(fp.error) return fail(fp.error);
@@ -113,14 +115,14 @@ if(digits.length!==10||digits.charAt(0)!=='0') return fail('телефон «'+(
 var phoneFmt='+38('+digits.slice(0,3)+') '+digits.slice(3,6)+'-'+digits.slice(6,8)+'-'+digits.slice(8,10);
 var me=await bd('/api/users/auth'); var meId=Number((me.json&&me.json.data&&me.json.data.id)||0)||undefined;
 var senderId=Number(keys.BREWDROP_SENDER_ID)||0;
-var totalCheck=Number(keys.BREWDROP_TOTAL_CHECK)||1590;
+var totalCheck=fullPrepay?(orderTotal||Number(keys.BREWDROP_TOTAL_CHECK)||1590):(Number(keys.BREWDROP_TOTAL_CHECK)||1590);
 var payload=Object.assign(senderId?{ sender_id:senderId }:{}, {
   dropshipper_id:meId,
   client_data:{ first_name:first,last_name:last,middle_name:middle,phone:phoneFmt,delivery_id:1,city_id:cityObj.id,branch_id:brObj.id },
-  delivery_data:{ delivery_id:1,delivery_pay_person:1 }, delivery_method_id:1, pay_type:1, pay_person:1,
+  delivery_data:{ delivery_id:1,delivery_pay_person:1 }, delivery_method_id:1, pay_type:fullPrepay?3:1, pay_person:fullPrepay?2:1,
   seller_comment:'Замовлення '+(context.orderRef||''), products:lines.map(function(l){return { product_color_size_id:l.pcsId, qty:l.qty };}),
   total_final:codAmount, total_check:totalCheck, ttn:null });
-var summary='🧾 brewdrop '+(dryRun?'(DRY-RUN)':'СТВОРЕНО')+':\n'+lines.map(function(l){return '• '+l.label+(l.qty>1?' ×'+l.qty:'');}).join('\n')+'\nОтримувач: '+last+' '+first+' '+(od.phone||'')+'\nНП: '+(cityObj.name_ua||cityObj.name)+' / '+(brObj.name_ua||brObj.name)+'\nНакладений платіж: '+codAmount+' грн (оголошена '+totalCheck+')'+(missing.length?('\n⚠️ Додайте вручну: '+missing.join('; ')):'');
+var summary='🧾 brewdrop '+(dryRun?'(DRY-RUN)':'СТВОРЕНО')+':\n'+lines.map(function(l){return '• '+l.label+(l.qty>1?' ×'+l.qty:'');}).join('\n')+'\nОтримувач: '+last+' '+first+' '+(od.phone||'')+'\nНП: '+(cityObj.name_ua||cityObj.name)+' / '+(brObj.name_ua||brObj.name)+(fullPrepay?'\nОплата: повна передоплата → «з балансу» (оголошена '+totalCheck+')':'\nНакладений платіж: '+codAmount+' грн (оголошена '+totalCheck+')')+(missing.length?('\n⚠️ Додайте вручну: '+missing.join('; ')):'');
 if(dryRun) return { supplierOrderResult:summary+'\n\n⚠️ DRY-RUN: НЕ відправлено (BREWDROP_DRY_RUN=1).', supplierOrderStatus:'dry_run', supplierOrderPayload:JSON.stringify(payload), supplierNeedsManual:missing.length>0 };
 // ── 5) кошик (серверний, per-user): очистити хвости попередніх спроб, додати позиції, створити замовлення ──
 var cur=await bd('/api/carts'); var curItems=(cur.json&&(cur.json.items||cur.json.data))||[];

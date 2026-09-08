@@ -200,6 +200,13 @@ try {
     for (var __ca = 0; __ca < __capArts.length; __ca++) {
       var __capProd = matchArticle(all, __capArts[__ca]);
       if (__capProd && String(__capProd.id) !== String(found.id)) {
+        // 2026-09-08 (Босий 14:24: у CRM реклама привʼязана до C0043 — саме те, що у відео; у тексті поста помилково A0187):
+        // привʼязка в CRM — рішення власника, вона головна; артикул з тексту лише сигналить менеджеру про розбіжність.
+        // Нові реклами n_lookup більше НЕ привʼязує сам (productId:null) — тож привʼязка в CRM завжди ручна.
+        context.adLinkMismatch = 'реклама ' + (context.entryAd || __adExternalId || '') + ' у CRM привʼязана до ' + (found.sku || found.name) + ', а в тексті поста артикул ' + __capArts[__ca] + ' — показано товар за привʼязкою CRM; якщо помилка — перепривʼяжіть';
+        break;
+      }
+      if (false) {
         context.adLinkMismatch = 'реклама ' + (context.entryAd || __adExternalId || '') + ' у CRM привʼязана до ' + (found.sku || found.name) + ', а в тексті поста артикул ' + __capArts[__ca] + ' — показано товар за артикулом; перевірте привʼязку в CRM';
         found = __capProd; via = 'ad_caption_override:' + __capArts[__ca]; mk = 'art_' + __capArts[__ca];
         break;
@@ -217,6 +224,10 @@ try {
     // n_catalog_hint визначив товар за назвою зі списку/каталогу (catalogHintPick) → перший кандидат.
     if (context.catalogHintPick) { cands = [String(context.catalogHintPick).toUpperCase()].concat(cands); context.catalogHintPick = ''; }
     var __commentArt = ''; var __commentAge = Date.now() - (Date.parse(context.commentProductAt || '') || 0);
+    // 2026-09-08 (Maltsev: менеджер «готовою відповіддю» показав картку з «Артикул: A0187», бот після відновлення товару не знав):
+    // артикул з останнього повідомлення менеджера (managerArticleHint, zernioHandler) — як підказка з коментаря.
+    var __mgrAge = Date.now() - (Date.parse(context.managerArticleAt || '') || 0);
+    if (context.managerArticleHint && __mgrAge < 6 * 3600 * 1000 && (!context.commentProductArticle || __mgrAge < __commentAge)) { context.commentProductArticle = context.managerArticleHint; __commentAge = __mgrAge; }
     if (context.commentProductArticle && __commentAge < 72 * 3600 * 1000) { __commentArt = String(context.commentProductArticle).toUpperCase(); if (!cands.length || cands.map(function (x) { return String(x).toUpperCase(); }).indexOf(__commentArt) < 0) cands = cands.concat([__commentArt]); }
     var seen = {}, cc = []; for (var ci = 0; ci < cands.length; ci++) { if (!seen[cands[ci]]) { seen[cands[ci]] = 1; cc.push(cands[ci]); } } cc = cc.slice(0, 8);
     // 2a) offer-SKU → товар + колір/розмір цього оферу
@@ -297,7 +308,7 @@ try {
       var __campaign = (context.lastReferral && context.lastReferral.ads_context_data) || {};
       await fetch(base + '/ads', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, hdr()), body: JSON.stringify({
         externalId: String(context.entryAd), name: String(context.adTitle || __campaign.ad_title || 'Реклама ' + context.entryAd).slice(0, 200),
-        productId: found ? found.id : null, campaignName: String(context.adTitle || '').replace(/_group_\d+/i, '').slice(0, 200) || null,
+        productId: null, campaignName: String(context.adTitle || '').replace(/_group_\d+/i, '').slice(0, 200) || null,
       }) });
     } catch (e) { /* best-effort */ }
   }
@@ -508,6 +519,13 @@ try {
   //    KeyCRM-опис у старій версії) — надсилаємо дослівно (n_welcome), обрізаючи лише
   //    службові нотатки-рядки, що починаються з ℹ️ (внутрішні нотатки адміна). ──
   var __descClean = String(found.presentationText || '').split('\n').filter(function (ln) { return !/^\s*ℹ️/.test(ln); }).join('\n').trim();
+  // 2026-09-08 (set1112: «Комплект 4 в 1 (кофта…)» і одразу «Комплект 4 в 1. Артикул: set1112» — назва двічі): якщо перший
+  // рядок презентації = назва товару, а далі йде рядок з артикулом — перший рядок прибираємо.
+  try {
+    var __dl = __descClean.split('\n'); var __first = String(__dl[0] || '').trim().toLowerCase(); var __nm = String(found.customerName || found.name || '').trim().toLowerCase();
+    var __second = (__dl.slice(1).find(function (l) { return l.trim(); }) || '').toLowerCase();
+    if (__dl.length > 2 && __nm && __first === __nm && /артикул/.test(__second)) __descClean = __dl.slice(1).join('\n').trim();
+  } catch (e) { }
   var __rawFirstLine = (__descClean.split('\n')[0] || '').trim();
   var __looksLikeHeading = /:$/.test(__rawFirstLine) || /^[^:]{1,30}:\s/.test(__rawFirstLine) || /^(в\s*наявност|наявніст|кольор|розмір|матеріал|ціна\b|акці|сезон)/i.test(__rawFirstLine) || __rawFirstLine.length < 4;
   // customerName у CRM covercar = речення-специфікація ("Матеріал накидок - алькантара. Він дуже…") —
@@ -638,6 +656,7 @@ try {
   var __prevSku = String((context.product && context.product.sku) || ''); var __prevAt = Number(context.presentedAt) || 0;
   result.skipPresentation = !!(__prevSku && found.sku && __prevSku.toUpperCase() === String(found.sku).toUpperCase() && (Date.now() - __prevAt) < 30 * 60 * 1000);
   result.presentedAt = result.skipPresentation ? __prevAt : Date.now(); // для ignoreRightAfterPresentationRe у n_size
+  result.lastPresentedSku = String(found.sku || ''); // n_presented_recently_cond звіряє й напряму (Софія 11:20: картка вдруге за 16 хв)
   // Товар визначено ЛИШЕ за артикулом з коментар-автоматизації (клієнт не називав його сам, у пості його нема) і
   // автоматизація презентувала його < 6 год тому → картку не дублюємо, одразу крок розміру.
   try {
@@ -645,6 +664,16 @@ try {
     if (__viaCommentOnly && __commentAge < 6 * 3600 * 1000) { result.skipPresentation = true; result.presentedAt = Date.now() - __commentAge; result.product._via = 'comment_automation:' + __commentArt; }
   } catch (e) { }
   if (preColor && preFromUser) { result.colorChoice = { color: preColor, _pre: true }; }
+  // 2026-09-08 (Родіонова: «хочу замовити (графітову) кофту, розмір XXL» — бот потім перепитав колір): колір із першого
+  // повідомлення клієнта, якщо він рівно один і є у списку кольорів товару → colorChoice одразу.
+  try {
+    if (!(result.colorChoice && result.colorChoice.color) && !(context.colorChoice && context.colorChoice.color)) {
+      var __umsg = String(context.lastUserMessage || input || '').replace(/\[переслав[^\]]*\][^\n]*/gi, ' ').toLowerCase();
+      var __clist = (result.product && result.product.colorsList) || [];
+      var __hitC = __clist.filter(function (cn) { var st = String(cn).toLowerCase().replace(/ий$|а$|у$|ого$|ому$/,'').slice(0, 6); return st.length >= 4 && __umsg.indexOf(st) >= 0; });
+      if (__hitC.length === 1) result.colorChoice = { color: __hitC[0], _fromFirstMsg: true };
+    }
+  } catch (e) { }
   if (preColor) result.product.preColor = preColor;
   if (preSize) { result.product.preSize = preSize; }
   if (__earlyBuyerId && !context.crmClientId) result.crmClientId = __earlyBuyerId;

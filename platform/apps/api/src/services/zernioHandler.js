@@ -936,8 +936,21 @@ async function handleIncomingMessage(botId, body) {
     const platformMessageId = msg.platformMessageId || null;
     const ref = body.metadata?.referral || msg.referral || body.referral || body.conversation?.referral || msg.metadata?.referral || body?.data?.referral || null;
     const storyReply = body.metadata?.storyReply || msg.metadata?.storyReply || null;
-    const adId = ref?.ad_id || ref?.adId || msg.metadata?.ad_id || null;
+    let adId = ref?.ad_id || ref?.adId || msg.metadata?.ad_id || null;
     const postId = ref?.ads_context_data?.post_id || ref?.ads_context_data?.postId || null;
+    let adTitleFromConv = null;
+    // 2026-09-08 (_hladkyi_vitalii_ 11:38: «Яка ціна товарів?» з реклами прийшло БЕЗ referral → бот не знав товару; за 17 хв той
+    // самий текст із referral → комплект). Для коротких «рекламних» питань без referral беремо meta_ad_id із самої розмови Zernio.
+    if (!adId && !postId && conversationId && /^(яка ціна|скільки кошту|як підібрати|як замовити|чи є в наявн|хочу замовити|перевір(те|ити) ціну|цікавить)/i.test(String(text || '').trim()) && String(text || '').length <= 80) {
+        try {
+            const zk = await getZernioKeys(botId);
+            if (isReal(zk.ZERNIO_API_TOKEN)) {
+                const cr = await fetch('https://zernio.com/api/v1/inbox/conversations/' + encodeURIComponent(conversationId), { headers: { Authorization: 'Bearer ' + zk.ZERNIO_API_TOKEN } });
+                const cj = await cr.json().catch(() => ({})); const md = ((cj && cj.data) || {}).metadata || {};
+                if (md.meta_ad_id) { adId = String(md.meta_ad_id); adTitleFromConv = md.meta_ad_title || null; logger.info('[zernioHandler] ad resolved from conversation metadata', { botId, conversationId, adId }); }
+            }
+        } catch (e) { logger.warn('[zernioHandler] conversation metadata lookup failed: ' + e.message, { botId, conversationId }); }
+    }
     const storyId = storyReply?.storyId || storyReply?.story_id || null;
 
     // Вхідні медіа (може бути кілька — «альбом» до 10 фото). Зберігаємо ВСІ.
@@ -975,6 +988,7 @@ async function handleIncomingMessage(botId, body) {
     if (postId) patch.postId = String(postId);
     if (storyId) patch.storyId = String(storyId);
     if (ref && ref.ads_context_data && ref.ads_context_data.ad_title) patch.adTitle = ref.ads_context_data.ad_title;
+    else if (adTitleFromConv) patch.adTitle = adTitleFromConv;
     const user = await findOrCreateZernioUser(contactId, botId, contactName);
     patch.lastUserTs = Date.now();
     if (user && user.metadata && user.metadata.crmClientId) patch.crmClientId = user.metadata.crmClientId;
@@ -1417,6 +1431,9 @@ async function handleSideEvent(botId, event, body) {
         try {
             const _fresh = await db.session.findUnique({ where: { id: session.id }, select: { context: true } });
             const _pc = (_fresh && _fresh.context) || {};
+            // 2026-09-08 (Maltsev): у «готовій відповіді» менеджера є «Артикул: A0187» — запамʼятовуємо, щоб після відновлення бот знав товар.
+            const _artM = String(_sentText || '').match(/Артикул:?\s*([A-Za-z]{1,4}\d{3,8}|set\d{3,6}|\d{5,8})/i);
+            if (_artM) { _pc.managerArticleHint = _artM[1]; _pc.managerArticleAt = new Date().toISOString(); if (_pc.funnelPaused) await db.session.update({ where: { id: session.id }, data: { context: _pc } }).catch(() => {}); }
             if (!_pc.funnelPaused) {
                 await db.session.update({ where: { id: session.id }, data: { context: { ..._pc, funnelPaused: true, pausedBy: 'manager_message', pausedAt: new Date().toISOString() } } });
                 await logDelivery(session.id, botId, 'zernio_inbound', true, null, { reason: 'manager_message → funnelPaused (бот на паузі, зняти можна в адмінці)' });

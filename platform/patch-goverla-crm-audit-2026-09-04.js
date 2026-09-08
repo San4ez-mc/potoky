@@ -580,6 +580,20 @@ function applyV12(nodes, edges, notes) {
         edges.push({ id: 'e_n_post_order_mark_msg', source: 'n_post_order_mark', target: 'n_post_order_msg' });
         notes.push('+ n_post_order_once_cond');
     }
+    // v12.13 (власник 2026-09-08: «конфлікт привʼязки реклами і артикулу — присилай сповіщення в Telegram»): n_lookup ставить
+    // adLinkMismatchAt лише на НОВИЙ текст розбіжності; алерт менеджеру один раз на кожен такий текст, діалог не зупиняється.
+    if (!byId().n_ad_conflict_cond && byId().n_lookup && byId().n_post_order_cond) {
+        const p = placer.place(pos('n_lookup').x + GX, pos('n_lookup').y - GY);
+        nodes.push({ id: 'n_ad_conflict_cond', type: 'condition', position: p, data: { label: '1.84 Реклама привʼязана не до того товару?', condition: '!!(context.adLinkMismatch && context.adLinkMismatchAt && (!context.adLinkMismatchAlertedAt || Number(context.adLinkMismatchAlertedAt) < Number(context.adLinkMismatchAt)))', description: 'TRUE → сигнал менеджеру (перевірити привʼязку реклами в CRM), далі звичайний шлях. FALSE → звичайний шлях.' } });
+        nodes.push({ id: 'n_ad_conflict_admin', type: 'notifyTg', position: placer.place(p.x + GX, p.y), data: { label: '1.845 Сигнал: конфлікт привʼязки реклами', targetKey: 'ADMIN_TELEGRAM_ID', message: '⚠️ <b>Реклама привʼязана не до того товару?</b>\n\n{{context.adLinkMismatch}}\n\n👤 {{context.senderName}} ({{context.igUsername}})\n💬 «{{context.lastCustomerMessage}}»', description: 'Не зупиняє діалог: бот уже показав товар за правилом (слово клієнта → артикул поста → привʼязка CRM). Менеджер перевіряє привʼязку реклами в CRM.' } });
+        nodes.push({ id: 'n_ad_conflict_mark', type: 'js', position: placer.place(p.x + 2 * GX, p.y), data: { label: '1.846 Позначити: сигнал про конфлікт надіслано', code: 'return { adLinkMismatchAlertedAt: Date.now() };' } });
+        edges = edges.map((e) => (e.source === 'n_lookup' && e.target === 'n_post_order_cond' ? { ...e, target: 'n_ad_conflict_cond' } : e));
+        edges.push({ id: 'e_n_ad_conflict_false', source: 'n_ad_conflict_cond', target: 'n_post_order_cond', sourceHandle: 'false' });
+        edges.push({ id: 'e_n_ad_conflict_true', source: 'n_ad_conflict_cond', target: 'n_ad_conflict_admin', sourceHandle: 'true' });
+        edges.push({ id: 'e_n_ad_conflict_admin_mark', source: 'n_ad_conflict_admin', target: 'n_ad_conflict_mark' });
+        edges.push({ id: 'e_n_ad_conflict_mark_next', source: 'n_ad_conflict_mark', target: 'n_post_order_cond' });
+        notes.push('+ n_ad_conflict_cond');
+    }
     // v12.8.2 (Пашковський 17:57: оплату вже звірено, а бот після оформлення написав «Чекаємо на оплату 200 грн»): статус оплати у промпт.
     { const n = byId().n_upsell2_wait; if (n && !/СТАТУС ОПЛАТИ \(система\)/.test(n.data.systemPrompt || '')) { n.data.systemPrompt = String(n.data.systemPrompt || '') + '\nСТАТУС ОПЛАТИ (система, не вигадуй інший): «{{context.payStatus}}». confirmed = оплату ВЖЕ отримали — на фото/чек/питання про оплату відповідай «Оплату отримали ✅, замовлення в роботі», НІКОЛИ не пиши «чекаємо на оплату» і не називай суму до сплати. not_found/порожньо = «чек отримали, команда звірить і напише». Фото після оформлення — це квитанція, не адреса.'; notes.push('payStatus n_upsell2_wait'); } }
     { const n = byId().n_set_choice; if (n) { if (n.data.waitAfterPresentation !== true) { n.data.waitAfterPresentation = true; notes.push('waitAfterPresentation n_set_choice'); } n.data.waitAfterPresentationUnless = 'кофт|джинс|футбол|лофер|окрем|лише|тільки|только|весь|все|комплект|набір|розмір|размер|\\d{2,3}\\s*[\\/,\\s\\-]\\s*\\d{2,3}|колір|цвет|\\b(xs|s|m|l|xl|xxl)\\b'; } }
@@ -868,17 +882,6 @@ function transform(flow, keysMap, opts) {
     addEdge('n_post_order_cond', 'n_post_order_msg', 'true');
     addNode('n_post_order_admin', 'notifyTg', { label: '1.87 Сигнал: клієнт пише після замовлення', targetKey: 'ADMIN_TELEGRAM_ID', message: '💬 <b>Клієнт написав після оформлення</b> — замовлення {{context.orderRef}} (CRM {{context.crmOrderId}})\n\n👤 {{context.senderName}} ({{context.igUsername}})\n💬 «{{context.lastCustomerMessage}}»', description: 'Термінальна після повідомлення: менеджер відповідає в Instagram.' }, pos('n_lookup').x + 3 * GX, pos('n_lookup').y);
     addEdge('n_post_order_msg', 'n_post_order_admin');
-
-    // ── 2026-09-08 (власник): конфлікт привʼязки реклами в CRM і артикулу/категорії клієнта → сповіщення менеджеру ──
-    // n_lookup ставить adLinkMismatchAt лише на НОВИЙ текст розбіжності; алерт один раз на кожен такий текст.
-    retarget('n_lookup', 'n_post_order_cond', 'n_ad_conflict_cond');
-    addNode('n_ad_conflict_cond', 'condition', { label: '1.84 Реклама привʼязана не до того товару?', condition: '!!(context.adLinkMismatch && context.adLinkMismatchAt && (!context.adLinkMismatchAlertedAt || Number(context.adLinkMismatchAlertedAt) < Number(context.adLinkMismatchAt)))', description: 'TRUE → сигнал менеджеру (перевірити привʼязку реклами в CRM), далі звичайний шлях. FALSE → звичайний шлях.' }, pos('n_lookup').x + GX, pos('n_lookup').y - GY);
-    addEdge('n_ad_conflict_cond', 'n_post_order_cond', 'false');
-    addNode('n_ad_conflict_admin', 'notifyTg', { label: '1.845 Сигнал: конфлікт привʼязки реклами', targetKey: 'ADMIN_TELEGRAM_ID', message: '⚠️ <b>Реклама привʼязана не до того товару?</b>\n\n{{context.adLinkMismatch}}\n\n👤 {{context.senderName}} ({{context.igUsername}})\n💬 «{{context.lastCustomerMessage}}»', description: 'Не зупиняє діалог: бот уже показав товар за правилом (слово клієнта → артикул поста → привʼязка CRM). Менеджер перевіряє привʼязку реклами в CRM.' }, pos('n_lookup').x + 2 * GX, pos('n_lookup').y - GY);
-    addEdge('n_ad_conflict_cond', 'n_ad_conflict_admin', 'true');
-    addNode('n_ad_conflict_mark', 'js', { label: '1.846 Позначити: сигнал про конфлікт надіслано', code: 'return { adLinkMismatchAlertedAt: Date.now() };' }, pos('n_lookup').x + 3 * GX, pos('n_lookup').y - GY);
-    addEdge('n_ad_conflict_admin', 'n_ad_conflict_mark');
-    addEdge('n_ad_conflict_mark', 'n_post_order_cond');
 
     // ── В11 сигнал про невідомий товар — раз на сесію ──
     retarget('n_unknown_notify_gate', 'n_unknown_admin', 'n_unknown_once_cond', 'true');

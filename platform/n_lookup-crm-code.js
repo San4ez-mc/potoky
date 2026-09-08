@@ -36,7 +36,12 @@
 // ранній вихід «товар той самий» має нести skipPresentation, інакше лишається старе false з першого показу → картка знову.
 if (context.product && context.product._source === 'crm' && (String(context.product._matchKey) === String(context.entryAd || context.__lk || '') || !context.hasFreshSignalThisTurn)) return { skipPresentation: !!(context.product.sku && context.presentedAt && (Date.now() - Number(context.presentedAt)) < 30 * 60 * 1000) };
 
-function fallback(reason) { return { product: null, productUnknown: true, productUnknownReason: reason || '' }; }
+function fallback(reason) {
+  var o = { product: null, productUnknown: true, productUnknownReason: reason || '' };
+  // конфлікт привʼязки реклами (список категорії замість хибної картки) теж має піти менеджеру — n_ad_conflict_cond
+  if (context.adLinkMismatch && context.adLinkMismatch !== context.adLinkMismatchSeen) { o.adLinkMismatchAt = Date.now(); o.adLinkMismatchSeen = context.adLinkMismatch; }
+  return o;
+}
 
 var apiKey = (keys.CRM_API_KEY || '').trim();
 var base = (keys.CRM_API_BASE || 'http://127.0.0.1:4700/api').replace(/\/$/, '');

@@ -538,7 +538,8 @@ function applyV12(nodes, edges, notes) {
     // (3) n_set_choice не дублює ціни одразу після картки комплекту; (4) n_color знає колір з фото клієнта.
     { const n = byId().n_collect; if (n) {
         if (n.data.waitOnEntry !== true) { n.data.waitOnEntry = true; notes.push('waitOnEntry n_collect'); }
-        n.data.waitOnEntryUnless = '\\d{10}|\\+?38\\s?\\d|відділен|поштомат|\\bвул\\b|місто|\\bм\\.\\s*[А-ЯІЇЄA-Z]|нов[аоуі]\\s*пошт|\\bнп\\b|отделен|почтомат';
+        // unless: дані доставки АБО прохання про реквізити/посилання/зміну оплати — це n_collect має обробити одразу.
+        n.data.waitOnEntryUnless = '\\d{10}|\\+?38\\s?\\d|відділен|поштомат|\\bвул\\b|місто|\\bм\\.\\s*[А-ЯІЇЄA-Z]|нов[аоуі]\\s*пошт|\\bнп\\b|отделен|почтомат|реквізит|реквизит|iban|ібан|рахун|картк|карту|посилан|ссылк|лінк|link|оплат|плат[іи]ж|наклад|передоплат|предоплат|чек|скрін|оплатив|заплатив|переказ|менеджер|людин';
         if (!/кілька рядків/.test(n.data.systemPrompt || '')) { n.data.systemPrompt = String(n.data.systemPrompt || '') + '\nКлієнт часто надсилає ВСІ дані одним повідомленням у кілька рядків (ПІБ / телефон / місто і відділення) — уважно витягни кожне поле з усіх рядків і НЕ перепитуй те, що вже є в повідомленні.'; notes.push('multiline n_collect'); }
     } }
     { const n = byId().n_order_intent; if (n && n.data.silentOnExit !== true) { n.data.silentOnExit = true; notes.push('silentOnExit n_order_intent'); } }

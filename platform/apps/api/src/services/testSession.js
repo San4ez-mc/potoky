@@ -1402,6 +1402,25 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
         return { session, botResponse: null, flowDriven: false, paused: true };
     }
 
+    // Чи є кому передати діалог. Детектори нижче («хочу менеджера», «повернення»)
+    // писались під магазини, але спрацьовують у КОЖНІЙ воронці двигуна. Асистентка
+    // рекрутингової агенції на фразу «шукаємо менеджера з продажу» відповіла
+    // «зараз покличу менеджера» і замовкла — слово з щоденної лексики клієнта
+    // збіглося зі стоп-словом магазину.
+    //
+    // Умова проста і самоналаштовна: обіцяти живу людину можна лише там, де ця
+    // людина налаштована. Немає ADMIN_TELEGRAM_ID — обіцянка все одно нікуди б не
+    // пішла, і краще хай відповідає бот, ніж «вам відповість менеджер» у порожнечу.
+    let _handoffPossible = false;
+    try {
+        const _hoKeys = await db.funnelKey.findMany({
+            where: { botId: session.botId, key: { in: ['ADMIN_TELEGRAM_ID', 'TELEGRAM_BOT_TOKEN'] } },
+            select: { key: true, value: true },
+        });
+        const _hoMap = Object.fromEntries(_hoKeys.map((k) => [k.key, (k.value || '').trim()]));
+        _handoffPossible = Boolean(_hoMap.ADMIN_TELEGRAM_ID) && /^\d+:[A-Za-z0-9_-]{20,}$/.test(_hoMap.TELEGRAM_BOT_TOKEN || '');
+    } catch (_e) { _handoffPossible = false; }
+
     // Повернення/обмін товару — детермінований детект (аудит 2026-08-28, запит
     // власника). Раніше "поверн"/"обмін" потрапляли під ЗАГАЛЬНИЙ "хочу менеджера"
     // хендоф — бот ПОВНІСТЮ зупинявся (adminEngaged), хоча запит на повернення не
@@ -1424,7 +1443,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
     const _returnRe = ctx.crmOrderId
         ? /поверн(ення|ути|іть)|обмін(яти|яю)?|обмен/i
         : /хочу\s+(поверну|обміня|вернут)|поверн(ути|іть)\s+(товар|гроші|кошти|замовлення|посилку)|обміня(ти|ю)\s+(товар|розмір|на\s)|вернуть\s+(товар|деньги)/i;
-    if (incomingUserMessage && !ctx.returnHandledAt && _returnRe.test(String(incomingUserMessage))) {
+    if (_handoffPossible && incomingUserMessage && !ctx.returnHandledAt && _returnRe.test(String(incomingUserMessage))) {
         ctx.returnHandledAt = new Date().toISOString();
         const retMsg = 'Звичайно, допоможемо! 🙂 Передала ваш запит на повернення/обмін менеджеру — він зв\'яжеться з деталями найближчим часом. Якщо тим часом є ще питання — я тут 💛';
         await persistAssistantMessage(session.id, retMsg, { source: 'return_keyword' });
@@ -1454,7 +1473,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
     const _softHandoffOff = Boolean(_hoNode && _hoNode.data && _hoNode.data.softHandoffOff === true);
     const _hoHardRe = /менеджер|оператор(?!ськ)|з\s*людин|живою\s*людин|жива\s*людин|людину\s*(покличте|дайте)|ви\s*бот|це\s*бот|справжн(я|ій)\s*людин|\bбрак\b|скарг|жалоб|конфлікт/i;
     const _hoSoftRe = /обман|шахра|не\s*прийшл|не\s*дійшл|не\s*дошл/i;
-    if (incomingUserMessage && !ctx.crmOrderId
+    if (_handoffPossible && incomingUserMessage && !ctx.crmOrderId
         && (_hoHardRe.test(String(incomingUserMessage)) || (!_softHandoffOff && _hoSoftRe.test(String(incomingUserMessage))))) {
         ctx.adminEngaged = true;
         ctx.handoffReason = String(incomingUserMessage).slice(0, 160);

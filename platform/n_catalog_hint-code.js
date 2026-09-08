@@ -4,6 +4,12 @@
 // n_unknown_msg: catalogCategories — категорії магазину з CRM з кількістю товарів (для привітання),
 // catalogHint — до 4 товарів названої категорії (артикул, назва, ціна). Best-effort: помилка → порожньо.
 var msg = String(context.lastUserMessage || input || '').toLowerCase();
+// 2026-09-08 (_valery_pechorin_: клік з реклами «Чоловічий замшевий костюм», реклама недоступна в Graph, у каталозі два
+// замшеві костюми → n_lookup не визначив; повідомлення «перевірте ціну» без категорії): назва реклами/поста — джерело
+// категорії для списку-підказки, коли в самому повідомленні її нема.
+var __adHint = String(context.adTitle || (context.sharedPost && context.sharedPost.caption) || '').toLowerCase().replace(/^допис в instagram:\s*/i, '').replace(/_group_\d+$/i, '').replace(/\.{3,}/g, ' ');
+var __msgHasCat = /(кофт|светр|худ|бомбер|куртк|вітровк|джинс|штан|футболк|лофер|взутт|кросів|черевик|костюм|комплект|накидк|подушк|органайзер|підголівник|шкірян|кожан)/.test(msg);
+if (!__msgHasCat && __adHint) msg = (msg + ' ' + __adHint).trim();
 var unknownTurns = (Number(context.unknownTurns) || 0) + 1;
 function out(hint, cnt, cats) { return { catalogHint: hint || '', catalogHintCount: cnt || 0, catalogHintSkus: '', catalogHintPick: '', catalogCategories: cats || '', unknownTurns: unknownTurns }; }
 if (context.product) return out('', 0, '');

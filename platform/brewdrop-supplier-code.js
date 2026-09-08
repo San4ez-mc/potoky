@@ -27,6 +27,10 @@ var prod=context.product||{}; var od=context.orderData||{}; var np=context.np||{
 var map={}; try{ map=JSON.parse(keys.BREWDROP_ARTICLE_MAP||'{}'); }catch(e){}
 var COLOR_SYN={ 'чорний':['чорний','черный','чёрный','black'], 'графітовий':['графітовий','графит','графитовый','графіт'], 'темно-синій':['темно-синій','темно-синий','синий','синій','navy'], 'синій':['синій','синий','темно-синий','темно-синій'], 'світло-сірий':['світло-сірий','светло-серый','світло сірий','светло серый'], 'сірий':['сірий','серый','grey','gray'], 'хакі':['хакі','хаки','khaki'], 'бордовий':['бордовий','бордовый','бордо'], 'білий':['білий','белый','white'], 'бежевий':['бежевий','бежевый','беж'], 'коричневий':['коричневий','коричневый','brown'], 'темно-коричневий':['темно-коричневий','темно-коричневый'], 'зелений':['зелений','зеленый','green'], 'темно-зелений':['темно-зелений','темно-зеленый'], 'оливковий':['оливковий','оливковый','олива'], 'молочний':['молочний','молочный'], 'червоний':['червоний','красный','red'], 'блакитний':['блакитний','голубой'], 'світло-синій':['світло-синій','светло-синий'] };
 function colorMatches(supplierColor, wanted){ var sc=norm(supplierColor), w=norm(wanted); if(!w) return true; if(sc===w||sc.indexOf(w)>=0||w.indexOf(sc)>=0) return true; var syn=COLOR_SYN[w]||[]; for(var i=0;i<syn.length;i++){ var s=norm(syn[i]); if(sc===s||sc.indexOf(s)>=0) return true; } return false; }
+// 2026-09-08 (Ковальчук A0182 «Сірий» ×2: у brewdrop лише «чёрный/графит», менеджер оформив як графіт): другий, м'якший
+// прохід — сусідні відтінки тієї ж гами, лише якщо точного/синонімічного збігу немає.
+var COLOR_LOOSE={ 'сірий':['графит','светло-серый','серый'], 'світло-сірий':['серый','графит'], 'графітовий':['серый','темно-серый'], 'темно-синій':['синий','джинс','голубо-синий'], 'синій':['темно-синий','голубо-синий','джинс'], 'блакитний':['голубо-синий','голубой'], 'коричневий':['темно-коричневый','кэмел'], 'темно-коричневий':['коричневый'], 'зелений':['темно-зеленый','хаки','олива'], 'темно-зелений':['зеленый','хаки'] };
+function colorMatchesLoose(supplierColor, wanted){ var sc=norm(supplierColor), w=norm(wanted); var syn=COLOR_LOOSE[w]||[]; for(var i=0;i<syn.length;i++){ var s=norm(syn[i]); if(sc===s||sc.indexOf(s)>=0) return true; } return false; }
 // Артикул → товар brewdrop (точний збіг vendor_code). Кандидати: ручний override → артикул постачальника з CRM → CRM-артикул (і без суфікса кольору).
 async function findBdProduct(p){
   var m=map[String(p.id)]||{};
@@ -39,15 +43,20 @@ async function findBdProduct(p){
   return { error:'артикул '+cands.join(' / ')+' не знайдено (точного збігу vendor_code нема)' };
 }
 // Колір+розмір → product_color_size_id із залишком > 0.
+var __bdDetail={};
 async function resolvePcs(bdp, color, size){
-  var d=await bd('/api/guest/products/'+bdp.product_id);
-  var colors=(((d.json&&(d.json.data||d.json))||{}).remains)||[];
-  for(var ci=0;ci<colors.length;ci++){ var c=colors[ci]; var cn=norm(c.color&&c.color.name);
-    if(color && !colorMatches(cn,color)) continue;
-    var sizes=c.sizes||[];
-    for(var si=0;si<sizes.length;si++){ var sv=sizes[si];
-      if(size && norm(sv.size&&sv.size.name)!==norm(size)) continue;
-      if(Number(sv.remains)>0) return { pcsId:sv.product_color_size_id, color:cn, size:(sv.size&&sv.size.name), remains:sv.remains }; } }
+  if(!__bdDetail[bdp.product_id]){ var d=await bd('/api/guest/products/'+bdp.product_id); __bdDetail[bdp.product_id]=(((d.json&&(d.json.data||d.json))||{}).remains)||[]; }
+  var colors=__bdDetail[bdp.product_id];
+  var passes=[colorMatches, colorMatchesLoose];
+  for(var pi=0;pi<passes.length;pi++){
+    for(var ci=0;ci<colors.length;ci++){ var c=colors[ci]; var cn=norm(c.color&&c.color.name);
+      if(color && !passes[pi](cn,color)) continue;
+      var sizes=c.sizes||[];
+      for(var si=0;si<sizes.length;si++){ var sv=sizes[si];
+        if(size && norm(sv.size&&sv.size.name)!==norm(size)) continue;
+        if(Number(sv.remains)>0) return { pcsId:sv.product_color_size_id, color:cn+(pi>0?' (≈ '+color+')':''), size:(sv.size&&sv.size.name), remains:sv.remains }; } }
+    if(!color) break;
+  }
   return null;
 }
 // ── 1) спосіб оплати: накладений платіж на решту; повна передоплата — вручну ──

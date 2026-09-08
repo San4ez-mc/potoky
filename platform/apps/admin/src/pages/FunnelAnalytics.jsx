@@ -24,6 +24,63 @@ const PLATFORM_LABEL = {
     telegram: 'Telegram', linkedin: 'LinkedIn', tiktok: 'TikTok',
 };
 
+const QUALITY_ROWS = [
+    { key: 'unknownProduct', label: 'Не визначив товар', base: 'sessions' },
+    { key: 'cardTwice', label: 'Картка товару двічі', base: 'sessions' },
+    { key: 'deliveryFail', label: 'Повідомлення не доставлено', base: 'sessions' },
+    { key: 'managerTakeover', label: 'Підхопив менеджер', base: 'sessions' },
+    { key: 'supplierError', label: 'Постачальник: помилка', base: 'orders' },
+    { key: 'supplierCreated', label: 'Постачальник: оформлено авто', base: 'orders', good: true },
+];
+function QualityTable({ q }) {
+    const pct = (v, b) => (b > 0 ? (Math.round((v / b) * 1000) / 10).toFixed(1) + '%' : '—');
+    return (
+        <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+                <thead>
+                    <tr className="text-gray-500">
+                        <th className="text-left font-medium py-1.5">Показник</th>
+                        <th className="text-right font-medium py-1.5">Зараз</th>
+                        <th className="text-right font-medium py-1.5">%</th>
+                        <th className="text-right font-medium py-1.5">Попередній</th>
+                        <th className="text-right font-medium py-1.5">%</th>
+                        <th className="text-right font-medium py-1.5">Зміна</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr className="border-t border-gray-800 text-gray-300">
+                        <td className="py-1.5">Сесій з відповідями бота</td>
+                        <td className="text-right tabular-nums">{q.current.sessions}</td><td />
+                        <td className="text-right tabular-nums text-gray-500">{q.previous.sessions}</td><td /><td />
+                    </tr>
+                    <tr className="border-t border-gray-800 text-gray-300">
+                        <td className="py-1.5">Замовлень</td>
+                        <td className="text-right tabular-nums">{q.current.orders}</td><td />
+                        <td className="text-right tabular-nums text-gray-500">{q.previous.orders}</td><td /><td />
+                    </tr>
+                    {QUALITY_ROWS.map((r) => {
+                        const cur = q.current[r.key] || 0, prev = q.previous[r.key] || 0;
+                        const curB = q.current[r.base] || 0, prevB = q.previous[r.base] || 0;
+                        const curP = curB > 0 ? cur / curB : null, prevP = prevB > 0 ? prev / prevB : null;
+                        const delta = (curP != null && prevP != null) ? Math.round((curP - prevP) * 1000) / 10 : null;
+                        const worse = delta != null && (r.good ? delta < 0 : delta > 0);
+                        return (
+                            <tr key={r.key} className="border-t border-gray-800">
+                                <td className="py-1.5 text-gray-300">{r.label}</td>
+                                <td className="text-right tabular-nums text-white">{cur}</td>
+                                <td className="text-right tabular-nums text-white">{pct(cur, curB)}</td>
+                                <td className="text-right tabular-nums text-gray-500">{prev}</td>
+                                <td className="text-right tabular-nums text-gray-500">{pct(prev, prevB)}</td>
+                                <td className={`text-right tabular-nums ${delta == null ? 'text-gray-600' : worse ? 'text-red-400' : 'text-emerald-400'}`}>{delta == null ? '—' : (delta > 0 ? '+' : '') + delta + ' п.п.'}</td>
+                            </tr>
+                        );
+                    })}
+                </tbody>
+            </table>
+        </div>
+    );
+}
+
 function Bar({ value, max, color = 'bg-brand' }) {
     const pct = max > 0 ? Math.round((value / max) * 100) : 0;
     return (
@@ -201,6 +258,17 @@ export function FunnelAnalytics() {
                         <Card label="Нових / тиждень" value={s.avgWeeklySubs ?? '—'} sub="середнє за останні повні тижні" color="text-amber-400" />
                         <Card label="Час проходження" value={formatDuration(s.avgCompletionMs)} sub="середньо від старту до завершення" color="text-violet-400" />
                     </div>
+
+                    {/* Помилки бота — кількість і % від сесій з відповідями бота, проти попереднього періоду (2026-09-08) */}
+                    {data.quality && !data.quality.error && (
+                        <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-2">
+                            <div>
+                                <div className="text-sm font-semibold text-white">Помилки бота</div>
+                                <div className="text-xs text-gray-500">Сесії з відповідями бота за період: {data.quality.current.sessions} (попередній такий самий період: {data.quality.previous.sessions}). Відсоток — від цих сесій; для постачальника — від замовлень.</div>
+                            </div>
+                            <QualityTable q={data.quality} />
+                        </div>
+                    )}
 
                     {/* Weekly new subscribers trend */}
                     {data.weeklySubs && data.weeklySubs.length > 1 && (

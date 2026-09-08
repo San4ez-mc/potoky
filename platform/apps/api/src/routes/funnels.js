@@ -726,8 +726,53 @@ router.get('/:botId/analytics',
             repliedSessions = Number(rr[0]?.c || 0);
         } catch { /* ignore */ }
 
+        // ── Якість бота (2026-09-08, запит власника): помилки — кількість і % від сесій з відповідями бота, поточний період
+        //    проти попереднього такої ж довжини. Джерело — повідомлення/контекст сесій, без окремих таблиць.
+        let quality = null;
+        try {
+            const computeQuality = async (from, to) => {
+                const msgs = await db.message.findMany({
+                    where: { session: { botId, ...testFilter }, createdAt: { gte: from, lt: to }, role: { in: ['assistant', 'user'] } },
+                    select: { sessionId: true, role: true, createdAt: true, metadata: true }, orderBy: { createdAt: 'asc' },
+                });
+                const per = {};
+                for (const m of msgs) {
+                    const p = (per[m.sessionId] ||= { bot: [], users: 0, manager: 0 });
+                    const md = m.metadata || {};
+                    if (m.role === 'user') p.users++;
+                    else if (md.source === 'zernio_inbox') p.manager++;
+                    else if (md.nodeId) p.bot.push({ node: md.nodeId, at: new Date(m.createdAt).getTime(), failed: md.status === 'failed' });
+                }
+                const q = { sessions: 0, unknownProduct: 0, cardTwice: 0, managerTakeover: 0, deliveryFail: 0, orders: 0, supplierError: 0, supplierCreated: 0 };
+                for (const p of Object.values(per)) {
+                    if (!p.bot.length) continue;
+                    q.sessions++;
+                    if (p.bot.some((b) => b.node === 'n_unknown_msg')) q.unknownProduct++;
+                    const cards = p.bot.filter((b) => b.node === 'n_welcome');
+                    for (let i = 1; i < cards.length; i++) { if (cards[i].at - cards[i - 1].at < 3600000) { q.cardTwice++; break; } }
+                    if (p.manager) q.managerTakeover++;
+                    if (p.bot.some((b) => b.failed)) q.deliveryFail++;
+                }
+                const ordSessions = await db.session.findMany({ where: { botId, ...testFilter, lastActive: { gte: from } }, select: { context: true } });
+                for (const s of ordSessions) {
+                    const c = (s.context && typeof s.context === 'object') ? s.context : {};
+                    const at = Number(c.orderRefAt || 0);
+                    if (!c.crmOrderId || !(at >= from.getTime() && at < to.getTime())) continue;
+                    q.orders++;
+                    if (c.supplierOrderStatus === 'error') q.supplierError++;
+                    if (c.supplierOrderStatus === 'created') q.supplierCreated++;
+                }
+                return q;
+            };
+            const now = new Date();
+            const prevFrom = new Date(timeFrom.getTime() - ms);
+            const [current, previous] = await Promise.all([computeQuality(timeFrom, now), computeQuality(prevFrom, timeFrom)]);
+            quality = { current, previous, from: timeFrom.toISOString(), prevFrom: prevFrom.toISOString() };
+        } catch (e) { quality = { error: e.message }; }
+
         res.json({ ok: true, data: {
             period,
+            quality,
             summary: {
                 totalSessions, activeSessions, completedSessions, unsubscribedSessions,
                 repliedSessions, repliedRate: totalSessions > 0 ? Math.round((repliedSessions / totalSessions) * 100) : 0,

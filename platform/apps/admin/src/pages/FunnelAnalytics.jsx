@@ -81,6 +81,41 @@ function QualityTable({ q }) {
     );
 }
 
+function QualityDaily({ daily }) {
+    const cols = [
+        { key: 'unknownProduct', label: 'Товар', base: 'sessions' },
+        { key: 'cardTwice', label: 'Картка ×2', base: 'sessions' },
+        { key: 'deliveryFail', label: 'Не дост.', base: 'sessions' },
+        { key: 'managerTakeover', label: 'Менеджер', base: 'sessions' },
+        { key: 'supplierError', label: 'Пост. пом.', base: 'orders' },
+    ];
+    const pct = (v, b) => (b > 0 ? Math.round((v / b) * 100) + '%' : '·');
+    return (
+        <div className="overflow-x-auto">
+            <table className="text-[11px] tabular-nums">
+                <thead>
+                    <tr className="text-gray-500">
+                        <th className="text-left font-medium pr-3 py-1">День</th>
+                        <th className="text-right font-medium pr-3 py-1">Сесій</th>
+                        <th className="text-right font-medium pr-3 py-1">Замов.</th>
+                        {cols.map((c) => <th key={c.key} className="text-right font-medium pr-3 py-1">{c.label}</th>)}
+                    </tr>
+                </thead>
+                <tbody>
+                    {daily.map((d) => (
+                        <tr key={d.date} className="border-t border-gray-800/60 text-gray-300">
+                            <td className="pr-3 py-0.5 text-gray-400">{d.date.slice(5)}</td>
+                            <td className="text-right pr-3">{d.sessions}</td>
+                            <td className="text-right pr-3">{d.orders}</td>
+                            {cols.map((c) => { const v = d[c.key] || 0, b = d[c.base] || 0; const p = b > 0 ? v / b : 0; return <td key={c.key} className={`text-right pr-3 ${b > 0 && p >= 0.2 ? 'text-red-400' : b > 0 && p >= 0.1 ? 'text-amber-400' : ''}`}>{pct(v, b)}{b > 0 && v > 0 ? ` (${v})` : ''}</td>; })}
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
+}
+
 function Bar({ value, max, color = 'bg-brand' }) {
     const pct = max > 0 ? Math.round((value / max) * 100) : 0;
     return (
@@ -267,6 +302,15 @@ export function FunnelAnalytics() {
                                 <div className="text-xs text-gray-500">Сесії з відповідями бота за період: {data.quality.current.sessions} (попередній такий самий період: {data.quality.previous.sessions}). Відсоток — від цих сесій; для постачальника — від замовлень.</div>
                             </div>
                             <QualityTable q={data.quality} />
+                            {data.quality.daily && data.quality.daily.length > 0 && (
+                                <div className="pt-2">
+                                    <div className="text-xs text-gray-500 mb-1">По днях (14 днів): частка сесій з помилкою. Порівнюйте день до і після правки.</div>
+                                    <QualityDaily daily={data.quality.daily} />
+                                </div>
+                            )}
+                            {data.quality.metricNodes === 0 && (
+                                <div className="text-xs text-amber-400">У графі немає нод із позначкою errorMetric ('unknown_product' / 'presentation') — рядки «не визначив товар» і «картка двічі» будуть нульові. Постав позначку в даних відповідних нод.</div>
+                            )}
                         </div>
                     )}
 

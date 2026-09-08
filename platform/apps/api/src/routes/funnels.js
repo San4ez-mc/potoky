@@ -728,46 +728,73 @@ router.get('/:botId/analytics',
 
         // ── Якість бота (2026-09-08, запит власника): помилки — кількість і % від сесій з відповідями бота, поточний період
         //    проти попереднього такої ж довжини. Джерело — повідомлення/контекст сесій, без окремих таблиць.
+        //    УНІВЕРСАЛЬНО для будь-якої воронки: ноди позначаються в графі полем data.errorMetric —
+        //    'unknown_product' (нода, що відповідає, коли товар/намір не визначено) і 'presentation' (картка/презентація;
+        //    двічі за годину = помилка). Для старих графів без позначки — фолбек за id (n_unknown_msg / n_welcome).
+        //    Решта метрик — загальні для всіх каналів: недоставлені повідомлення, втручання менеджера (zernio_inbox),
+        //    замовлення/постачальник (context.crmOrderId, supplierOrderStatus). Плюс ряд по днях за 14 днів — щоб бачити,
+        //    як правки міняють частку помилок.
         let quality = null;
         try {
-            const computeQuality = async (from, to) => {
-                const msgs = await db.message.findMany({
-                    where: { session: { botId, ...testFilter }, createdAt: { gte: from, lt: to }, role: { in: ['assistant', 'user'] } },
-                    select: { sessionId: true, role: true, createdAt: true, metadata: true }, orderBy: { createdAt: 'asc' },
-                });
+            const metricOf = {};
+            for (const n of nodes) {
+                const em = n.data && n.data.errorMetric;
+                if (em) metricOf[n.id] = String(em);
+                else if (n.id === 'n_unknown_msg') metricOf[n.id] = 'unknown_product';
+                else if (n.id === 'n_welcome') metricOf[n.id] = 'presentation';
+            }
+            const now = new Date();
+            const prevFrom = new Date(timeFrom.getTime() - ms);
+            const dailyFrom = new Date(now.getTime() - 14 * 86400000);
+            const fetchFrom = new Date(Math.min(prevFrom.getTime(), dailyFrom.getTime()));
+            const msgs = await db.message.findMany({
+                where: { session: { botId, ...testFilter }, createdAt: { gte: fetchFrom }, role: { in: ['assistant', 'user'] } },
+                select: { sessionId: true, role: true, createdAt: true, metadata: true }, orderBy: { createdAt: 'asc' },
+            });
+            const ordSessions = await db.session.findMany({ where: { botId, ...testFilter, lastActive: { gte: fetchFrom } }, select: { context: true } });
+            const orderMarks = []; // { at, status }
+            for (const s of ordSessions) {
+                const c = (s.context && typeof s.context === 'object') ? s.context : {};
+                const at = Number(c.orderRefAt || 0);
+                if (c.crmOrderId && at > 0) orderMarks.push({ at, status: String(c.supplierOrderStatus || '') });
+            }
+            const computeQuality = (from, to) => {
                 const per = {};
                 for (const m of msgs) {
+                    const t = new Date(m.createdAt).getTime(); if (t < from.getTime() || t >= to.getTime()) continue;
                     const p = (per[m.sessionId] ||= { bot: [], users: 0, manager: 0 });
                     const md = m.metadata || {};
                     if (m.role === 'user') p.users++;
                     else if (md.source === 'zernio_inbox') p.manager++;
-                    else if (md.nodeId) p.bot.push({ node: md.nodeId, at: new Date(m.createdAt).getTime(), failed: md.status === 'failed' });
+                    else if (md.nodeId) p.bot.push({ metric: metricOf[md.nodeId] || '', at: t, failed: md.status === 'failed' });
                 }
                 const q = { sessions: 0, unknownProduct: 0, cardTwice: 0, managerTakeover: 0, deliveryFail: 0, orders: 0, supplierError: 0, supplierCreated: 0 };
                 for (const p of Object.values(per)) {
                     if (!p.bot.length) continue;
                     q.sessions++;
-                    if (p.bot.some((b) => b.node === 'n_unknown_msg')) q.unknownProduct++;
-                    const cards = p.bot.filter((b) => b.node === 'n_welcome');
+                    if (p.bot.some((b) => b.metric === 'unknown_product')) q.unknownProduct++;
+                    const cards = p.bot.filter((b) => b.metric === 'presentation');
                     for (let i = 1; i < cards.length; i++) { if (cards[i].at - cards[i - 1].at < 3600000) { q.cardTwice++; break; } }
                     if (p.manager) q.managerTakeover++;
                     if (p.bot.some((b) => b.failed)) q.deliveryFail++;
                 }
-                const ordSessions = await db.session.findMany({ where: { botId, ...testFilter, lastActive: { gte: from } }, select: { context: true } });
-                for (const s of ordSessions) {
-                    const c = (s.context && typeof s.context === 'object') ? s.context : {};
-                    const at = Number(c.orderRefAt || 0);
-                    if (!c.crmOrderId || !(at >= from.getTime() && at < to.getTime())) continue;
+                for (const o of orderMarks) {
+                    if (!(o.at >= from.getTime() && o.at < to.getTime())) continue;
                     q.orders++;
-                    if (c.supplierOrderStatus === 'error') q.supplierError++;
-                    if (c.supplierOrderStatus === 'created') q.supplierCreated++;
+                    if (o.status === 'error') q.supplierError++;
+                    if (o.status === 'created') q.supplierCreated++;
                 }
                 return q;
             };
-            const now = new Date();
-            const prevFrom = new Date(timeFrom.getTime() - ms);
-            const [current, previous] = await Promise.all([computeQuality(timeFrom, now), computeQuality(prevFrom, timeFrom)]);
-            quality = { current, previous, from: timeFrom.toISOString(), prevFrom: prevFrom.toISOString() };
+            const current = computeQuality(timeFrom, now);
+            const previous = computeQuality(prevFrom, timeFrom);
+            const daily = [];
+            for (let d = 13; d >= 0; d--) {
+                const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - d);
+                const dayEnd = new Date(dayStart.getTime() + 86400000);
+                daily.push({ date: dayStart.toISOString().slice(0, 10), ...computeQuality(dayStart, dayEnd) });
+            }
+            quality = { current, previous, daily, metricNodes: Object.keys(metricOf).length, from: timeFrom.toISOString(), prevFrom: prevFrom.toISOString() };
         } catch (e) { quality = { error: e.message }; }
 
         res.json({ ok: true, data: {

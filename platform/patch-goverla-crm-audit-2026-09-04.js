@@ -561,6 +561,8 @@ function applyV12(nodes, edges, notes) {
         n.data.missingKeyPrompts = { phone: 'Дякую! Підкажіть, будь ласка, ваш номер телефону 📱', fullName: 'Підкажіть, будь ласка, ваше імʼя та прізвище для відправки 😊', city: 'Підкажіть, будь ласка, місто доставки 📍', branch: 'І номер відділення або поштомата Нової Пошти 📦' };
     } }
     { const n = byId().n_order_intent; if (n && n.data.silentOnExit !== true) { n.data.silentOnExit = true; notes.push('silentOnExit n_order_intent'); } }
+    // Аналітика «Помилки бота» (2026-09-08): універсальні позначки нод для будь-якої воронки — errorMetric у data.
+    { const u = byId().n_unknown_msg; if (u && u.data.errorMetric !== 'unknown_product') { u.data.errorMetric = 'unknown_product'; notes.push('errorMetric n_unknown_msg'); } const w = byId().n_welcome; if (w && w.data.errorMetric !== 'presentation') { w.data.errorMetric = 'presentation'; notes.push('errorMetric n_welcome'); } }
     // v12.9 (скан: fatieieva_olya отримала «Ваше замовлення в роботі…» тричі за 3 хв): після оформлення — цей текст не частіше ніж раз на 30 хв;
     // менеджеру алерт іде як і раніше (n_post_order_admin).
     if (!byId().n_post_order_once_cond && byId().n_post_order_cond && byId().n_post_order_msg && byId().n_post_order_admin) {

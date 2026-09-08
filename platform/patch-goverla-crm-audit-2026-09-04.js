@@ -554,6 +554,9 @@ function applyV12(nodes, edges, notes) {
         edges.push({ id: 'e_n_hint_pick_false', source: 'n_hint_pick_cond', target: 'n_unknown_msg', sourceHandle: 'false' });
         notes.push('+ n_hint_pick_cond');
     }
+    // n_prev_match_snapshot перераховує hasFreshSignalThisTurn з нуля — названий зі списку товар теж свіжий сигнал
+    // (інакше n_returning_check веде у n_welcome_back замість презентації з фото).
+    { const n = byId().n_prev_match_snapshot; if (n && /!!context\.lastUserImageUrl \};/.test(n.data.code || '') && !/catalogHintPick/.test(n.data.code || '')) { n.data.code = String(n.data.code).replace('!!context.lastUserImageUrl };', '!!context.lastUserImageUrl || !!context.catalogHintPick };'); notes.push('hintPick n_prev_match_snapshot'); } }
     const cr = byId().n_create;
     if (cr && !/adLinkMismatch/.test(cr.data.alertDetails || '')) { cr.data.alertDetails = String(cr.data.alertDetails || '') + '\n{{context.adLinkMismatchLine}}'; notes.push('n_create adLinkMismatch'); }
     return { nodes, edges };

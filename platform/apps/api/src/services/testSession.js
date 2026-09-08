@@ -2251,12 +2251,15 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                     // 2026-09-08 05:02 (vya.cheslav76): сітку надіслали тричі — тут на кожен json з wantsSizeChart і ще
                     // раз нодою n_size_photo. Один раз на товар: позначка sizeChartSentAt (n_size_photo_cond її теж бачить).
                     const _scAlready = ctx.sizeChartSentAt && ctx.sizeChartSentSku === String((ctx.product && ctx.product.sku) || '') && (Date.now() - Number(ctx.sizeChartSentAt)) < 6 * 3600 * 1000;
+                    const _scText = String((ctx.product && ctx.product.sizeChartText) || '').trim();
                     if (_scAlready) {
                         pushDelivery(runtime, 'size_chart_on_demand', true, null, { nodeId: node.id, skipped: 'already sent' });
-                    } else if (/^https?:\/\//.test(String(_scUrl))) {
-                        await persistAssistantMessage(session.id, '', { nodeId: node.id, nodeType: 'size_chart_on_demand', attachment: { type: 'photo', url: _scUrl, caption: '' } });
+                    } else if (/^https?:\/\//.test(String(_scUrl)) || _scText) {
+                        // Картинка (якщо є) + текстова таблиця з точними цифрами (якщо є) — одним ходом, один раз на товар.
+                        if (/^https?:\/\//.test(String(_scUrl))) await persistAssistantMessage(session.id, '', { nodeId: node.id, nodeType: 'size_chart_on_demand', attachment: { type: 'photo', url: _scUrl, caption: '' } });
+                        if (_scText) await persistAssistantMessage(session.id, _scText, { nodeId: node.id, nodeType: 'size_chart_on_demand' });
                         ctx.sizeChartSentAt = Date.now(); ctx.sizeChartSentSku = String((ctx.product && ctx.product.sku) || '');
-                        pushDelivery(runtime, 'size_chart_on_demand', true, null, { nodeId: node.id });
+                        pushDelivery(runtime, 'size_chart_on_demand', true, null, { nodeId: node.id, image: /^https?:\/\//.test(String(_scUrl)), text: !!_scText });
                     } else {
                         pushDelivery(runtime, 'size_chart_on_demand', false, 'немає product.sizeChartUrl', { nodeId: node.id });
                         await notifyAdminPhotoMissing(session, ctx, funnelEnv, runtime, 'розмірної сітки (у CRM нема картинки сітки)');

@@ -545,6 +545,15 @@ function applyV12(nodes, edges, notes) {
     { const n = byId().n_order_intent; if (n && n.data.silentOnExit !== true) { n.data.silentOnExit = true; notes.push('silentOnExit n_order_intent'); } }
     { const n = byId().n_set_choice; if (n) { if (n.data.waitAfterPresentation !== true) { n.data.waitAfterPresentation = true; notes.push('waitAfterPresentation n_set_choice'); } n.data.waitAfterPresentationUnless = 'кофт|джинс|футбол|лофер|окрем|лише|тільки|только|весь|все|комплект|набір|розмір|размер|\\d{2,3}\\s*[\\/,\\s\\-]\\s*\\d{2,3}|колір|цвет|\\b(xs|s|m|l|xl|xxl)\\b'; } }
     { const n = byId().n_color; if (n && !/КОЛІР З ФОТО КЛІЄНТА/.test(n.data.systemPrompt || '')) { n.data.systemPrompt = String(n.data.systemPrompt || '') + '\nКОЛІР З ФОТО КЛІЄНТА (порожньо = фото не було): «{{context.photoColor}}». ЯКЩО непорожньо — клієнту вже запропонували саме цей колір; «так/давай/цей/беремо» = вибір цього кольору (json з ним одразу), інша назва зі списку — беремо її.'; notes.push('photoColor n_color'); } }
+    // v12.4 (_grigoriy_ 04:46): n_catalog_hint назвав товар зі списку (catalogHintPick) → на звичайний шлях n_lookup.
+    if (!byId().n_hint_pick_cond && byId().n_catalog_hint && byId().n_unknown_msg && byId().n_prev_match_snapshot) {
+        const p = placer.place(pos('n_catalog_hint').x + GX, pos('n_catalog_hint').y);
+        nodes.push({ id: 'n_hint_pick_cond', type: 'condition', position: p, data: { label: '1a.5 Клієнт назвав товар зі списку?', condition: '!!context.catalogHintPick', description: 'TRUE → n_prev_match_snapshot/n_lookup презентують названий товар (з фото). FALSE → n_unknown_msg.' } });
+        edges = edges.map((e) => (e.source === 'n_catalog_hint' && e.target === 'n_unknown_msg' ? { ...e, target: 'n_hint_pick_cond' } : e));
+        edges.push({ id: 'e_n_hint_pick_true', source: 'n_hint_pick_cond', target: 'n_prev_match_snapshot', sourceHandle: 'true' });
+        edges.push({ id: 'e_n_hint_pick_false', source: 'n_hint_pick_cond', target: 'n_unknown_msg', sourceHandle: 'false' });
+        notes.push('+ n_hint_pick_cond');
+    }
     const cr = byId().n_create;
     if (cr && !/adLinkMismatch/.test(cr.data.alertDetails || '')) { cr.data.alertDetails = String(cr.data.alertDetails || '') + '\n{{context.adLinkMismatchLine}}'; notes.push('n_create adLinkMismatch'); }
     return { nodes, edges };

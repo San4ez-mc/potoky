@@ -5,7 +5,7 @@
 // catalogHint — до 4 товарів названої категорії (артикул, назва, ціна). Best-effort: помилка → порожньо.
 var msg = String(context.lastUserMessage || input || '').toLowerCase();
 var unknownTurns = (Number(context.unknownTurns) || 0) + 1;
-function out(hint, cnt, cats) { return { catalogHint: hint || '', catalogHintCount: cnt || 0, catalogHintSkus: '', catalogCategories: cats || '', unknownTurns: unknownTurns }; }
+function out(hint, cnt, cats) { return { catalogHint: hint || '', catalogHintCount: cnt || 0, catalogHintSkus: '', catalogHintPick: '', catalogCategories: cats || '', unknownTurns: unknownTurns }; }
 if (context.product) return out('', 0, '');
 var base = (keys.CRM_API_BASE || 'http://127.0.0.1:4700/api').replace(/\/$/, '');
 var apiKey = (keys.CRM_API_KEY || '').trim();
@@ -29,6 +29,25 @@ var catList = Object.keys(counts).sort(function (a, b) { return counts[b] - coun
 // Підказка від n_lookup: реклама комплекту, клієнт назвав категорію, у наборах кілька таких компонентів — питаємо, який.
 if (context.setComponentHint) { var __scn = String(context.setComponentHint).split('\n').length; return { catalogHint: context.setComponentHint, catalogHintCount: __scn, catalogHintTotal: __scn, catalogCategories: catList, unknownTurns: unknownTurns }; }
 if (!msg) return out('', 0, catList);
+// 2026-09-08 (_grigoriy_: «надішліть зображення костюму (мажор)» після списку): повідомлення без артикула йде сюди в обхід
+// n_lookup (n_signal_cond=false). Якщо слово з повідомлення називає РІВНО один товар — спершу зі щойно показаного списку
+// (catalogHintSkus), потім з усього каталогу (кілька збігів звужуємо словом-категорією) — віддаємо його як catalogHintPick:
+// n_hint_pick_cond веде на звичайний шлях n_lookup → презентація з фото.
+try {
+  var __STOP = { 'надіслати': 1, 'надішліть': 1, 'зображення': 1, 'могли': 1, 'можете': 1, 'будь': 1, 'ласка': 1, 'дякую': 1, 'ціна': 1, 'ціну': 1, 'розмір': 1, 'колір': 1, 'фото': 1, 'скиньте': 1, 'скинути': 1, 'підберіть': 1, 'зріст': 1, 'вага': 1, 'чорний': 1, 'чорну': 1, 'сірий': 1, 'білий': 1, 'синій': 1, 'хочу': 1, 'цікавить': 1, 'артикул': 1, 'товар': 1, 'товару': 1, 'пост': 1, 'який': 1, 'яка': 1, 'можна': 1, 'вітаю': 1, 'привіт': 1, 'добрий': 1, 'день': 1, 'вечір': 1, 'ранок': 1, 'наявності': 1, 'наявність': 1, 'замовити': 1, 'замовлення': 1, 'доставка': 1, 'оплата': 1 };
+  var __stemM = msg.match(/(кофт|футболк|джинс|бомбер|куртк|вітровк|костюм|штан|лофер|кросівк|худі|светр|черевик|накидк)/i); var __stem = __stemM ? __stemM[1] : '';
+  var __uw = msg.replace(/[^a-zа-яіїєґ0-9\s]/gi, ' ').split(/\s+/).filter(function (w) { return w.length >= 4 && !__STOP[w] && !(__stem && w.indexOf(__stem) === 0); });
+  if (__uw.length) {
+    var __nameOf = function (p) { return (String(p.name || '') + ' ' + String(p.customerName || '')).toLowerCase(); };
+    var __hitsBy = function (list) { return list.filter(function (p) { var h = __nameOf(p); return __uw.some(function (w) { return h.indexOf(w) >= 0; }); }); };
+    var __prev = String(context.catalogHintSkus || '').toUpperCase().split(',').filter(Boolean);
+    var __pick = null;
+    var __nh = __hitsBy(active.filter(function (p) { return __prev.indexOf(String(p.sku || '').toUpperCase()) >= 0; }));
+    if (__nh.length === 1) __pick = __nh[0];
+    else if (!__nh.length) { var __na = __hitsBy(active); if (__na.length > 1 && __stem) __na = __na.filter(function (p) { return __nameOf(p).indexOf(__stem) >= 0 || String(cats[p.categoryId] || '').toLowerCase().indexOf(__stem) >= 0; }); if (__na.length === 1) __pick = __na[0]; }
+    if (__pick && __pick.sku) return { catalogHint: '', catalogHintCount: 0, catalogHintSkus: '', catalogHintPick: String(__pick.sku), hasProductSignal: true, catalogCategories: catList, unknownTurns: unknownTurns - 1 };
+  }
+} catch (e) { /* best-effort */ }
 // стем → корені для пошуку в назві товару/категорії
 var STEMS = [
   ['кофт', ['кофт']], ['светр', ['светр', 'кофт']], ['худ', ['худ']], ['бомбер', ['бомбер']], ['куртк', ['куртк', 'бомбер', 'вітровк']],

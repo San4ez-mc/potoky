@@ -207,6 +207,8 @@ try {
     var cands = fromUser.concat(extractArticles((context.sharedPost && context.sharedPost.caption) || '')).concat(extractArticles(__adCaption || '')).concat(extractArticles(context.adTitle || ''));
     // 2026-09-08 (vadim.lutchenko + 19 з 22 коментаторів за добу): товар, який Zernio-автоматизація презентувала в DM
     // після коментаря (handleCommentReceived → commentProductArticle). Найнижчий пріоритет серед артикулів, діє 72 год.
+    // n_catalog_hint визначив товар за назвою зі списку/каталогу (catalogHintPick) → перший кандидат.
+    if (context.catalogHintPick) { cands = [String(context.catalogHintPick).toUpperCase()].concat(cands); context.catalogHintPick = ''; }
     var __commentArt = ''; var __commentAge = Date.now() - (Date.parse(context.commentProductAt || '') || 0);
     if (context.commentProductArticle && __commentAge < 72 * 3600 * 1000) { __commentArt = String(context.commentProductArticle).toUpperCase(); if (!cands.length || cands.map(function (x) { return String(x).toUpperCase(); }).indexOf(__commentArt) < 0) cands = cands.concat([__commentArt]); }
     var seen = {}, cc = []; for (var ci = 0; ci < cands.length; ci++) { if (!seen[cands[ci]]) { seen[cands[ci]] = 1; cc.push(cands[ci]); } } cc = cc.slice(0, 8);
@@ -423,6 +425,16 @@ try {
   var __sizeChartUrl = resolveUrl(found.sizeChartImage || '');
   var __sizeChartData = found.sizeChartData || null;
   var __aiInfo = found.aiNotes || '';
+  // 2026-09-08 (Vyacheslav: замість сітки прийшов колаж товару — у CRM як «картинка сітки» завантажено фото): текстова
+  // таблиця з sizeChartData іде РАЗОМ із картинкою (або замість неї), щоб клієнт завжди отримав точні цифри.
+  var __sizeChartText = '';
+  try {
+    var __scd = __sizeChartData || {}; var __scs = Array.isArray(__scd.sizes) ? __scd.sizes : []; var __scm = __scd.measurements || {};
+    var __scKeys = Object.keys(__scm).filter(function (k) { return Array.isArray(__scm[k]) && __scm[k].length === __scs.length; });
+    if (__scs.length && __scKeys.length) {
+      __sizeChartText = '📏 Розмірна сітка' + (__scd.title ? ' — ' + __scd.title : '') + ' (' + (__scd.unit || 'см') + '):\n' + __scs.map(function (s, i) { return s + ' — ' + __scKeys.map(function (k) { return k.toLowerCase() + ' ' + __scm[k][i]; }).join(', '); }).join('\n');
+    }
+  } catch (e) { __sizeChartText = ''; }
   var __sizeChartNote = __sizeChartUrl
     ? 'Розмірна сітка для цього товару Є — якщо клієнт попросить, скажи що зараз покажеш.'
     : (__sizeChartData
@@ -586,7 +598,7 @@ try {
       // CRM f50aba5: Product.alwaysAvailable (дефолт true) — кількості враховуються ЛИШЕ коли вимкнено; offer.inStock рахує бекенд.
       alwaysAvailable: found.alwaysAvailable !== false,
       stockTracked: found.alwaysAvailable === false && (Array.isArray(found.offers) ? found.offers : []).some(function (o) { return o && o.quantity !== null && o.quantity !== undefined; }),
-      sizeChartUrl: __sizeChartUrl, aiInfo: __aiInfo, sizeChartNote: __sizeChartNote, sizeChartData: __sizeChartData,
+      sizeChartUrl: __sizeChartUrl, sizeChartText: __sizeChartText, aiInfo: __aiInfo, sizeChartNote: __sizeChartNote, sizeChartData: __sizeChartData,
       // §3 ТЗ — динамічні параметри підбору розміру з CRM Category.requiredParams:
       categoryParams: categoryParams, categoryParamsPrompt: __paramsPrompt, categoryParamsIsHeightWeight: __isHeightWeight
     }

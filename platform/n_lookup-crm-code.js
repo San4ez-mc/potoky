@@ -350,6 +350,11 @@ try {
       else if (__comp.length > 1) {
         context.setComponentHint = __comp.slice(0, 4).map(function (p) { return (p.sku ? ('Артикул ' + p.sku + ' — ') : '') + String(p.customerName || p.name || '').replace(/\.?\s*Артикул:.*$/i, '').trim() + (Number(p.price) ? (' — ' + Number(p.price) + ' грн') : ''); }).join('\n');
         found = null; via = ''; mk = '';
+      } else if (!found.isSet && !__comp.length) {
+        // 2026-09-08 19:01 (Tyurin: реклама привʼязана до куртки A0182, клієнт питає «Яка ціна КОФТИ?», тексту поста нема):
+        // товар з привʼязки не з тієї категорії, що просить клієнт → не показуємо його, а даємо список категорії (n_catalog_hint).
+        context.adLinkMismatch = 'реклама ' + (context.entryAd || '') + ' у CRM привʼязана до ' + (found.sku || found.name) + ', а клієнт питає про «' + __uStem + '» — показано список категорії; перевірте привʼязку в CRM';
+        found = null; via = ''; mk = '';
       }
     } else if (__uStem && !found) {
       var __byStem = all.filter(function (p) { return !p.isSet && __hasStem(p, __uStem); });

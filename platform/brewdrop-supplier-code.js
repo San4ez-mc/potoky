@@ -106,12 +106,16 @@ var brObj=ba.find(function(b){return bnRe.test(String(b.name||'')+' '+String(b.n
 if(!brObj) return fail('відділення №'+bnum+' у місті «'+(cityObj.name_ua||cityObj.name)+'» не знайдено');
 // ── 4) отримувач, dropshipper_id ──
 var parts=String(od.fullName||'').split(/\s+/); var last=parts[0]||'',first=parts[1]||'',middle=parts[2]||null;
+// 2026-09-08 13:16 (перший реальний POST, Микитан): «client_data.phone має бути 18 символів» — формат кабінету «+38(0XX) XXX-XX-XX».
+var digits=String(od.phone||'').replace(/\D/g,''); if(digits.length===12&&digits.indexOf('380')===0) digits=digits.slice(2); if(digits.length===11&&digits.charAt(0)==='8') digits=digits.slice(1);
+if(digits.length!==10||digits.charAt(0)!=='0') return fail('телефон «'+(od.phone||'')+'» не схожий на український мобільний (потрібно 10 цифр 0XXXXXXXXX)');
+var phoneFmt='+38('+digits.slice(0,3)+') '+digits.slice(3,6)+'-'+digits.slice(6,8)+'-'+digits.slice(8,10);
 var me=await bd('/api/users/auth'); var meId=Number((me.json&&me.json.data&&me.json.data.id)||0)||undefined;
 var senderId=Number(keys.BREWDROP_SENDER_ID)||0;
 var totalCheck=Number(keys.BREWDROP_TOTAL_CHECK)||1590;
 var payload=Object.assign(senderId?{ sender_id:senderId }:{}, {
   dropshipper_id:meId,
-  client_data:{ first_name:first,last_name:last,middle_name:middle,phone:od.phone||'',delivery_id:1,city_id:cityObj.id,branch_id:brObj.id },
+  client_data:{ first_name:first,last_name:last,middle_name:middle,phone:phoneFmt,delivery_id:1,city_id:cityObj.id,branch_id:brObj.id },
   delivery_data:{ delivery_id:1,delivery_pay_person:1 }, delivery_method_id:1, pay_type:1, pay_person:1,
   seller_comment:'Замовлення '+(context.orderRef||''), products:lines.map(function(l){return { product_color_size_id:l.pcsId, qty:l.qty };}),
   total_final:codAmount, total_check:totalCheck, ttn:null });

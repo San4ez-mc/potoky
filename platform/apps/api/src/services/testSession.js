@@ -2196,6 +2196,26 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                         exit.done = false;
                     }
                 }
+                // 2026-09-08 13:01 (Микитан): n_collect повернула json без телефону → вихід → NP-перевірка → знову «напишіть дані
+                // одним повідомленням». data.requiredJsonKeys — без усіх обовʼязкових ключів json не є виходом: часткові дані
+                // зберігаємо в outputVar (промпт бачить «ВЖЕ ВІДОМО»), клієнту — питання про перше відсутнє поле
+                // (data.missingKeyPrompts), якщо модель сама тексту не дала. Службові ключі (реквізити, зміна оплати, handoff) — як і раніше.
+                if (exit.parsed && typeof exit.parsed === 'object' && !Array.isArray(exit.parsed) && exit.done && Array.isArray(data.requiredJsonKeys) && data.requiredJsonKeys.length) {
+                    const _svc = ['wantsManualReq', 'paymentMethodChange', 'handoff', 'askManager', 'wantsPhoto', 'photoArticle', 'wantsSizeChart', 'alsoWants'];
+                    const _hasSvc = _svc.some((k) => exit.parsed[k] !== undefined && exit.parsed[k] !== null && exit.parsed[k] !== false && exit.parsed[k] !== '');
+                    if (!_hasSvc) {
+                        const _missing = data.requiredJsonKeys.filter((k) => exit.parsed[k] === undefined || exit.parsed[k] === null || String(exit.parsed[k]).trim() === '');
+                        if (_missing.length) {
+                            exit.done = false;
+                            const _ov = String(data.outputVar || '').replace(/^context\./, '');
+                            if (_ov && !/\./.test(_ov)) { const _partial = {}; for (const [k, v] of Object.entries(exit.parsed)) { if (v !== null && v !== undefined && String(v).trim() !== '') _partial[k] = v; } ctx[_ov] = Object.assign({}, ctx[_ov] || {}, _partial); }
+                            const _visible = (typeof exit.jsonStart === 'number') ? stripJsonAndTrailingText(responseText, exit.jsonStart) : responseText;
+                            const _ask = (data.missingKeyPrompts || {})[_missing[0]] || '';
+                            if (!String(_visible || '').trim() && _ask) { responseText = _ask; exit.jsonStart = undefined; }
+                            pushDelivery(runtime, 'required_json_keys', true, null, { nodeId: node.id, missing: _missing });
+                        }
+                    }
+                }
 
                 // Якщо json_output містить ЛИШЕ wantsPhoto (клієнт просто попросив фото,
                 // жодного реального рішення типу setChoice/color не назвав) — це НЕ привід

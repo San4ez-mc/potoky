@@ -10,6 +10,8 @@ var msg = String(context.lastUserMessage || input || '').toLowerCase();
 var __adHint = String(context.adTitle || (context.sharedPost && context.sharedPost.caption) || '').toLowerCase().replace(/^допис в instagram:\s*/i, '').replace(/_group_\d+$/i, '').replace(/\.{3,}/g, ' ');
 var __msgHasCat = /(кофт|светр|худ|бомбер|куртк|вітровк|джинс|штан|футболк|лофер|взутт|кросів|черевик|костюм|комплект|накидк|подушк|органайзер|підголівник|шкірян|кожан)/.test(msg);
 if (!__msgHasCat && __adHint) msg = (msg + ' ' + __adHint).trim();
+// 2026-09-08 (andriy.symoniuk: у lastUserMessage підпис рілса обрізаний до 80 символів — «футб» не стем): повний підпис завжди.
+if (context.sharedPost && context.sharedPost.caption && msg.indexOf(String(context.sharedPost.caption).toLowerCase().slice(0, 40)) < 0) msg = (msg + ' ' + String(context.sharedPost.caption).toLowerCase()).trim();
 var unknownTurns = (Number(context.unknownTurns) || 0) + 1;
 function out(hint, cnt, cats) { return { catalogHint: hint || '', catalogHintCount: cnt || 0, catalogHintSkus: '', catalogHintPick: '', catalogCategories: cats || '', unknownTurns: unknownTurns }; }
 if (context.product) return out('', 0, '');

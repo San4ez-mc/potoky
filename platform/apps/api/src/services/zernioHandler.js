@@ -202,8 +202,18 @@ async function findMessageByZid(sessionId, zernioMessageId, platformMessageId) {
 // Zernio/Meta Send API логується в api_calls (statusCode, тривалість, сирі
 // requestData/responseData) — окремо від deliveryLog, який лишається для
 // людського перегляду в конкретній сесії.
+// 2026-09-08 17:06 (лог: «unexpected end of hex escape» у prisma.message.create / apiCall.create): обрізання рядків
+// (.slice(0, N)) розриває пару сурогатів емодзі → самотній сурогат → JSON для Postgres невалідний → вхідне повідомлення
+// НЕ зберігалось. Чистимо всі рядки в даних перед записом (самотні сурогати + \u0000).
+function cleanJsonDeep(v) {
+    if (typeof v === 'string') return v.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '').replace(/(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '$1').replace(/\u0000/g, '');
+    if (Array.isArray(v)) return v.map(cleanJsonDeep);
+    if (v && typeof v === 'object' && !(v instanceof Date)) { const o = {}; for (const k of Object.keys(v)) o[k] = cleanJsonDeep(v[k]); return o; }
+    return v;
+}
 async function logZernioApiCall(sessionId, method, requestData, responseData, statusCode, startedAt) {
     try {
+        requestData = cleanJsonDeep(requestData); responseData = cleanJsonDeep(responseData);
         await db.apiCall.create({
             data: {
                 sessionId: sessionId || null, service: 'zernio', method,
@@ -941,7 +951,9 @@ async function handleIncomingMessage(botId, body) {
     let adTitleFromConv = null;
     // 2026-09-08 (_hladkyi_vitalii_ 11:38: «Яка ціна товарів?» з реклами прийшло БЕЗ referral → бот не знав товару; за 17 хв той
     // самий текст із referral → комплект). Для коротких «рекламних» питань без referral беремо meta_ad_id із самої розмови Zernio.
-    if (!adId && !postId && conversationId && /^(яка ціна|скільки кошту|як підібрати|як замовити|чи є в наявн|хочу замовити|перевір(те|ити) ціну|цікавить)/i.test(String(text || '').trim()) && String(text || '').length <= 80) {
+    // 17:30 (mrs_fox_28 «З реклами» → referral прийшов лише за 90 с у conversation.started): короткі відкриваючі
+    // повідомлення без referral (до 40 символів) теж перевіряємо через метадані розмови.
+    if (!adId && !postId && conversationId && ((/^(яка ціна|скільки кошту|як підібрати|як замовити|чи є в наявн|хочу замовити|перевір(те|ити) ціну|цікавить|з реклами|по рекламі|реклам)/i.test(String(text || '').trim()) && String(text || '').length <= 80) || (String(text || '').trim().length > 0 && String(text || '').trim().length <= 40 && !/\d{3,}/.test(String(text || ''))))) {
         try {
             const zk = await getZernioKeys(botId);
             if (isReal(zk.ZERNIO_API_TOKEN)) {
@@ -1028,7 +1040,7 @@ async function handleIncomingMessage(botId, body) {
     const staleInbound = !!(msgCreatedAt && lastAssistantMsg && !hasProductSignal && (lastAssistantMsg.createdAt.getTime() - msgCreatedAt.getTime()) > 90 * 1000);
 
     await db.message.create({
-        data: {
+        data: cleanJsonDeep({
             sessionId: session.id, role: 'user', content: text || (sharedPost && sharedPost.caption ? ('[переслав ' + sharedPost.kind + '] ' + sharedPost.caption.slice(0, 80)) : mediaLabel),
             metadata: {
                 source: 'zernio', zernioMessageId: zMsgId, platformMessageId, messageId: zMsgId,
@@ -1040,7 +1052,7 @@ async function handleIncomingMessage(botId, body) {
                 ...(attachment ? { attachment, attachments: mappedAtts } : {}),
                 ...(sharedPost ? { sharedPost } : {}),
             },
-        },
+        }),
     });
 
     let ctxNow = session.context || {};
@@ -1108,6 +1120,21 @@ async function handleIncomingMessage(botId, body) {
     // Рішення власника 20:05: без прихованого гейту — повідомлення менеджера (message.sent не від бота) ставить
     // ЗВИЧАЙНУ паузу сесії (funnelPaused, та сама іконка в адмінці), менеджер сам знімає її, коли віддає розмову боту.
     // Див. handleMessageSent нижче (pausedBy: 'manager_message'). Тут лише стандартна перевірка funnelPaused.
+    // 2026-09-08 16:18 (grechkodmitrii: менеджер учора оформив замовлення сам, сьогодні клієнт написав «Зелений)» — бот
+    // продовжив зі свого старого кроку розміру): останнє вихідне в розмові — від менеджера, а в новому повідомленні
+    // немає сигналу товару → розмова менеджерська: пауза (той самий перемикач), бот мовчить. Новий пост/реклама/артикул
+    // після ≥24 год тиші відкриває розмову заново (правило client_return_24h вище).
+    if (!testModeBlocked && !ctxNow.funnelPaused && !hasProductSignal) {
+        try {
+            const _lastOut = await db.message.findFirst({ where: { sessionId: session.id, role: 'assistant' }, orderBy: { createdAt: 'desc' }, select: { metadata: true, createdAt: true } });
+            if (_lastOut && ((_lastOut.metadata || {}).source) === 'zernio_inbox') {
+                ctxNow = { ...ctxNow, funnelPaused: true, pausedBy: 'manager_message', pausedAt: _lastOut.createdAt.toISOString() };
+                await db.session.update({ where: { id: session.id }, data: { context: ctxNow } });
+                await logDelivery(session.id, botId, 'zernio_inbound', true, null, { reason: 'manager_last: останнє вихідне від менеджера, сигналу товару нема — пауза, бот мовчить', text: String(text || '').slice(0, 80) });
+                logger.info('[zernioHandler] manager wrote last — session paused on client reply', { botId, sessionId: session.id });
+            }
+        } catch (e) { logger.warn('[zernioHandler] manager_last check failed: ' + e.message, { botId, sessionId: session.id }); }
+    }
     if (!testModeBlocked && !ctxNow.funnelPaused) {
         // Аудит 2026-08-27 (антипатерн A12, реальний кейс Сіразетдінова): рілс/пост і
         // підпис-текст до нього іноді приходять ДВОМА окремими webhook-подіями за
@@ -1425,7 +1452,7 @@ async function handleSideEvent(botId, event, body) {
             if (_ourMedia) { const _c = _ourMedia.metadata || {}; await db.message.update({ where: { id: _ourMedia.id }, data: { metadata: { ..._c, zernioMessageId: msg.id || null, platformMessageId: msg.platformMessageId || _c.platformMessageId || null, status: 'sent' } } }).catch(() => {}); return { ok: true, processed: 0 }; }
         }
         const _label = _sentText || (_sentAtts.length ? ('[' + (_sentAtts.length > 1 ? 'фото ×' + _sentAtts.length : ((_sentAtts[0] && /video/i.test(String(_sentAtts[0].type || ''))) ? 'відео' : 'фото')) + ' від менеджера]') : '[повідомлення від менеджера]');
-        await db.message.create({ data: { sessionId: session.id, role: 'assistant', content: _label, metadata: { source: 'zernio_inbox', zernioMessageId: msg.id || null, platformMessageId: msg.platformMessageId || null, status: 'sent', ...(_sentAtts.length ? { attachments: _sentAtts.slice(0, 10) } : {}) } } });
+        await db.message.create({ data: cleanJsonDeep({ sessionId: session.id, role: 'assistant', content: _label, metadata: { source: 'zernio_inbox', zernioMessageId: msg.id || null, platformMessageId: msg.platformMessageId || null, status: 'sent', ...(_sentAtts.length ? { attachments: _sentAtts.slice(0, 10) } : {}) } }) });
         // 2026-09-07 20:05 (рішення власника, бойовий старт): менеджер написав клієнту з інбокса → сесія стає на
         // ЗВИЧАЙНУ паузу (funnelPaused — та сама іконка в адмінці). Бот мовчить, доки менеджер сам не зніме паузу.
         try {

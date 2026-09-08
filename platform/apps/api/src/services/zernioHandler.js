@@ -1029,7 +1029,24 @@ async function handleIncomingMessage(botId, body) {
         },
     });
 
-    const ctxNow = session.context || {};
+    let ctxNow = session.context || {};
+    // 2026-09-08 05:45 (рішення власника): пауза від менеджера (manager_message / бекфіл 594 розмов) — не назавжди.
+    // Клієнт повертається з НОВИМ сигналом товару (пост/рілс, реклама, артикул, фото) після ≥24 год тиші в розмові
+    // (ні клієнт, ні менеджер, ні бот не писали) → пауза знімається, бот відповідає. Ручна пауза (manual) — ніколи.
+    if (ctxNow.funnelPaused && (ctxNow.pausedBy === 'manager_message' || ctxNow.pausedBy === 'manager_message_backfill') && hasProductSignal && !testModeBlocked) {
+        try {
+            const prev = await db.message.findFirst({ where: { sessionId: session.id, createdAt: { lt: new Date(Date.now() - 5000) } }, orderBy: { createdAt: 'desc' }, select: { createdAt: true } });
+            const quietMs = prev ? (Date.now() - prev.createdAt.getTime()) : Infinity;
+            if (quietMs >= 24 * 3600 * 1000) {
+                const fresh = await db.session.findUnique({ where: { id: session.id }, select: { context: true } });
+                const fc = (fresh && fresh.context) || {};
+                ctxNow = { ...fc, funnelPaused: false, pausedBy: null, resumedBy: 'client_return_24h', resumedAt: new Date().toISOString() };
+                session = await db.session.update({ where: { id: session.id }, data: { context: ctxNow } });
+                await logDelivery(session.id, botId, 'zernio_inbound', true, null, { reason: 'client_return_24h: клієнт повернувся з новим товаром після ' + Math.round(quietMs / 3600000) + ' год тиші — паузу менеджера знято', text: String(text || '').slice(0, 80) });
+                logger.info('[zernioHandler] manager pause lifted: client returned with product signal', { botId, sessionId: session.id, quietHours: Math.round(quietMs / 3600000) });
+            }
+        } catch (e) { logger.warn('[zernioHandler] client_return_24h check failed: ' + e.message, { botId, sessionId: session.id }); }
+    }
     // Детект «клієнт просить людину» тепер ЄДИНИЙ і живе в движку (executeFlowStep) —
     // спрацьовує однаково для всіх каналів (раніше тут був окремий дубль-regex, який
     // міг розійтися з движковим). Адаптер лише транспортує: викликає крок і доставляє

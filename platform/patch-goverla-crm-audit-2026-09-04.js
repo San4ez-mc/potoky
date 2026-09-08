@@ -543,7 +543,10 @@ function applyV12(nodes, edges, notes) {
     }
     // v12.7 (Софія 11:20: картка вдруге за 16 хв): умова звіряє й lastPresentedSku/presentedAt напряму — навіть якщо n_lookup цього ходу
     // повернув порожній результат і skipPresentation лишився старим.
-    { const n = byId().n_presented_recently_cond; const COND = "context.skipPresentation === true || !!(context.product && context.product.sku && context.lastPresentedSku && String(context.lastPresentedSku).toUpperCase() === String(context.product.sku).toUpperCase() && context.presentedAt && (Date.now() - Number(context.presentedAt)) < 30 * 60 * 1000)"; if (n && n.data.condition !== COND) { n.data.condition = COND; notes.push('presented-recently v12.7'); } }
+    // v12.8.1 (18:25, marinasalivonyk/steallir: НЕМА картки і відповіді на «Яка ціна?» з 16:07): n_lookup ставить presentedAt і
+    // lastPresentedSku ДО показу картки → умова v12.7 вважала перший показ повторним. Повертаємо просту умову (skipPresentation
+    // рахує n_lookup за ПОПЕРЕДНІМ presentedAt).
+    { const n = byId().n_presented_recently_cond; const COND = 'context.skipPresentation === true'; if (n && n.data.condition !== COND) { n.data.condition = COND; notes.push('presented-recently v12.8.1'); } }
     // v12.3 (нічні сесії 01:15–03:20 після повторного бойового старту 2026-09-08):
     // (1) n_collect чекає НАСТУПНЕ повідомлення після n_collect_ask/n_req_sum (двічі поспіль два суперечливі прохання);
     // (2) n_order_intent мовчить при json-виході («Ой, вибачте — ви вже сказали» перед «Оформлюємо!»);

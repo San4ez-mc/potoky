@@ -47,16 +47,14 @@ var __bdDetail={};
 async function resolvePcs(bdp, color, size){
   if(!__bdDetail[bdp.product_id]){ var d=await bd('/api/guest/products/'+bdp.product_id); __bdDetail[bdp.product_id]=(((d.json&&(d.json.data||d.json))||{}).remains)||[]; }
   var colors=__bdDetail[bdp.product_id];
-  var passes=[colorMatches, colorMatchesLoose];
-  for(var pi=0;pi<passes.length;pi++){
-    for(var ci=0;ci<colors.length;ci++){ var c=colors[ci]; var cn=norm(c.color&&c.color.name);
-      if(color && !passes[pi](cn,color)) continue;
-      var sizes=c.sizes||[];
-      for(var si=0;si<sizes.length;si++){ var sv=sizes[si];
-        if(size && norm(sv.size&&sv.size.name)!==norm(size)) continue;
-        if(Number(sv.remains)>0) return { pcsId:sv.product_color_size_id, color:cn+(pi>0?' (≈ '+color+')':''), size:(sv.size&&sv.size.name), remains:sv.remains }; } }
-    if(!color) break;
-  }
+  function pickIn(cands, label){ for(var ci=0;ci<cands.length;ci++){ var c=cands[ci]; var cn=norm(c.color&&c.color.name); var sizes=c.sizes||[];
+    for(var si=0;si<sizes.length;si++){ var sv=sizes[si]; if(size && norm(sv.size&&sv.size.name)!==norm(size)) continue;
+      if(Number(sv.remains)>0) return { pcsId:sv.product_color_size_id, color:cn+(label||''), size:(sv.size&&sv.size.name), remains:sv.remains }; } } return null; }
+  // 1) точний/синонімічний збіг кольору; 2) м'який прохід — у ПОРЯДКУ синонімів (Світло-сірий → спершу «серый», потім «графит»).
+  var strict=colors.filter(function(c){ return !color || colorMatches(norm(c.color&&c.color.name), color); });
+  var r0=pickIn(strict,''); if(r0||!color) return r0;
+  var loose=COLOR_LOOSE[norm(color)]||[];
+  for(var li=0;li<loose.length;li++){ var s=norm(loose[li]); var cand=colors.filter(function(c){ var cn=norm(c.color&&c.color.name); return cn===s||cn.indexOf(s)>=0; }); var r1=pickIn(cand,' (≈ '+color+')'); if(r1) return r1; }
   return null;
 }
 // ── 1) спосіб оплати: накладений платіж на решту; повна передоплата — вручну ──

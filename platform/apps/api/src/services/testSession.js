@@ -1363,6 +1363,9 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
             _isDifferentProduct = false;
         }
         if (_isDifferentProduct) {
+            // 2026-09-08 (twisti13.14): «новий» entryAd часто веде на ТОЙ САМИЙ товар (пост без реферала, потім айсбрейкер із
+            // рефералом реклами). Знімок дає n_lookup повернути розмір/колір, якщо sku збігся; картку вдруге блокує lastPresentedSku.
+            ctx.prevProductSnapshot = { sku: ctx.product.sku || '', recommendedSize: ctx.recommendedSize || '', sizeInput: ctx.sizeInput || null, colorChoice: ctx.colorChoice || null, at: Date.now() };
             delete ctx.product;
             delete ctx.colorChoice;
             delete ctx.recommendedSize;

@@ -671,9 +671,22 @@ try {
   } catch (e) { result.alsoWants = ''; }
   // Той самий товар уже презентували < 30 хв тому (коментар → приватна відповідь, потім DM з реклами; Купцова 21:44):
   // n_presented_recently_cond пропускає фото+картку, далі одразу крок розміру.
-  var __prevSku = String((context.product && context.product.sku) || ''); var __prevAt = Number(context.presentedAt) || 0;
+  // 2026-09-08 19:31 (twisti13.14, yevgeniybey: пост без реферала → картка; за хвилину «Яка ціна кофти?» ПРИЙШЛО з рефералом
+  // реклами → двигун побачив «новий entryAd ≠ _matchedEntryAd», стер context.product і перезапустив воронку → картка вдруге).
+  // Двигун product стирає, але lastPresentedSku/presentedAt лишає — звіряємось і з ними; знімок prevProductSnapshot повертає
+  // розмір/колір, якщо це той самий товар.
+  var __prevSku = String((context.product && context.product.sku) || context.lastPresentedSku || ''); var __prevAt = Number(context.presentedAt) || 0;
   result.skipPresentation = !!(__prevSku && found.sku && __prevSku.toUpperCase() === String(found.sku).toUpperCase() && (Date.now() - __prevAt) < 30 * 60 * 1000);
   result.presentedAt = result.skipPresentation ? __prevAt : Date.now(); // для ignoreRightAfterPresentationRe у n_size
+  try {
+    var __snap = context.prevProductSnapshot;
+    if (__snap && found.sku && String(__snap.sku || '').toUpperCase() === String(found.sku).toUpperCase() && (Date.now() - Number(__snap.at || 0)) < 6 * 3600 * 1000) {
+      if (__snap.recommendedSize && !context.recommendedSize) result.recommendedSize = __snap.recommendedSize;
+      if (__snap.sizeInput && !context.sizeInput) result.sizeInput = __snap.sizeInput;
+      if (__snap.colorChoice && __snap.colorChoice.color && !(context.colorChoice && context.colorChoice.color)) result.colorChoice = __snap.colorChoice;
+      result.prevProductSnapshot = null;
+    }
+  } catch (e) { }
   result.lastPresentedSku = String(found.sku || ''); // n_presented_recently_cond звіряє й напряму (Софія 11:20: картка вдруге за 16 хв)
   // Товар визначено ЛИШЕ за артикулом з коментар-автоматизації (клієнт не називав його сам, у пості його нема) і
   // автоматизація презентувала його < 6 год тому → картку не дублюємо, одразу крок розміру.

@@ -1518,8 +1518,15 @@ async function resumeAfterManagerSilence() {
                 let lastBotIdx = -1; msgs.forEach((m, idx) => { if (m.role === 'assistant' && (m.metadata || {}).nodeId) lastBotIdx = idx; });
                 const after = msgs.slice(Math.min(lastManagerIdx, lastBotIdx) + 1).filter((m) => m.role === 'user');
                 if (!after.length) continue;
+                // 2026-09-08 19:30 (oleksandr7776777): менеджер спитав «Який у вас обʼєм по грудях?» о 16:24, а о 16:30 бот
+                // «відновився» і відповів на повідомлення клієнта 16:19, яке менеджер уже опрацював. Правила: (1) відновлюємось
+                // ЛИШЕ коли є повідомлення клієнта ПІСЛЯ останньої репліки менеджера (без відповіді); (2) 10 хв тиші рахуємо
+                // від останнього повідомлення БУДЬ-КОГО з двох (клієнт і менеджер), а не лише клієнта.
+                const unanswered = msgs.slice(lastManagerIdx + 1).filter((m) => m.role === 'user');
+                if (!unanswered.length) continue;
                 const lastClientAt = after[after.length - 1].createdAt.getTime();
-                if (Date.now() - lastClientAt < MANAGER_SILENCE_RESUME_MS) continue;
+                const lastManagerAt = msgs[lastManagerIdx].createdAt.getTime();
+                if (Date.now() - Math.max(lastClientAt, lastManagerAt) < MANAGER_SILENCE_RESUME_MS) continue;
                 const fresh = await db.session.findUnique({ where: { id: s.id }, select: { context: true } });
                 const fc = (fresh && fresh.context) || {};
                 await db.session.update({ where: { id: s.id }, data: { context: { ...fc, funnelPaused: false, pausedBy: null, resumedBy: 'manager_silence', resumedAt: new Date().toISOString() } } });

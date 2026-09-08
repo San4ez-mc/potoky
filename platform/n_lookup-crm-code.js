@@ -43,9 +43,11 @@ if (!apiKey) return fallback('CRM_API_KEY не заповнено');
 function hdr() { return { Authorization: 'Bearer ' + apiKey, Accept: 'application/json' }; }
 function resolveUrl(u) { if (!u) return ''; return /^https?:\/\//i.test(u) ? u : (publicBase + (u.charAt(0) === '/' ? u : '/' + u)); }
 
+// 2026-09-08 (mashavoloshka: «артикул А0182» з кириличною «А» → товар не перемкнувся): схожі кириличні літери перед цифрами → латиниця.
+function latinizeLookalikes(x) { var M = { 'А': 'A', 'В': 'B', 'С': 'C', 'Е': 'E', 'Н': 'H', 'І': 'I', 'К': 'K', 'М': 'M', 'О': 'O', 'Р': 'P', 'Т': 'T', 'Х': 'X', 'У': 'Y', 'а': 'a', 'в': 'b', 'с': 'c', 'е': 'e', 'н': 'h', 'і': 'i', 'к': 'k', 'м': 'm', 'о': 'o', 'р': 'p', 'т': 't', 'х': 'x', 'у': 'y' }; return String(x || '').replace(/[АВСЕНІКМОРТХУавсенікмортху]{1,4}(?=\d{2,8})/g, function (seq) { return seq.split('').map(function (ch) { return M[ch] || ch; }).join(''); }); }
 function extractArticles(txt) {
   if (!txt) return [];
-  var s = String(txt); var out = []; var m;
+  var s = latinizeLookalikes(String(txt)); var out = []; var m;
   var re1 = /(?:артикул|арт\.?|art|код|sku|#|№)\s*[:#№.\-]?\s*([A-Za-zА-Яа-яІЇЄҐіїєґ]{0,5}\d{2,8})/gi; while ((m = re1.exec(s))) { out.push(m[1].toUpperCase()); }
   var re2 = /\b([A-Za-z]\d{3,6})\b/g; while ((m = re2.exec(s))) { out.push(m[1].toUpperCase()); }
   var re3 = /\b(\d{4,8})\b/g; while ((m = re3.exec(s))) { out.push(m[1]); }
@@ -169,6 +171,11 @@ try {
         // post_id з referral буває постом Facebook-сторінки (не IG-медіа): «nonexisting field (caption)» → message/full_picture
         if (!__adCaption) { var __m3 = await __gget(__pid + '?fields=message,full_picture', __muTok); if (__m3 && (__m3.message || __m3.full_picture)) { __adCaption = String(__m3.message || ''); __adImage = __adImage || String(__m3.full_picture || ''); } }
       }
+      // 2026-09-08 (_sergey_nesteruk: entryAd=18089766755652603 — це IG-медіа, не реклама): спершу пробуємо як медіа.
+      if (!__adCaption && __aid && /^1[78]\d{14,16}$/.test(__aid) && __muTok) {
+        var __mm = await __gget(__aid + '?fields=caption,media_url,thumbnail_url,permalink', __muTok);
+        if (__mm && (__mm.caption || __mm.media_url)) { __adCaption = String(__mm.caption || ''); __adImage = String(__mm.thumbnail_url || __mm.media_url || ''); }
+      }
       if (!__adCaption && __aid && __muTok) {
         var __ad = await __gget(__aid + '?fields=creative{effective_object_story_id,body,thumbnail_url,object_story_spec}', __muTok);
         var __cr = (__ad && __ad.creative) || null;
@@ -227,13 +234,15 @@ try {
   var __kwSource = (context.sharedPost && context.sharedPost.caption) || __adCaption || (context.adTitle ? __normAdName(context.adTitle) : '');
   if (!found && __kwSource) {
     var STOPWORDS_KW = { 'та': 1, 'і': 1, 'й': 1, 'на': 1, 'до': 1, 'за': 1, 'від': 1, 'для': 1, 'або': 1, 'це': 1, 'вже': 1, 'ще': 1, 'як': 1, 'що': 1, 'по': 1, 'при': 1, 'без': 1, 'між': 1 };
-    function tokenizeKW(s) { return String(s || '').toLowerCase().replace(/[^\wа-яіїєґ\s]/gi, ' ').split(/\s+/).filter(function (w) { return w.length >= 4 && !STOPWORDS_KW[w]; }); }
+    // 2026-09-08: слова порівнюємо за 5-літерним коренем («замшевий»≈«замш», «вʼязана»≈«вязан»); джерело назв — name + customerName + displayName
+    // (mykola: підпис поста комплекту «кофта, джинси, футболка, лофери» не збігався з displayName «Комплект 4 в 1»).
+    function tokenizeKW(s) { return String(s || '').toLowerCase().replace(/[’'`ʼ]/g, '').replace(/[^\wа-яіїєґ\s]/gi, ' ').split(/\s+/).filter(function (w) { return w.length >= 4 && !STOPWORDS_KW[w]; }).map(function (w) { return w.slice(0, 5); }); }
     var capWordsKW = tokenizeKW(__kwSource);
     if (capWordsKW.length) {
       var capSetKW = {}; for (var wi = 0; wi < capWordsKW.length; wi++) capSetKW[capWordsKW[wi]] = 1;
       var scoredKW = [];
       for (var pi3 = 0; pi3 < all.length; pi3++) {
-        var pnameWordsKW = tokenizeKW(all[pi3].displayName || all[pi3].name);
+        var pnameWordsKW = tokenizeKW([all[pi3].name, all[pi3].customerName, all[pi3].displayName].filter(Boolean).join(' ')); pnameWordsKW = pnameWordsKW.filter(function (w, i) { return pnameWordsKW.indexOf(w) === i; });
         var overlapKW = 0; for (var wj = 0; wj < pnameWordsKW.length; wj++) { if (capSetKW[pnameWordsKW[wj]]) overlapKW++; }
         if (overlapKW > 0) scoredKW.push({ p: all[pi3], score: overlapKW });
       }
@@ -408,7 +417,7 @@ try {
     if (!cprod) continue;
     upsell.push(upname(cprod));
     var __cq = {}; (Array.isArray(cprod.bulkPricing) ? cprod.bulkPricing : []).forEach(function (b) { if (b && b.quantity && b.price) __cq[String(b.quantity)] = Number(b.price); });
-    upsellItems.push({ id: cprod.id, name: upname(cprod).replace(/\s—\s\d+ грн$/, ''), price: Number(cprod.price) || 0, qtyPrices: __cq, colors: [...new Set((cprod.offers || []).flatMap(function (o) { return (o.properties || []).filter(function (q) { return /кол|цвет/i.test(q.name || ''); }).map(function (q) { return q.value; }); }))].join(', ') });
+    upsellItems.push({ id: cprod.id, sku: cprod.sku || '', supplierArticle: cprod.supplierArticle || '', name: upname(cprod).replace(/\s—\s\d+ грн$/, ''), price: Number(cprod.price) || 0, qtyPrices: __cq, colors: [...new Set((cprod.offers || []).flatMap(function (o) { return (o.properties || []).filter(function (q) { return /кол|цвет/i.test(q.name || ''); }).map(function (q) { return q.value; }); }))].join(', ') });
     if (!__upsellPhoto) { __upsellPhoto = resolveUrl(cprod.thumbnailUrl || (cprod.images || [])[0] || ''); }
   }
   var __upsellPhotoNote = __upsellPhoto

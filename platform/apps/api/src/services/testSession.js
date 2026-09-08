@@ -1279,7 +1279,10 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
     // замовлення й далі НЕ перемикає (це квитанція — гард !ctx.orderRef нижче).
     if (ctx.product && (ctx.product._source === 'keycrm' || ctx.product._source === 'crm') && !ctx.adminEngaged
         && runtime.currentNodeId !== 'n_comment_entry' && (incomingUserMessage || incomingImageUrl)) {
-        const _extractArticleCandidates = (txt) => {
+        const _extractArticleCandidates = (txt0) => {
+            // 2026-09-08 (mashavoloshka «артикул А0182» кирилицею): схожі кириличні літери перед цифрами → латиниця.
+            const _LAT = { 'А': 'A', 'В': 'B', 'С': 'C', 'Е': 'E', 'Н': 'H', 'І': 'I', 'К': 'K', 'М': 'M', 'О': 'O', 'Р': 'P', 'Т': 'T', 'Х': 'X', 'У': 'Y', 'а': 'a', 'в': 'b', 'с': 'c', 'е': 'e', 'н': 'h', 'і': 'i', 'к': 'k', 'м': 'm', 'о': 'o', 'р': 'p', 'т': 't', 'х': 'x', 'у': 'y' };
+            const txt = String(txt0 || '').replace(/[АВСЕНІКМОРТХУавсенікмортху]{1,4}(?=\d{2,8})/g, (seq) => seq.split('').map((ch) => _LAT[ch] || ch).join(''));
             const out = [];
             const re1 = /(?:артикул|арт\.?|код|sku|№)\s*[:#№.-]?\s*([A-Za-zА-Яа-я]{0,5}\d{2,8})/gi;
             const re2 = /\b([A-Za-z]\d{3,6})\b/g;

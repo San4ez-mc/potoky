@@ -205,6 +205,10 @@ try {
   if (!found) {
     var fromUser = extractArticles(context.lastUserMessage || input || '');
     var cands = fromUser.concat(extractArticles((context.sharedPost && context.sharedPost.caption) || '')).concat(extractArticles(__adCaption || '')).concat(extractArticles(context.adTitle || ''));
+    // 2026-09-08 (vadim.lutchenko + 19 з 22 коментаторів за добу): товар, який Zernio-автоматизація презентувала в DM
+    // після коментаря (handleCommentReceived → commentProductArticle). Найнижчий пріоритет серед артикулів, діє 72 год.
+    var __commentArt = ''; var __commentAge = Date.now() - (Date.parse(context.commentProductAt || '') || 0);
+    if (context.commentProductArticle && __commentAge < 72 * 3600 * 1000) { __commentArt = String(context.commentProductArticle).toUpperCase(); if (!cands.length || cands.map(function (x) { return String(x).toUpperCase(); }).indexOf(__commentArt) < 0) cands = cands.concat([__commentArt]); }
     var seen = {}, cc = []; for (var ci = 0; ci < cands.length; ci++) { if (!seen[cands[ci]]) { seen[cands[ci]] = 1; cc.push(cands[ci]); } } cc = cc.slice(0, 8);
     // 2a) offer-SKU → товар + колір/розмір цього оферу
     for (var a = 0; a < cc.length && !found; a++) {
@@ -587,6 +591,12 @@ try {
   var __prevSku = String((context.product && context.product.sku) || ''); var __prevAt = Number(context.presentedAt) || 0;
   result.skipPresentation = !!(__prevSku && found.sku && __prevSku.toUpperCase() === String(found.sku).toUpperCase() && (Date.now() - __prevAt) < 30 * 60 * 1000);
   result.presentedAt = result.skipPresentation ? __prevAt : Date.now(); // для ignoreRightAfterPresentationRe у n_size
+  // Товар визначено ЛИШЕ за артикулом з коментар-автоматизації (клієнт не називав його сам, у пості його нема) і
+  // автоматизація презентувала його < 6 год тому → картку не дублюємо, одразу крок розміру.
+  try {
+    var __viaCommentOnly = !!(__commentArt && String(mk || '').toUpperCase() === ('ART_' + __commentArt) && fromUser.map(function (x) { return String(x).toUpperCase(); }).indexOf(__commentArt) < 0 && extractArticles((context.sharedPost && context.sharedPost.caption) || '').map(function (x) { return String(x).toUpperCase(); }).indexOf(__commentArt) < 0);
+    if (__viaCommentOnly && __commentAge < 6 * 3600 * 1000) { result.skipPresentation = true; result.presentedAt = Date.now() - __commentAge; result.product._via = 'comment_automation:' + __commentArt; }
+  } catch (e) { }
   if (preColor && preFromUser) { result.colorChoice = { color: preColor, _pre: true }; }
   if (preColor) result.product.preColor = preColor;
   if (preSize) { result.product.preSize = preSize; }

@@ -94,10 +94,34 @@ if (s0.color && context.product && String(context.product.colors || '').trim()) 
   __colorPick = __list.filter(function (c) { var l = c.toLowerCase(); return l === __want || l.indexOf(__want) === 0 || __want.indexOf(l) === 0; })[0] || null;
 }
 if (__colorPick) { __needsColorAsk = false; __sizeColorFollowup = '\n\n🎨 Колір: ' + __colorPick + ' — зафіксувала 👍'; }
+// 2026-09-08 (evgensiskz: клієнт надіслав фото джинсів і кофти, потім параметри — бот перепитав колір списком,
+// хоча на фото він видно): якщо є свіже фото клієнта (≤30 хв) і колір ще не обрано — Gemini визначає колір ЦЬОГО
+// товару на фото зі списку кольорів; n_size_reply пропонує саме його («На фото — сірий, беремо його?»), n_color
+// бачить context.photoColor. Best-effort: без ключа/фото/відповіді — звичайне питання зі списком.
+var __photoColor = '';
+try {
+  var __imgUrl = context.lastUserImageUrl || ((Date.now() - (Number(context.recentUserImageAt) || 0)) < 30 * 60 * 1000 ? String(context.recentUserImageUrl || '') : '');
+  var __colorsArr = String((context.product && context.product.colors) || '').split(',').map(function (c) { return c.trim(); }).filter(Boolean);
+  if (__needsColorAsk && __imgUrl && /^https?:/.test(__imgUrl) && __colorsArr.length >= 2 && keys.GEMINI_API_KEY) {
+    var __acc = new AbortController(); var __tmr = setTimeout(function () { try { __acc.abort(); } catch (e) { } }, 9000);
+    try {
+      var __ir = await fetch(__imgUrl, { signal: __acc.signal }); var __ab = await __ir.arrayBuffer();
+      if (__ab.byteLength <= 8000000) {
+        var __mime = ((__ir.headers.get('content-type') || '').split(';')[0]) || 'image/jpeg'; if (__mime === 'application/octet-stream') __mime = 'image/jpeg';
+        var __pp = 'На фото клієнта може бути товар «' + String(context.product.customerName || context.product.name || '') + '» (можливо разом з іншими речами). Доступні кольори цього товару: ' + __colorsArr.join(', ') + '. Який із цих кольорів має САМЕ цей товар на фото? Відповідай лише JSON: {"color":"<точна назва зі списку або порожній рядок, якщо товару на фото нема або колір не зі списку>","confidence":0..1}';
+        var __gr = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + encodeURIComponent(keys.GEMINI_API_KEY), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: __pp }, { inline_data: { mime_type: __mime, data: Buffer.from(__ab).toString('base64') } }] }] }), signal: __acc.signal });
+        var __gj = await __gr.json(); var __gt = ((((__gj.candidates || [])[0] || {}).content || {}).parts || [{}])[0].text || '';
+        var __gm = __gt.match(/\{[\s\S]*\}/);
+        if (__gm) { var __gp = JSON.parse(__gm[0]); var __gc = String(__gp.color || '').trim().toLowerCase(); var __hit = __colorsArr.filter(function (c) { return c.toLowerCase() === __gc; })[0]; if (__hit && Number(__gp.confidence) >= 0.6) __photoColor = __hit; }
+      }
+    } catch (e) { } finally { clearTimeout(__tmr); }
+  }
+} catch (e) { __photoColor = ''; }
+if (__photoColor) { __sizeColorFollowup = '\n\n🎨 На фото — ' + __photoColor.toLowerCase() + ' колір. Беремо його чи інший (' + __colorsArr.filter(function (c) { return c !== __photoColor; }).join(', ') + ')? 😊'; }
 // «також хоче» (інші речі, названі на кроці розміру) — зливаємо з тим, що вже було з першого повідомлення
 var __alsoMerged = [String(context.alsoWants || '').trim(), String(s0.alsoWants || '').trim()].filter(Boolean).join('; ');
 function done(size, source) {
-  var out = { recommendedSize: size, sizeSource: source, sizeReplyText: replyFor(source, size), sizeOutOfRange: false, sizeColorFollowup: __sizeColorFollowup, sizeAskedFor: __askedFor, knownMeasurementsToSave: __kmSave };
+  var out = { recommendedSize: size, sizeSource: source, sizeReplyText: replyFor(source, size), sizeOutOfRange: false, sizeColorFollowup: __sizeColorFollowup, sizeAskedFor: __askedFor, knownMeasurementsToSave: __kmSave, photoColor: __photoColor };
   if (__colorPick) out.colorChoice = { color: __colorPick, _fromSizeStep: true };
   if (__alsoMerged) out.alsoWants = __alsoMerged;
   return out;

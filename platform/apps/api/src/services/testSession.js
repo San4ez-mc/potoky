@@ -1662,6 +1662,11 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
     if (incomingImageUrl) {
         ctx.lastReceiptImageUrl = incomingImageUrl;
         ctx.lastUserImageUrl = incomingImageUrl;
+        // 2026-09-08 (evgensiskz: фото джинсів і кофти, потім «зріст 183 вага 63» окремим ходом): фото клієнта
+        // лишається доступним 30 хв для визначення кольору на кроці розміру/кольору (n_calc), навіть коли
+        // lastUserImageUrl уже очищено наступним текстовим ходом.
+        ctx.recentUserImageUrl = incomingImageUrl;
+        ctx.recentUserImageAt = Date.now();
     } else if (incomingUserMessage) {
         // Живий тест 2026-09-04 (Олексій): фото з попереднього ходу лишалось у lastUserImageUrl,
         // і наступний ТЕКСТ ("Світло-сірий") n_prev_match_snapshot рахував як "свіжий сигнал товару"
@@ -1913,6 +1918,22 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
             if (data.waitAfterPresentation === true && mode === 'dialog' && ctx.productJustPresented && runtime.lastUserMessage && !_presentationUnless
                 && !(Array.isArray(runtime.dialogHistory[node.id]) && runtime.dialogHistory[node.id].length)) {
                 delete ctx.productJustPresented;
+                runtime.lastUserMessage = '';
+                runtime.waitingForUser = true;
+                break;
+            }
+            // 2026-09-08 (реальні замовлення 01:50 і 02:12): data.waitOnEntry — діалогова нода, перед якою message-нода вже
+            // поставила питання (n_collect_ask → n_collect), НЕ обробляє повідомлення, що привело сюди («[фото]» чека,
+            // «1» — вибір оплати), а чекає НАСТУПНЕ. Інакше клієнт отримував два суперечливі прохання підряд
+            // («напишіть усе одним повідомленням» + «підкажіть імʼя та прізвище»). waitOnEntryUnless — regex: якщо в
+            // цьому ж повідомленні вже є потрібне (телефон, відділення) — обробляємо одразу. Одноразово на вхід у ноду.
+            let _entryUnless = false;
+            if (data.waitOnEntryUnless && runtime.lastUserMessage) {
+                try { _entryUnless = new RegExp(String(data.waitOnEntryUnless), 'i').test(String(runtime.lastUserMessage)); } catch (_e) { _entryUnless = false; }
+            }
+            if (data.waitOnEntry === true && mode === 'dialog' && runtime.lastUserMessage && !_entryUnless && !speakFirstNow
+                && !(Array.isArray(runtime.dialogHistory[node.id]) && runtime.dialogHistory[node.id].length) && runtime.waitedOnEntry !== node.id) {
+                runtime.waitedOnEntry = node.id;
                 runtime.lastUserMessage = '';
                 runtime.waitingForUser = true;
                 break;

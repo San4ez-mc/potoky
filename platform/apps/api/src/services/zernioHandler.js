@@ -607,11 +607,19 @@ function buildAutomationPresentation(p, opener) {
         : (p.category_id === 7 ? 'Напишіть, будь ласка, який розмір взуття зазвичай носите? 😊' : 'Цікавить? 😊');
     return (opener || AUTOMATION_OPENERS[0]) + descClean + '\n\n' + followUp;
 }
+// 2026-09-08 03:00 (vadim.lutchenko та ще 19 з 22 коментаторів за добу): Zernio-автоматизація сама шле DM з
+// карткою товару, а наша сесія про цей товар НЕ знала — на «180-88» бот питав «це артикул чи розмір?».
+// Повертаємо, ЩО саме презентувала автоматизація ({ article, name }), щоб handleCommentReceived поклав це в
+// контекст сесії, а n_lookup підхопив як артикул, коли клієнт відповість у директ.
+function automationArticle(dmMessage) {
+    const m = String(dmMessage || '').match(/Артикул:\s*([A-Za-zА-Яа-я]{0,3}\d{3,8}|[A-Za-z]{1,4}\d{2,8}|set\d{3,6})/i);
+    return m ? m[1] : null;
+}
 async function ensurePostAutomation(botId, mediaId, caption) {
-    if (!mediaId || !caption) return;
+    if (!mediaId || !caption) return null;
     try {
         const zk = await getZernioKeys(botId);
-        if (!isReal(zk.ZERNIO_API_TOKEN) || !isReal(zk.ZERNIO_ACCOUNT_ID)) return;
+        if (!isReal(zk.ZERNIO_API_TOKEN) || !isReal(zk.ZERNIO_ACCOUNT_ID)) return null;
 
         const existR = await fetch('https://zernio.com/api/v1/comment-automations', { headers: { Authorization: 'Bearer ' + zk.ZERNIO_API_TOKEN } });
         const existD = await existR.json().catch(() => ({}));
@@ -631,7 +639,7 @@ async function ensurePostAutomation(botId, mediaId, caption) {
                     body: JSON.stringify({ dmMessage: nextOpener + rest }),
                 }).catch(() => {});
             } catch (_e) { /* ротація — best-effort, не критична */ }
-            return;
+            return { article: automationArticle(existing.dmMessage), name: existing.postTitle || null, existed: true };
         }
 
         // Аудит 2026-08-31 (запит власника, живий аудит 41 коментатора): раніше тут
@@ -667,9 +675,9 @@ async function ensurePostAutomation(botId, mediaId, caption) {
         if (catExc.length) all = all.filter((p) => catExc.indexOf(String(p.category_id)) < 0);
 
         // РІВЕНЬ 1: артикул у підписі (як і раніше).
-        let found = null;
+        let found = null; let foundArticle = null;
         if (candidates.length) {
-            for (const c of candidates) { found = matchArticleInCatalog(all, c); if (found) break; }
+            for (const c of candidates) { found = matchArticleInCatalog(all, c); if (found) { foundArticle = c; break; } }
         }
         await logAutomationMatchAttempt(botId, mediaId, 'article', found, { request: { candidates } });
 
@@ -697,12 +705,12 @@ async function ensurePostAutomation(botId, mediaId, caption) {
             }
         }
 
-        if (!found) { logger.info('[zernioHandler] ensurePostAutomation: жоден рівень матчингу (артикул/keyword/vision) не знайшов товар — автоматизацію не створюю', { botId, mediaId, candidates }); return; }
+        if (!found) { logger.info('[zernioHandler] ensurePostAutomation: жоден рівень матчингу (артикул/keyword/vision) не знайшов товар — автоматизацію не створюю', { botId, mediaId, candidates }); return null; }
 
         const profR = await fetch('https://zernio.com/api/v1/profiles', { headers: { Authorization: 'Bearer ' + zk.ZERNIO_API_TOKEN } });
         const profD = await profR.json().catch(() => ({}));
         const profileId = profD.profiles && profD.profiles[0] && profD.profiles[0]._id;
-        if (!profileId) { logger.warn('[zernioHandler] ensurePostAutomation: не знайдено Zernio profileId', { botId }); return; }
+        if (!profileId) { logger.warn('[zernioHandler] ensurePostAutomation: не знайдено Zernio profileId', { botId }); return null; }
 
         const body = {
             profileId,
@@ -725,12 +733,14 @@ async function ensurePostAutomation(botId, mediaId, caption) {
         const cd = await cr.json().catch(() => ({}));
         if (cr.ok && cd.automation) {
             logger.info('[zernioHandler] ensurePostAutomation: створено нову автоматизацію на пост', { botId, mediaId, product: found.name, automationId: cd.automation.id });
+            return { article: foundArticle || automationArticle(body.dmMessage) || found.sku || null, name: found.name || null, existed: false };
         } else {
             logger.warn('[zernioHandler] ensurePostAutomation: створення не вдалось', { botId, mediaId, status: cr.status, error: JSON.stringify(cd).slice(0, 300) });
         }
     } catch (e) {
         logger.warn('[zernioHandler] ensurePostAutomation error: ' + e.message, { botId, mediaId });
     }
+    return null;
 }
 
 // Аудит 2026-08-27 (автовідповіді на коментарі, запит користувача): раніше
@@ -807,11 +817,12 @@ async function handleCommentReceived(botId, body) {
     // увімкнений — НЕ створюємо і НЕ ротуємо жодної Zernio-автоматизації (вона не вміє
     // фільтрувати по нашому allowlist, тільки по followerStatus). Коли власник вимкне
     // testMode — усе почне створюватись і ротуватись як і раніше, без жодних змін.
+    let automationHint = null;
     if (mediaId && postCaption) {
         if (await isTestModeOn(botId)) {
             logger.info('[zernioHandler] ensurePostAutomation пропущено — testMode увімкнено', { botId, mediaId });
         } else {
-            await ensurePostAutomation(botId, mediaId, postCaption);
+            automationHint = await ensurePostAutomation(botId, mediaId, postCaption);
         }
     }
 
@@ -819,6 +830,9 @@ async function handleCommentReceived(botId, body) {
     const patch = {
         psid: String(contactId), senderName: contactName || undefined, igUsername: contactUsername || undefined,
         commentId: String(commentId), commentText, commentMediaId: mediaId ? String(mediaId) : null,
+        // 2026-09-08: товар, який Zernio-автоматизація презентувала в DM після цього коментаря — n_lookup бере його
+        // як артикул, коли клієнт відповідає в директ («180-88», «XL»). Ключі НЕ в списку очищення DM-гілки.
+        ...(automationHint && (automationHint.article || automationHint.name) ? { commentProductArticle: automationHint.article || '', commentProductName: automationHint.name || '', commentProductAt: new Date().toISOString() } : {}),
         // entryAd — той самий механізм, яким уже користується n_lookup (ПРІОРІТЕТ 1,
         // ad_id по CT_1001) — коментар під конкретним постом ідентифікує товар так
         // само, як клік із реклами на цей пост.
@@ -1046,6 +1060,13 @@ async function handleIncomingMessage(botId, body) {
         logger.info('[zernioHandler] stale inbound — stored, flow not run', { botId, sessionId: session.id });
         return { ok: true, processed: 1, stale: true };
     }
+    // 2026-09-08 (реальні замовлення 01:53, 02:14, 03:14): після тексту з адресою Instagram досилає порожнє вкладення
+    // типу «template» без файлу й тексту. У воронку його не пускаємо — інакше «[вкладення без файлу: template]»
+    // стає окремим ходом клієнта і провокує зайву відповідь.
+    if (!text && !attachment && !sharedPost && unknownAtts.length) {
+        logger.info('[zernioHandler] attachment-only inbound without file — stored, flow not run', { botId, sessionId: session.id, types: rawAttTypes });
+        return { ok: true, processed: 1, skipped: 'attachment-without-file' };
+    }
     // 2026-09-07 (бойовий старт goverla, 19:45): десятки розмов у цей момент вели МЕНЕДЖЕРИ вручну (клієнти вже
     // платили), а бот на перше ж повідомлення після увімкнення слав презентацію з нуля. Правило: якщо за останні
     // 12 год у розмові писав менеджер (zernio_inbox), а бот жодного разу ще не вів цю розмову (нема повідомлень з
@@ -1259,7 +1280,27 @@ async function handleSideEvent(botId, event, body) {
     } else {
         session = await findSessionByConversation(botId, conversationId);
     }
-    if (!session) { logger.warn('[zernioHandler] event без сесії', { botId, event }); return { ok: true, processed: 0 }; }
+    // 2026-09-08 03:00 (vadim.lutchenko): менеджер відповів «готовою відповіддю» клієнту, чия сесія почалась із
+    // КОМЕНТАРЯ (conversationId ще не відомий) → «event без сесії» → пауза не стала → о 03:02 бот вліз у розмову.
+    // Для message.sent дістаємо учасника розмови з Zernio (GET /inbox/conversations/{id}) і знаходимо/створюємо
+    // сесію за контактом — тоді пауза від менеджера спрацьовує і для таких розмов.
+    if (!session && event === 'message.sent' && conversationId) {
+        try {
+            const zk = await getZernioKeys(botId);
+            if (isReal(zk.ZERNIO_API_TOKEN)) {
+                const cr = await fetch('https://zernio.com/api/v1/inbox/conversations/' + encodeURIComponent(conversationId), { headers: { Authorization: 'Bearer ' + zk.ZERNIO_API_TOKEN } });
+                const cj = await cr.json().catch(() => ({}));
+                const cd = (cj && cj.data) || {};
+                const pid = cd.participantId || ((cd.participants || []).find((p) => p && p.id && !selfIds.has(String(p.id))) || {}).id || null;
+                if (pid && !selfIds.has(String(pid))) {
+                    const user = await findOrCreateZernioUser(String(pid), botId, cd.participantName || null);
+                    session = await findOrCreateZernioSession(user.id, botId, { conversationId, psid: String(pid), senderName: cd.participantName || undefined });
+                    logger.info('[zernioHandler] message.sent: сесію знайдено через Zernio conversation', { botId, sessionId: session.id, conversationId });
+                }
+            }
+        } catch (e) { logger.warn('[zernioHandler] conversation lookup failed: ' + e.message, { botId, conversationId }); }
+    }
+    if (!session) { logger.warn('[zernioHandler] event без сесії', { botId, event, conversationId, contactId, bodyKeys: Object.keys(body || {}).slice(0, 15) }); return { ok: true, processed: 0 }; }
 
     // ── Статуси доставки → позначка на конкретному повідомленні ──
     if (event === 'message.delivered' || event === 'message.read' || event === 'message.failed') {

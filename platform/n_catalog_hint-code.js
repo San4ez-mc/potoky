@@ -45,7 +45,8 @@ try {
     var __nh = __hitsBy(active.filter(function (p) { return __prev.indexOf(String(p.sku || '').toUpperCase()) >= 0; }));
     if (__nh.length === 1) __pick = __nh[0];
     else if (!__nh.length) { var __na = __hitsBy(active); if (__na.length > 1 && __stem) __na = __na.filter(function (p) { return __nameOf(p).indexOf(__stem) >= 0 || String(cats[p.categoryId] || '').toLowerCase().indexOf(__stem) >= 0; }); if (__na.length === 1) __pick = __na[0]; }
-    if (__pick && __pick.sku) return { catalogHint: '', catalogHintCount: 0, catalogHintSkus: '', catalogHintPick: String(__pick.sku), hasProductSignal: true, catalogCategories: catList, unknownTurns: unknownTurns - 1 };
+    // hasFreshSignalThisTurn: інакше n_returning_check веде у n_welcome_back («на жаль, не можу надіслати фото») замість презентації.
+    if (__pick && __pick.sku) return { catalogHint: '', catalogHintCount: 0, catalogHintSkus: '', catalogHintPick: String(__pick.sku), hasProductSignal: true, hasFreshSignalThisTurn: true, catalogCategories: catList, unknownTurns: unknownTurns - 1 };
   }
 } catch (e) { /* best-effort */ }
 // стем → корені для пошуку в назві товару/категорії

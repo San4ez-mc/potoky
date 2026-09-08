@@ -758,6 +758,23 @@ router.get('/:botId/analytics',
                 const at = Number(c.orderRefAt || 0);
                 if (c.crmOrderId && at > 0) orderMarks.push({ at, status: String(c.supplierOrderStatus || '') });
             }
+            // Вартість AI (2026-09-08, власник: «вивести в аналітику вартість за розмову / за замовлення»): токени беремо з
+            // api_calls (responseData.inputTokens/outputTokens/cacheReadTokens/cacheWriteTokens, requestData.model — пише
+            // packages/claude wrapper). Ціни — USD за 1M токенів за префіксом моделі; невідома модель → як Sonnet.
+            const PRICES = [
+                ['claude-opus', 15, 75, 1.5, 18.75], ['claude-sonnet', 3, 15, 0.3, 3.75], ['claude-haiku', 1, 5, 0.1, 1.25],
+                ['gpt-4o-mini', 0.15, 0.6, 0.075, 0.15], ['gpt-4', 2.5, 10, 1.25, 2.5], ['gpt-5', 1.25, 10, 0.125, 1.25], ['gemini', 0.3, 2.5, 0.075, 0.3],
+            ];
+            const priceOf = (m) => { const s = String(m || '').toLowerCase(); return PRICES.find((x) => s.startsWith(x[0])) || PRICES[1]; };
+            let aiMarks = [];
+            try {
+                const rows = await db.$queryRawUnsafe(
+                    `SELECT a."sessionId" AS sid, a."createdAt" AS at, a."requestData"->>'model' AS mdl, COALESCE((a."responseData"->>'inputTokens')::int, 0) AS tin, COALESCE((a."responseData"->>'outputTokens')::int, 0) AS tout, COALESCE((a."responseData"->>'cacheReadTokens')::int, 0) AS tcr, COALESCE((a."responseData"->>'cacheWriteTokens')::int, 0) AS tcw FROM api_calls a JOIN sessions s ON s.id = a."sessionId" WHERE s."botId" = $1 AND a."createdAt" >= $2 AND a.service LIKE 'claude%'` + (testFilter.isTest === false ? ' AND s."isTest" = false' : ''),
+                    botId, fetchFrom,
+                );
+                aiMarks = rows.map((r) => { const p = priceOf(r.mdl); return { sid: r.sid, at: new Date(r.at).getTime(), usd: (Number(r.tin) * p[1] + Number(r.tout) * p[2] + Number(r.tcr) * p[3] + Number(r.tcw) * p[4]) / 1e6 }; });
+            } catch (e) { aiMarks = []; }
+            const usdUah = Number(req.query.usdUah) > 0 ? Number(req.query.usdUah) : 41.5;
             const computeQuality = (from, to) => {
                 const per = {};
                 for (const m of msgs) {
@@ -784,6 +801,12 @@ router.get('/:botId/analytics',
                     if (o.status === 'error') q.supplierError++;
                     if (o.status === 'created') q.supplierCreated++;
                 }
+                let usd = 0, calls = 0; const aiSess = new Set();
+                for (const m of aiMarks) { if (m.at >= from.getTime() && m.at < to.getTime()) { usd += m.usd; calls++; aiSess.add(m.sid); } }
+                q.aiCalls = calls; q.aiSessions = aiSess.size; q.aiUsd = Math.round(usd * 1000) / 1000;
+                const baseSess = q.sessions || q.aiSessions;
+                q.aiPerSession = baseSess ? Math.round((usd / baseSess) * 10000) / 10000 : 0;
+                q.aiPerOrder = q.orders ? Math.round((usd / q.orders) * 1000) / 1000 : 0;
                 return q;
             };
             const current = computeQuality(timeFrom, now);
@@ -794,7 +817,7 @@ router.get('/:botId/analytics',
                 const dayEnd = new Date(dayStart.getTime() + 86400000);
                 daily.push({ date: dayStart.toISOString().slice(0, 10), ...computeQuality(dayStart, dayEnd) });
             }
-            quality = { current, previous, daily, metricNodes: Object.keys(metricOf).length, from: timeFrom.toISOString(), prevFrom: prevFrom.toISOString() };
+            quality = { current, previous, daily, usdUah, metricNodes: Object.keys(metricOf).length, from: timeFrom.toISOString(), prevFrom: prevFrom.toISOString() };
         } catch (e) { quality = { error: e.message }; }
 
         res.json({ ok: true, data: {

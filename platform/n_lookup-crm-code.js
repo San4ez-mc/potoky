@@ -710,5 +710,8 @@ try {
   if (preColor) result.product.preColor = preColor;
   if (preSize) { result.product.preSize = preSize; }
   if (__earlyBuyerId && !context.crmClientId) result.crmClientId = __earlyBuyerId;
+  // 2026-09-08 (власник: «конфлікт привʼязки реклами і артикулу — присилай сповіщення в Telegram»): нова розбіжність →
+  // adLinkMismatchAt; n_ad_conflict_cond шле алерт один раз на кожен НОВИЙ текст розбіжності (не на кожен хід).
+  if (context.adLinkMismatch && context.adLinkMismatch !== context.adLinkMismatchSeen) { result.adLinkMismatchAt = Date.now(); result.adLinkMismatchSeen = context.adLinkMismatch; }
   return result;
 } catch (e) { return fallback('EXCEPTION: ' + e.message); }

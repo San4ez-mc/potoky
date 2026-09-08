@@ -434,6 +434,7 @@ const ALERTS = {
     n_supplier_notify: { alertTitle: '🏭 Постачальник · {{context.orderRef}}', alertMain: '{{context.supplierOrderResult}}', alertDetails: '' },
     n_crm_order_failed_admin: { alertTitle: '❌ Замовлення не створено в CRM', alertMain: 'Оформіть вручну. Причина: {{context.crmOrderError}}', alertDetails: '🛍️ {{context.product.name}} · {{context.orderUnitsText}}\n💳 {{context.payLabel}}\n📦 {{context.orderData.fullName}}, {{context.orderData.phone}}\n📍 {{context.orderData.city}}, НП {{context.orderData.branch}}' },
     n_post_order_admin: { alertTitle: '💬 Клієнт написав після оформлення', alertMain: 'Відповідайте в чаті — бот лише подякував і далі діалог не веде.', alertDetails: '🧾 {{context.orderRef}}\n💬 «{{context.lastCustomerMessage}}»' },
+    n_ad_conflict_admin: { alertTitle: '⚠️ Реклама привʼязана не до того товару?', alertMain: '{{context.adLinkMismatch}}', alertDetails: '🛍️ Показано: {{context.product.name}} (арт. {{context.product.sku}})\n💬 «{{context.lastCustomerMessage}}»' },
     n_avail_stock_admin: { alertTitle: '📦 Товар закінчився', alertMain: 'За залишками в CRM цього варіанту немає; клієнт чекає — підкажіть альтернативу або дату поставки.', alertDetails: '🛍️ {{context.product.name}} · {{context.recommendedSize}} · {{context.colorChoice.color}}' },
 };
 function applyV10(nodes, edges, notes) {
@@ -867,6 +868,17 @@ function transform(flow, keysMap, opts) {
     addEdge('n_post_order_cond', 'n_post_order_msg', 'true');
     addNode('n_post_order_admin', 'notifyTg', { label: '1.87 Сигнал: клієнт пише після замовлення', targetKey: 'ADMIN_TELEGRAM_ID', message: '💬 <b>Клієнт написав після оформлення</b> — замовлення {{context.orderRef}} (CRM {{context.crmOrderId}})\n\n👤 {{context.senderName}} ({{context.igUsername}})\n💬 «{{context.lastCustomerMessage}}»', description: 'Термінальна після повідомлення: менеджер відповідає в Instagram.' }, pos('n_lookup').x + 3 * GX, pos('n_lookup').y);
     addEdge('n_post_order_msg', 'n_post_order_admin');
+
+    // ── 2026-09-08 (власник): конфлікт привʼязки реклами в CRM і артикулу/категорії клієнта → сповіщення менеджеру ──
+    // n_lookup ставить adLinkMismatchAt лише на НОВИЙ текст розбіжності; алерт один раз на кожен такий текст.
+    retarget('n_lookup', 'n_post_order_cond', 'n_ad_conflict_cond');
+    addNode('n_ad_conflict_cond', 'condition', { label: '1.84 Реклама привʼязана не до того товару?', condition: '!!(context.adLinkMismatch && context.adLinkMismatchAt && (!context.adLinkMismatchAlertedAt || Number(context.adLinkMismatchAlertedAt) < Number(context.adLinkMismatchAt)))', description: 'TRUE → сигнал менеджеру (перевірити привʼязку реклами в CRM), далі звичайний шлях. FALSE → звичайний шлях.' }, pos('n_lookup').x + GX, pos('n_lookup').y - GY);
+    addEdge('n_ad_conflict_cond', 'n_post_order_cond', 'false');
+    addNode('n_ad_conflict_admin', 'notifyTg', { label: '1.845 Сигнал: конфлікт привʼязки реклами', targetKey: 'ADMIN_TELEGRAM_ID', message: '⚠️ <b>Реклама привʼязана не до того товару?</b>\n\n{{context.adLinkMismatch}}\n\n👤 {{context.senderName}} ({{context.igUsername}})\n💬 «{{context.lastCustomerMessage}}»', description: 'Не зупиняє діалог: бот уже показав товар за правилом (слово клієнта → артикул поста → привʼязка CRM). Менеджер перевіряє привʼязку реклами в CRM.' }, pos('n_lookup').x + 2 * GX, pos('n_lookup').y - GY);
+    addEdge('n_ad_conflict_cond', 'n_ad_conflict_admin', 'true');
+    addNode('n_ad_conflict_mark', 'js', { label: '1.846 Позначити: сигнал про конфлікт надіслано', code: 'return { adLinkMismatchAlertedAt: Date.now() };' }, pos('n_lookup').x + 3 * GX, pos('n_lookup').y - GY);
+    addEdge('n_ad_conflict_admin', 'n_ad_conflict_mark');
+    addEdge('n_ad_conflict_mark', 'n_post_order_cond');
 
     // ── В11 сигнал про невідомий товар — раз на сесію ──
     retarget('n_unknown_notify_gate', 'n_unknown_admin', 'n_unknown_once_cond', 'true');

@@ -58,6 +58,23 @@ function QualityTable({ q }) {
                         <td className="text-right tabular-nums">{q.current.orders}</td><td />
                         <td className="text-right tabular-nums text-gray-500">{q.previous.orders}</td><td /><td />
                     </tr>
+                    {[
+                        { key: 'aiUsd', label: 'Вартість AI за період', d: 2 },
+                        { key: 'aiPerSession', label: 'AI за одну розмову', d: 3 },
+                        { key: 'aiPerOrder', label: 'AI за одне замовлення', d: 2 },
+                    ].map((r) => {
+                        const cur = Number(q.current[r.key] || 0), prev = Number(q.previous[r.key] || 0);
+                        const uah = (v) => (q.usdUah ? ' (' + (v * q.usdUah).toFixed(r.d === 3 ? 2 : 0) + ' грн)' : '');
+                        const delta = prev > 0 ? Math.round(((cur - prev) / prev) * 100) : null;
+                        return (
+                            <tr key={r.key} className="border-t border-gray-800 text-gray-300">
+                                <td className="py-1.5">{r.label}</td>
+                                <td className="text-right tabular-nums text-white whitespace-nowrap">${cur.toFixed(r.d)}{uah(cur)}</td><td />
+                                <td className="text-right tabular-nums text-gray-500 whitespace-nowrap">${prev.toFixed(r.d)}{uah(prev)}</td><td />
+                                <td className={`text-right tabular-nums ${delta == null ? 'text-gray-600' : delta > 0 ? 'text-red-400' : 'text-emerald-400'}`}>{delta == null ? '—' : (delta > 0 ? '+' : '') + delta + '%'}</td>
+                            </tr>
+                        );
+                    })}
                     {QUALITY_ROWS.map((r) => {
                         const cur = q.current[r.key] || 0, prev = q.previous[r.key] || 0;
                         const curB = q.current[r.base] || 0, prevB = q.previous[r.base] || 0;
@@ -89,6 +106,11 @@ function QualityDaily({ daily }) {
         { key: 'managerTakeover', label: 'Менеджер', base: 'sessions' },
         { key: 'supplierError', label: 'Пост. пом.', base: 'orders' },
     ];
+    const money = [
+        { key: 'aiUsd', label: 'AI $', d: 2 },
+        { key: 'aiPerSession', label: '$/розм.', d: 3 },
+        { key: 'aiPerOrder', label: '$/замовл.', d: 2 },
+    ];
     const pct = (v, b) => (b > 0 ? Math.round((v / b) * 100) + '%' : '·');
     return (
         <div className="overflow-x-auto">
@@ -99,6 +121,7 @@ function QualityDaily({ daily }) {
                         <th className="text-right font-medium pr-3 py-1">Сесій</th>
                         <th className="text-right font-medium pr-3 py-1">Замов.</th>
                         {cols.map((c) => <th key={c.key} className="text-right font-medium pr-3 py-1">{c.label}</th>)}
+                        {money.map((c) => <th key={c.key} className="text-right font-medium pr-3 py-1">{c.label}</th>)}
                     </tr>
                 </thead>
                 <tbody>
@@ -108,6 +131,7 @@ function QualityDaily({ daily }) {
                             <td className="text-right pr-3">{d.sessions}</td>
                             <td className="text-right pr-3">{d.orders}</td>
                             {cols.map((c) => { const v = d[c.key] || 0, b = d[c.base] || 0; const p = b > 0 ? v / b : 0; return <td key={c.key} className={`text-right pr-3 ${b > 0 && p >= 0.2 ? 'text-red-400' : b > 0 && p >= 0.1 ? 'text-amber-400' : ''}`}>{pct(v, b)}{b > 0 && v > 0 ? ` (${v})` : ''}</td>; })}
+                            {money.map((c) => { const v = Number(d[c.key] || 0); return <td key={c.key} className="text-right pr-3 text-gray-400">{v > 0 ? v.toFixed(c.d) : '·'}</td>; })}
                         </tr>
                     ))}
                 </tbody>

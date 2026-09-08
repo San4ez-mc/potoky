@@ -1119,6 +1119,35 @@ async function _handlePlatformBotUpdateInner(botId, update) {
 
         await persistUserMessage(session.id, text, incomingMedia);
 
+        // Голосове, яке не вдалось розшифрувати, у воронку не пускаємо.
+        //
+        // Спроба пояснити це промптом провалилась на живому прогоні: модель
+        // побачила службову позначку «[voice — без розшифровки]» як чужий текст
+        // і відповіла «схоже, це системне повідомлення потрапило до чату». Вона й
+        // не могла інакше — для неї це просто рядок від користувача.
+        //
+        // Тому відповідаємо самі, коротко й чесно, і кажемо власнику: розшифровка
+        // зламалась. Клієнт при цьому не лишається без відповіді.
+        if (!text && incomingMedia && (incomingMedia.type === 'voice' || incomingMedia.type === 'audio')) {
+            const askAgain = 'Не почула голосове — не вдалося його розшифрувати 😔 '
+                + 'Повтори, будь ласка, ще раз голосом або текстом.';
+            await db.message.create({
+                data: { sessionId: session.id, role: 'assistant', content: askAgain, metadata: { source: 'voice-undecoded' } },
+            }).catch(() => {});
+            await sendTelegramMessage(token, chatId, askAgain).catch(() => {});
+            try {
+                const { sendAlert } = require('../routes/alerts');
+                await sendAlert({
+                    botId: targetBotId,
+                    sessionId: session.id,
+                    kind: 'error',
+                    text: 'Голосове не розшифрувалось — клієнту довелось повторювати.',
+                    details: `fileId: ${incomingMedia.fileId || '—'}`,
+                });
+            } catch (e) { /* сповіщення не має ламати відповідь клієнту */ }
+            return;
+        }
+
         // Notify admin if they previously engaged in this session manually
         if (session.context?.adminEngaged) {
             const adminKeys = await db.funnelKey.findMany({

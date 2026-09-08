@@ -235,6 +235,21 @@ if (avail.length && avail.indexOf(size) < 0) {
   for (var i = 0; i < letterAvail.length; i++){ var dd = Math.abs(order.indexOf(letterAvail[i]) - idx); if (dd < bestd){ bestd = dd; best = letterAvail[i]; } }
   size = best;
 }
+// 2026-09-08 (власник, ganusiako: «потрібно розмір хл, вага 81, ріст 174» — бот дав L і не згадав прохання клієнта):
+// клієнт назвав розмір РАЗОМ із параметрами → називаємо свою рекомендацію за сіткою, але ФІКСУЄМО розмір клієнта
+// (якщо він є у товару). Немає такого розміру — лишаємо рекомендацію і кажемо про це.
+if (clientSize && clientSize !== size) {
+  var __clientOk = !avail.length || avail.indexOf(clientSize) >= 0;
+  if (__clientOk) {
+    var __ov = done(clientSize, 'client_override');
+    __ov.recommendedByChart = size;
+    __ov.sizeReplyText = 'За вашими параметрами (' + h + ' см / ' + w + ' кг) я б порадила ' + size + __bellyNote + ', але фіксую ' + clientSize + ', як ви просите 📏 Якщо захочете — можна змінити до оформлення 🙂';
+    return __ov;
+  }
+  var __resNo = done(size, 'chart');
+  __resNo.sizeReplyText = String(__resNo.sizeReplyText || '').replace(/\s*📏/, __bellyNote + ' 📏') + ' Розміру ' + clientSize + ' у цієї моделі немає (є: ' + avail.join(', ') + ').';
+  return __resNo;
+}
 var __resChart = done(size, 'chart');
 if (typeof __bellyNote === 'string' && __bellyNote) __resChart.sizeReplyText = String(__resChart.sizeReplyText || '').replace(/\s*📏/, __bellyNote + ' 📏');
 return __resChart;

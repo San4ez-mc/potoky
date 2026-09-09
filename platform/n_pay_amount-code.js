@@ -94,6 +94,8 @@ var extraProducts=[String(context.extraUnresolved||'').trim(), (orderExtras.leng
 var extraProductsLine=extraProducts?('➕ ДОДАТКОВО просить (додати в цю ж посилку вручну, ціну/розмір узгодити): '+extraProducts+'\n'):'';
 var adLinkMismatchLine=String(context.adLinkMismatch||'').trim()?('⚠️ '+String(context.adLinkMismatch).trim()):'';
 var out={ orderRef:ref, orderRefAt:refAt, orderQty:qty, orderUnits:units, orderUnitsText:orderUnitsText, orderUnitsTotal:mainTotal, extraProducts:extraProducts, extraProductsLine:extraProductsLine, orderExtras:orderExtras, extrasSum:extrasSum, extrasLine:extrasLine, upsellLine:upsellLine+extrasLine, adLinkMismatchLine:adLinkMismatchLine, orderChangeNote:'', fop:fop, upsellSum:upsellSum, upsellQty:upsellQty, addressAskLine:addressAskLine };
+// 2026-09-09 (r.ruslin.l: brewdrop «orderTotal=0» при cod_trust): загальна сума потрібна і без передоплати.
+out.orderTotal = full;
 if(method==='cod_trust'){ out.payAmount=0; out.payLabel='без передоплати (виняток за домовленістю, накладений платіж повністю)'; return out; }
 out.payAmount = method==='cod'?200:full;
 out.payLabel = method==='cod'?('передоплата 200 грн, решта '+(full-200)+' грн при отриманні'):('повна оплата, '+full+' грн');

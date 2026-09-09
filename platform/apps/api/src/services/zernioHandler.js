@@ -232,12 +232,19 @@ async function sendZernioMessage(botId, conversationId, text, opts = {}) {
         const tmpl = km.ZERNIO_SEND_URL || 'https://zernio.com/api/v1/inbox/conversations/{conversationId}/messages';
         const url = tmpl.replace('{conversationId}', encodeURIComponent(conversationId));
         const _t0 = Date.now();
-        const res = await fetch(url, {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${km.ZERNIO_API_TOKEN}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ accountId: km.ZERNIO_ACCOUNT_ID, message: String(text || '') }),
-        });
-        const data = await res.json().catch(() => ({}));
+        // 2026-09-09 (34 відмови HTTP 429 за ранок, 26 розмов — повідомлення клієнтам не доходили): ліміт Zernio Send API →
+        // повторюємо до 4 разів із паузою 1.5 / 3 / 6 / 10 с; інші помилки не повторюємо.
+        let res, data;
+        for (let attempt = 0; attempt < 5; attempt++) {
+            res = await fetch(url, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${km.ZERNIO_API_TOKEN}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ accountId: km.ZERNIO_ACCOUNT_ID, message: String(text || '') }),
+            });
+            data = await res.json().catch(() => ({}));
+            if (res.status !== 429 || attempt === 4) break;
+            await new Promise((r) => setTimeout(r, [1500, 3000, 6000, 10000][attempt]));
+        }
         await logZernioApiCall(opts.sessionId, 'send_message', { conversationId, text: String(text || '').slice(0, 300) }, data, res.status, _t0);
         if (!res.ok || data.error) {
             const msg = data?.error?.message || data?.message || `HTTP ${res.status}`;
@@ -893,6 +900,7 @@ async function handleCommentReceived(botId, body) {
 
     scheduleFlowRun(session.id, {
         botId, contactId, conversationId: conv.id || conv.conversationId || null, contactName, commentId: String(commentId), text: commentText,
+        ctxPatch: patch, flowRuntimePatch: { currentNodeId: 'n_comment_entry', waitingForUser: false },
     });
     logger.info('[zernioHandler] Comment routed to n_comment_entry', { botId, sessionId: session.id, commentId, mediaId });
     return { ok: true, processed: 1 };
@@ -1150,7 +1158,10 @@ async function handleIncomingMessage(botId, body) {
         // сигналу товару) виконувалась ЯК ОКРЕМИЙ крок і могла дати суперечливу
         // відповідь. Дебаунс зливає такі близькі повідомлення ОДНІЄЇ сесії в ОДИН
         // виклик рушія — чекаємо коротке вікно, чи не прийде ще щось майже одразу.
-        scheduleFlowRun(session.id, { botId, contactId, conversationId, contactName, text, imageUrl: inImageUrl });
+        // ctxPatch: пост/реклама/реферал цього повідомлення — runFlowAndDeliver накладе їх на контекст ЩЕ РАЗ перед
+        // запуском, бо прогін, що саме виконується, наприкінці перезаписує контекст своїм знімком (2026-09-09,
+        // oleksandr.ruslanovych / tetianashablenko: пост, що прийшов під час прогону, губився — бот не бачив товар).
+        scheduleFlowRun(session.id, { botId, contactId, conversationId, contactName, text, imageUrl: inImageUrl, ctxPatch: patch });
     }
     logger.info('[zernioHandler] Inbound stored', { botId, sessionId: session.id, hasAd: !!adId });
     return { ok: true, processed: 1 };
@@ -1190,6 +1201,8 @@ function scheduleFlowRun(sessionId, msg) {
     }
     if (msg.text) entry.texts.push(msg.text);
     if (msg.imageUrl && !entry.imageUrl) entry.imageUrl = msg.imageUrl;
+    if (msg.ctxPatch && typeof msg.ctxPatch === 'object') { entry.ctxPatch = entry.ctxPatch || {}; for (const [k, v] of Object.entries(msg.ctxPatch)) if (v != null) entry.ctxPatch[k] = v; }
+    if (msg.flowRuntimePatch && typeof msg.flowRuntimePatch === 'object') entry.flowRuntimePatch = { ...(entry.flowRuntimePatch || {}), ...msg.flowRuntimePatch };
     if (msg.contactName) entry.contactName = msg.contactName;
     if (msg.commentId) entry.commentId = msg.commentId;
     if (entry.timer) clearTimeout(entry.timer);
@@ -1209,6 +1222,16 @@ async function runFlowAndDeliver(sessionId, entry) {
     const { botId, contactId, conversationId, contactName, commentId } = entry;
     const sendOpts = { sessionId, ...(commentId ? { commentId } : {}) };
     const mergedText = entry.texts.filter(Boolean).join('\n').trim();
+    // Повторне накладання патчу контексту (пост/реклама/реферал) — попередній прогін у черзі міг перезаписати його.
+    if ((entry.ctxPatch && Object.keys(entry.ctxPatch).length) || entry.flowRuntimePatch) {
+        try {
+            const _s = await db.session.findUnique({ where: { id: sessionId }, select: { context: true } });
+            const _c = { ...((_s && _s.context) || {}) };
+            for (const [k, v] of Object.entries(entry.ctxPatch || {})) if (v != null) _c[k] = v;
+            if (entry.flowRuntimePatch) _c.flowRuntime = { ...(_c.flowRuntime || {}), ...entry.flowRuntimePatch };
+            await db.session.update({ where: { id: sessionId }, data: { context: cleanJsonDeep(_c) } });
+        } catch (e) { logger.warn('[zernioHandler] ctxPatch re-apply failed: ' + e.message, { sessionId }); }
+    }
     const sinceTime = new Date();
     try { await executeFlowStep({ sessionId, incomingUserMessage: mergedText, incomingImageUrl: entry.imageUrl }); }
     catch (e) { logger.error('[zernioHandler] flow step failed', { botId, sessionId, error: e.message }); }

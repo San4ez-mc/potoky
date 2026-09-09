@@ -32,6 +32,9 @@ const S = {
   comment_price: { over: { commentProductArticle: 'A0165', commentProductName: 'Бомбер замш Хьюстон', commentProductAt: new Date().toISOString(), sharedPost: { kind: 'post', caption: BOMBER_CAPTION, mediaId: '18108870742947242' } }, msgs: ['Цена'], check: (c, log, x) => c.product && c.product.sku === 'A0165' && x.photos === 0 && /1479|грн|₴/.test(log[0] || '') },
   separate_q: { over: {}, msgs: ['[переслав reel] Чоловічий замшевий костюм. Артикул: sh667999\nЗдравствуйте, возможно получить куртку отдельно?'], check: (c, log) => /окремо|отдельно|лише|тільки|комплект|костюм/i.test(log[0] || '') && (log[0] || '').split('||').length >= 2 },
   // 2026-09-09 (власник, muzika_volodimir двічі відмовився і пішов): скрипт заперечення проти передоплати v12.19.
+  // 2026-09-10 (власник): перевірка деталізації в алерт «Бот не визначив товар» — вигаданий артикул
+  // (hasProductSignal=true, у каталозі його нема) → n_unknown_debug має рахувати context.unknownDetectionDebug.
+  unknown_debug_alert: { over: {}, msgs: ['Артикул Z9999 є в наявності?'], check: (c) => !!c.unknownDetectionDebug && /ID реклами: не отримано/.test(c.unknownDetectionDebug) && /ID поста.*не отримано/.test(c.unknownDetectionDebug) && /Артикул у тексті: «Артикул Z9999»/.test(c.unknownDetectionDebug) && /Підказка категорії: не спрацювала/.test(c.unknownDetectionDebug) },
   cod_trust_objection: { over: {}, msgs: ['[переслав reel] Чоловіча вʼязана кофта. Артикул: A0187', '180 80', 'Чорний', 'Так, оформляємо', 'Без футболки', 'Тільки накладеним, без передоплати', 'Ні, не хочу передоплату', 'Добре, обіцяю'],
     check: (c, log) => /чат-бот/i.test(log.join(' ')) && /обіцяєте.*завтра не передумаєте/i.test(log.join(' ')) && c.paymentInfo && c.paymentInfo.method === 'cod_trust' },
   // 2026-09-09 (аудит бази знань): shop-рівень; питання без товару має піти через n_unknown_msg → useCrmKb (scope=shop).

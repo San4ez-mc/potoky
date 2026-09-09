@@ -5,11 +5,12 @@
 // Джерела тексту: context.alsoWants (перше повідомлення / крок розміру-кольору), context.extraProductMention
 // (двигун, lockProduct), orderIntent.extraProducts (клієнт назвав на кроці «Оформляємо?» — тоді повертаємось
 // сюди через n_extra_after_cond і n_order_intent дає новий підсумок).
-var __src = [String(context.alsoWants || '').trim(), String(context.extraProductMention || '').trim(), String((context.orderIntent && context.orderIntent.extraProducts) || '').trim()].filter(Boolean);
-var text = __src.join('; ').trim();
-var fromIntent = !!(context.orderIntent && String(context.orderIntent.extraProducts || '').trim());
-if (!text) return { extraItems: context.extraItems || [], extraItemsText: '', extraUnresolved: '', extraResolvedFor: '' };
-if (context.extraResolvedFor === text && !fromIntent) return {};
+var intentText = String((context.orderIntent && context.orderIntent.extraProducts) || '').trim();
+var fromIntent = !!intentText && context.extraIntentResolved !== intentText;
+var text = fromIntent ? intentText : [String(context.alsoWants || '').trim(), String(context.extraProductMention || '').trim()].filter(Boolean).join('; ').trim();
+var prevItems = Array.isArray(context.extraItems) ? context.extraItems : [];
+if (!text) return { extraFromIntent: false, extraJustResolved: false, extraItems: prevItems, extraItemsText: prevItems.length ? prevItems.map(function (it) { return lineOf(it); }).join('\n') : '', extraUnresolved: String(context.extraUnresolved || '') };
+if (!fromIntent && context.extraResolvedFor === text) return { extraFromIntent: false, extraJustResolved: false };
 var prod = context.product || {};
 var mainSku = String(prod.sku || '').toUpperCase();
 var upSkus = ((prod.upsellItems) || []).map(function (u) { return String(u.sku || '').toUpperCase(); }).filter(Boolean);
@@ -45,13 +46,14 @@ for (var si = 0; si < segs.length; si++) {
   var p = findByArticle(seg);
   var cands = [];
   if (!p && stem) {
-    cands = all.filter(function (x) { return prodWords(x).indexOf(stem) >= 0 && String(x.sku || '').toUpperCase() !== mainSku && upSkus.indexOf(String(x.sku || '').toUpperCase()) < 0 && x.isActive !== false; });
+    // комплекти (isSet / ціна 0) — не кандидати: «джинси» = окремий товар, а не «Комплект 4 в 1 (…джинси…)»
+    cands = all.filter(function (x) { return prodWords(x).indexOf(stem) >= 0 && String(x.sku || '').toUpperCase() !== mainSku && upSkus.indexOf(String(x.sku || '').toUpperCase()) < 0 && x.isActive !== false && !x.isSet && Number(x.price) > 0; });
     // звужуємо словами сегмента (колір/назва): «джинси сірі» → серед джинсів ті, що мають сірий
     if (cands.length > 1) { var narrowed = cands.filter(function (x) { var cs = colorsOf(x).map(norm); return cs.some(function (c) { var st = c.replace(/ий$|а$|у$|ого$|ому$/, '').slice(0, 5); return st.length >= 4 && low.indexOf(st) >= 0; }); }); if (narrowed.length >= 1 && narrowed.length < cands.length) cands = narrowed; }
     if (cands.length > 1) { var byName = cands.filter(function (x) { var w = prodWords(x).split(/\s+/).filter(function (t) { return t.length >= 5 && t.slice(0, 5) !== stem; }); return w.some(function (t) { return low.indexOf(t.slice(0, 5)) >= 0; }); }); if (byName.length === 1) cands = byName; }
     if (cands.length === 1) p = cands[0];
   }
-  if (!p) { unresolved.push(seg + (cands.length > 1 ? ' (є кілька: ' + cands.slice(0, 4).map(function (x) { return (x.customerName || x.name) + ' арт. ' + x.sku; }).join(', ') + ')' : '')); continue; }
+  if (!p) { unresolved.push(seg + (cands.length > 1 ? ' (є кілька: ' + cands.slice(0, 5).map(function (x) { return (x.customerName || x.name) + ' — арт. ' + x.sku + ' — ' + (Number(x.price) || 0) + ' грн'; }).join('; ') + ')' : '')); continue; }
   if (String(p.sku || '').toUpperCase() === mainSku) continue;
   var colors = colorsOf(p), sizes = sizesOf(p);
   var color = ''; colors.forEach(function (c) { var st = norm(c).replace(/ий$|а$|у$|ого$|ому$/, '').slice(0, 5); if (!color && st.length >= 4 && low.indexOf(st) >= 0) color = c; });
@@ -67,10 +69,21 @@ function lineOf(it) {
   if (it.sizes.length) parts.push(it.size ? 'розмір: ' + it.size : 'РОЗМІР НЕ ОБРАНО (є: ' + it.sizes.join(', ') + ')');
   return '• ' + parts.join('; ');
 }
-var out = { extraItems: items, extraItemsText: items.map(lineOf).join('\n'), extraUnresolved: unresolved.join('; '), extraResolvedFor: text, alsoWants: '', extraProductMention: '' };
+// злиття з уже розпізнаними раніше (повернення з кроку «Оформляємо?» додає, а не замінює)
+var merged = prevItems.slice(); var newCount = 0;
+items.forEach(function (it) {
+  var same = merged.filter(function (m) { return m.sku === it.sku; })[0];
+  if (same) { if (it.color) same.color = it.color; if (it.size) same.size = it.size; if (it.qty > 1) same.qty = it.qty; if (it.color || it.size) newCount++; }
+  else { merged.push(it); newCount++; }
+});
+var needChoice = unresolved.some(function (u) { return u.indexOf('є кілька:') >= 0; });
+var out = { extraItems: merged, extraItemsText: merged.map(lineOf).join('\n'), extraUnresolved: unresolved.join('; '), extraResolvedFor: fromIntent ? String(context.extraResolvedFor || '') : text, alsoWants: '', extraProductMention: '', extraFromIntent: fromIntent, extraJustResolved: fromIntent ? (newCount > 0 || needChoice) : true };
 if (fromIntent) {
-  // повернення з кроку «Оформляємо?»: клієнт назвав інші товари → новий підсумок із ними (як зміна замовлення)
-  out.orderChangeNote = 'клієнт додає до замовлення: ' + (items.length ? items.map(function (it) { return it.name + (it.color ? ' ' + it.color : '') + (it.size ? ' ' + it.size : '') + (it.qty > 1 ? ' ×' + it.qty : ''); }).join(', ') : '') + (unresolved.length ? ((items.length ? '; ' : '') + 'не знайдено в каталозі: ' + unresolved.join('; ') + ' — це додасть менеджер') : '');
-  out.orderIntent = null;
+  out.extraIntentResolved = intentText;
+  if (newCount > 0 || needChoice) {
+    // повернення з кроку «Оформляємо?»: клієнт назвав інші товари → новий підсумок із ними (як зміна замовлення)
+    out.orderChangeNote = 'клієнт додає до замовлення: ' + (items.length ? items.map(function (it) { return it.name + (it.color ? ' ' + it.color : '') + (it.size ? ' ' + it.size : '') + (it.qty > 1 ? ' ×' + it.qty : ''); }).join(', ') : '') + (unresolved.length ? ((items.length ? '; ' : '') + (needChoice ? 'треба уточнити, який саме: ' : 'не знайдено в каталозі: ') + unresolved.join('; ')) : '');
+    out.orderIntent = null;
+  }
 }
 return out;

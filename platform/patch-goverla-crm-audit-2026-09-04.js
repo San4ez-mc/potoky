@@ -436,6 +436,21 @@ function applyV9(nodes, edges, notes) {
     return { nodes, edges };
 }
 
+// v12.20.4 (2026-09-09, власник: «додай деталізацію… ід реклами не отримано, ід поста отримано, артикул не
+// знайдено, гарно напиши»): код n_unknown_debug — перевіряє, які способи визначення товару спрацювали.
+const UNKNOWN_DEBUG_CODE = `var lines = [];
+lines.push(context.entryAdId ? ('📢 ID реклами: отримано (' + context.entryAdId + ')') : '📢 ID реклами: не отримано');
+if (context.sharedPost && context.sharedPost.mediaId) lines.push('📎 ID поста/рілса: отримано (' + (context.sharedPost.kind === 'reel' ? 'рілс' : context.sharedPost.kind === 'story' ? 'сторіс' : 'пост') + ', ' + context.sharedPost.mediaId + ')');
+else if (context.postId) lines.push('📎 ID поста: отримано (' + context.postId + ')');
+else if (context.storyId) lines.push('📎 ID сторіс: отримано (' + context.storyId + ')');
+else lines.push('📎 ID поста/рілса/сторіс: не отримано');
+var msg = String(context.lastUserMessage || (context.flowRuntime && context.flowRuntime.lastUserMessage) || input || '');
+var artM = msg.match(/(?:артикул|арт\\.?|код|sku|№)\\s*[:#№.-]?\\s*[A-Za-zА-Яа-я]{0,5}\\d{2,8}|\\b[A-Za-z]\\d{3,6}\\b/i);
+lines.push(artM ? ('📝 Артикул у тексті: «' + artM[0] + '» — у каталозі не знайдено') : '📝 Артикул у тексті: не вказано');
+lines.push(context.catalogHint ? '🗂 Підказка категорії: спрацювала (показано список товарів)' : '🗂 Підказка категорії: не спрацювала (категорія в повідомленні не розпізнана)');
+if (context.commentProductArticle) lines.push('💬 Товар з коментаря: артикул ' + context.commentProductArticle + ' (застарів або не підтвердився в директі)');
+return { unknownDetectionDebug: lines.join('\\n') };`;
+
 // v10 (2026-09-07, запит власника): (1) ЄДИНИЙ ФОРМАТ сповіщень — notifyTg-ноди отримують alertTitle/alertMain/
 // alertDetails, двигун збирає «назва · магазин / головне / деталі / клієнт · сесія · CRM» з прихованими
 // посиланнями; (2) МЕНШЕ сповіщень: n_supplier_hold і n_pay_notfound_admin прибрано (їх суть — у n_create:
@@ -444,7 +459,7 @@ function applyV9(nodes, edges, notes) {
 const ALERTS = {
     n_create: { alertTitle: '🎉 {{context.createAlertTitle}} · {{context.orderRef}}', alertMain: '{{context.createAlertMain}}', alertDetails: '🛍️ {{context.product.name}} · арт. {{context.orderSku}}\n{{context.extraProductsLine}}🧾 {{context.orderUnitsText}}{{context.upsellLine}}\n💳 {{context.payLabel}} · у виписці: {{context.payStatus}}\n📦 {{context.orderData.fullName}}, {{context.orderData.phone}}\n📍 {{context.orderData.city}}, НП {{context.orderData.branch}}\n🏭 Постачальник: {{context.supplier}}' },
     n_receipt_alert: { alertTitle: '🧾 Чек отримано — у виписці не знайдено · {{context.orderRef}}', alertMain: 'Клієнт надіслав чек, але автозвірка з mono платіж не знайшла (не mono, інша сума або ще не надійшов). Перевірте вручну; якщо все гаразд — підтвердіть оплату в CRM.', alertDetails: '💰 {{context.payAmount}} грн ({{context.payLabel}})\n🛍️ {{context.product.name}} · {{context.orderUnitsText}}\n🖼 {{context.lastReceiptImageUrl}}' },
-    n_unknown_admin: { alertTitle: '🔔 Бот не визначив товар', alertMain: 'Клієнт пише, але бот не зрозумів, про який товар мова, і попросив пост/артикул. Якщо бачите товар — підкажіть у чаті.', alertDetails: '💬 «{{context.lastCustomerMessage}}»' },
+    n_unknown_admin: { alertTitle: '🔔 Бот не визначив товар', alertMain: 'Клієнт пише, але бот не зрозумів, про який товар мова, і попросив пост/артикул. Якщо бачите товар — підкажіть у чаті.', alertDetails: '💬 «{{context.lastCustomerMessage}}»\n\n{{context.unknownDetectionDebug}}' },
     n_size_oor_admin: { alertTitle: '📏 Розмір поза сіткою', alertMain: 'Бот не зміг підібрати розмір і попросив клієнта зачекати — підкажіть розмір у чаті.', alertDetails: '🛍️ {{context.product.name}}\n📐 зріст {{context.sizeInput.height}} см, вага {{context.sizeInput.weight}} кг\n❗ {{context.sizeOorReason}}' },
     n_supplier_manual: { alertTitle: '📦 Оформіть постачальнику вручну · {{context.orderRef}}', alertMain: 'Для цього постачальника/комплекту авто-замовлення не передбачене — оформіть вручну.', alertDetails: '🏭 {{context.supplier}} ({{context.supplierMechanism}})\n🛍️ {{context.product.name}} · {{context.orderUnitsText}}\n📦 {{context.orderData.fullName}}, {{context.orderData.phone}} — {{context.orderData.city}}, {{context.orderData.branch}}\n{{context.supplierSetBreakdown}}' },
     n_supplier_notify: { alertTitle: '🏭 Постачальник · {{context.orderRef}}', alertMain: '{{context.supplierOrderResult}}', alertDetails: '' },
@@ -539,6 +554,16 @@ function applyV12(nodes, edges, notes) {
     }
     const ua = byId().n_unknown_admin;
     if (ua && ua.data.alertPhoto !== '{{context.lastUserImageUrl}}') { ua.data.alertPhoto = '{{context.lastUserImageUrl}}'; notes.push('n_unknown_admin alertPhoto'); }
+    // v12.20.4 (2026-09-09, власник: «додай деталізацію... ід реклами не отримано, ід поста отримано, артикул
+    // не знайдено»): нода-вставка n_unknown_once_cond[true] → n_unknown_debug → n_unknown_admin, рахує
+    // context.unknownDetectionDebug для alertDetails (ALERTS.n_unknown_admin, applyV10 нижче за списком).
+    if (!byId().n_unknown_debug && byId().n_unknown_once_cond && byId().n_unknown_admin) {
+        const pud = placer.place(pos('n_unknown_admin').x - GX, pos('n_unknown_admin').y - GY);
+        nodes.push({ id: 'n_unknown_debug', type: 'js', position: pud, data: { label: '1c.55 Деталізація: чому не визначено', code: UNKNOWN_DEBUG_CODE, description: 'Формує context.unknownDetectionDebug для алерту n_unknown_admin: ID реклами, ID поста/рілса/сторіс, артикул у тексті, підказка категорії, коментар-джерело — отримано/не отримано.' } });
+        edges = edges.map((e) => (e.source === 'n_unknown_once_cond' && e.target === 'n_unknown_admin' && (e.sourceHandle || null) === 'true' ? { ...e, target: 'n_unknown_debug' } : e));
+        edges.push({ id: 'e_n_unknown_debug_admin', source: 'n_unknown_debug', target: 'n_unknown_admin' });
+        notes.push('+ n_unknown_debug');
+    }
     // числові розміри (джинси 29–36, взуття 40–45): «джинси 31 размера» — приймаємо одразу, без зросту/ваги
     if (byId().n_size && !/ЧИСЛОВІ розміри/.test(byId().n_size.data.systemPrompt || '')) {
         byId().n_size.data.systemPrompt = String(byId().n_size.data.systemPrompt || '') + '\nВИНЯТОК до 3c — ЧИСЛОВІ розміри: якщо у товару розміри числові (джинси 29–36, штани 46–54, взуття 39–45) і клієнт назвав число з цього ряду («31 размера», «джинси 32», «42 розмір») — це його розмір: одразу поверни ТІЛЬКИ json_output {"clothingSize":"<число>"} (можна разом із "color"/"alsoWants"), зріст і вагу НЕ вимагай.';

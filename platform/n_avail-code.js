@@ -34,6 +34,14 @@ var unitsOut={ orderUnits:units, orderQty:units.length, orderUnitsText:unitsText
 var __alsoC=[String(context.alsoWants||'').trim(), String((context.colorChoice&&context.colorChoice.alsoWants)||'').trim()].filter(Boolean).join('; ');
 if(__alsoC) unitsOut.alsoWants=__alsoC;
 function sizeOk(o){
+  // CRM 569e00c (2026-09-09): новий offer = один КОЛІР, розмір більше не властивість —
+  // CRM вже рахує o.effectiveSizes (майстер-розміри товару, звужені для цього кольору,
+  // якщо власник це зробив). Якщо поле є — воно й вирішує, властивості "розмір" ігноруємо.
+  if (Array.isArray(o.effectiveSizes)) {
+    if (!chosenSize) return true;
+    return o.effectiveSizes.some(function(s){ return String(s).toUpperCase()===String(chosenSize).toUpperCase(); });
+  }
+  // Стара модель (offer = колір+розмір разом, до 2026-09-09) — fallback для немігрованих товарів.
   var pr=o.properties||[];
   var hasSizeProp = pr.some(function(x){ return /розмір|размер/i.test(String(x.name||'')); });
   if(!hasSizeProp || !chosenSize) return true;
@@ -83,7 +91,16 @@ if(colorsList.length){
   if(sizeOverride && sizeOverride!==context.recommendedSize){ okOut.recommendedSize=sizeOverride; okOut.sizeSource='client'; }
   return okOut;
 }
-// Без кольору: перевіряємо залишок лише якщо offers взагалі несуть quantity.
+// Без кольору, але розмір УЖЕ відомий (2026-09-09, фідбек власника: перевіряти наявність
+// одразу після підбору розміру за параметрами, не чекаючи вибору кольору) — нова модель:
+// якщо товар веде майстер-список розмірів, дивимось, чи є хоч ОДИН колір, де chosenSize
+// доступний (effectiveSizes+inStock, рахує CRM). Товар без sizes — стара логіка нижче.
+if (chosenSize && stockTracked && Array.isArray(context.product && context.product.sizes) && context.product.sizes.length) {
+  var anyColorHasSize = !offers.length || offers.some(function(o){ return sizeOk(o) && offerOk(o); });
+  if (!anyColorHasSize) return { available: false, availReason: 'no_stock', orderUnits: null, orderQty: 0, orderUnitsText: '' };
+  return Object.assign({ available: true, availReason: '' }, unitsOut);
+}
+// Стара модель: перевіряємо залишок лише якщо offers взагалі несуть quantity.
 var qtyOffers = offers.filter(hasQty);
 if (qtyOffers.length) {
   var pool2 = qtyOffers.filter(sizeOk);

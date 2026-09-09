@@ -418,12 +418,16 @@ try {
   }
 
   // ── offers → sizes/colors ──
-  var sizes = [], colors = [], offers = found.offers || [];
+  // CRM 569e00c (2026-09-09): Product.sizes — майстер-список розмірів товару (іконки в
+  // картці), головне джерело. Стару модель (offer = один колір+розмір, розмір у properties)
+  // лишаємо як fallback ЛИШЕ для товарів, які ще не мігрували на sizes (порожньо).
+  var sizes = Array.isArray(found.sizes) && found.sizes.length ? found.sizes.slice() : [];
+  var colors = [], offers = found.offers || [];
   for (var k = 0; k < offers.length; k++) {
     var propsK = offers[k].properties || [];
     for (var mm = 0; mm < propsK.length; mm++) {
       var nmK = String(propsK[mm].name || '').toLowerCase();
-      if ((nmK.indexOf('розмір') >= 0 || nmK.indexOf('размер') >= 0) && sizes.indexOf(propsK[mm].value) < 0) sizes.push(propsK[mm].value);
+      if (!sizes.length && (nmK.indexOf('розмір') >= 0 || nmK.indexOf('размер') >= 0) && sizes.indexOf(propsK[mm].value) < 0) sizes.push(propsK[mm].value);
       if ((nmK.indexOf('колір') >= 0 || nmK.indexOf('цвет') >= 0) && colors.indexOf(propsK[mm].value) < 0) colors.push(propsK[mm].value);
     }
   }
@@ -660,9 +664,15 @@ try {
       isClothing: __isClothing, supplierArticle: found.supplierArticle || '', footwearNote: __footwearNote,
       qtyPrices: __qtyPrices, qtyPromoText: __qtyPromoText,
       // v10 (CRM 2026-09-07): «доступно завжди» і кількості по розмірах — n_avail читає ці прапорці
-      // CRM f50aba5: Product.alwaysAvailable (дефолт true) — кількості враховуються ЛИШЕ коли вимкнено; offer.inStock рахує бекенд.
+      // CRM f50aba5: Product.alwaysAvailable (дефолт true) — доступність враховується ЛИШЕ коли вимкнено; offer.inStock рахує бекенд.
       alwaysAvailable: found.alwaysAvailable !== false,
-      stockTracked: found.alwaysAvailable === false && (Array.isArray(found.offers) ? found.offers : []).some(function (o) { return o && o.quantity !== null && o.quantity !== undefined; }),
+      // CRM 569e00c (2026-09-09): stockTracked тепер означає "товар має майстер-список
+      // розмірів" (sizes.length>0) — саме це вирішує, чи взагалі є що звужувати по кольору.
+      // Fallback на стару "хоч один offer з quantity" — для товарів, ще не мігрованих на sizes.
+      stockTracked: found.alwaysAvailable === false && (
+        (Array.isArray(found.sizes) && found.sizes.length > 0)
+        || (Array.isArray(found.offers) ? found.offers : []).some(function (o) { return o && o.quantity !== null && o.quantity !== undefined; })
+      ),
       sizeChartUrl: __sizeChartUrl, sizeChartText: __sizeChartText, aiInfo: __aiInfo, sizeChartNote: __sizeChartNote, sizeChartData: __sizeChartData,
       // §3 ТЗ — динамічні параметри підбору розміру з CRM Category.requiredParams:
       categoryParams: categoryParams, categoryParamsPrompt: __paramsPrompt, categoryParamsIsHeightWeight: __isHeightWeight

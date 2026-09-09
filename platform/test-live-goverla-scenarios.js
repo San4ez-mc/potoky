@@ -31,6 +31,14 @@ const S = {
   basket_extras_mid: { over: {}, msgs: ['[переслав reel] Чоловіча вʼязана кофта. Артикул: A0187', '180 80', 'Графітовий', 'Додайте ще лофери 5935 розмір 43', 'Так, оформляємо, без футболки', '1'], check: (c, log) => Array.isArray(c.extraItems) && c.extraItems.length >= 1 && c.extraItems[0].sku === '5935' && /1990/.test(log.join(' ')) && Number(c.orderTotal) === 1279 + 1990 },
   comment_price: { over: { commentProductArticle: 'A0165', commentProductName: 'Бомбер замш Хьюстон', commentProductAt: new Date().toISOString(), sharedPost: { kind: 'post', caption: BOMBER_CAPTION, mediaId: '18108870742947242' } }, msgs: ['Цена'], check: (c, log, x) => c.product && c.product.sku === 'A0165' && x.photos === 0 && /1479|грн|₴/.test(log[0] || '') },
   separate_q: { over: {}, msgs: ['[переслав reel] Чоловічий замшевий костюм. Артикул: sh667999\nЗдравствуйте, возможно получить куртку отдельно?'], check: (c, log) => /окремо|отдельно|лише|тільки|комплект|костюм/i.test(log[0] || '') && (log[0] || '').split('||').length >= 2 },
+  // 2026-09-09 (власник, muzika_volodimir двічі відмовився і пішов): скрипт заперечення проти передоплати v12.19.
+  cod_trust_objection: { over: {}, msgs: ['[переслав reel] Чоловіча вʼязана кофта. Артикул: A0187', '180 80', 'Чорний', 'Так, оформляємо', 'Без футболки', 'Тільки накладеним, без передоплати', 'Ні, не хочу передоплату', 'Добре, обіцяю'],
+    check: (c, log) => /чат-бот/i.test(log.join(' ')) && /обіцяєте.*завтра не передумаєте/i.test(log.join(' ')) && c.paymentInfo && c.paymentInfo.method === 'cod_trust' },
+  // 2026-09-09 (аудит бази знань): shop-рівень; питання без товару має піти через n_unknown_msg → useCrmKb (scope=shop).
+  kb_shop_guarantee: { over: {}, msgs: ['Добрий день', 'Яку гарантію ви даєте? Не довіряю передоплаті, боюся обману'],
+    check: (c, log) => /14 днів|обмін|повернен/i.test(log[1] || log[0] || '') },
+  kb_shop_shoes: { over: {}, msgs: ['Добрий день', 'Чи прийде взуття разом з рештою замовлення однією посилкою?'],
+    check: (c, log) => /окрем/i.test(log[1] || log[0] || '') },
 };
 async function run(id) {
   const sc = S[id]; const out = ['', '=== ' + id]; const log = []; let photos = 0;

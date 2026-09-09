@@ -38,7 +38,15 @@ try{
   // база — extraItems (усе, що знайшов резолвер); orderIntent.extras лише УТОЧНЮЄ колір/розмір/кількість за sku
   // (модель може не перелічити всі позиції — вони не губляться; v12.17: лофери випали, бо extras мали лише джинси).
   var __list=__ei.map(function(b){ var e=__oe.filter(function(x){ return String(x.sku||'').toUpperCase()===String(b.sku).toUpperCase(); })[0]||{}; return { id:b.id||null, sku:String(b.sku||''), name:b.name||'Товар', price:Number(b.price)||0, qtyPrices:b.qtyPrices||{}, color:String(e.color||b.color||'').trim(), size:String(e.size||b.size||'').trim(), qty:Number(e.qty)||Number(b.qty)||1, supplier:b.supplier||'', supplierArticle:b.supplierArticle||'', offers:b.offers||[] }; });
-  __oe.forEach(function(e){ if(!e||!e.sku) return; if(__list.some(function(x){ return x.sku.toUpperCase()===String(e.sku).toUpperCase(); })) return; if(Number(e.price)>0) __list.push({ id:null, sku:String(e.sku), name:e.name||'Товар', price:Number(e.price), qtyPrices:{}, color:String(e.color||'').trim(), size:String(e.size||'').trim(), qty:Number(e.qty)||1, supplier:'', supplierArticle:'', offers:[] }); });
+  // позиція з extras, якої резолвер не бачив (модель обрала варіант зі списку «є кілька» без json extraProducts) — шукаємо в каталозі CRM за sku
+  var __missOe=__oe.filter(function(e){ return e&&e.sku&&!__list.some(function(x){ return x.sku.toUpperCase()===String(e.sku).toUpperCase(); }); });
+  if(__missOe.length){
+    var __cat=[]; try{ var __cb=(keys.CRM_API_BASE||'http://127.0.0.1:4700/api').replace(/\/$/,''); var __ck=(keys.CRM_API_KEY||'').trim(); if(__ck){ var __cr=await fetch(__cb+'/products?take=300',{headers:{Authorization:'Bearer '+__ck,Accept:'application/json'}}); if(__cr.ok){ var __cj=await __cr.json().catch(function(){return {};}); __cat=Array.isArray(__cj.data)?__cj.data:[]; } } }catch(e){ __cat=[]; }
+    __missOe.forEach(function(e){ var A=String(e.sku).toUpperCase(); var p=__cat.filter(function(x){ return String(x.sku||'').toUpperCase()===A||String(x.supplierArticle||'').toUpperCase()===A; })[0];
+      if(p&&Number(p.price)>0&&!p.isSet){ var qp={}; (Array.isArray(p.bulkPricing)?p.bulkPricing:[]).forEach(function(b){ if(b&&b.quantity&&b.price) qp[String(b.quantity)]=Number(b.price); });
+        __list.push({ id:p.id, sku:String(p.sku||A), name:(p.customerName||p.name||'Товар'), price:Number(p.price), qtyPrices:qp, color:String(e.color||'').trim(), size:String(e.size||'').trim(), qty:Number(e.qty)||1, supplier:(p.supplier&&p.supplier.name)||'', supplierArticle:p.supplierArticle||'', offers:(p.offers||[]).map(function(o){ return { id:o.id, sku:o.sku||'', properties:(o.properties||[]).map(function(q){ return { name:q.name, value:q.value }; }) }; }) }); }
+      else if(Number(e.price)>0) __list.push({ id:null, sku:String(e.sku), name:e.name||'Товар', price:Number(e.price), qtyPrices:{}, color:String(e.color||'').trim(), size:String(e.size||'').trim(), qty:Number(e.qty)||1, supplier:'', supplierArticle:'', offers:[] }); });
+  }
   __list=__list.filter(function(x){ return x.sku && x.price>0; });
   __list.forEach(function(x){ x.sum=tierTotal(x.qtyPrices, x.price, x.qty); extrasSum+=x.sum; });
   orderExtras=__list;

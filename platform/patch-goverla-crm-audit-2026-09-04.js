@@ -333,6 +333,10 @@ function applyV4(nodes, edges, notes) {
     if (byId.n_req_ref_v) { byId.n_req_ref_v.data.text = 'Оплата за товар {{context.orderRef}}'; byId.n_req_ref_v.data.variants = []; }
     if (byId.n_unknown_once_cond) byId.n_unknown_once_cond.data.condition = '!context.unknownNotifiedAt && !' + GREETING_RE + '.test(String(context.lastUserMessage || \'\'))';
     if (byId.n_unknown_stop) byId.n_unknown_stop.data.testRestartAfter = false;
+    // v12.20.2 (живий тест: перевірка v12.20.1 показала, що softHandoffOff на n_unknown_msg не діє —
+    // після відповіді сесія паркується на n_unknown_stop, і саме ЙОГО ноду бачить рушій як currentNodeId
+    // при наступному повідомленні клієнта; той самий гейт має стояти й тут, з тих самих причин.
+    if (byId.n_unknown_stop) byId.n_unknown_stop.data.softHandoffOff = true;
     edges = edges.map((e) => (e.source === 'n_pay_notfound_once_cond' && (e.sourceHandle || null) === 'false' && e.target === 'n_pay_notfound_msg') ? { ...e, target: 'n_has_address_cond' } : e);
     return { nodes, edges };
 }

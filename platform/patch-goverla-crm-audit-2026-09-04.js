@@ -444,7 +444,9 @@ if (context.sharedPost && context.sharedPost.mediaId) lines.push('📎 ID пос
 else if (context.postId) lines.push('📎 ID поста: отримано (' + context.postId + ')');
 else if (context.storyId) lines.push('📎 ID сторіс: отримано (' + context.storyId + ')');
 else lines.push('📎 ID поста/рілса/сторіс: не отримано');
-var msg = String(context.lastUserMessage || (context.flowRuntime && context.flowRuntime.lastUserMessage) || input || '');
+// context.lastCustomerMessage (той самий, що вже в alertDetails n_unknown_admin) — стабільний; на відміну від
+// runtime.lastUserMessage/input, який попередні ноди цього ж ходу (n_unknown_msg) встигають скинути до порожнього.
+var msg = String(context.lastCustomerMessage || context.lastUserMessage || (context.flowRuntime && context.flowRuntime.lastUserMessage) || input || '');
 var artM = msg.match(/(?:артикул|арт\\.?|код|sku|№)\\s*[:#№.-]?\\s*[A-Za-zА-Яа-я]{0,5}\\d{2,8}|\\b[A-Za-z]\\d{3,6}\\b/i);
 lines.push(artM ? ('📝 Артикул у тексті: «' + artM[0] + '» — у каталозі не знайдено') : '📝 Артикул у тексті: не вказано');
 lines.push(context.catalogHint ? '🗂 Підказка категорії: спрацювала (показано список товарів)' : '🗂 Підказка категорії: не спрацювала (категорія в повідомленні не розпізнана)');

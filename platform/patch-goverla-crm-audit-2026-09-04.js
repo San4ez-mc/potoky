@@ -763,6 +763,14 @@ function refresh(flow, opts) {
     if (byId.n_upsell2_wait) byId.n_upsell2_wait.data.systemPrompt = UPSELL2_PROMPT;
     if (byId.n_size) byId.n_size.data.waitAfterPresentation = true;
     applyPayCollectGuard(byId.n_pay_collect);
+    // v12.19: заміна тексту заперечення — тут, а НЕ в transform() (transform() виконується лише при першому
+    // застосуванні патча на новому боті; прод оновлюється --refresh --apply, який transform() НЕ викликає —
+    // урок 09.09: перша спроба цієї правки в transform() мовчки не подіяла на бойовому клоні).
+    if (byId.n_pay_collect) {
+        const _pcSp = String(byId.n_pay_collect.data.systemPrompt || '');
+        if (_pcSp.includes(PAY_COLLECT_OBJECTION_OLD)) { byId.n_pay_collect.data.systemPrompt = _pcSp.split(PAY_COLLECT_OBJECTION_OLD).join(PAY_COLLECT_OBJECTION_NEW); notes.push('n_pay_collect objection script v12.19'); }
+        else if (!_pcSp.includes(PAY_COLLECT_OBJECTION_NEW)) notes.push('⚠️ n_pay_collect: objection script v12.19 fragment not found');
+    }
     const v2 = applyV2(nodes, flow.edges.map((e) => ({ ...e })), notes);
     const v3raw = applyV3(v2.nodes, v2.edges, notes);
     const v4 = applyV4(v3raw.nodes, v3raw.edges, notes);

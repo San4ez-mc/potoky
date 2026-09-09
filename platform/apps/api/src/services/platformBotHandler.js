@@ -476,44 +476,10 @@ function isAddressedToBot(message, text, identity, triggerName) {
     return false;
 }
 
-/**
- * Persist a group message into the group's ongoing session WITHOUT running
- * the flow — used for messages that weren't addressed to the bot, so later
- * (when it IS addressed) the recent-history injection already has context.
- */
-async function logGroupMessagePassively(groupUserId, botId, taggedText) {
-    let session = await findActiveSession(groupUserId, botId);
-    if (!session) session = await createNewSession(groupUserId, botId);
-    await persistUserMessage(session.id, taggedText, { source: 'telegram-group-passive' });
-}
-
-/**
- * Best-effort archive of EVERY group message (passive or addressed) into an
- * external Google Doc — separate from the DB history above, for a
- * human-readable running transcript. Opt-in via two funnelKeys; does nothing
- * (silently) until both are set, so it never affects bots that don't use it.
- *   GDOC_APPEND_URL — deployed Google Apps Script Web App URL
- *   GDOC_APPEND_KEY — shared secret the script checks (its own Script Property)
- * The script owns per-chat doc creation/lookup — this side just POSTs the line.
- */
-async function appendToGroupDoc(botId, chat, taggedText) {
-    const keys = await db.funnelKey.findMany({
-        where: { botId, key: { in: ['GDOC_APPEND_URL', 'GDOC_APPEND_KEY'] } },
-        select: { key: true, value: true },
-    }).catch(() => []);
-    const km = Object.fromEntries(keys.map(k => [k.key, k.value]));
-    if (!km.GDOC_APPEND_URL || !km.GDOC_APPEND_KEY) return; // not configured — skip quietly
-    try {
-        await fetch(km.GDOC_APPEND_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ apiKey: km.GDOC_APPEND_KEY, chatId: chat.id, chatTitle: chat.title || '', text: taggedText }),
-            signal: AbortSignal.timeout(15000),
-        });
-    } catch (err) {
-        logger.warn('[platformBotHandler] appendToGroupDoc failed', { error: err.message });
-    }
-}
+// Archiving a passive group message (Google Doc, image description, etc.) is
+// FUNNEL behavior now — a condition node on {{context.addressed}} routes to an
+// archive js-node chain instead of the agent. See fineko-funnel-standard §1
+// (root cause #8: channel adapters stay thin, business logic lives in nodes).
 
 async function getNewAssistantMessages(sessionId, since) {
     const where = { sessionId, role: 'assistant' };
@@ -1001,7 +967,12 @@ async function _handlePlatformBotUpdateInner(botId, update) {
     }
 
     // ── Group chats: opt-in per bot, OFF by default (see helpers above) ──────
+    // `addressed` stays true for private chats (existing behavior, untouched).
+    // What happens with a message — archive silently vs. actually reply — is a
+    // FUNNEL decision now (a condition node branches on {{context.addressed}}),
+    // not something hardcoded here. This file only classifies and routes.
     const chatType = message.chat?.type || 'private';
+    let addressed = true;
     if (chatType === 'group' || chatType === 'supergroup') {
         const groupMode = await getGroupModeConfig(botId);
         if (!groupMode) {
@@ -1014,8 +985,8 @@ async function _handlePlatformBotUpdateInner(botId, update) {
 
         // Voice/audio in a passive (non-addressed) message would otherwise carry
         // no text at all — reuse the SAME Whisper path already used below for
-        // addressed messages (Phase 1.5), just run early so passive logging and
-        // the Google Doc archive get real text too, not silence.
+        // addressed messages (Phase 1.5), just run early so the archive node
+        // downstream gets real text too, not silence.
         if (!text) {
             const media = await extractIncomingMedia(message, gToken).catch(() => null);
             if (media && (media.type === 'voice' || media.type === 'audio') && media.fileUrl) {
@@ -1028,39 +999,18 @@ async function _handlePlatformBotUpdateInner(botId, update) {
         }
 
         const identity = await getBotIdentity(gToken);
-        const addressed = isAddressedToBot(message, text, identity, groupMode.triggerName);
+        addressed = isAddressedToBot(message, text, identity, groupMode.triggerName);
         const tag = `[${displayName(from)}]: `;
-        const taggedText = text ? tag + text : '';
 
         // Group chat id is always negative → never collides with a real user id.
         // Reusing findOrCreateUser with a synthetic "from" gives the whole group
-        // one shared, continuing session/history — same machinery as a 1:1 chat.
-        const groupFrom = { id: message.chat.id, first_name: message.chat.title || 'Група', last_name: null, username: null };
-        let groupUser;
-        try {
-            groupUser = await findOrCreateUser(groupFrom, botId);
-        } catch (err) {
-            logger.warn('[platformBotHandler] findOrCreateUser (group) failed', { error: err.message });
-            return;
-        }
-
-        // Full transcript archive (Google Doc) — every message, addressed or not.
-        // No-ops until GDOC_APPEND_URL/KEY are configured for this bot.
-        if (taggedText) appendToGroupDoc(botId, message.chat, taggedText).catch(() => {});
-
-        if (!addressed) {
-            // Passive: remember what was said, don't reply, don't run the flow.
-            if (taggedText) await logGroupMessagePassively(groupUser.id, botId, taggedText).catch(() => {});
-            return;
-        }
-
-        // Addressed to the bot — fall through into the normal pipeline below,
-        // attributed to the group's shared identity instead of the sender's.
-        // Slash-commands (e.g. /start) are left untagged so the raw-text
-        // parsing further down (startPayload = text.slice('/start'.length))
-        // still lines up correctly.
-        from = groupFrom;
-        if (!text.startsWith('/')) text = taggedText;
+        // one shared, continuing session/history — same machinery as a 1:1 chat,
+        // and lets the funnel's archive nodes see every message via the normal
+        // session/message history, addressed or not.
+        from = { id: message.chat.id, first_name: message.chat.title || 'Група', last_name: null, username: null };
+        // Slash-commands (e.g. /start) are left untagged so the raw-text parsing
+        // further down (startPayload = text.slice('/start'.length)) still lines up.
+        if (text && !text.startsWith('/')) text = tag + text;
     }
 
     const isStart = (message.text || '').startsWith('/start');
@@ -1288,8 +1238,14 @@ async function _handlePlatformBotUpdateInner(botId, update) {
         }
 
         if (!session) {
-            await sendTelegramMessage(token, chatId, 'Натисніть /start щоб розпочати.');
-            return;
+            if (chatType !== 'private') {
+                // First message ever from this group — silently open a session
+                // (mirrors /start) instead of nagging the group to type /start.
+                session = await createNewSession(user.id, targetBotId);
+            } else {
+                await sendTelegramMessage(token, chatId, 'Натисніть /start щоб розпочати.');
+                return;
+            }
         }
 
         await persistUserMessage(session.id, text, incomingMedia,
@@ -1360,10 +1316,12 @@ async function _handlePlatformBotUpdateInner(botId, update) {
     // Content-manager bot uses telegramChatId for deliverTo (sends generated content back here)
     // and lastUserMedia to let the agent reuse a sent photo/video as a background.
     // incomingMedia вже витягнуто у Phase 1.5 (з можливою транскрипцією голосу).
-    if (chatId && (session?.context?.telegramChatId !== chatId || session?.context?.chatType !== chatType || incomingMedia)) {
-        const nextCtx = { ...(session.context || {}), telegramChatId: chatId, chatType };
-        // Visible/branchable from the funnel itself (condition node on {{context.chatType}})
-        // instead of being decided invisibly in this file — see fineko-funnel-standard.
+    if (chatId && (session?.context?.telegramChatId !== chatId || session?.context?.chatType !== chatType
+        || session?.context?.addressed !== addressed || incomingMedia)) {
+        const nextCtx = { ...(session.context || {}), telegramChatId: chatId, chatType, addressed };
+        // Visible/branchable from the funnel itself (condition node on {{context.chatType}}
+        // / {{context.addressed}}) instead of being decided invisibly in this file —
+        // see fineko-funnel-standard.
         if (chatType !== 'private') {
             nextCtx.chatTitle = message.chat?.title || '';
         }

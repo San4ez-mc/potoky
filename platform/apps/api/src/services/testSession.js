@@ -3700,6 +3700,11 @@ ${sourceContent || '(немає даних)'}
                             sessionId: session.id,
                             stageName,
                             stageOrder: Number(data.stageOrder) || 0,
+                            // 2026-09-09: CRM створює/рухає картку на дошці для кожної розмови — контакт і презентований товар.
+                            igUsername: ctx.igUsername || null,
+                            senderName: ctx.senderName || null,
+                            psid: ctx.psid || null,
+                            product: ctx.product && (ctx.product.sku || ctx.product.name) ? { id: ctx.product.id || null, sku: ctx.product.sku || '', name: ctx.product.customerName || ctx.product.name || '', price: Number(ctx.product.price) || 0 } : null,
                         }),
                     }).catch((e) => { console.warn('[funnelStage] CRM best-effort fail:', e.message); notifyAdminOfServiceOutage(session.id, 'CRM funnel-events (аналітика етапів воронки)', e.message).catch(() => {}); return null; });
                     if (fsRes && !fsRes.ok) {

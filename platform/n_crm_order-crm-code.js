@@ -133,6 +133,8 @@ try {
   }
   var body = {
     buyerId: buyerId,
+    // 2026-09-09: картка цієї розмови вже на дошці CRM (з funnel-events) — CRM доповнить її, а не створить другу.
+    funnelSessionId: (typeof session !== 'undefined' && session && session.id) ? String(session.id) : null,
     sourceName: 'Instagram' + (shopTag ? (' ' + shopTag) : ''),
     managerComment: 'Товар: ' + (p.customerName || p.name || '') + ' | Позиції: ' + unitsText + ' | Оплата: ' + payTxt + (supplierName ? (' | Постачальник: ' + supplierName) : '') + (items.some(function (it) { return it.isUpsell; }) ? (' | + допродаж: ' + items.filter(function (it) { return it.isUpsell; })[0].name + ' × ' + items.filter(function (it) { return it.isUpsell; })[0].quantity) : '') + (String(context.extraProducts || '').trim() ? (' | ДОДАТКОВО ПРОСИТЬ (додати вручну): ' + String(context.extraProducts).trim()) : '') + ' | Перевірити оплату.',
     shipping: { shippingService: 'Нова Пошта', city: (od.city || ''), branch: (od.branch || ''), recipientFullName: (od.fullName || ''), recipientPhone: phone },

@@ -1902,7 +1902,10 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
             // клієнт відповість текстом. Мовчимо і чекаємо далі.
             // 20:43 (скрін власника): «Вітаю, ціна?» одразу після презентації, де ціна вже є, → бот повторив ціну.
             // data.ignoreRightAfterPresentationRe — такі короткі репліки протягом 5 хв після презентації без відповіді.
-            if (mode === 'dialog' && data.ignoreRightAfterPresentationRe && runtime.lastUserMessage && ctx.presentedAt && (Date.now() - Number(ctx.presentedAt)) < 5 * 60 * 1000 && !speakFirstNow) {
+            // 2026-09-09 (_iamevgeniy_ 00:08: товар з коментар-автоматизації, перше повідомлення в DM «Цена» проігноровано як
+            // айсбрейкер після картки): картку в DM бот не показував — ігнор не застосовуємо до товарів via comment_automation.
+            const _viaComment = !!(ctx.product && /^comment_automation/.test(String(ctx.product._via || '')));
+            if (mode === 'dialog' && data.ignoreRightAfterPresentationRe && runtime.lastUserMessage && ctx.presentedAt && (Date.now() - Number(ctx.presentedAt)) < 5 * 60 * 1000 && !speakFirstNow && !_viaComment) {
                 let _ign = false; try { _ign = new RegExp(String(data.ignoreRightAfterPresentationRe), 'i').test(String(runtime.lastUserMessage).trim()); } catch (_e) { _ign = false; }
                 if (_ign) {
                     pushDelivery(runtime, 'message_ignored', true, null, { nodeId: node.id, reason: 'коротке «ціна?/привіт» одразу після презентації — відповідь уже в картці', text: String(runtime.lastUserMessage).slice(0, 60) });

@@ -59,8 +59,10 @@ for (var si = 0; si < segs.length; si++) {
   var color = ''; colors.forEach(function (c) { var st = norm(c).replace(/ий$|а$|у$|ого$|ому$/, '').slice(0, 5); if (!color && st.length >= 4 && low.indexOf(st) >= 0) color = c; });
   var size = ''; var sm = seg.replace(/\d{3,}/g, ' ').match(SIZE_RE); if (sm) { var sv = sm[1].toLowerCase(); sv = SIZE_MAP[sv] || sv.toUpperCase(); if (!sizes.length || sizes.map(function (x) { return x.toUpperCase(); }).indexOf(sv) >= 0) size = sv; }
   var qty = 1; var qm = seg.match(/(\d+)\s*(шт|штук|пар)/i) || seg.match(/[x×]\s*(\d+)/i); if (qm) qty = Number(qm[1]) || 1; else { for (var qw in QTY_WORDS) { if (low.indexOf(qw + ' ') === 0 || low.indexOf(' ' + qw + ' ') >= 0) qty = QTY_WORDS[qw]; } }
-  var ex = items.filter(function (it) { return it.sku === (p.sku || '') && it.color === color && it.size === size; })[0];
-  if (ex) { ex.qty += qty; continue; }
+  // та сама річ згадана ще раз (alsoWants накопичує формулювання з різних кроків) — це НЕ друга штука
+  var explicitQty = !!(qm || Object.keys(QTY_WORDS).some(function (qw) { return low.indexOf(qw + ' ') === 0 || low.indexOf(' ' + qw + ' ') >= 0; }));
+  var ex = items.filter(function (it) { return it.sku === (p.sku || ''); })[0];
+  if (ex) { if (color && !ex.color) ex.color = color; if (size && !ex.size) ex.size = size; if (explicitQty) ex.qty = Math.max(ex.qty, qty); continue; }
   items.push({ id: p.id, sku: p.sku || '', name: (p.customerName || p.name || 'Товар'), price: Number(p.price) || 0, qtyPrices: qtyPricesOf(p), color: color, size: size, qty: qty, colorsList: colors, sizes: sizes, supplier: (p.supplier && p.supplier.name) || '', supplierArticle: p.supplierArticle || '', offers: (p.offers || []).map(function (o) { return { id: o.id, sku: o.sku || '', properties: (o.properties || []).map(function (q) { return { name: q.name, value: q.value }; }) }; }), raw: seg });
 }
 function lineOf(it) {

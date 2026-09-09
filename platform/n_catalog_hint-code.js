@@ -47,7 +47,9 @@ try {
   var __uw = msg.replace(/[^a-zа-яіїєґ0-9\s]/gi, ' ').split(/\s+/).filter(function (w) { return w.length >= 4 && !__STOP[w] && !(__stem && w.indexOf(__stem) === 0); });
   if (__uw.length) {
     var __nameOf = function (p) { return (String(p.name || '') + ' ' + String(p.customerName || '')).toLowerCase(); };
-    var __hitsBy = function (list) { return list.filter(function (p) { var h = __nameOf(p); return __uw.some(function (w) { return h.indexOf(w) >= 0; }); }); };
+    // 2026-09-09 (latifzada_0: «фото кофты «Сейн ангора»» → «ангора» є і в «Кофта Ангора» C0043 → два збіги → списку замість фото):
+    // рахуємо, скільки слів клієнта є в назві; якщо є єдиний лідер за кількістю збігів — беремо його.
+    var __hitsBy = function (list) { var scored = list.map(function (p) { var h = __nameOf(p); return { p: p, n: __uw.filter(function (w) { return h.indexOf(w) >= 0; }).length }; }).filter(function (x) { return x.n > 0; }); if (!scored.length) return []; var top = Math.max.apply(null, scored.map(function (x) { return x.n; })); var best = scored.filter(function (x) { return x.n === top; }).map(function (x) { return x.p; }); return best; };
     var __prev = String(context.catalogHintSkus || '').toUpperCase().split(',').filter(Boolean);
     var __pick = null;
     var __nh = __hitsBy(active.filter(function (p) { return __prev.indexOf(String(p.sku || '').toUpperCase()) >= 0; }));

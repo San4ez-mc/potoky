@@ -160,7 +160,11 @@ function exactBy(val, keyRe, preferLarger) {
 var chestVal = Number(s0.chest) || 0;
 var footVal = Number(s0.footLength) || 0;
 var __exactMeasure = '';
-var ex = exactBy(chestVal, /груд/i, false);
+// 2026-09-09 (yarvolod: «182, 100 кг, обхват грудей 108» → бот покликав менеджера, бо 108 < мінімального обхвату ВИРОБУ 110):
+// обхват грудей клієнта — це обхват тіла, а в сітці — виріб із запасом, тому при наявних зрості й вазі рахуємо за ними,
+// а обхват беремо лише коли зросту/ваги нема.
+var __hwGiven = (Number(s0.height) || 0) > 0 && (Number(s0.weight) || 0) > 0;
+var ex = __hwGiven ? null : exactBy(chestVal, /груд/i, false);
 if (ex) __exactMeasure = 'обхватом грудей ' + String(chestVal).replace('.', ',') + ' см';
 if (!ex) { ex = exactBy(footVal, /стоп|устілк|foot|нога/i, true); if (ex) __exactMeasure = 'довжиною стопи ' + String(footVal).replace('.', ',') + ' см'; }
 if (ex && ex.outOfChart) return oor('вимір ' + (footVal || chestVal) + ' см поза сіткою товару (' + ex.key + ': ' + ex.min + '–' + ex.max + ' см)', '');

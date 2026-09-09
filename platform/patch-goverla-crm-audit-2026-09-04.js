@@ -566,6 +566,10 @@ function applyV12(nodes, edges, notes) {
         edges.push({ id: 'e_n_unknown_debug_admin', source: 'n_unknown_debug', target: 'n_unknown_admin' });
         notes.push('+ n_unknown_debug');
     }
+    // Синхронізація коду безумовна (окремо від створення вище) — інакше правки в UNKNOWN_DEBUG_CODE після
+    // першого деплою мовчки ігноруються: `if (!byId().n_unknown_debug …)` створює ноду РІВНО ОДИН раз (урок
+    // 2026-09-10: v12.20.5 змінив константу, але на проді нода вже існувала з v12.20.4 — код не оновився).
+    if (byId().n_unknown_debug && byId().n_unknown_debug.data.code !== UNKNOWN_DEBUG_CODE) { byId().n_unknown_debug.data.code = UNKNOWN_DEBUG_CODE; notes.push('code n_unknown_debug'); }
     // числові розміри (джинси 29–36, взуття 40–45): «джинси 31 размера» — приймаємо одразу, без зросту/ваги
     if (byId().n_size && !/ЧИСЛОВІ розміри/.test(byId().n_size.data.systemPrompt || '')) {
         byId().n_size.data.systemPrompt = String(byId().n_size.data.systemPrompt || '') + '\nВИНЯТОК до 3c — ЧИСЛОВІ розміри: якщо у товару розміри числові (джинси 29–36, штани 46–54, взуття 39–45) і клієнт назвав число з цього ряду («31 размера», «джинси 32», «42 розмір») — це його розмір: одразу поверни ТІЛЬКИ json_output {"clothingSize":"<число>"} (можна разом із "color"/"alsoWants"), зріст і вагу НЕ вимагай.';

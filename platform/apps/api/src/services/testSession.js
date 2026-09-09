@@ -1987,7 +1987,11 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
             if (data.useCrmKb && runtime.lastUserMessage && ctx.product !== undefined) {
                 try {
                     const _q = String(runtime.lastUserMessage).trim();
-                    const _looksLikeQuestion = _q.length >= 6 && (/\?/.test(_q) || /^(чи|як|коли|де|скільки|чому|можна|є\s|який|яка|які|що|а\s)/i.test(_q));
+                    // 2026-09-09 (аудит бази знань): goverla — двомовна аудиторія (жива переписка ~третина
+                    // повідомлень російською: "Сколько стоит?", "Есть ли гарантия?"), а старий список слів був
+                    // лише українським — без "?" такі питання пропускали пошук по базі знань мовчки. Додано
+                    // російські відповідники + кілька українських, яких бракувало (звідки, куди, хто, скажіть).
+                    const _looksLikeQuestion = _q.length >= 6 && (/\?/.test(_q) || /^(чи|як|коли|де|звідки|куди|хто|скільки|чому|можна|є\s|який|яка|які|що|а\s|скажіть|підкажіть|как|когда|где|откуда|куда|кто|сколько|почему|можно|есть\s|какой|какая|какие|что|скажите|подскажите)/i.test(_q));
                     const _kRawBase = String(funnelEnv.CRM_API_URL || funnelEnv.CRM_API_BASE || '').trim().replace(/\/$/, '');
                     const _kApiUrl = _kRawBase && !_kRawBase.endsWith('/api') ? `${_kRawBase}/api` : _kRawBase;
                     const _kApiKey = String(funnelEnv.CRM_API_KEY || '').trim();

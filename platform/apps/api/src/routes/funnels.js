@@ -478,15 +478,21 @@ router.get('/:botId/nodes/:nodeId/stats',
             },
         });
 
-        const errorsAtNode = await db.$queryRaw`
-            SELECT COUNT(*) as count FROM app_errors
-            WHERE "botId" = ${botId}
-            AND "nodeId" = ${nodeId}
-            AND "createdAt" >= ${timeFrom}
-            AND "resolved" = false
-        `;
-
-        const errorCount = errorsAtNode?.[0]?.count || 0;
+        // 2026-09-09: AppError не має колонки "nodeId" — nodeId лежить у JSON-полі context (context.nodeId,
+        // ставить движок при логуванні помилки ноди). Раніше запит падав на кожен виклик з "column nodeId
+        // does not exist" (unhandled, MCP get_node_stats повертав 500). best-effort: якщо помилки логуються
+        // без nodeId у context з якоїсь причини — errorCount просто 0, ендпоінт не має падати через це.
+        let errorCount = 0;
+        try {
+            const errorsAtNode = await db.$queryRaw`
+                SELECT COUNT(*) as count FROM app_errors
+                WHERE "botId" = ${botId}
+                AND context->>'nodeId' = ${nodeId}
+                AND "createdAt" >= ${timeFrom}
+                AND "resolved" = false
+            `;
+            errorCount = Number(errorsAtNode?.[0]?.count) || 0;
+        } catch (e) { /* best-effort — не валимо ендпоінт статистики через це */ }
 
         // Token usage for Claude nodes — aggregate from api_calls responseData
         const claudeApiCalls = await db.apiCall.findMany({

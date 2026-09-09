@@ -29,6 +29,19 @@ if(context.orderIntent&&context.orderIntent.addUpsell){
   }
 }
 full=full+upsellSum;
+// 2026-09-09 (п.5, складні кошики): додаткові товари з каталогу — orderIntent.extras (фінальний вибір кольору/розміру
+// на кроці «Оформляємо?») поверх context.extraItems (n_extra_resolve). Ціна за кількість — за акцією товару.
+var extrasSum=0; var orderExtras=[];
+try{
+  var __ei=Array.isArray(context.extraItems)?context.extraItems:[];
+  var __oe=Array.isArray(oi.extras)?oi.extras:[];
+  var __list=__oe.length?__oe.map(function(e){ var b=__ei.filter(function(x){ return String(x.sku).toUpperCase()===String(e.sku||'').toUpperCase(); })[0]||{}; return { id:b.id||null, sku:String(e.sku||b.sku||''), name:b.name||e.name||'Товар', price:Number(b.price||e.price)||0, qtyPrices:b.qtyPrices||{}, color:String(e.color||b.color||'').trim(), size:String(e.size||b.size||'').trim(), qty:Number(e.qty)||Number(b.qty)||1, supplier:b.supplier||'', supplierArticle:b.supplierArticle||'', offers:b.offers||[] }; }):__ei.map(function(b){ return Object.assign({}, b, { qty:Number(b.qty)||1 }); });
+  __list=__list.filter(function(x){ return x.sku && x.price>0; });
+  __list.forEach(function(x){ x.sum=tierTotal(x.qtyPrices, x.price, x.qty); extrasSum+=x.sum; });
+  orderExtras=__list;
+}catch(e){ orderExtras=[]; extrasSum=0; }
+full=full+extrasSum;
+var extrasLine=orderExtras.length?('\n➕ Додатково: '+orderExtras.map(function(x){ return x.name+' '+[x.color,x.size].filter(Boolean).join(' ')+(x.qty>1?' ×'+x.qty:'')+' ('+x.sum+' грн)'; }).join('; ')):'';
 // orderRef — короткий код у призначенні платежу: префікс із SHOP_TAG (клон = шаблон + конфіг),
 // id з psid/igUsername (для Instagram telegramId нема — раніше виходило "GOVNAN…"), orderRefAt —
 // момент видачі коду (n_reconcile дивиться у виписці лише платежі ПІСЛЯ нього).
@@ -65,10 +78,11 @@ var addressAskLine = haveAddr
   : '📦 Дані для відправки (ПІБ, телефон, місто, № відділення або поштомата Нової Пошти) можна написати прямо зараз одним повідомленням 🙂';
 // v8.1: інший товар, який клієнт попросив додати посеред оформлення — рядок для сповіщень менеджеру (n_create/n_supplier_hold) і коментаря в CRM.
 var upsellLine = upsellSum>0 ? (' + допродаж: '+String(((context.product&&context.product.upsellItems)||[])[0]&&((context.product.upsellItems)[0].name)||'допродаж')+' ×'+upsellQty+' ('+upsellSum+' грн)') : '';
-var extraProducts=String((oi.extraProducts)||'').trim();
+// нерозпізнані речі (n_extra_resolve не знайшов у каталозі) — як і раніше, менеджеру вручну
+var extraProducts=[String(context.extraUnresolved||'').trim(), (orderExtras.length?'':String((oi.extraProducts)||'').trim())].filter(Boolean).join('; ');
 var extraProductsLine=extraProducts?('➕ ДОДАТКОВО просить (додати в цю ж посилку вручну, ціну/розмір узгодити): '+extraProducts+'\n'):'';
 var adLinkMismatchLine=String(context.adLinkMismatch||'').trim()?('⚠️ '+String(context.adLinkMismatch).trim()):'';
-var out={ orderRef:ref, orderRefAt:refAt, orderQty:qty, orderUnits:units, orderUnitsText:orderUnitsText, orderUnitsTotal:mainTotal, extraProducts:extraProducts, extraProductsLine:extraProductsLine, upsellLine:upsellLine, adLinkMismatchLine:adLinkMismatchLine, orderChangeNote:'', fop:fop, upsellSum:upsellSum, upsellQty:upsellQty, addressAskLine:addressAskLine };
+var out={ orderRef:ref, orderRefAt:refAt, orderQty:qty, orderUnits:units, orderUnitsText:orderUnitsText, orderUnitsTotal:mainTotal, extraProducts:extraProducts, extraProductsLine:extraProductsLine, orderExtras:orderExtras, extrasSum:extrasSum, extrasLine:extrasLine, upsellLine:upsellLine+extrasLine, adLinkMismatchLine:adLinkMismatchLine, orderChangeNote:'', fop:fop, upsellSum:upsellSum, upsellQty:upsellQty, addressAskLine:addressAskLine };
 if(method==='cod_trust'){ out.payAmount=0; out.payLabel='без передоплати (виняток за домовленістю, накладений платіж повністю)'; return out; }
 out.payAmount = method==='cod'?200:full;
 out.payLabel = method==='cod'?('передоплата 200 грн, решта '+(full-200)+' грн при отриманні'):('повна оплата, '+full+' грн');

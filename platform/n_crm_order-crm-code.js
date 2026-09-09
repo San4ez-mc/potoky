@@ -131,6 +131,13 @@ try {
     var upUnit = upQty > 1 && Number(context.upsellSum) ? Math.round((Number(context.upsellSum) / upQty) * 100) / 100 : (up0.price || 0);
     items.push({ productId: up0.id || null, offerId: null, name: (up0.name || 'Допродаж') + (upNote ? (' (' + upNote + ')') : ''), price: upUnit, quantity: upQty, properties: null, isUpsell: true });
   }
+  // 2026-09-09 (п.5): додаткові товари з каталогу (n_extra_resolve → n_pay_amount.orderExtras) — окремі позиції з offerId за кольором/розміром.
+  (Array.isArray(context.orderExtras) ? context.orderExtras : []).forEach(function (x) {
+    var of = null; (x.offers || []).forEach(function (o) { if (of) return; var pp = o.properties || []; var okC = !x.color || pp.some(function (q) { return /кол|цвет/i.test(q.name || '') && String(q.value) === String(x.color); }); var okS = !x.size || pp.some(function (q) { return /розмір|размер/i.test(q.name || '') && String(q.value).toUpperCase() === String(x.size).toUpperCase(); }); if (okC && okS) of = o; });
+    var props = []; if (x.size) props.push({ name: 'Розмір', value: x.size }); if (x.color) props.push({ name: 'Колір', value: x.color });
+    var unit = x.qty > 1 && Number(x.sum) ? Math.round((Number(x.sum) / x.qty) * 100) / 100 : (Number(x.price) || 0);
+    items.push({ productId: x.id || null, offerId: of ? of.id : null, name: x.name + ' (арт. ' + x.sku + ')', price: unit, quantity: Number(x.qty) || 1, properties: props.length ? props : null, isUpsell: false });
+  });
   var body = {
     buyerId: buyerId,
     // 2026-09-09: картка цієї розмови вже на дошці CRM (з funnel-events) — CRM доповнить її, а не створить другу.

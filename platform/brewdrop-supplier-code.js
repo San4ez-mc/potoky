@@ -88,6 +88,16 @@ if(oi.addUpsell && up){
       var exu=lines.find(function(l){return l.pcsId===ru.pcsId;}); if(exu) exu.qty+=per; else lines.push({ pcsId:ru.pcsId, qty:per, label:fu.article+' / '+ru.color+' / '+ru.size+' ×'+per+' (допродаж, залишок '+ru.remains+')' }); }
   }
 }
+// ── 2c) додаткові товари з каталогу (п.5, 2026-09-09): того ж постачальника — у це ж замовлення; іншого — менеджеру вручну ──
+var extras=Array.isArray(context.orderExtras)?context.orderExtras:[];
+var mainSupplier=norm((prod.supplier)||context.supplier||'');
+for(var xi=0;xi<extras.length;xi++){ var x=extras[xi]||{}; var xs=norm(x.supplier||'');
+  if(!xs||(mainSupplier&&xs!==mainSupplier&&xs.indexOf('brewdrop')<0&&mainSupplier.indexOf(xs)<0)){ missing.push('додатково «'+x.name+'» '+[x.color,x.size].filter(Boolean).join(' ')+(x.qty>1?' ×'+x.qty:'')+' — постачальник «'+(x.supplier||'?')+'», оформіть окремо'); continue; }
+  var fx=await findBdProduct({ id:x.id, sku:x.sku, supplierArticle:x.supplierArticle, name:x.name });
+  if(fx.error){ missing.push('додатково «'+x.name+'»: '+fx.error); continue; }
+  var rx=await resolvePcs(fx.found, x.color||'', x.size||'');
+  if(!rx){ missing.push('додатково «'+x.name+'» '+(x.color||'')+' '+(x.size||'')+' — нема в наявності у brewdrop'); continue; }
+  var exx=lines.find(function(l){return l.pcsId===rx.pcsId;}); var xq=Number(x.qty)||1; if(exx) exx.qty+=xq; else lines.push({ pcsId:rx.pcsId, qty:xq, label:fx.article+' / '+rx.color+' / '+rx.size+(xq>1?' ×'+xq:'')+' (додатково, залишок '+rx.remains+')' }); }
 // ── 3) місто/відділення (до кошика) ──
 var cityRaw=String(np.city||od.city||'');
 var cityQ=cityRaw.replace(/^(м|с|смт|сел|селище|місто|село)\.?\s+/i,'').split(',')[0].split('(')[0].trim();

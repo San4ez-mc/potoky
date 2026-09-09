@@ -1193,6 +1193,13 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
         ctx.adminEngaged = false;
         delete ctx.handoffKind;
         delete ctx.handoffReason;
+        // 2026-09-09 (аудит бази знань goverla): клієнт, щойно піднятий з "товар не визначено", часто пише
+        // ЩЕ не про товар — «не довіряю передоплаті, боюся обману». runtime.currentNodeId цієї миті = null
+        // (сесія "completed"), тому data.softHandoffOff НІЯКОЇ ноди тут перевірити неможливо — HARD/SOFT-чек
+        // нижче спрацьовував і рвав щойно відновлену сесію одразу на цьому ж ході, не даючи флоу навіть
+        // спробувати відповісти (n_unknown_msg тепер має useCrmKb саме для таких загальних питань).
+        // Прапорець — одноразовий, лише на ЦЕЙ хід; знімається одразу після SOFT-чека нижче.
+        ctx._justResumedFromProductUnknown = true;
     }
     if (ctx.adminEngaged && !ctx.funnelPaused && (incomingUserMessage || incomingImageUrl)) {
         ctx.adminEngaged = false;
@@ -1478,7 +1485,11 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
     // сценарій винятку довіри cod_trust з промпту) — раніше двигун перехоплював ці слова
     // ДО ноди, і ретельно прописаний сценарій ніколи не спрацьовував.
     const _hoNode = runtime.currentNodeId ? nodesById.get(runtime.currentNodeId) : null;
-    const _softHandoffOff = Boolean(_hoNode && _hoNode.data && _hoNode.data.softHandoffOff === true);
+    // 2026-09-09: currentNodeId часто null саме в мить, коли сесія щойно відновилась з паузи product_unknown
+    // (див. _justResumedFromProductUnknown вище) — softHandoffOff НОДИ тоді нема кого перевірити, тому той
+    // самий одноразовий прапорець контексту теж вимикає SOFT-детект на цей єдиний хід; знімається одразу.
+    const _softHandoffOff = Boolean((_hoNode && _hoNode.data && _hoNode.data.softHandoffOff === true) || ctx._justResumedFromProductUnknown);
+    delete ctx._justResumedFromProductUnknown;
     const _hoHardRe = /менеджер|оператор(?!ськ)|з\s*людин|живою\s*людин|жива\s*людин|людину\s*(покличте|дайте)|ви\s*бот|це\s*бот|справжн(я|ій)\s*людин|\bбрак\b|скарг|жалоб|конфлікт/i;
     const _hoSoftRe = /обман|шахра|не\s*прийшл|не\s*дійшл|не\s*дошл/i;
     if (_handoffPossible && incomingUserMessage && !ctx.crmOrderId

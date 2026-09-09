@@ -35,7 +35,10 @@ var extrasSum=0; var orderExtras=[];
 try{
   var __ei=Array.isArray(context.extraItems)?context.extraItems:[];
   var __oe=Array.isArray(oi.extras)?oi.extras:[];
-  var __list=__oe.length?__oe.map(function(e){ var b=__ei.filter(function(x){ return String(x.sku).toUpperCase()===String(e.sku||'').toUpperCase(); })[0]||{}; return { id:b.id||null, sku:String(e.sku||b.sku||''), name:b.name||e.name||'Товар', price:Number(b.price||e.price)||0, qtyPrices:b.qtyPrices||{}, color:String(e.color||b.color||'').trim(), size:String(e.size||b.size||'').trim(), qty:Number(e.qty)||Number(b.qty)||1, supplier:b.supplier||'', supplierArticle:b.supplierArticle||'', offers:b.offers||[] }; }):__ei.map(function(b){ return Object.assign({}, b, { qty:Number(b.qty)||1 }); });
+  // база — extraItems (усе, що знайшов резолвер); orderIntent.extras лише УТОЧНЮЄ колір/розмір/кількість за sku
+  // (модель може не перелічити всі позиції — вони не губляться; v12.17: лофери випали, бо extras мали лише джинси).
+  var __list=__ei.map(function(b){ var e=__oe.filter(function(x){ return String(x.sku||'').toUpperCase()===String(b.sku).toUpperCase(); })[0]||{}; return { id:b.id||null, sku:String(b.sku||''), name:b.name||'Товар', price:Number(b.price)||0, qtyPrices:b.qtyPrices||{}, color:String(e.color||b.color||'').trim(), size:String(e.size||b.size||'').trim(), qty:Number(e.qty)||Number(b.qty)||1, supplier:b.supplier||'', supplierArticle:b.supplierArticle||'', offers:b.offers||[] }; });
+  __oe.forEach(function(e){ if(!e||!e.sku) return; if(__list.some(function(x){ return x.sku.toUpperCase()===String(e.sku).toUpperCase(); })) return; if(Number(e.price)>0) __list.push({ id:null, sku:String(e.sku), name:e.name||'Товар', price:Number(e.price), qtyPrices:{}, color:String(e.color||'').trim(), size:String(e.size||'').trim(), qty:Number(e.qty)||1, supplier:'', supplierArticle:'', offers:[] }); });
   __list=__list.filter(function(x){ return x.sku && x.price>0; });
   __list.forEach(function(x){ x.sum=tierTotal(x.qtyPrices, x.price, x.qty); extrasSum+=x.sum; });
   orderExtras=__list;

@@ -238,7 +238,7 @@ async function flushPendingEdits() {
 
                 if (!keyCache.has(session.botId)) {
                     const keyRows = await db.funnelKey.findMany({
-                        where: { botId: session.botId, key: { in: ['EDITS_API_URL', 'EDITS_API_TOKEN'] } },
+                        where: { botId: session.botId, key: { in: ['EDITS_API_URL', 'EDITS_API_TOKEN', 'EDITS_SOURCE'] } },
                         select: { key: true, value: true },
                     });
                     keyCache.set(session.botId, Object.fromEntries(keyRows.map((k) => [k.key, k.value])));
@@ -255,11 +255,9 @@ async function flushPendingEdits() {
                             km.EDITS_API_TOKEN ? { Authorization: 'Bearer ' + km.EDITS_API_TOKEN } : {}
                         ),
                         body: JSON.stringify({
-                            source: 'otis',
-                            botId: session.botId,
-                            chatTitle: ctx.chatTitle,
                             text: ctx.editsPendingText,
-                            timestamp: new Date().toISOString(),
+                            source: km.EDITS_SOURCE || 'otis',
+                            sourceRef: ctx.chatTitle,
                         }),
                         signal: AbortSignal.timeout(8000),
                     });

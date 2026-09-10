@@ -324,9 +324,16 @@ try {
   if (context.entryAd && !context.testMode && !adsList.some(function (a) { return String(a.externalId || '') === String(context.entryAd); })) {
     try {
       var __campaign = (context.lastReferral && context.lastReferral.ads_context_data) || {};
+      // 2026-09-10 (власник: "чому фото не отримались?"): органічні/реферальні оголошення
+      // (Instagram-допис, на який прийшов клієнт) реєструються тут, ДО щоденної синхронізації
+      // Meta Ads (яка бачить лише платні кампанії й ніколи не дійде до цього externalId) —
+      // тож фото треба брати звідси, інакше воно НІКОЛИ не зʼявиться. __refImg вище (Gemini-
+      // візія) уже несе саме цей URL — той самий __acd, просто інша локальна змінна.
+      var __regThumb = __refImg || String(__campaign.photo_url || __campaign.image_url || __campaign.video_url || '') || '';
       await fetch(base + '/ads', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, hdr()), body: JSON.stringify({
         externalId: String(context.entryAd), name: String(context.adTitle || __campaign.ad_title || 'Реклама ' + context.entryAd).slice(0, 200),
         productId: null, campaignName: String(context.adTitle || '').replace(/_group_\d+/i, '').slice(0, 200) || null,
+        thumbnailUrl: __regThumb || null,
       }) });
     } catch (e) { /* best-effort */ }
   }

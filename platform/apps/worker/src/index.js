@@ -209,6 +209,81 @@ setTimeout(() => {
     setInterval(checkInactiveSessions, FOLLOW_UP_INTERVAL_MS);
 }, 2 * 60 * 1000);
 
+// ── Дозапис у систему правок (edits.fineko.space) — довисилка "зависаючих" пачок ──
+// Custom-code ноди (напр. Отіс) буферизують кілька повідомлень підряд в одну
+// правку (context.editsPendingText/editsLastMessageAt) і самі відправляють пачку,
+// щойно надходить наступне повідомлення з паузою 2+ хв. Але якщо повідомлень
+// більше не буде (кінець розмови) або відправка з ноди не вдалась (сервіс ще
+// не готовий/тимчасово недоступний) — пачка так і лишиться в context назавжди.
+// Це підстраховка: раз на хвилину шукаємо такі "завислі" пачки старші 2 хв і
+// довідправляємо їх, не чіпаючи нічого іншого в сесії.
+const EDITS_FLUSH_INTERVAL_MS = 60 * 1000;
+const EDITS_FLUSH_AGE_MS = 2 * 60 * 1000;
+
+async function flushPendingEdits() {
+    try {
+        const recentCutoff = new Date(Date.now() - 30 * 60 * 1000); // пачка не може бути старша 30 хв
+        const recentSessions = await db.session.findMany({
+            where: { isActive: true, lastActive: { gte: recentCutoff } },
+            select: { id: true, botId: true, context: true },
+        });
+
+        const keyCache = new Map(); // botId -> {EDITS_API_URL, EDITS_API_TOKEN}
+
+        for (const session of recentSessions) {
+            try {
+                const ctx = (typeof session.context === 'object' ? session.context : JSON.parse(session.context || '{}')) || {};
+                if (!ctx.editsPendingText || !ctx.editsLastMessageAt) continue;
+                if (Date.now() - ctx.editsLastMessageAt < EDITS_FLUSH_AGE_MS) continue; // ще може прийти продовження
+
+                if (!keyCache.has(session.botId)) {
+                    const keyRows = await db.funnelKey.findMany({
+                        where: { botId: session.botId, key: { in: ['EDITS_API_URL', 'EDITS_API_TOKEN'] } },
+                        select: { key: true, value: true },
+                    });
+                    keyCache.set(session.botId, Object.fromEntries(keyRows.map((k) => [k.key, k.value])));
+                }
+                const km = keyCache.get(session.botId);
+                if (!km.EDITS_API_URL) continue; // сервіс ще не готовий — не чіпаємо, нода й далі пише в Google Docs
+
+                let sent = false;
+                try {
+                    const editsRes = await fetch(km.EDITS_API_URL, {
+                        method: 'POST',
+                        headers: Object.assign(
+                            { 'Content-Type': 'application/json' },
+                            km.EDITS_API_TOKEN ? { Authorization: 'Bearer ' + km.EDITS_API_TOKEN } : {}
+                        ),
+                        body: JSON.stringify({
+                            source: 'otis',
+                            botId: session.botId,
+                            chatTitle: ctx.chatTitle,
+                            text: ctx.editsPendingText,
+                            timestamp: new Date().toISOString(),
+                        }),
+                        signal: AbortSignal.timeout(8000),
+                    });
+                    sent = editsRes.ok;
+                } catch (e) { /* сервіс тимчасово недоступний — спробуємо наступного проходу */ }
+
+                if (sent) {
+                    const { editsPendingText, editsLastMessageAt, editsPendingSince, ...restCtx } = ctx;
+                    await db.session.update({ where: { id: session.id }, data: { context: restCtx } });
+                }
+            } catch (sessionError) {
+                logger.warn('Edits flush failed for session', { sessionId: session.id, error: sessionError.message });
+            }
+        }
+    } catch (err) {
+        logger.error('Edits flush checker error', { error: err.message });
+    }
+}
+
+setTimeout(() => {
+    flushPendingEdits();
+    setInterval(flushPendingEdits, EDITS_FLUSH_INTERVAL_MS);
+}, 60 * 1000);
+
 // ── Розумні нагадування для sales-воронок Zernio ─────────────────────────────
 // прочитав, не відповів → 10 хв; не прочитав → 2 год; текст залежно від етапу;
 // поважати «напишу після HH:MM» (+30хв); не нагадувати якщо оформлено; макс 3.

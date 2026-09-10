@@ -99,12 +99,29 @@ router.get('/:id', asyncHandler(async (req, res) => {
     res.json({ ok: true, data: bc });
 }));
 
-// POST /api/broadcasts — create and send/schedule
+// POST /api/broadcasts — create as draft, or send/schedule directly
+// `draft: true` (or omitting both sendMode fields) saves it WITHOUT queueing anything —
+// nothing goes out until POST /:id/approve is called. This is the review/approve gate:
+// a broadcast only reaches real subscribers after that explicit second step.
 router.post('/', asyncHandler(async (req, res) => {
-    const { name, message, recipients, scheduledAt } = req.body;
+    const { name, message, recipients, scheduledAt, draft } = req.body;
     if (!recipients?.length) return res.status(400).json({ ok: false, error: { message: 'No recipients' } });
     if (!message?.text && !message?.photoUrl && !message?.documentUrl) {
         return res.status(400).json({ ok: false, error: { message: 'Message must have text, photo or document' } });
+    }
+
+    if (draft) {
+        const broadcast = await db.broadcast.create({
+            data: {
+                name: name || null,
+                status: 'draft',
+                scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
+                message: message || {},
+                recipients,
+                stats: { total: recipients.length, sent: 0, failed: 0 },
+            },
+        });
+        return res.status(201).json({ ok: true, data: broadcast });
     }
 
     const isScheduled = scheduledAt && new Date(scheduledAt) > new Date();
@@ -127,10 +144,59 @@ router.post('/', asyncHandler(async (req, res) => {
     res.status(201).json({ ok: true, data: broadcast });
 }));
 
-// DELETE /api/broadcasts/:id — cancel scheduled
+// PATCH /api/broadcasts/:id — edit a draft before approving it (name/message/recipients).
+// Only allowed while status is still "draft" — an approved/sent broadcast is immutable.
+router.patch('/:id', asyncHandler(async (req, res) => {
+    const bc = await db.broadcast.findUnique({ where: { id: req.params.id } });
+    if (!bc) return res.status(404).json({ ok: false, error: { message: 'Not found' } });
+    if (bc.status !== 'draft') {
+        return res.status(400).json({ ok: false, error: { message: 'Can only edit drafts' } });
+    }
+    const { name, message, recipients } = req.body;
+    const data = {};
+    if (name !== undefined) data.name = name || null;
+    if (message !== undefined) data.message = message;
+    if (recipients !== undefined) {
+        if (!recipients.length) return res.status(400).json({ ok: false, error: { message: 'No recipients' } });
+        data.recipients = recipients;
+        data.stats = { total: recipients.length, sent: 0, failed: 0 };
+    }
+    const updated = await db.broadcast.update({ where: { id: req.params.id }, data });
+    res.json({ ok: true, data: updated });
+}));
+
+// POST /api/broadcasts/:id/approve — the explicit approval step: turns a
+// reviewed draft into an actually-queued broadcast (now, or at scheduledAt).
+router.post('/:id/approve', asyncHandler(async (req, res) => {
+    const bc = await db.broadcast.findUnique({ where: { id: req.params.id } });
+    if (!bc) return res.status(404).json({ ok: false, error: { message: 'Not found' } });
+    if (bc.status !== 'draft') {
+        return res.status(400).json({ ok: false, error: { message: 'Only drafts can be approved' } });
+    }
+
+    const { scheduledAt } = req.body || {};
+    const isScheduled = scheduledAt && new Date(scheduledAt) > new Date();
+    const status = isScheduled ? 'scheduled' : 'sending';
+
+    const updated = await db.broadcast.update({
+        where: { id: req.params.id },
+        data: { status, scheduledAt: scheduledAt ? new Date(scheduledAt) : null },
+    });
+
+    const delay = isScheduled ? (new Date(scheduledAt).getTime() - Date.now()) : 0;
+    await broadcastQueue.add({ broadcastId: updated.id }, { delay: Math.max(0, delay), attempts: 2 });
+
+    res.json({ ok: true, data: updated });
+}));
+
+// DELETE /api/broadcasts/:id — delete an unsent draft outright, or cancel a scheduled one
 router.delete('/:id', asyncHandler(async (req, res) => {
     const bc = await db.broadcast.findUnique({ where: { id: req.params.id } });
     if (!bc) return res.status(404).json({ ok: false, error: { message: 'Not found' } });
+    if (bc.status === 'draft') {
+        await db.broadcast.delete({ where: { id: req.params.id } });
+        return res.json({ ok: true });
+    }
     if (bc.status !== 'scheduled') {
         return res.status(400).json({ ok: false, error: { message: 'Can only cancel scheduled broadcasts' } });
     }

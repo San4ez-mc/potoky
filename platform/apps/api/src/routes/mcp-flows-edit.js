@@ -37,6 +37,7 @@ const EDIT_TOOL_NAMES = new Set([
     'list_broadcasts',
     'get_broadcast_subscribers',
     'create_broadcast',
+    'approve_broadcast',
     'cancel_broadcast',
 ]);
 

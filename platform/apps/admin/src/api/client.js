@@ -167,6 +167,8 @@ export const api = {
     getBroadcastSubscribers: (botIds) => req('GET', `/broadcasts/subscribers?botIds=${botIds.join(',')}`),
     getBroadcasts: () => req('GET', '/broadcasts'),
     createBroadcast: (data) => req('POST', '/broadcasts', data),
+    updateBroadcast: (id, data) => req('PATCH', `/broadcasts/${id}`, data),
+    approveBroadcast: (id, scheduledAt) => req('POST', `/broadcasts/${id}/approve`, scheduledAt ? { scheduledAt } : {}),
     cancelBroadcast: (id) => req('DELETE', `/broadcasts/${id}`),
 
     // System Keys (settings-level, not funnel-level)

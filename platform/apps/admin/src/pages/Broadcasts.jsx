@@ -88,7 +88,7 @@ function MessagePreview({ message }) {
 }
 
 // ── Broadcast list item ──────────────────────────────────────
-function BroadcastItem({ bc, onCancel }) {
+function BroadcastItem({ bc, onCancel, onApprove }) {
     const stats = bc.stats || {};
     const msg = bc.message || {};
     const preview = msg.text
@@ -116,6 +116,14 @@ function BroadcastItem({ bc, onCancel }) {
                     )}
                 </div>
             </div>
+            {bc.status === 'draft' && (
+                <div className="text-xs text-gray-500 border-t border-gray-800 pt-2">
+                    Чернетка — нікому ще не надіслано. Перевір текст і затверди відправку.
+                    {bc.scheduledAt && (
+                        <> Орієнтовний час: <span className="text-yellow-400">{new Date(bc.scheduledAt).toLocaleString('uk-UA', { dateStyle: 'short', timeStyle: 'short' })}</span>.</>
+                    )}
+                </div>
+            )}
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4 text-xs text-gray-500">
                     <span>Всього: <span className="text-gray-300">{stats.total ?? 0}</span></span>
@@ -124,6 +132,22 @@ function BroadcastItem({ bc, onCancel }) {
                         <span>Помилок: <span className="text-red-400">{stats.failed}</span></span>
                     )}
                 </div>
+                {bc.status === 'draft' && (
+                    <div className="flex gap-2">
+                        <button
+                            onClick={() => onCancel(bc.id)}
+                            className="text-xs px-2 py-1 rounded bg-gray-800 text-gray-400 hover:bg-gray-700 transition-colors"
+                        >
+                            Видалити
+                        </button>
+                        <button
+                            onClick={() => onApprove(bc.id, stats.total ?? 0, bc.scheduledAt)}
+                            className="text-xs px-2.5 py-1 rounded bg-brand text-white font-medium hover:bg-brand/80 transition-colors"
+                        >
+                            {bc.scheduledAt ? '▶ Затвердити й запланувати' : '▶ Затвердити й надіслати'}
+                        </button>
+                    </div>
+                )}
                 {bc.status === 'scheduled' && (
                     <button
                         onClick={() => onCancel(bc.id)}
@@ -154,7 +178,7 @@ export function Broadcasts() {
     const [message, setMessage] = useState({ text: '', parseMode: 'Markdown', photoUrl: '', documentUrl: '', documentName: '', caption: '' });
 
     const [broadcastName, setBroadcastName] = useState('');
-    const [sendMode, setSendMode] = useState('now'); // 'now' | 'scheduled'
+    const [sendMode, setSendMode] = useState('now'); // 'now' | 'scheduled' | 'draft'
     const [scheduledAt, setScheduledAt] = useState('');
     const [sending, setSending] = useState(false);
     const [sendError, setSendError] = useState('');
@@ -273,11 +297,14 @@ export function Broadcasts() {
             // Remove undefined keys
             Object.keys(msgPayload).forEach(k => msgPayload[k] === undefined && delete msgPayload[k]);
 
+            // Always saved as a draft — nothing is queued here. scheduledAt (if set)
+            // is only a hint carried over as the default when the draft is approved.
             await api.createBroadcast({
                 name: broadcastName || undefined,
                 message: msgPayload,
                 recipients,
                 scheduledAt: sendMode === 'scheduled' && scheduledAt ? scheduledAt : undefined,
+                draft: true,
             });
             setSendSuccess(true);
             loadBroadcasts();
@@ -301,12 +328,26 @@ export function Broadcasts() {
     }
 
     async function handleCancel(id) {
-        if (!window.confirm('Скасувати заплановану розсилку?')) return;
+        if (!window.confirm('Видалити чернетку / скасувати заплановану розсилку?')) return;
         try {
             await api.cancelBroadcast(id);
             loadBroadcasts();
         } catch (err) {
             alert(err.message || 'Помилка скасування');
+        }
+    }
+
+    async function handleApprove(id, total, scheduledAtHint) {
+        const when = scheduledAtHint ? new Date(scheduledAtHint).toLocaleString('uk-UA') : null;
+        const question = when
+            ? `Запланувати цю розсилку на ${when}? Отримувачів: ${total}.`
+            : `Надіслати цю розсилку зараз? Отримувачів: ${total}.`;
+        if (!window.confirm(`${question} Це реальні повідомлення реальним підписникам — скасувати після старту вже не можна.`)) return;
+        try {
+            await api.approveBroadcast(id, scheduledAtHint || undefined);
+            loadBroadcasts();
+        } catch (err) {
+            alert(err.message || 'Помилка затвердження');
         }
     }
 
@@ -527,7 +568,7 @@ export function Broadcasts() {
                 </div>
 
                 <div>
-                    <div className="text-xs text-gray-400 mb-2">Час відправки</div>
+                    <div className="text-xs text-gray-400 mb-2">Бажаний час відправки (необов'язково)</div>
                     <div className="flex flex-col gap-2">
                         <label className="flex items-center gap-2 cursor-pointer">
                             <input
@@ -538,7 +579,7 @@ export function Broadcasts() {
                                 onChange={() => setSendMode('now')}
                                 className="accent-brand"
                             />
-                            <span className="text-sm text-white">Надіслати зараз</span>
+                            <span className="text-sm text-white">Якнайшвидше після затвердження</span>
                         </label>
                         <label className="flex items-center gap-2 cursor-pointer">
                             <input
@@ -549,7 +590,7 @@ export function Broadcasts() {
                                 onChange={() => setSendMode('scheduled')}
                                 className="accent-brand"
                             />
-                            <span className="text-sm text-white">Запланувати</span>
+                            <span className="text-sm text-white">На певний час</span>
                         </label>
                     </div>
                     {sendMode === 'scheduled' && (
@@ -563,6 +604,9 @@ export function Broadcasts() {
                             />
                         </div>
                     )}
+                    <div className="mt-2 text-xs text-gray-500">
+                        Це лише орієнтир — розсилка збережеться як чернетка і нікуди не піде, поки її не затвердять у списку нижче.
+                    </div>
                 </div>
 
                 <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4 text-sm text-gray-300 space-y-1">
@@ -570,7 +614,7 @@ export function Broadcasts() {
                     <div>Повідомлення: <span className="text-white">{message.photoUrl ? 'Фото' : message.documentUrl ? 'Документ' : 'Текст'}</span></div>
                     {broadcastName && <div>Назва: <span className="text-white">{broadcastName}</span></div>}
                     {sendMode === 'scheduled' && scheduledAt && (
-                        <div>Час: <span className="text-yellow-300">{new Date(scheduledAt).toLocaleString('uk-UA')}</span></div>
+                        <div>Орієнтовний час: <span className="text-yellow-300">{new Date(scheduledAt).toLocaleString('uk-UA')}</span></div>
                     )}
                 </div>
 
@@ -582,7 +626,7 @@ export function Broadcasts() {
 
                 {sendSuccess && (
                     <div className="bg-green-900/30 border border-green-700/50 rounded-lg px-4 py-3 text-sm text-green-300">
-                        Розсилку успішно створено!
+                        Чернетку збережено! Ніхто нічого ще не отримав — перевір текст у списку нижче і натисни «Затвердити й надіслати», коли будеш готовий.
                     </div>
                 )}
 
@@ -591,7 +635,7 @@ export function Broadcasts() {
                     disabled={sending || sendSuccess || (sendMode === 'scheduled' && !scheduledAt)}
                     className="w-full py-3 rounded-lg bg-brand text-white font-semibold text-sm hover:bg-brand/80 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
-                    {sending ? 'Надсилання...' : sendMode === 'scheduled' ? 'Запланувати розсилку' : `Надіслати ${selectedCount} повідомлень`}
+                    {sending ? 'Зберігання...' : `Зберегти чернетку (${selectedCount})`}
                 </button>
             </div>
         );
@@ -652,7 +696,7 @@ export function Broadcasts() {
                 ) : (
                     <div className="space-y-3">
                         {broadcasts.map(bc => (
-                            <BroadcastItem key={bc.id} bc={bc} onCancel={handleCancel} />
+                            <BroadcastItem key={bc.id} bc={bc} onCancel={handleCancel} onApprove={handleApprove} />
                         ))}
                     </div>
                 )}

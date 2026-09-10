@@ -361,7 +361,7 @@ const TOOLS = [
     },
     {
         name: 'create_broadcast',
-        description: 'Create and queue a broadcast to subscribers of specified bots. Unsubscribed users are excluded by default.',
+        description: 'Create a broadcast to subscribers of specified bots. By default this ONLY saves a draft — nothing is sent until a human (or an explicit approve_broadcast call) approves it. Pass confirmSend:true ONLY when the user has explicitly, in this conversation, told you to send/schedule it now — never on your own judgement. Unsubscribed users are excluded by default.',
         inputSchema: {
             type: 'object',
             properties: {
@@ -379,15 +379,28 @@ const TOOLS = [
                         parseMode: { type: 'string', enum: ['Markdown', 'HTML'], description: 'Parse mode, default Markdown' },
                     },
                 },
-                scheduledAt: { type: 'string', description: 'ISO datetime to schedule the broadcast. Omit for immediate send.' },
+                scheduledAt: { type: 'string', description: 'ISO datetime to schedule the broadcast for. Only takes effect once approved (confirmSend:true here, or a later approve_broadcast call).' },
                 includeUnsubscribed: { type: 'boolean', description: 'Include users who unsubscribed. Default: false.' },
+                confirmSend: { type: 'boolean', description: 'Set true ONLY after explicit human approval to send/schedule immediately. Default false = save as draft, do not queue.' },
             },
             required: ['botIds', 'message'],
         },
     },
     {
+        name: 'approve_broadcast',
+        description: 'Approve a draft broadcast so it actually gets queued for sending — the explicit human-approval step after create_broadcast saved a draft. Only works on status "draft".',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                id: { type: 'string', description: 'Broadcast UUID' },
+                scheduledAt: { type: 'string', description: 'ISO datetime to schedule for. Omit to send immediately.' },
+            },
+            required: ['id'],
+        },
+    },
+    {
         name: 'cancel_broadcast',
-        description: 'Cancel a scheduled broadcast (only possible while status is "scheduled")',
+        description: 'Cancel a scheduled broadcast, or delete a draft that is no longer needed.',
         inputSchema: {
             type: 'object',
             properties: { id: { type: 'string', description: 'Broadcast UUID' } },
@@ -975,7 +988,7 @@ async function getBroadcastSubscribers({ botIds = [] } = {}) {
         where: {
             botId: { in: botIds },
             isTest: false,
-            user: { telegramId: { not: null } },
+            user: { username: { not: 'webhook_system' } },
         },
         orderBy: { lastActive: 'desc' },
         select: {
@@ -1003,7 +1016,7 @@ async function getBroadcastSubscribers({ botIds = [] } = {}) {
     return result;
 }
 
-async function createBroadcastMcp({ name, botIds = [], message = {}, scheduledAt, includeUnsubscribed = false }) {
+async function createBroadcastMcp({ name, botIds = [], message = {}, scheduledAt, includeUnsubscribed = false, confirmSend = false }) {
     if (!botIds.length) throw new Error('botIds is required');
     if (!message.text && !message.photoUrl && !message.documentUrl) {
         throw new Error('message must have text, photoUrl, or documentUrl');
@@ -1013,6 +1026,29 @@ async function createBroadcastMcp({ name, botIds = [], message = {}, scheduledAt
     const allSubs = await getBroadcastSubscribers({ botIds });
     const recipients = includeUnsubscribed ? allSubs : allSubs.filter(s => !s.isUnsubscribed);
     if (!recipients.length) throw new Error('No eligible recipients found');
+
+    // Safety default: an agent/MCP call NEVER sends on its own. It only saves a
+    // draft — a human (or an explicit approve_broadcast after real approval in
+    // conversation) has to move it out of "draft" before anything is queued.
+    if (!confirmSend) {
+        const draft = await prisma.broadcast.create({
+            data: {
+                name: name || null,
+                status: 'draft',
+                scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
+                message,
+                recipients,
+                stats: { total: recipients.length, sent: 0, failed: 0 },
+            },
+        });
+        return {
+            id: draft.id,
+            name: draft.name,
+            status: draft.status,
+            recipientCount: recipients.length,
+            note: 'Saved as draft — not sent. Call approve_broadcast (or approve it in the admin) once a human has reviewed the text.',
+        };
+    }
 
     const isScheduled = scheduledAt && new Date(scheduledAt) > new Date();
     const status = isScheduled ? 'scheduled' : 'sending';
@@ -1028,13 +1064,7 @@ async function createBroadcastMcp({ name, botIds = [], message = {}, scheduledAt
         },
     });
 
-    // Enqueue via Bull
-    const Bull = require('bull');
-    const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
-    const broadcastQueue = new Bull('broadcasts', REDIS_URL);
-    const delay = isScheduled ? Math.max(0, new Date(scheduledAt).getTime() - Date.now()) : 0;
-    await broadcastQueue.add({ broadcastId: broadcast.id }, { delay, attempts: 2 });
-    await broadcastQueue.close();
+    await enqueueBroadcast(broadcast.id, isScheduled ? scheduledAt : null);
 
     return {
         id: broadcast.id,
@@ -1046,9 +1076,39 @@ async function createBroadcastMcp({ name, botIds = [], message = {}, scheduledAt
     };
 }
 
+async function enqueueBroadcast(broadcastId, scheduledAt) {
+    const Bull = require('bull');
+    const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+    const broadcastQueue = new Bull('broadcasts', REDIS_URL);
+    const delay = scheduledAt ? Math.max(0, new Date(scheduledAt).getTime() - Date.now()) : 0;
+    await broadcastQueue.add({ broadcastId }, { delay, attempts: 2 });
+    await broadcastQueue.close();
+}
+
+async function approveBroadcastMcp({ id, scheduledAt }) {
+    const bc = await prisma.broadcast.findUnique({ where: { id } });
+    if (!bc) throw new Error(`Broadcast not found: ${id}`);
+    if (bc.status !== 'draft') throw new Error(`Cannot approve broadcast with status "${bc.status}" — only drafts can be approved`);
+
+    const isScheduled = scheduledAt && new Date(scheduledAt) > new Date();
+    const status = isScheduled ? 'scheduled' : 'sending';
+
+    await prisma.broadcast.update({
+        where: { id },
+        data: { status, scheduledAt: scheduledAt ? new Date(scheduledAt) : null },
+    });
+    await enqueueBroadcast(id, isScheduled ? scheduledAt : null);
+
+    return { id, status, name: bc.name };
+}
+
 async function cancelBroadcastMcp({ id }) {
     const bc = await prisma.broadcast.findUnique({ where: { id } });
     if (!bc) throw new Error(`Broadcast not found: ${id}`);
+    if (bc.status === 'draft') {
+        await prisma.broadcast.delete({ where: { id } });
+        return { deleted: id, name: bc.name };
+    }
     if (bc.status !== 'scheduled') throw new Error(`Cannot cancel broadcast with status "${bc.status}"`);
     await prisma.broadcast.update({ where: { id }, data: { status: 'cancelled' } });
     return { cancelled: id, name: bc.name };
@@ -1085,6 +1145,7 @@ async function callTool(name, args = {}) {
         case 'list_broadcasts': return listBroadcasts(args);
         case 'get_broadcast_subscribers': return getBroadcastSubscribers(args);
         case 'create_broadcast': return createBroadcastMcp(args);
+        case 'approve_broadcast': return approveBroadcastMcp(args);
         case 'cancel_broadcast': return cancelBroadcastMcp(args);
         default: throw new Error(`Unknown tool: ${name}`);
     }

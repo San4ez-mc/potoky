@@ -672,6 +672,10 @@ export function KeysPanel({ embedded = false }) {
     const getRequiredKeys = () => {
         const req = new Set();
         const hasTgConnector = keys.some(k => k.key === 'TELEGRAM_CONNECTOR_ID' && k.value);
+        // 2026-09-05: банківські секрети (Mono-токен, реквізити ФОП) живуть тільки в CRM
+        // (Fop.monobankToken/iban/taxId/name), движок бере їх звідти напряму (crmActiveFop),
+        // funnelKey — лише легасі-фолбек. Якщо є CRM-конектор — не вимагаємо ці ключі у воронці.
+        const hasCrmConnector = keys.some(k => k.key === 'CRM_API_BASE' && k.value) && keys.some(k => k.key === 'CRM_API_KEY' && k.value);
 
         // 1) Активні канали
         const channelsKey = keys.find(k => k.key === 'FUNNEL_CHANNELS');
@@ -701,8 +705,11 @@ export function KeysPanel({ embedded = false }) {
             if (n.type === 'notifyAdmin' || n.type === 'notifyTg') { if (!hasTgConnector) req.add('TELEGRAM_BOT_TOKEN'); }
             if ((n.type === 'claude' || n.type === 'agent') && !d.connectorId) req.add('CLAUDE_CONNECTOR_ID');
             if (n.type === 'connector') {
-                if (d.connectorType === 'ibanoplata') { req.add('IBANOPLATA_API_KEY'); req.add('FOP_IBAN'); req.add('FOP_CODE'); req.add('FOP_NAME'); }
-                if (d.connectorType === 'monobank') { req.add('MONO_TOKEN'); }
+                if (d.connectorType === 'ibanoplata') {
+                    req.add('IBANOPLATA_API_KEY'); // окремий сервісний ключ ibanoplata.com, не банківський секрет — лишається у воронці
+                    if (!hasCrmConnector) { req.add('FOP_IBAN'); req.add('FOP_CODE'); req.add('FOP_NAME'); }
+                }
+                if (d.connectorType === 'monobank' && !hasCrmConnector) { req.add('MONO_TOKEN'); }
                 if (d.connectorType === 'wayforpay') { req.add('WAYFORPAY_CONNECTOR_ID'); }
             }
         }

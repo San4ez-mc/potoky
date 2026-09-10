@@ -12,6 +12,9 @@
 // («решта при отриманні»), total_check = 1590 (оголошена вартість, у менеджера завжди 1590 → ключ
 // BREWDROP_TOTAL_CHECK), products = позиції кошика (кілька штук/розмірів — одним замовленням).
 // Повна передоплата (method=full) — менеджеру вручну (тип оплати «з балансу» не перевірений).
+// 2026-09-10 (постачальник попросив не писати коментарі до замовлень): seller_comment завжди
+// порожній — раніше туди писався "Замовлення <orderRef>" (наш внутрішній ідентифікатор), який
+// постачальник бачив у своєму кабінеті і просив прибрати.
 if(context.testMode) return { supplierOrderResult:'(testMode: brewdrop пропущено)' };
 var base=(keys.BREWDROP_API_BASE||'https://api.brewdrop.in.ua').replace(/\/+$/,'');
 var tok=(keys.BREWDROP_TOKEN||'').trim();
@@ -130,7 +133,7 @@ var payload=Object.assign(senderId?{ sender_id:senderId }:{}, {
   dropshipper_id:meId,
   client_data:{ first_name:first,last_name:last,middle_name:middle,phone:phoneFmt,delivery_id:1,city_id:cityObj.id,branch_id:brObj.id },
   delivery_data:{ delivery_id:1,delivery_pay_person:1 }, delivery_method_id:1, pay_type:fullPrepay?3:1, pay_person:fullPrepay?2:1,
-  seller_comment:'Замовлення '+(context.orderRef||''), products:lines.map(function(l){return { product_color_size_id:l.pcsId, qty:l.qty };}),
+  seller_comment:'', products:lines.map(function(l){return { product_color_size_id:l.pcsId, qty:l.qty };}),
   total_final:codAmount, total_check:totalCheck, ttn:null });
 var summary='🧾 brewdrop '+(dryRun?'(DRY-RUN)':'СТВОРЕНО')+':\n'+lines.map(function(l){return '• '+l.label+(l.qty>1?' ×'+l.qty:'');}).join('\n')+'\nОтримувач: '+last+' '+first+' '+(od.phone||'')+'\nНП: '+(cityObj.name_ua||cityObj.name)+' / '+(brObj.name_ua||brObj.name)+(fullPrepay?'\nОплата: повна передоплата → «з балансу» (оголошена '+totalCheck+')':'\nНакладений платіж: '+codAmount+' грн (оголошена '+totalCheck+')')+(missing.length?('\n⚠️ Додайте вручну: '+missing.join('; ')):'');
 if(dryRun) return { supplierOrderResult:summary+'\n\n⚠️ DRY-RUN: НЕ відправлено (BREWDROP_DRY_RUN=1).', supplierOrderStatus:'dry_run', supplierOrderPayload:JSON.stringify(payload), supplierNeedsManual:missing.length>0 };

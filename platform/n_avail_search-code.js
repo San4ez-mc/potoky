@@ -46,8 +46,13 @@ var pool = all.filter(function (p) { return p.isActive !== false && !p.archived 
 // Категорія з питання — інакше, якщо є розмір/колір без категорії, звужуємо до поточного товару (якщо є).
 var candidates = stem ? pool.filter(function (p) { return hay(p).indexOf(stem) >= 0; }) : (context.product && context.product.sku ? pool.filter(function (p) { return String(p.sku || '').toUpperCase() === String(context.product.sku).toUpperCase(); }) : []);
 if (!candidates.length) return out('');
-function sizesOf(p) { var s = []; (p.offers || []).forEach(function (o) { (o.properties || []).forEach(function (pr) { var n = String(pr.name || '').toLowerCase(); if (n.indexOf('розмір') >= 0 || n.indexOf('размер') >= 0) { var v = String(pr.value || '').trim(); if (v && s.indexOf(v) < 0) s.push(v); } }); }); if (!s.length && Array.isArray(p.sizes)) s = p.sizes.slice(); return s; }
-function colorsOf(p) { var c = []; (p.offers || []).forEach(function (o) { (o.properties || []).forEach(function (pr) { var n = String(pr.name || '').toLowerCase(); if (n.indexOf('колір') >= 0 || n.indexOf('цвет') >= 0) { var v = String(pr.value || '').trim(); if (v && c.indexOf(v) < 0) c.push(v); } }); }); return c; }
+// 2026-09-11 (живий тест, лофери 5932-5935): ці товари НЕ мають offers-варіантів взагалі
+// (offersCount:0, p.sizes:[]) — реальний перелік розмірів лежить лише в sizeChartData.sizes
+// (той самий блок, що рендерить розмірну сітку клієнту); колір — лише текстом у
+// presentationText/aiNotes ("Колір: чорний"). Без цих fallback усі товари цього типу завжди
+// виглядали "розміру/кольору немає" — false negative, бот брехав "немає в наявності".
+function sizesOf(p) { var s = []; (p.offers || []).forEach(function (o) { (o.properties || []).forEach(function (pr) { var n = String(pr.name || '').toLowerCase(); if (n.indexOf('розмір') >= 0 || n.indexOf('размер') >= 0) { var v = String(pr.value || '').trim(); if (v && s.indexOf(v) < 0) s.push(v); } }); }); if (!s.length && Array.isArray(p.sizes) && p.sizes.length) s = p.sizes.slice(); if (!s.length && p.sizeChartData && Array.isArray(p.sizeChartData.sizes) && p.sizeChartData.sizes.length) s = p.sizeChartData.sizes.slice(); return s; }
+function colorsOf(p) { var c = []; (p.offers || []).forEach(function (o) { (o.properties || []).forEach(function (pr) { var n = String(pr.name || '').toLowerCase(); if (n.indexOf('колір') >= 0 || n.indexOf('цвет') >= 0) { var v = String(pr.value || '').trim(); if (v && c.indexOf(v) < 0) c.push(v); } }); }); if (!c.length) { var src = String(p.presentationText || p.aiNotes || ''); var m = src.match(/колір[:\s]+([^\n,.;]+)/i); if (m) c.push(m[1].trim()); } return c; }
 var lines = [];
 for (var ci = 0; ci < candidates.length && lines.length < 4; ci++) {
   var p = candidates[ci]; var sizes = sizesOf(p); var colors = colorsOf(p);

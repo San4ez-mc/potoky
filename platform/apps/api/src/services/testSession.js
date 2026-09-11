@@ -850,7 +850,11 @@ async function computeAvailAnswer(rawMsg, ctx, botId) {
                 if (v && s.indexOf(v) < 0) s.push(v);
             }
         }));
-        if (!s.length && Array.isArray(p.sizes)) s = p.sizes.slice();
+        if (!s.length && Array.isArray(p.sizes) && p.sizes.length) s = p.sizes.slice();
+        // 2026-09-11 (лофери 5932-5935): ці товари НЕ мають offers-варіантів взагалі
+        // (offersCount:0, p.sizes:[]) — реальний перелік розмірів лежить лише в
+        // sizeChartData.sizes (той самий блок, що рендерить розмірну сітку клієнту).
+        if (!s.length && p.sizeChartData && Array.isArray(p.sizeChartData.sizes) && p.sizeChartData.sizes.length) s = p.sizeChartData.sizes.slice();
         return s;
     };
     const colorsOf = (p) => {
@@ -862,6 +866,14 @@ async function computeAvailAnswer(rawMsg, ctx, botId) {
                 if (v && c.indexOf(v) < 0) c.push(v);
             }
         }));
+        // Товари без offers-варіантів (напр. лофери 5932-5935) мають колір лише текстом
+        // у presentationText/aiNotes ("Колір: чорний") — той самий підхід, що й sizeChartData
+        // fallback вище, інакше такі товари завжди виглядають "кольору немає".
+        if (!c.length) {
+            const src = String(p.presentationText || p.aiNotes || '');
+            const m = src.match(/колір[:\s]+([^\n,.;]+)/i);
+            if (m) c.push(m[1].trim());
+        }
         return c;
     };
 
@@ -870,6 +882,10 @@ async function computeAvailAnswer(rawMsg, ctx, botId) {
         const p = candidates[ci];
         const sizes = sizesOf(p);
         const colors = colorsOf(p);
+        // 2026-09-11: НЕ використовуємо p.alwaysAvailable як "будь-який розмір підходить" —
+        // це поле означає лише "немає обліку залишків по варіантах" (дропшип під замовлення),
+        // а не "розмір поза сіткою теж є". Реальний перелік розмірів — з sizeChartData
+        // (fallback у sizesOf вище); саме він і вирішує sizeOk/colorOk нижче.
         const sizeOk = !sizeWanted || sizes.some((s) => s.replace(/\D/g, '') === sizeWanted);
         const colorOk = !colorWanted || colors.some((c) => c.toLowerCase().indexOf(colorWanted.slice(0, 4)) >= 0);
         const status = (sizeOk && colorOk)

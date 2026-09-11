@@ -118,9 +118,9 @@ async function checkBotGroups(bot) {
     const thresholdMs = hours * 3600 * 1000;
 
     // Групи впізнаємо за відʼємним telegramId — так їх позначає сам Telegram,
-    // тож переплутати з людиною неможливо.
+    // тож переплутати з людиною неможливо. Поле BigInt, тому порівняння числове.
     const groups = await db.session.findMany({
-        where: { botId: bot.id, user: { telegramId: { startsWith: '-' } } },
+        where: { botId: bot.id, user: { telegramId: { lt: 0 } } },
         select: { id: true, context: true, user: { select: { firstName: true } } },
     });
 

@@ -71,6 +71,7 @@ const CODE = {
     n_catalog_hint: () => readCode('n_catalog_hint-code.js'),
     n_shop_profile: () => readCode('n_shop_profile-code.js'),
     n_extra_resolve: () => readCode('n_extra_resolve-code.js'),
+    n_signal_check: () => readCode('n_signal_check-code.js'),
 };
 
 const MATCH_NOTE_OLD = '⚠️ Товар вище вже ОДНОЗНАЧНО підтверджено системою за артикулом/кодом, який назвав клієнт — НІКОЛИ не пиши, що товар/артикул "не знайдено" чи "немає в каталозі", навіть якщо точний код не видно в описі нижче. Завжди довіряй даним про товар вище.';
@@ -458,7 +459,11 @@ else lines.push('📎 ID поста/рілса/сторіс: не отриман
 // context.lastCustomerMessage (той самий, що вже в alertDetails n_unknown_admin) — стабільний; на відміну від
 // runtime.lastUserMessage/input, який попередні ноди цього ж ходу (n_unknown_msg) встигають скинути до порожнього.
 var msg = String(context.lastCustomerMessage || context.lastUserMessage || (context.flowRuntime && context.flowRuntime.lastUserMessage) || input || '');
-var artM = msg.match(/(?:артикул|арт\\.?|код|sku|№)\\s*[:#№.-]?\\s*[A-Za-zА-Яа-я]{0,5}\\d{2,8}|\\b[A-Za-z]\\d{3,6}\\b/i);
+// 2026-09-11 (2b54d51e): кирилична А/В/С/Е тощо перед цифрами (напр. «А0182») інакше не
+// впізнається другою половиною регексу нижче — та сама нормалізація, що й у n_signal_check/n_lookup.
+var __lM = { 'А':'A','В':'B','С':'C','Е':'E','Н':'H','І':'I','К':'K','М':'M','О':'O','Р':'P','Т':'T','Х':'X','У':'Y','а':'a','в':'b','с':'c','е':'e','н':'h','і':'i','к':'k','м':'m','о':'o','р':'p','т':'t','х':'x','у':'y' };
+var msgLat = msg.replace(/[АВСЕНІКМОРТХУавсенікмортху]{1,4}(?=\\d{2,8})/g, function (seq) { return seq.split('').map(function (ch) { return __lM[ch] || ch; }).join(''); });
+var artM = msg.match(/(?:артикул|арт\\.?|код|sku|№)\\s*[:#№.-]?\\s*[A-Za-zА-Яа-я]{0,5}\\d{2,8}/i) || msgLat.match(/\\b[A-Za-z]\\d{3,6}\\b/);
 lines.push(artM ? ('📝 Артикул у тексті: «' + artM[0] + '» — у каталозі не знайдено') : '📝 Артикул у тексті: не вказано');
 lines.push(context.catalogHint ? '🗂 Підказка категорії: спрацювала (показано список товарів)' : '🗂 Підказка категорії: не спрацювала (категорія в повідомленні не розпізнана)');
 if (context.commentProductArticle) lines.push('💬 Товар з коментаря: артикул ' + context.commentProductArticle + ' (застарів або не підтвердився в директі)');

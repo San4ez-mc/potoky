@@ -174,11 +174,18 @@ async function checkInactiveSessions() {
                     });
                     const km2 = Object.fromEntries(keyRows.map(k => [k.key, k.value]));
                     followUpText = km2[`FOLLOW_UP_MESSAGE_${n}`]
-                        || (n === 1 ? km2['FOLLOW_UP_MESSAGE'] : null)
-                        || (followUpCount === 0
-                            ? `Привіт! 👋 Ми ще на зв'язку — якщо є питання, просто напиши. Буду радий допомогти! 😊`
-                            : `Гей, востаннє нагадаю — без тиску. Якщо надумаєш — просто напиши. Удачі! 👋`);
+                        || (n === 1 ? km2['FOLLOW_UP_MESSAGE'] : null);
                 }
+
+                // Немає налаштованого тексту — не пишемо нічого.
+                //
+                // Тут був захардкоджений дефолт із продажної воронки («Ми ще на
+                // звʼязку… буду радий допомогти»), і він діяв на ВСІ воронки
+                // двигуна. Засновниця-клієнтка, яка просто відклала розмову з
+                // помічницею на день, отримала від неї продажну підводку в
+                // чоловічому роді. Фолоу-ап — рішення воронки, а не двигуна:
+                // хто хоче нагадувати, той пише свій текст у FOLLOW_UP_MESSAGE.
+                if (!followUpText) continue;
 
                 await sendFollowUpViaTelegram(token, String(telegramId), followUpText);
                 processedPairs.add(pairKey);

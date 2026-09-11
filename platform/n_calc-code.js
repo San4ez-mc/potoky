@@ -14,6 +14,73 @@ if (context.sizeInput && typeof context.sizeInput === 'object') {
     }
 }
 
+// 2026-09-11 (власник: "розмір має рахуватись для кожного товару в комплекті окремо" — для
+// "весь комплект" раніше рахувався ОДИН спільний розмір на весь набір, хоча кофта/джинси/лофери
+// мають РІЗНІ системи розмірів). Якщо товар — сет і клієнт щойно дав зріст/вагу — рахуємо розмір
+// ОКРЕМО для кожної позиції зі своєї сітки/структурованих розмірів, і повертаємось РАНІШЕ за
+// звичайну одно-товарну логіку нижче (яка для сета не застосовна — у сета немає власної сітки).
+if (context.product && context.product.isSet && Array.isArray(context.product.setItems) && context.product.setItems.length
+    && context.sizeInput && Number(context.sizeInput.height) > 0 && Number(context.sizeInput.weight) > 0) {
+  var __setH = Number(context.sizeInput.height), __setW = Number(context.sizeInput.weight);
+  var __setOrder = ['XS','S','M','L','XL','XXL','XXXL','4XL'];
+  var __setChart = {}; try { __setChart = JSON.parse(keys.SIZE_CHART || '{}'); } catch (e) {}
+  function __setNorm(x) { return String(x || '').toUpperCase().trim().replace(/^2XL$/, 'XXL').replace(/^3XL$/, 'XXXL'); }
+  function __setInRange(v, r) { return r && v >= Number(r[0]) && v <= Number(r[1]); }
+  // Компактна версія основного алгоритму (вага — головний критерій, зріст — поправка; той самий
+  // допуск на суміжних межах, що й у головній логіці нижче) — лише для letter-розмірів (S..XXXL).
+  function __setCalcOne(avail) {
+    var wMatches = []; for (var wk in __setChart) { if (__setInRange(__setW, __setChart[wk] && __setChart[wk].weight)) wMatches.push(wk); }
+    wMatches.sort(function (a, b) { return __setOrder.indexOf(a) - __setOrder.indexOf(b); });
+    var size = null;
+    if (wMatches.length) {
+      var hOk = wMatches.filter(function (k) { return __setInRange(__setH, __setChart[k] && __setChart[k].height); });
+      if (hOk.length) size = hOk[0];
+      else {
+        var hMaxOfW = Math.max.apply(null, wMatches.map(function (k) { return Number((__setChart[k].height || [0, 0])[1]); }));
+        if (__setH > hMaxOfW) {
+          var bumpCands = wMatches.slice();
+          for (var bwk in __setChart) { if (bumpCands.indexOf(bwk) >= 0) continue; var bwr = __setChart[bwk] && __setChart[bwk].weight; if (bwr && __setW > Number(bwr[1]) && __setW <= Number(bwr[1]) + 3) bumpCands.push(bwk); }
+          bumpCands.sort(function (a, b) { return __setOrder.indexOf(a) - __setOrder.indexOf(b); });
+          var baseW = bumpCands[0]; var nx = __setOrder[__setOrder.indexOf(baseW) + 1]; size = (nx && __setChart[nx]) ? nx : baseW;
+        } else size = wMatches[0];
+      }
+    }
+    if (!size) return { oor: 'не визначено за зростом/вагою' };
+    if (avail.length) {
+      var letterAvail = avail.filter(function (a) { return __setOrder.indexOf(a) >= 0; });
+      if (letterAvail.length && avail.indexOf(size) < 0) {
+        var maxIdx = Math.max.apply(null, letterAvail.map(function (a) { return __setOrder.indexOf(a); }));
+        if (__setOrder.indexOf(size) > maxIdx) return { oor: 'найбільший наявний ' + __setOrder[maxIdx] + ' (буде малий)' };
+        var idx = __setOrder.indexOf(size), best = letterAvail[0], bestd = 999;
+        for (var i = 0; i < letterAvail.length; i++) { var dd = Math.abs(__setOrder.indexOf(letterAvail[i]) - idx); if (dd < bestd) { bestd = dd; best = letterAvail[i]; } }
+        size = best;
+      }
+    }
+    return { size: size };
+  }
+  var __setLines = [];
+  for (var __si = 0; __si < context.product.setItems.length; __si++) {
+    var __it = context.product.setItems[__si];
+    var __itAvail = (Array.isArray(__it.structuredSizes) && __it.structuredSizes.length ? __it.structuredSizes : (__it.sizeChartData && Array.isArray(__it.sizeChartData.sizes) ? __it.sizeChartData.sizes : [])).map(__setNorm);
+    var __itLetter = __itAvail.some(function (a) { return __setOrder.indexOf(a) >= 0; });
+    if (__itLetter) {
+      var __r = __setCalcOne(__itAvail);
+      __setLines.push(__it.name + ': ' + (__r.size ? ('розмір ' + __r.size) : ('уточнимо окремо — ' + __r.oor)));
+    } else if (__itAvail.length) {
+      __setLines.push(__it.name + ': розмір оберіть самі (' + __itAvail.join(', ') + ')');
+    } else {
+      __setLines.push(__it.name + ': розмір уточнимо окремо в чаті');
+    }
+  }
+  return {
+    isSetSizeCalc: true,
+    setSizesText: __setLines.join('\n'),
+    sizeReplyText: 'Дякую! 🙌 За зростом ' + __setH + ' см і вагою ' + __setW + ' кг підібрала розмір для кожної позиції:\n' + __setLines.join('\n'),
+    sizeOutOfRange: false,
+    knownMeasurementsToSave: null
+  };
+}
+
 // Підтвердження розміру й питання про колір мають йти РАЗОМ, одним повідомленням
 // (n_size_reply) — інакше клієнт лишається з голою похвалою без наступного кроку.
 var __needsColorAsk = !!(context.product && String(context.product.colors||'').trim().length > 0 && !(context.colorChoice && context.colorChoice.color));

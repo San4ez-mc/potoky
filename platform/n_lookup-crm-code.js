@@ -527,12 +527,19 @@ try {
     // кольори й розміри компонента з його оферів — у setList, щоб n_set_choice відповідав сам.
     var cColors = [], cSizes = [];
     if (compFull) { var cOffs = compFull.offers || []; for (var co = 0; co < cOffs.length; co++) { var cps = cOffs[co].properties || []; for (var cq = 0; cq < cps.length; cq++) { var cnm = String(cps[cq].name || '').toLowerCase(); var cv = String(cps[cq].value || '').trim(); if (!cv) continue; if ((cnm.indexOf('колір') >= 0 || cnm.indexOf('цвет') >= 0) && cColors.indexOf(cv) < 0) cColors.push(cv); if ((cnm.indexOf('розмір') >= 0 || cnm.indexOf('размер') >= 0) && cSizes.indexOf(cv) < 0) cSizes.push(cv); } } }
+    // 2026-09-11 (власник: розмір для "весь комплект" має рахуватись ОКРЕМО для кожної позиції,
+    // не одним спільним числом) — довантажуємо сюди ж (без додаткових запитів, compFull уже є)
+    // structured sizes/sizeChartData/categoryId кожного компонента, щоб n_calc міг порахувати
+    // розмір по сітці САМЕ цього компонента, а не сета в цілому.
+    var cRawSizes = (compFull && Array.isArray(compFull.sizes) && compFull.sizes.length) ? compFull.sizes.slice() : cSizes.slice();
     setItems.push({
       article: comp.sku || '', id: comp.productId, name: comp.name || '',
       price: compFull ? (Number(compFull.price) || 0) : null,
       supplier: (compFull && compFull.supplier && compFull.supplier.name) || '',
       supplierArticle: (compFull && compFull.supplierArticle) || '',
       colors: cColors, sizes: cSizes,
+      structuredSizes: cRawSizes, sizeChartData: (compFull && compFull.sizeChartData) || null,
+      categoryId: (compFull && (compFull.categoryId || (compFull.category && compFull.category.id))) || null,
       photoUrl: cImgs[0] || '', imageUrls: cImgs.slice(0, 5)
     });
   }

@@ -883,6 +883,16 @@ broadcastQueue.on('failed', (job, error) => {
     db.broadcast.update({ where: { id: job.data.broadcastId }, data: { status: 'failed' } }).catch(() => {});
 });
 
+// ── Тиша в робочих групах (ТЗ Digital Hiring, Етап 2) ────────
+// Клієнт написав у групу і йому не відповіли довше порогу — засновниця
+// дізнається сама. Кожні 30 хв, як і решта перевірок цього воркера.
+const { checkGroupSilence } = require('./silenceChecker');
+const SILENCE_CHECK_INTERVAL_MS = 30 * 60 * 1000;
+setTimeout(() => {
+    checkGroupSilence();
+    setInterval(checkGroupSilence, SILENCE_CHECK_INTERVAL_MS);
+}, 90 * 1000);
+
 // ── Graceful shutdown ────────────────────────────────────────
 async function shutdown() {
     logger.info('Worker shutting down...');

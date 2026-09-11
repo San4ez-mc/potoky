@@ -4514,9 +4514,19 @@ ${_baseUrl}/legal/terms — Правила використання`;
                 lastAssistant = agentResponse;
             }
             if (outputPath) {
-                // finishTool спрацював цього ходу → кладемо структуровані аргументи виклику,
-                // а не вільний текст (agentResponse) — саме заради цього finishTool існує.
-                setByPath(ctx, outputPath, finishToolInput !== null ? finishToolInput : agentResponse);
+                if (finishToolInput !== null) {
+                    // finishTool спрацював цього ходу → кладемо структуровані аргументи
+                    // виклику, а не вільний текст — саме заради цього finishTool існує.
+                    setByPath(ctx, outputPath, finishToolInput);
+                } else if (!data.finishTool) {
+                    // Нода без finishTool (напр. digital-hiring: outputVar як "остання
+                    // відповідь агента") — старий режим, пишемо agentResponse щоходу.
+                    setByPath(ctx, outputPath, agentResponse);
+                }
+                // Нода З finishTool, який ЩЕ не спрацював цього ходу — outputPath НЕ
+                // чіпаємо: інакше проміжна репліка (вільний текст) затре структуровані
+                // дані з попереднього finishTool, і наступний хід побачить сміття
+                // замість JSON-картки в systemPrompt.
             }
             runtime.lastUserMessage = '';
             // Дописати чистий хід у історію (документи обрізаємо — не тягнемо 40K щоразу).

@@ -2332,6 +2332,33 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                 if (exit.parsed && exit.parsed.wantsSizeChart === true && !exit.parsed.askManager) {
                     const _scKeys = Object.keys(exit.parsed).filter((k) => k !== 'wantsSizeChart' && k !== 'wantsPhoto' && k !== 'photoArticle');
                     if (_scKeys.length === 0) exit.done = false;
+                    // 2026-09-11 (власник: "в таких випадках відправляй розмірну сітку по кожному товару
+                    // окремо" — сет 'Комплект 4 в 1' не має ВЛАСНОЇ картинки сітки, і раніше це завжди
+                    // ескалювалось менеджеру): для сета рахуємо чергу sizeChartData кожного компонента
+                    // (той самий сирий об'єкт, що вже підвантажує n_lookup для set-калькулятора розміру
+                    // сьогодні) — і показуємо як текстову таблицю на кожну позицію окремо.
+                    const _isSetChart = !!(ctx.product && ctx.product.isSet && Array.isArray(ctx.product.setItems) && ctx.product.setItems.length);
+                    if (_isSetChart) {
+                        const _setScLines = [];
+                        for (const _it of ctx.product.setItems) {
+                            const _scd = _it && _it.sizeChartData;
+                            if (_scd && Array.isArray(_scd.sizes) && _scd.measurements) {
+                                const _rows = _scd.sizes.map((sz, i) => sz + ': ' + Object.keys(_scd.measurements).map((k) => k + ' ' + _scd.measurements[k][i]).join(', ')).join('\n');
+                                _setScLines.push('🛍 ' + (_it.name || _it.article) + ' (' + (_scd.unit || 'см') + '):\n' + _rows);
+                            } else if (Array.isArray(_it.structuredSizes) && _it.structuredSizes.length) {
+                                _setScLines.push('🛍 ' + (_it.name || _it.article) + ': розміри ' + _it.structuredSizes.join(', ') + ' (без таблиці замірів)');
+                            }
+                        }
+                        if (_setScLines.length) {
+                            await persistAssistantMessage(session.id, 'Розмірна сітка по кожній позиції комплекту:\n\n' + _setScLines.join('\n\n'), { nodeId: node.id, nodeType: 'size_chart_on_demand_set' });
+                            ctx.sizeChartSentAt = Date.now(); ctx.sizeChartSentSku = String((ctx.product && ctx.product.sku) || '');
+                            pushDelivery(runtime, 'size_chart_on_demand', true, null, { nodeId: node.id, setItems: _setScLines.length });
+                        } else {
+                            pushDelivery(runtime, 'size_chart_on_demand', false, 'жоден компонент сета не має sizeChartData', { nodeId: node.id });
+                            await notifyAdminPhotoMissing(session, ctx, funnelEnv, runtime, 'розмірної сітки для компонентів комплекту (у CRM немає даних)');
+                        }
+                    }
+                    if (!_isSetChart) {
                     const _scUrl = (ctx.product && ctx.product.sizeChartUrl) || '';
                     // 2026-09-08 05:02 (vya.cheslav76): сітку надіслали тричі — тут на кожен json з wantsSizeChart і ще
                     // раз нодою n_size_photo. Один раз на товар: позначка sizeChartSentAt (n_size_photo_cond її теж бачить).
@@ -2348,6 +2375,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                     } else {
                         pushDelivery(runtime, 'size_chart_on_demand', false, 'немає product.sizeChartUrl', { nodeId: node.id });
                         await notifyAdminPhotoMissing(session, ctx, funnelEnv, runtime, 'розмірної сітки (у CRM нема картинки сітки)');
+                    }
                     }
                 }
 

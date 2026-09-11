@@ -1258,8 +1258,12 @@ async function runFlowAndDeliver(sessionId, entry) {
                 // іншого фото (sendPhoto-нода, wantsPhoto основного товару) — як і
                 // раніше: усі фото товару з CRM (галерея) поспіль; підпис → текстом.
                 const _isUpsellPhoto = m.nodeType === 'photo_on_demand_upsell';
-                const _fresh = _isUpsellPhoto ? null : await db.session.findUnique({ where: { id: sessionId }, select: { context: true } }).catch(() => null);
-                const _gal = _isUpsellPhoto ? [] : (((_fresh && _fresh.context && _fresh.context.product && _fresh.context.product.imageUrls) || [])).filter((u) => u && String(u).startsWith('http'));
+                // 2026-09-11 (photo_on_demand_catalog — фото КІЛЬКОХ РІЗНИХ товарів зі списку-підказки,
+                // не одного товару з context.product): att.urls, якщо є, це вже готовий, точний
+                // список для альбому — не підміняти галереєю жодного окремого товару.
+                const _explicitUrls = Array.isArray(att.urls) ? att.urls.filter((u) => u && String(u).startsWith('http')) : null;
+                const _fresh = (_isUpsellPhoto || _explicitUrls) ? null : await db.session.findUnique({ where: { id: sessionId }, select: { context: true } }).catch(() => null);
+                const _gal = _explicitUrls ? _explicitUrls : (_isUpsellPhoto ? [] : (((_fresh && _fresh.context && _fresh.context.product && _fresh.context.product.imageUrls) || [])).filter((u) => u && String(u).startsWith('http')));
                 // IG приймає до 10 attachment-обʼєктів в одному повідомленні → шлемо АЛЬБОМОМ.
                 const _maxRow = await db.funnelKey.findFirst({ where: { botId, key: 'PRODUCT_PHOTOS_MAX' }, select: { value: true } }).catch(() => null);
                 const _max = Math.min(10, Math.max(1, parseInt((_maxRow && _maxRow.value) || '10', 10) || 10));

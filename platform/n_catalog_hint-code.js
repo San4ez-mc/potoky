@@ -52,9 +52,26 @@ try {
     var __hitsBy = function (list) { var scored = list.map(function (p) { var h = __nameOf(p); return { p: p, n: __uw.filter(function (w) { return h.indexOf(w) >= 0; }).length }; }).filter(function (x) { return x.n > 0; }); if (!scored.length) return []; var top = Math.max.apply(null, scored.map(function (x) { return x.n; })); var best = scored.filter(function (x) { return x.n === top; }).map(function (x) { return x.p; }); return best; };
     var __prev = String(context.catalogHintSkus || '').toUpperCase().split(',').filter(Boolean);
     var __pick = null;
-    var __nh = __hitsBy(active.filter(function (p) { return __prev.indexOf(String(p.sku || '').toUpperCase()) >= 0; }));
-    if (__nh.length === 1) __pick = __nh[0];
-    else if (!__nh.length) { var __na = __hitsBy(active); if (__na.length > 1 && __stem) __na = __na.filter(function (p) { return __nameOf(p).indexOf(__stem) >= 0 || String(cats[p.categoryId] || '').toLowerCase().indexOf(__stem) >= 0; }); if (__na.length === 1) __pick = __na[0]; }
+    // 2026-09-11 (Олексій: "не пиши їм скидати артикул — кажуть 'хочу сіру чи чорну', лови це"):
+    // колірні слова свідомо в __STOP (не годяться для збігу з НАЗВОЮ товару), тому окремий прохід —
+    // збіг із КОЛЬОРОМ саме серед щойно показаних у ПІДКАЗЦІ товарів (їхні offers[].properties).
+    if (__prev.length) {
+      var __colorWords = msg.match(/(чорн\w*|сір\w*|біл\w*|син\w*|графіт\w*|бордов\w*|беж\w*|коричнев\w*|зелен\w*|червон\w*|хакі|олив\w*|молочн\w*|блакитн\w*)/gi) || [];
+      if (__colorWords.length) {
+        var __prevProducts = active.filter(function (p) { return __prev.indexOf(String(p.sku || '').toUpperCase()) >= 0; });
+        var __colorHits = __prevProducts.filter(function (p) {
+          var offs = p.offers || []; var pc = [];
+          for (var oi = 0; oi < offs.length; oi++) { var props = offs[oi].properties || []; for (var pi = 0; pi < props.length; pi++) { var pn = String(props[pi].name || '').toLowerCase(); if (pn.indexOf('колір') >= 0 || pn.indexOf('цвет') >= 0) pc.push(String(props[pi].value || '').toLowerCase()); } }
+          return __colorWords.some(function (cw) { return pc.some(function (c) { return c.indexOf(cw.toLowerCase().slice(0, 4)) >= 0; }); });
+        });
+        if (__colorHits.length === 1) __pick = __colorHits[0];
+      }
+    }
+    if (!__pick) {
+      var __nh = __hitsBy(active.filter(function (p) { return __prev.indexOf(String(p.sku || '').toUpperCase()) >= 0; }));
+      if (__nh.length === 1) __pick = __nh[0];
+      else if (!__nh.length) { var __na = __hitsBy(active); if (__na.length > 1 && __stem) __na = __na.filter(function (p) { return __nameOf(p).indexOf(__stem) >= 0 || String(cats[p.categoryId] || '').toLowerCase().indexOf(__stem) >= 0; }); if (__na.length === 1) __pick = __na[0]; }
+    }
     // hasFreshSignalThisTurn: інакше n_returning_check веде у n_welcome_back («на жаль, не можу надіслати фото») замість презентації.
     if (__pick && __pick.sku) return { catalogHint: '', catalogHintCount: 0, catalogHintSkus: '', catalogHintPick: String(__pick.sku), hasProductSignal: true, hasFreshSignalThisTurn: true, catalogCategories: catList, unknownTurns: unknownTurns - 1 };
   }
@@ -85,4 +102,10 @@ function __ov(p) { var h = hay(p); var n = 0; __mw.forEach(function (w) { if (h.
 hits.sort(function (a, b) { return (__ov(b) - __ov(a)) || ((Number(a.price) || 0) - (Number(b.price) || 0)); });
 var top = hits.slice(0, 4);
 var lines = top.map(function (p) { return (p.sku ? ('Артикул ' + p.sku + ' — ') : '') + String(p.name || '').trim() + (Number(p.price) ? (' — ' + Number(p.price) + ' грн') : ''); });
-return { catalogHint: lines.join('\n'), catalogHintCount: top.length, catalogHintTotal: hits.length, catalogHintSkus: top.map(function (p) { return String(p.sku || ''); }).filter(Boolean).join(','), catalogCategories: catList, unknownTurns: unknownTurns };
+// 2026-09-11 (Олексій: "люди не розуміють що то за кофти по артикулах — зразу скидати фото і
+// ловити відповідь типу 'хочу сіру чи чорну'"): клієнт бачить фото одразу, не питає артикул.
+// thumbnailUrl у CRM — відносний шлях (/uploads/...), той самий resolveUrl, що й у n_lookup.
+var __publicBase = (keys.CRM_PUBLIC_BASE || 'https://pcrm.fineko.space').replace(/\/$/, '');
+function __resolveUrl(u) { if (!u) return ''; return /^https?:\/\//i.test(u) ? u : (__publicBase + (u.charAt(0) === '/' ? u : '/' + u)); }
+var catalogHintPhotos = top.map(function (p) { return __resolveUrl(p.thumbnailUrl || (Array.isArray(p.images) && p.images[0]) || ''); }).filter(Boolean);
+return { catalogHint: lines.join('\n'), catalogHintCount: top.length, catalogHintTotal: hits.length, catalogHintSkus: top.map(function (p) { return String(p.sku || ''); }).filter(Boolean).join(','), catalogHintPhotos: catalogHintPhotos, catalogCategories: catList, unknownTurns: unknownTurns };

@@ -2447,6 +2447,20 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                     }
                 }
 
+                // 2026-09-11 (Олексій: клієнти не розуміють артикулів, лишають без фото — «Артикули
+                // ніколи не треба питати у клієнта, їм треба фото товарів надсилати»): коли
+                // n_catalog_hint щойно показав список кількох товарів (ПІДКАЗКА, до 4 позицій) —
+                // ДЕТЕРМІНОВАНО (не чекаючи, поки модель згадає прапорець) шлемо альбом їхніх
+                // мініатюр одразу за текстом. Анти-спам: не повторюємо той самий список фото, якщо
+                // клієнт просто ще раз не відповів на ту саму підказку (catalogHintSkus не змінився).
+                if (Array.isArray(ctx.catalogHintPhotos) && ctx.catalogHintPhotos.length && ctx.catalogHintSkus && ctx.catalogHintSkus !== ctx.catalogHintPhotosSentFor) {
+                    const _catPhotos = ctx.catalogHintPhotos.filter((u) => u && String(u).startsWith('http')).slice(0, 10);
+                    if (_catPhotos.length) {
+                        await persistAssistantMessage(session.id, '', { nodeId: node.id, nodeType: 'photo_on_demand_catalog', attachment: { type: 'photo', url: _catPhotos[0], urls: _catPhotos, caption: '' } });
+                        ctx.catalogHintPhotosSentFor = ctx.catalogHintSkus;
+                    }
+                }
+
                 // Централізований текстовий safety-net (Проблема 4, аудит 2026-09-01,
                 // живий кейс: клієнт просив фото графітової кофти — модель відповіла
                 // "зараз надішлю фото графітової кофти" ЗВИЧАЙНИМ ТЕКСТОМ, без

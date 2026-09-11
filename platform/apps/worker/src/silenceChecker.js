@@ -72,6 +72,18 @@ function isOurs(author, teamNames) {
     });
 }
 
+/** Токен бота: спершу збережений конектор, потім прямий ключ воронки. */
+async function resolveToken(keys) {
+    if (keys.TELEGRAM_CONNECTOR_ID) {
+        const c = await db.savedConnector.findUnique({
+            where: { id: keys.TELEGRAM_CONNECTOR_ID }, select: { config: true },
+        }).catch(() => null);
+        const t = c?.config?.token;
+        if (t && /^\d+:[A-Za-z0-9_-]{20,}$/.test(t.trim())) return t.trim();
+    }
+    return /^\d+:[A-Za-z0-9_-]{20,}$/.test(keys.TELEGRAM_BOT_TOKEN || '') ? keys.TELEGRAM_BOT_TOKEN : null;
+}
+
 async function sendAlert(token, chatId, text) {
     const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: 'POST',
@@ -96,16 +108,7 @@ async function checkBotGroups(bot) {
     const ownerChat = keys.OWNER_TELEGRAM_ID;
     if (!ownerChat) return; // нема кому повідомляти — мовчимо, а не вгадуємо
 
-    const token = await (async () => {
-        if (keys.TELEGRAM_CONNECTOR_ID) {
-            const c = await db.savedConnector.findUnique({
-                where: { id: keys.TELEGRAM_CONNECTOR_ID }, select: { config: true },
-            }).catch(() => null);
-            const t = c?.config?.token;
-            if (t && /^\d+:[A-Za-z0-9_-]{20,}$/.test(t.trim())) return t.trim();
-        }
-        return /^\d+:[A-Za-z0-9_-]{20,}$/.test(keys.TELEGRAM_BOT_TOKEN || '') ? keys.TELEGRAM_BOT_TOKEN : null;
-    })();
+    const token = await resolveToken(keys);
     if (!token) return;
 
     const team = await loadTeamNames(keys);
@@ -179,4 +182,4 @@ async function checkGroupSilence() {
     }
 }
 
-module.exports = { checkGroupSilence, isOurs, authorOf };
+module.exports = { checkGroupSilence, isOurs, authorOf, loadKeys, loadTeamNames, resolveToken };

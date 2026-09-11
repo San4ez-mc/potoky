@@ -912,6 +912,16 @@ setTimeout(() => {
     setInterval(checkGroupSilence, SILENCE_CHECK_INTERVAL_MS);
 }, 90 * 1000);
 
+// ── Зведення по групах: щоденне і щотижневе (ТЗ Digital Hiring, Етап 2) ──
+// Сама функція вирішує, чи зараз ранкове вікно і чи не слала вона сьогодні —
+// тому інтервал може бути частим і не мусить збігатися з розкладом.
+const { runDigests } = require('./groupDigest');
+const DIGEST_INTERVAL_MS = 20 * 60 * 1000;
+setTimeout(() => {
+    runDigests();
+    setInterval(runDigests, DIGEST_INTERVAL_MS);
+}, 2 * 60 * 1000);
+
 // ── Graceful shutdown ────────────────────────────────────────
 async function shutdown() {
     logger.info('Worker shutting down...');

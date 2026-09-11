@@ -72,6 +72,7 @@ const CODE = {
     n_shop_profile: () => readCode('n_shop_profile-code.js'),
     n_extra_resolve: () => readCode('n_extra_resolve-code.js'),
     n_signal_check: () => readCode('n_signal_check-code.js'),
+    n_avail_search: () => readCode('n_avail_search-code.js'),
 };
 
 const MATCH_NOTE_OLD = '⚠️ Товар вище вже ОДНОЗНАЧНО підтверджено системою за артикулом/кодом, який назвав клієнт — НІКОЛИ не пиши, що товар/артикул "не знайдено" чи "немає в каталозі", навіть якщо точний код не видно в описі нижче. Завжди довіряй даним про товар вище.';
@@ -83,6 +84,7 @@ const SET_CHOICE_CAR_NEW = 'Якщо клієнт задав РОЗМИТЕ пи
 const PAY_INTL_LINE = '\n\n🌍 Доставка за кордон? Напишіть, будь ласка, у яку країну — підкажу умови.';
 
 const ORDER_INTENT_PROMPT = `Ти — {{env.PERSONA_NAME}}, тепла консультантка {{env.SHOP_TAG}}. Товар: {{context.product.customerName}} (артикул {{context.product.sku}}) — {{context.product.price}} грн. Це ТОЙ САМИЙ товар, який клієнт назвав/відкрив — він уже визначений системою, не шукай його і не пиши "не знаходжу". Опис (для контексту, не цитуй списком): {{context.product.desc}}
+ЯКЩО клієнт питає про наявність ІНШОГО товару/розміру/кольору (рядок нижче непорожній) — система ВЖЕ перевірила каталог, відповідай ЦИМИ фактами прямо, не проси зачекати і не кажи "уточню": {{context.availAnswer}}
 Колір, ЯКЩО узгоджено: «{{context.colorChoice.color}}» (порожньо = у товару нема вибору кольору, просто не згадуй). Розмір, ЯКЩО визначено: «{{context.recommendedSize}}» (порожньо = не згадуй). Розмір уже підібрано системою за сіткою і озвучено клієнту — НІКОЛИ не перераховуй його сам за зростом/вагою і не називай інший розмір (2026-09-08: клієнту сказали XXL, а ти написала XL). Якщо клієнт просить інший розмір — зафіксуй його бажання в підсумку без сперечань.
 ЯКЩО це ВЕСЬ КОМПЛЕКТ (рядок нижче непорожній) — розмір для КОЖНОЇ позиції вже підібрано ОКРЕМО (різні речі мають різні сітки) — у підсумку перелічи КОЖНУ позицію з ЇЇ розміром рядком нижче дослівно, а не єдиний {{context.recommendedSize}}: {{context.setSizesText}}
 ПОЗИЦІЇ ЗАМОВЛЕННЯ (кількість і кольори/розміри, вже узгоджені з клієнтом): {{context.orderUnitsText}}; сума за них: {{context.orderUnitsTotal}} грн. Якщо позицій більше однієї — у підсумку перелічи ВСІ і назви саме цю суму, а не ціну однієї штуки.
@@ -590,6 +592,21 @@ function applyV12(nodes, edges, notes) {
         edges.push({ id: 'e_n_catalog_hint_photo_next', source: 'n_catalog_hint_photo', target: 'n_catalog_hint_photo_mark' });
         edges.push({ id: 'e_n_catalog_hint_photo_mark_next', source: 'n_catalog_hint_photo_mark', target: 'n_unknown_msg' });
         notes.push('+ n_catalog_hint_photo_cond / n_catalog_hint_photo / n_catalog_hint_photo_mark');
+    }
+    // 2026-09-11 (власник: "питання чи є ще такий товар воронка має відпрацьовувати сама, не
+    // чекаючи менеджера — система має мати доступ до каталогу і сама аналізувати") — живий кейс:
+    // клієнт обговорював кофту C0043, запитав про наявність ІНШОГО товару (лофери 45-46) →
+    // askManager замість прямої відповіді. n_avail_search — детермінований пошук по всьому
+    // каталогу (не лише поточному товару), готує context.availAnswer перед n_order_intent.
+    if (!byId().n_avail_search && byId().n_order_intent) {
+        const pa = placer.place(pos('n_order_intent').x - GX, pos('n_order_intent').y + GY);
+        nodes.push({ id: 'n_avail_search', type: 'js', position: pa, data: { label: '8.5 Перевірка наявності по каталогу', code: CODE.n_avail_search(), description: 'Якщо повідомлення схоже на питання про наявність (чи є/наявність/залишилось) — шукає в CRM по ВСЬОМУ каталогу (не лише поточному товару), готує context.availAnswer з фактами замість ескалації менеджеру.' } });
+        edges = edges.map((e) => (e.target === 'n_order_intent' && e.source !== 'n_avail_search' ? { ...e, target: 'n_avail_search' } : e));
+        edges.push({ id: 'e_n_avail_search_next', source: 'n_avail_search', target: 'n_order_intent' });
+        notes.push('+ n_avail_search');
+    } else if (byId().n_avail_search && byId().n_avail_search.data.code !== CODE.n_avail_search()) {
+        byId().n_avail_search.data.code = CODE.n_avail_search();
+        notes.push('code n_avail_search (sync)');
     }
     const ua = byId().n_unknown_admin;
     if (ua && ua.data.alertPhoto !== '{{context.lastUserImageUrl}}') { ua.data.alertPhoto = '{{context.lastUserImageUrl}}'; notes.push('n_unknown_admin alertPhoto'); }

@@ -811,6 +811,17 @@ function refresh(flow, opts) {
     if (byId.n_welcome_back && byId.n_welcome_back.type === 'claude') byId.n_welcome_back.data.systemPrompt = WELCOME_BACK_PROMPT;
     if (byId.n_upsell2_wait) byId.n_upsell2_wait.data.systemPrompt = UPSELL2_PROMPT;
     if (byId.n_size) byId.n_size.data.waitAfterPresentation = true;
+    // 2026-09-11 (власник: бот сам має доступ до кольорів і розмірів компонентів сету, має
+    // відповідати з них, а не кликати менеджера): "Чорні класичні замшеві лофери, артикул 5934"
+    // — назва товару вже каже, що колір ОДИН (чорний), офферів по кольору в CRM просто нема.
+    // Питання "чи є коричневого кольору?" ескалювалось до askManager замість чесної відповіді
+    // "лише чорний" прямо з назви/складу. Додаємо правило дописом (idempotent), а не заміною
+    // всього промпту — n_set_choice не зберігається як повна константа в цьому патчі.
+    const SET_CHOICE_SINGLE_COLOR_RULE = '\nЯКЩО клієнт питає про КОЛІР/ВАРІАНТ позиції зі складу комплекту (вище, "Склад комплекту"), а в назві/переліку кольорів ЦІЄЇ позиції названо лише ОДИН колір (або кольорів там немає взагалі) — це означає, що ІНШИХ кольорів у цієї позиції НЕМА: чесно скажи, який колір є, замість {"askManager":"..."}. askManager для кольору/розміру позиції — лише якщо в даних вище справді НЕМА жодної інформації про колір цієї позиції.';
+    if (byId.n_set_choice && byId.n_set_choice.type === 'claude' && !String(byId.n_set_choice.data.systemPrompt || '').includes('ІНШИХ кольорів у цієї позиції НЕМА')) {
+        byId.n_set_choice.data.systemPrompt = String(byId.n_set_choice.data.systemPrompt || '') + SET_CHOICE_SINGLE_COLOR_RULE;
+        notes.push('n_set_choice singleColorRule');
+    }
     applyPayCollectGuard(byId.n_pay_collect);
     // v12.19: заміна тексту заперечення — тут, а НЕ в transform() (transform() виконується лише при першому
     // застосуванні патча на новому боті; прод оновлюється --refresh --apply, який transform() НЕ викликає —

@@ -1705,6 +1705,15 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
         // lastUserImageUrl уже очищено наступним текстовим ходом.
         ctx.recentUserImageUrl = incomingImageUrl;
         ctx.recentUserImageAt = Date.now();
+        // Ноди з data.collectPhotos===true (напр. Property Capture) накопичують ВСІ вхідні
+        // фото за сесію в масив, а не лише останнє — на відміну від lastUserImageUrl/
+        // recentUserImageUrl вище, які завжди тримають тільки один, найсвіжіший кадр.
+        const _curNodeForCollect = runtime.currentNodeId ? nodesById.get(runtime.currentNodeId) : null;
+        if (_curNodeForCollect && _curNodeForCollect.data && _curNodeForCollect.data.collectPhotos === true) {
+            const _photos = Array.isArray(ctx.propertyPhotos) ? ctx.propertyPhotos.slice(-49) : [];
+            if (!_photos.includes(incomingImageUrl)) _photos.push(incomingImageUrl);
+            ctx.propertyPhotos = _photos;
+        }
     } else if (incomingUserMessage) {
         // Живий тест 2026-09-04 (Олексій): фото з попереднього ходу лишалось у lastUserImageUrl,
         // і наступний ТЕКСТ ("Світло-сірий") n_prev_match_snapshot рахував як "свіжий сигнал товару"
@@ -4322,6 +4331,11 @@ ${_baseUrl}/legal/terms — Правила використання`;
 
             let agentResponse = '';
             let agentDone = false;
+            // Аргументи виклику finishTool (структурований підсумок, який модель САМА
+            // склала за схемою інструмента) — на відміну від agentResponse (вільний текст
+            // останньої репліки), це те, що реально треба класти в outputVar для нод типу
+            // «зібрати структуровані дані діалогом» (Property Capture тощо).
+            let finishToolInput = null;
             for (let iter = 0; iter < maxIterations; iter++) {
                 let response;
                 try {
@@ -4370,6 +4384,7 @@ ${_baseUrl}/legal/terms — Правила використання`;
                     // finishTool — сигнал завершення діалогу (dialogMode): не HTTP, а прапорець.
                     if (data.finishTool && toolCall.name === data.finishTool) {
                         agentDone = true;
+                        finishToolInput = toolCall.input || {};
                         toolResults.push({ type: 'tool_result', tool_use_id: toolCall.id, content: 'Готово, завершую.' });
                         continue;
                     }
@@ -4473,7 +4488,9 @@ ${_baseUrl}/legal/terms — Правила використання`;
                 lastAssistant = agentResponse;
             }
             if (outputPath) {
-                setByPath(ctx, outputPath, agentResponse);
+                // finishTool спрацював цього ходу → кладемо структуровані аргументи виклику,
+                // а не вільний текст (agentResponse) — саме заради цього finishTool існує.
+                setByPath(ctx, outputPath, finishToolInput !== null ? finishToolInput : agentResponse);
             }
             runtime.lastUserMessage = '';
             // Дописати чистий хід у історію (документи обрізаємо — не тягнемо 40K щоразу).

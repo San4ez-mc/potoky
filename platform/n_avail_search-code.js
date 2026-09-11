@@ -6,7 +6,10 @@
 // Детермінований крок ПЕРЕД будь-якою claude-нодою, що може отримати таке питання: розпізнає
 // "чи є / наявність / залишилось" + категорію (+ опційно розмір/колір), шукає в CRM НЕЗАЛЕЖНО
 // від того, який товар вже "визначено" — і готує context.availAnswer з прямою відповіддю.
-var msg = String(context.lastUserMessage || input || '').toLowerCase();
+// 2026-09-11: lastUserMessage свідомо СКИДАЄТЬСЯ попередньою claude-нодою (n_color/n_size) в
+// цьому ж ході — беремо СТАБІЛЬНИЙ знімок lastCustomerMessage (той самий урок, що й у
+// UNKNOWN_DEBUG_CODE раніше цієї сесії), інакше на цьому кроці msg завжди порожній.
+var msg = String(context.lastCustomerMessage || context.lastUserMessage || input || '').toLowerCase();
 function out(ans) { return { availAnswer: ans || '' }; }
 var isAvailQ = /(чи\s*є\b|є\s+в\s+наявнос|наявніст|наявність|залиш(и|ил)ось|маєте\s+ще|є\s+ще\s+так|є\s+ще\b)/i.test(msg);
 if (!isAvailQ) return out('');
@@ -37,7 +40,9 @@ try {
   finally { clearTimeout(to); }
 } catch (e) { return out(''); }
 function hay(p) { return (String(p.name || '') + ' ' + String(p.customerName || '')).toLowerCase(); }
-var pool = all.filter(function (p) { return p.isActive !== false && !p.archived; });
+// 2026-09-11: сети (артикул set...) мають слова категорій у СКЛАДІ назви ("Комплект 4 в 1 (...,
+// лофери)") — без винятку вони забивали всі 4 слоти кандидатів раніше реальних окремих товарів.
+var pool = all.filter(function (p) { return p.isActive !== false && !p.archived && !/^set/i.test(String(p.sku || '')); });
 // Категорія з питання — інакше, якщо є розмір/колір без категорії, звужуємо до поточного товару (якщо є).
 var candidates = stem ? pool.filter(function (p) { return hay(p).indexOf(stem) >= 0; }) : (context.product && context.product.sku ? pool.filter(function (p) { return String(p.sku || '').toUpperCase() === String(context.product.sku).toUpperCase(); }) : []);
 if (!candidates.length) return out('');

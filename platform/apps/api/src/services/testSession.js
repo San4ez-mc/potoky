@@ -2022,7 +2022,12 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                         const _kj = _kr.ok ? await _kr.json().catch(() => ({})) : {};
                         const _hits = Array.isArray(_kj.data) ? _kj.data : [];
                         if (_hits.length) {
-                            systemPrompt += '\n\n=== ДОВІДКА ПО ПИТАННЮ (база знань магазину в CRM — відповідай СПИРАЮЧИСЬ на неї, своїми словами, без вигадок) ===\n'
+                            // 2026-09-11 (регресія: на "чи прийде взуття однією посилкою?" бот ІНОДІ
+                            // впевнено відповідав протилежне факту з цього ж блоку) — модель не завжди
+                            // розуміла, що цей підмішаний блок ТОЧНІШИЙ за її власні здогадки/загальні
+                            // знання про магазин; посилила формулювання явним пріоритетом і забороною
+                            // суперечити.
+                            systemPrompt += '\n\n=== ДОВІДКА ПО ПИТАННЮ (база знань магазину в CRM — це ФАКТИ САМЕ ПРО ЦЕЙ МАГАЗИН, точніші за будь-які твої припущення чи загальні знання; відповідай СПИРАЮЧИСЬ на неї, своїми словами, НІКОЛИ не суперечь їй і не вигадуй протилежне) ===\n'
                                 + _hits.map((h) => '• ' + (h.question ? ('Питання: ' + String(h.question).slice(0, 200) + ' → ') : '') + 'Відповідь: ' + String(h.answer || '').slice(0, 600)).join('\n');
                         }
                         db.apiCall.create({ data: { sessionId: session.id, service: 'crm_kb', method: 'search', requestData: { query: _q.slice(0, 120), scope: _scope }, responseData: { count: _hits.length }, statusCode: _kr.status, durationMs: Date.now() - _kStart } }).catch(() => {});

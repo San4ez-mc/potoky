@@ -113,8 +113,12 @@ if(!cityObj){ var byBase=cyList.filter(function(c){ return normCity(c.name)===no
   if(!cityObj && byBase.length>1){ var regSrc=norm([od.region, np.region, od.branch, od.city, cityRaw].filter(Boolean).join(' ')); var regStems=(regSrc.match(/[а-яіїєґ]{5,}/g)||[]).map(function(w){return w.slice(0,5);}).filter(function(w){return !/^(облас|район|відді|поштом|нова|пошта|село|селищ)/.test(w);});
     var byReg=byBase.filter(function(c){ var paren=norm(String(c.name_ua||c.name||'').split('(')[1]||''); return regStems.some(function(st){ return paren.indexOf(st)>=0; }); }); if(byReg.length===1) cityObj=byReg[0]; } }
 if(!cityObj) return fail('місто «'+cityQ+'» не знайдено точним збігом (варіанти: '+(cyList.map(function(c){return c.name_ua||c.name;}).slice(0,5).join(', ')||'—')+')');
-var bnum=(String(np.warehouse||od.branch||'').match(/№\s*(\d+)/)||String(od.branch||'').match(/(\d+)/)||[])[1]||'';
-if(!bnum) return fail('не вказано номер відділення/поштомата');
+// 2026-09-10 (клієнт хотів доставку на домашню адресу, бот силою підібрав СХОЖЕ, але не те
+// відділення): раніше при відсутності «№ N» брався ПЕРШИЙ довільний номер з будь-якого тексту
+// od.branch (напр. з номера будинку/квартири вулиці) — і часто випадково збігався з реально
+// існуючим відділенням у місті. Тепер без чіткого «№ N» — одразу ❌ manual, а не вгадування.
+var bnum=(String(np.warehouse||od.branch||'').match(/№\s*(\d+)/)||[])[1]||'';
+if(!bnum) return fail('не вказано номер відділення/поштомата (od.branch="'+String(od.branch||'').slice(0,80)+'" не схоже на відділення НП — можливо, клієнт дав домашню адресу)');
 var brs=await bd('/api/branches?city_id='+cityObj.id+'&search='+encodeURIComponent(bnum)+'&per_page=50');
 var ba=(brs.json&&brs.json.data)||[];
 var bnRe=new RegExp('№\\s*'+bnum+'(?!\\d)');

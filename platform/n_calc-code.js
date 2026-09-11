@@ -208,7 +208,22 @@ if (w && h && wMatches.length) {
   else {
     var hMaxOfW = Math.max.apply(null, wMatches.map(function (k) { return Number((chart[k].height || [0, 0])[1]); }));
     // 187/85 (Олена, 09-07): вага на межі L/XL, зріст вищий за обидва → бамп від МЕНШОГО (L→XL), а не від XL→XXL (менеджер: XL).
-    if (h > hMaxOfW) { var baseW = wMatches[0]; var nx = order[order.indexOf(baseW) + 1]; size = (nx && chart[nx]) ? nx : baseW; }
+    // 2026-09-11 (власник: 187/86 → бот дав XXL, має бути XL, так само як підтверджене 187/85 → XL):
+    // пороги суміжні (L 75-85, XL 85-100) — рівно НА межі (85 кг) L теж матчиться і бамп іде від
+    // НЬОГО (L→XL, коректно), а вже за 1 кг вище (86 кг) L випадає зі списку взагалі — лишається
+    // тільки XL, бамп іде вже від XL→XXL — стрибок на цілий розмір через 1 кг. Для вибору БАЗИ
+    // бампа (не для прямого hOk-збігу вище) додатково пускаємо в кандидати сусідній НИЖЧИЙ бренд,
+    // якщо вага лише трохи (≤3 кг) вище його межі — база бампа лишається тією ж, що й на самій межі.
+    if (h > hMaxOfW) {
+      var bumpCands = wMatches.slice();
+      for (var bwk in chart) {
+        if (bumpCands.indexOf(bwk) >= 0) continue;
+        var bwr = chart[bwk] && chart[bwk].weight;
+        if (bwr && w > Number(bwr[1]) && w <= Number(bwr[1]) + 3) bumpCands.push(bwk);
+      }
+      bumpCands.sort(function (a, b) { return order.indexOf(a) - order.indexOf(b); });
+      var baseW = bumpCands[0]; var nx = order[order.indexOf(baseW) + 1]; size = (nx && chart[nx]) ? nx : baseW;
+    }
     else size = wMatches[0];
   }
 } else if (byW && byH) { size = order.indexOf(byW) >= order.indexOf(byH) ? byW : byH; }

@@ -2453,6 +2453,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                 // ДЕТЕРМІНОВАНО (не чекаючи, поки модель згадає прапорець) шлемо альбом їхніх
                 // мініатюр одразу за текстом. Анти-спам: не повторюємо той самий список фото, якщо
                 // клієнт просто ще раз не відповів на ту саму підказку (catalogHintSkus не змінився).
+                logger.info('[DEBUG catalogHintPhotos]', { nodeId: node.id, hasPhotos: Array.isArray(ctx.catalogHintPhotos), photosLen: ctx.catalogHintPhotos && ctx.catalogHintPhotos.length, skus: ctx.catalogHintSkus, sentFor: ctx.catalogHintPhotosSentFor });
                 if (Array.isArray(ctx.catalogHintPhotos) && ctx.catalogHintPhotos.length && ctx.catalogHintSkus && ctx.catalogHintSkus !== ctx.catalogHintPhotosSentFor) {
                     const _catPhotos = ctx.catalogHintPhotos.filter((u) => u && String(u).startsWith('http')).slice(0, 10);
                     if (_catPhotos.length) {

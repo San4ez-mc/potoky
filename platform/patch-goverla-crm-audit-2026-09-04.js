@@ -809,6 +809,16 @@ function refresh(flow, opts) {
     const nodes = flow.nodes.map((n) => ({ ...n, data: { ...n.data } }));
     const byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
     for (const [id, get] of Object.entries(CODE)) { if (byId[id]) { byId[id].data.code = get(); notes.push('code ' + id); } }
+    // 2026-09-11: "весь комплект" мав isClothing=false (сет без власної категорії, і це коректно —
+    // категорію одному сету не призначиш, у різних позицій різні розміри), тому n_is_clothing
+    // пропускав n_size/n_calc повністю — зріст/вагу для комплекту ніхто деТерміновано не рахував,
+    // n_order_intent вигадував розміри сам вільним текстом. Пускаємо сети через n_size теж — там
+    // новий блок у n_calc-code.js рахує розмір ОКРЕМО для кожної позиції набору.
+    const N_IS_CLOTHING_COND = "context.product && (context.product.isClothing || context.product.isSet) && context.sizeAskedFor !== context.product.categoryId";
+    if (byId.n_is_clothing && byId.n_is_clothing.data.condition !== N_IS_CLOTHING_COND) {
+        byId.n_is_clothing.data.condition = N_IS_CLOTHING_COND;
+        notes.push('n_is_clothing condition includes isSet');
+    }
     if (byId.n_order_intent) byId.n_order_intent.data.systemPrompt = ORDER_INTENT_PROMPT;
     if (byId.n_collect) { byId.n_collect.data.systemPrompt = COLLECT_PROMPT; byId.n_collect.data.detectPaymentChange = true; }
     if (byId.n_welcome_back && byId.n_welcome_back.type === 'claude') byId.n_welcome_back.data.systemPrompt = WELCOME_BACK_PROMPT;

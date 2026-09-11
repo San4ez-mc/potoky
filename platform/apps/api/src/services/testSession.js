@@ -781,6 +781,106 @@ function looksLikeGeneratedArtifact(text) {
     return value.length > 1200;
 }
 
+// Довідка по наявності в каталозі (2026-09-11, власник: "питання чи є товар в наявності має
+// відпрацьовуватись воронкою САМА, не чекаючи менеджера"). Спершу це було реалізовано як
+// окремий js-вузол n_avail_search на ОДНОМУ вхідному ребрі перед n_order_intent — живий тест
+// показав: dialogMode-ноди (n_order_intent, n_color, n_pay...) ЗАЦИКЛЮЮТЬСЯ на собі (exit.done
+// === false → runtime.currentNodeId НЕ змінюється, рядок ~2636) — тобто на КОЖНОМУ наступному
+// ході, поки діалог триває всередині однієї dialog-ноди, жоден upstream js-вузол графа більше
+// НЕ виконується. n_avail_search фактично спрацьовував лише на єдиному ході переходу В
+// dialog-ноду вперше — для реальних розмов (де запитання "а лофери є?" приходить ПІСЛЯ кількох
+// ходів усередині n_order_intent) availAnswer завжди лишався ''. Тому цю ж логіку рахуємо тут,
+// у самому двигуні, НА КОЖНОМУ вхідному повідомленні, незалежно від того, яка нода зараз
+// тримає controlled dialog — так само, як funnelEnv/CRM-ключі читаються напряму (без
+// побудованого funnelEnv) в аналогічному блоку розпізнавання сирого IG-лінка вище.
+async function computeAvailAnswer(rawMsg, ctx, botId) {
+    const msg = String(rawMsg || '').toLowerCase();
+    const isAvailQ = /(чи\s*є\b|є\s+в\s+наявнос|наявніст|наявність|залиш(и|ил)ось|маєте\s+ще|є\s+ще\s+так|є\s+ще\b)/i.test(msg);
+    if (!isAvailQ) return '';
+    const STEMS = [
+        ['кофт', 'кофт'], ['светр', 'кофт'], ['худ', 'худ'], ['бомбер', 'бомбер'], ['куртк', 'куртк'],
+        ['вітровк', 'вітровк'], ['джинс', 'джинс'], ['штан', 'штан'], ['футболк', 'футболк'],
+        ['лофер', 'лофер'], ['взутт', 'взутт'], ['кросів', 'кросів'], ['черевик', 'черевик'],
+        ['костюм', 'костюм'], ['комплект', 'комплект'], ['накидк', 'накидк'],
+    ];
+    let stem = null;
+    for (const [needle, tag] of STEMS) { if (msg.indexOf(needle) >= 0) { stem = tag; break; } }
+    const sizeM = msg.match(/\b(\d{2}(?:[-/]\d{2})?)\b/);
+    const sizeWanted = sizeM ? sizeM[1].split(/[-/]/)[0] : '';
+    const colorM = msg.match(/(чорн\w*|сір\w*|біл\w*|син\w*|графіт\w*|бордов\w*|беж\w*|коричнев\w*|зелен\w*|червон\w*|хакі|олив\w*|молочн\w*|блакитн\w*)/i);
+    const colorWanted = colorM ? colorM[1] : '';
+    if (!stem && !sizeWanted && !colorWanted) return '';
+
+    const _rows = await db.funnelKey.findMany({
+        where: { botId, key: { in: ['CRM_API_URL', 'CRM_API_BASE', 'CRM_API_KEY'] } },
+        select: { key: true, value: true },
+    }).catch(() => []);
+    const _keys = Object.fromEntries((_rows || []).map((k) => [k.key, k.value]));
+    const base = String(_keys.CRM_API_URL || _keys.CRM_API_BASE || '').trim().replace(/\/$/, '');
+    const apiKey = String(_keys.CRM_API_KEY || '').trim();
+    if (!base || !apiKey) return '';
+
+    const hdr = { Authorization: 'Bearer ' + apiKey, Accept: 'application/json' };
+    let all = [];
+    try {
+        const ac = new AbortController();
+        const to = setTimeout(() => { try { ac.abort(); } catch (_e) { /* noop */ } }, 4000);
+        try {
+            const r = await fetch(base + '/products?take=300', { headers: hdr, signal: ac.signal });
+            const j = await r.json().catch(() => ({}));
+            all = Array.isArray(j.data) ? j.data : [];
+        } finally { clearTimeout(to); }
+    } catch (_e) { return ''; }
+
+    const hay = (p) => (String(p.name || '') + ' ' + String(p.customerName || '')).toLowerCase();
+    // Сети (артикул set...) мають слова категорій у СКЛАДІ назви ("Комплект 4 в 1 (...,
+    // лофери)") — без винятку вони забивали всі 4 слоти кандидатів раніше реальних окремих товарів.
+    const pool = all.filter((p) => p.isActive !== false && !p.archived && !/^set/i.test(String(p.sku || '')));
+    const candidates = stem
+        ? pool.filter((p) => hay(p).indexOf(stem) >= 0)
+        : (ctx.product && ctx.product.sku ? pool.filter((p) => String(p.sku || '').toUpperCase() === String(ctx.product.sku).toUpperCase()) : []);
+    if (!candidates.length) return '';
+
+    const sizesOf = (p) => {
+        let s = [];
+        (p.offers || []).forEach((o) => (o.properties || []).forEach((pr) => {
+            const n = String(pr.name || '').toLowerCase();
+            if (n.indexOf('розмір') >= 0 || n.indexOf('размер') >= 0) {
+                const v = String(pr.value || '').trim();
+                if (v && s.indexOf(v) < 0) s.push(v);
+            }
+        }));
+        if (!s.length && Array.isArray(p.sizes)) s = p.sizes.slice();
+        return s;
+    };
+    const colorsOf = (p) => {
+        const c = [];
+        (p.offers || []).forEach((o) => (o.properties || []).forEach((pr) => {
+            const n = String(pr.name || '').toLowerCase();
+            if (n.indexOf('колір') >= 0 || n.indexOf('цвет') >= 0) {
+                const v = String(pr.value || '').trim();
+                if (v && c.indexOf(v) < 0) c.push(v);
+            }
+        }));
+        return c;
+    };
+
+    const lines = [];
+    for (let ci = 0; ci < candidates.length && lines.length < 4; ci++) {
+        const p = candidates[ci];
+        const sizes = sizesOf(p);
+        const colors = colorsOf(p);
+        const sizeOk = !sizeWanted || sizes.some((s) => s.replace(/\D/g, '') === sizeWanted);
+        const colorOk = !colorWanted || colors.some((c) => c.toLowerCase().indexOf(colorWanted.slice(0, 4)) >= 0);
+        const status = (sizeOk && colorOk)
+            ? 'Є в наявності ✅'
+            : 'Немає саме такого варіанту ❌ (є: ' + (sizes.length ? 'розміри ' + sizes.join(', ') : '') + (sizes.length && colors.length ? '; ' : '') + (colors.length ? 'кольори ' + colors.join(', ') : '') + ')';
+        lines.push((p.sku ? ('Артикул ' + p.sku + ' — ') : '') + String(p.name || p.customerName || '').trim() + (Number(p.price) ? (' — ' + Number(p.price) + ' грн') : '') + ': ' + status);
+    }
+    if (!lines.length) return '';
+    return 'ДОВІДКА ПО НАЯВНОСТІ (система перевірила каталог щойно, дані точні — відповідай ЦИМИ фактами, не вигадуй): \n' + lines.join('\n');
+}
+
 function isUserConfirmation(text) {
     if (!text || typeof text !== 'string') return false;
 
@@ -1675,6 +1775,10 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
         // нода далі в каскаді не чистить — саме його треба показувати людям
         // (сповіщення, адмінка), а не транзиторний runtime.lastUserMessage.
         ctx.lastCustomerMessage = runtime.lastUserMessage;
+        // Довідка по наявності (2026-09-11) — рахуємо на КОЖНОМУ ході, а не лише на вході в
+        // dialog-ноду (детальний урок — див. коментар над computeAvailAnswer). Дешевий no-op
+        // для 99% повідомлень (перший regex-чек всередині відсікає одразу).
+        ctx.availAnswer = await computeAvailAnswer(runtime.lastUserMessage, ctx, session.botId).catch(() => '');
         // Аудит 2026-09-02 (Проблема 5, доповнення — живий тест виявив): якщо в
         // повідомленні був сирий IG-лінк (_hasRawIgLink вище), товар уже міг бути
         // ПРАВИЛЬНО визначений системою через sharedPost/Graph API — але сам URL і

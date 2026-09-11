@@ -450,11 +450,23 @@ async function resetStaleOrCompletedSessions() {
         const now = Date.now();
         const sessions = await db.session.findMany({
             where: { isActive: true, isTest: false, lastActive: { lte: new Date(now - SESSION_RESET_MIN_IDLE_MS) } },
-            select: { id: true, context: true, lastActive: true },
+            select: { id: true, botId: true, context: true, lastActive: true },
             take: 300,
         });
+        // Скидання — логіка магазину: «мовчить добу без покупки → почнемо з вітання».
+        // Для довгої розмови це руйнівно: разом з flowRuntime зникає історія діалогу,
+        // і клієнтка, що відклала опитування на день, наступного разу почала б його
+        // з першого питання. Тому вмикається ключем воронки SESSION_AUTO_RESET.
+        const allowed = new Set(
+            (await db.funnelKey.findMany({
+                where: { key: 'SESSION_AUTO_RESET', value: { in: ['1', 'true', 'on', 'yes'] } },
+                select: { botId: true },
+            })).map((k) => k.botId),
+        );
+
         for (const s of sessions) {
             try {
+                if (!allowed.has(s.botId)) continue;
                 const ctx = (typeof s.context === 'object' ? s.context : JSON.parse(s.context || '{}')) || {};
                 if (!ctx.flowRuntime) continue; // не flow-сесія (напр. курс/контент-бот) — не чіпаємо
                 if (ctx.adminEngaged || ctx.funnelPaused) continue; // людина зараз веде розмову — не втручаємось

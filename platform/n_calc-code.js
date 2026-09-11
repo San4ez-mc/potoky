@@ -135,8 +135,16 @@ function oor(reason, size) {
 // Реальні розміри товару з offers (порожньо = у CRM розмірів по офферах нема — тоді НЕ
 // валідуємо, приймаємо як є; раніше тут був дефолт S/M/L/XL, через який взуття
 // 42 перетворювалось на "розмір S").
-var avail = (context.product && Array.isArray(context.product.sizes) && context.product.sizes.length) ? context.product.sizes.map(function (x) { return String(x).toUpperCase().trim(); }) : [];
-var order = ['XS','S','M','L','XL','XXL','XXXL','2XL','3XL','4XL'];
+function normSize(x) { return String(x || '').toUpperCase().trim().replace(/^2XL$/, 'XXL').replace(/^3XL$/, 'XXXL').replace(/^4XL$/, '4XL'); }
+var avail = (context.product && Array.isArray(context.product.sizes) && context.product.sizes.length) ? context.product.sizes.map(normSize) : [];
+// 2026-09-11 (Russo 187/115кг → XXL без застереження "буде малий", хоча в товару максимум XXL):
+// Product.sizes (структуроване поле) у CRM ПОРОЖНЄ практично для всього каталогу — власник ввів
+// розміри лише текстом у описі. Але sizeChartData.sizes (розмірна сітка) ЧАСТО заповнена — це
+// той самий список реальних розмірів товару, тому використовуємо як фолбек, коли avail порожній.
+if (!avail.length && context.product && context.product.sizeChartData && Array.isArray(context.product.sizeChartData.sizes) && context.product.sizeChartData.sizes.length) {
+  avail = context.product.sizeChartData.sizes.map(normSize);
+}
+var order = ['XS','S','M','L','XL','XXL','XXXL','4XL'];
 
 // 1) Точний вимір проти реальних вимірів ЦЬОГО товару (sizeChartData.measurements).
 //    Обхват грудей → ключ /груд/; довжина стопи/устілки (взуття, 2026-09-04) → /стоп|устілк|foot/.

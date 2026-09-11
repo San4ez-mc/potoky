@@ -2004,7 +2004,13 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
             // додаємо топ-результати у системний промпт (FAQ/заперечення з Google Doc).
             // База знань у CRM (2026-09-05, замість вектор-бази з Google-документа): пошук лише коли
             // повідомлення схоже на питання, лише на нодах з data.useCrmKb, у скоупі поточного товару.
-            if (data.useCrmKb && runtime.lastUserMessage && ctx.product !== undefined) {
+            // 2026-09-11 (kb_shop_shoes живий тест: "чи взуття однією посилкою?" на самому старті
+            // розмови — ctx.product ще НЕ ІНІЦІАЛІЗОВАНО взагалі, це `undefined`, а не `null`, тому
+            // стара умова `ctx.product !== undefined` мовчки блокувала пошук БЗ для БУДЬ-ЯКОГО
+            // shop-рівневого питання до першого товарного кроку — модель імпровізувала відповідь
+            // замість читати факт із CRM). Scope нижче й так коректно розрізняє product/shop незалежно
+            // від undefined чи null — сама перевірка на product була зайвою і шкідливою.
+            if (data.useCrmKb && runtime.lastUserMessage) {
                 try {
                     const _q = String(runtime.lastUserMessage).trim();
                     // 2026-09-09 (аудит бази знань): goverla — двомовна аудиторія (жива переписка ~третина

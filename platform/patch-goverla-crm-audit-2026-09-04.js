@@ -565,6 +565,22 @@ function applyV12(nodes, edges, notes) {
         edges.push({ id: 'e_n_upsell_photo_mark_next', source: 'n_upsell_photo_mark', target: 'n_order_intent' });
         notes.push('+ n_upsell_photo_cond / n_upsell_photo / n_upsell_photo_mark');
     }
+    // 2026-09-11 (Олексій: «артикули ніколи не треба питати у клієнта, їм треба фото товарів
+    // надсилати» — живий кейс _palenko_, клієнт пішов «Прощайте»): той самий патерн, що
+    // n_upsell_photo_cond вище — детермінований sendPhoto-вузол, не залежить від того, чи модель
+    // згадає прапорець. Один раз на список (catalogHintSkus), не на кожен хід.
+    if (!byId().n_catalog_hint_photo_cond && byId().n_unknown_msg) {
+        const pc = placer.place(pos('n_unknown_msg').x - GX, pos('n_unknown_msg').y - GY);
+        nodes.push({ id: 'n_catalog_hint_photo_cond', type: 'condition', position: pc, data: { label: '2.55 Є фото підказки і ще не показували?', condition: "Array.isArray(context.catalogHintPhotos) && context.catalogHintPhotos.length > 0 && context.catalogHintSkus !== context.catalogHintPhotosSentFor", description: 'TRUE → альбом мініатюр товарів зі списку-підказки перед текстом (клієнт бачить фото, не питає артикул).' } });
+        nodes.push({ id: 'n_catalog_hint_photo', type: 'sendPhoto', position: placer.place(pc.x, pc.y - GY), data: { label: '2.56 Фото товарів з підказки', photoVar: 'catalogHintPhotos', caption: '', description: 'До 4 мініатюр товарів, які щойно потрапили у ПІДКАЗКУ — одним альбомом.' } });
+        nodes.push({ id: 'n_catalog_hint_photo_mark', type: 'js', position: placer.place(pc.x + GX, pc.y - GY), data: { label: '2.57 Позначити: фото підказки показано', code: 'return { catalogHintPhotosSentFor: context.catalogHintSkus };', description: 'Щоб не слати той самий альбом повторно, поки клієнт не отримає НОВУ підказку (інші skus).' } });
+        edges = edges.map((e) => (e.target === 'n_unknown_msg' && e.source !== 'n_catalog_hint_photo_cond' && e.source !== 'n_catalog_hint_photo_mark' ? { ...e, target: 'n_catalog_hint_photo_cond' } : e));
+        edges.push({ id: 'e_n_catalog_hint_photo_cond_true', source: 'n_catalog_hint_photo_cond', target: 'n_catalog_hint_photo', sourceHandle: 'true' });
+        edges.push({ id: 'e_n_catalog_hint_photo_cond_false', source: 'n_catalog_hint_photo_cond', target: 'n_unknown_msg', sourceHandle: 'false' });
+        edges.push({ id: 'e_n_catalog_hint_photo_next', source: 'n_catalog_hint_photo', target: 'n_catalog_hint_photo_mark' });
+        edges.push({ id: 'e_n_catalog_hint_photo_mark_next', source: 'n_catalog_hint_photo_mark', target: 'n_unknown_msg' });
+        notes.push('+ n_catalog_hint_photo_cond / n_catalog_hint_photo / n_catalog_hint_photo_mark');
+    }
     const ua = byId().n_unknown_admin;
     if (ua && ua.data.alertPhoto !== '{{context.lastUserImageUrl}}') { ua.data.alertPhoto = '{{context.lastUserImageUrl}}'; notes.push('n_unknown_admin alertPhoto'); }
     // v12.20.4 (2026-09-09, власник: «додай деталізацію... ід реклами не отримано, ід поста отримано, артикул

@@ -2447,20 +2447,6 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                     }
                 }
 
-                // 2026-09-11 (Олексій: клієнти не розуміють артикулів, лишають без фото — «Артикули
-                // ніколи не треба питати у клієнта, їм треба фото товарів надсилати»): коли
-                // n_catalog_hint щойно показав список кількох товарів (ПІДКАЗКА, до 4 позицій) —
-                // ДЕТЕРМІНОВАНО (не чекаючи, поки модель згадає прапорець) шлемо альбом їхніх
-                // мініатюр одразу за текстом. Анти-спам: не повторюємо той самий список фото, якщо
-                // клієнт просто ще раз не відповів на ту саму підказку (catalogHintSkus не змінився).
-                logger.info('[DEBUG catalogHintPhotos]', { nodeId: node.id, hasPhotos: Array.isArray(ctx.catalogHintPhotos), photosLen: ctx.catalogHintPhotos && ctx.catalogHintPhotos.length, skus: ctx.catalogHintSkus, sentFor: ctx.catalogHintPhotosSentFor });
-                if (Array.isArray(ctx.catalogHintPhotos) && ctx.catalogHintPhotos.length && ctx.catalogHintSkus && ctx.catalogHintSkus !== ctx.catalogHintPhotosSentFor) {
-                    const _catPhotos = ctx.catalogHintPhotos.filter((u) => u && String(u).startsWith('http')).slice(0, 10);
-                    if (_catPhotos.length) {
-                        await persistAssistantMessage(session.id, '', { nodeId: node.id, nodeType: 'photo_on_demand_catalog', attachment: { type: 'photo', url: _catPhotos[0], urls: _catPhotos, caption: '' } });
-                        ctx.catalogHintPhotosSentFor = ctx.catalogHintSkus;
-                    }
-                }
 
                 // Централізований текстовий safety-net (Проблема 4, аудит 2026-09-01,
                 // живий кейс: клієнт просив фото графітової кофти — модель відповіла
@@ -3374,9 +3360,15 @@ ${sourceContent || '(немає даних)'}
             try {
                 const photoData = getByPath(ctx, photoVar);
                 let photoUrl = '';
-
-                // If photoData is base64, convert to data URL
-                if (typeof photoData === 'string' && photoData.length > 0) {
+                // 2026-09-11 (катаlogHintPhotos — фото КІЛЬКОХ РІЗНИХ товарів зі списку-підказки,
+                // не однієї галереї): photoVar може вказувати на МАСИВ URL-ів, не лише один рядок —
+                // шлемо всі як альбом (att.urls), zernioHandler бере його як є, не підмінює галереєю.
+                let photoUrls = null;
+                if (Array.isArray(photoData)) {
+                    photoUrls = photoData.filter((u) => typeof u === 'string' && u.startsWith('http')).slice(0, 10);
+                    photoUrl = photoUrls[0] || '';
+                } else if (typeof photoData === 'string' && photoData.length > 0) {
+                    // If photoData is base64, convert to data URL
                     if (photoData.startsWith('http')) {
                         photoUrl = photoData;
                     } else {
@@ -3389,7 +3381,9 @@ ${sourceContent || '(немає даних)'}
                     await persistAssistantMessage(session.id, caption || '', {
                         nodeId: node.id,
                         nodeType: node.type,
-                        attachment: { type: 'photo', url: photoUrl, caption },
+                        attachment: photoUrls && photoUrls.length > 1
+                            ? { type: 'photo', url: photoUrl, urls: photoUrls, caption }
+                            : { type: 'photo', url: photoUrl, caption },
                     });
 
                     if (caption) {

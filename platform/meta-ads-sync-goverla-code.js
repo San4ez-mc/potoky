@@ -15,7 +15,10 @@
 
 var token = (keys.META_SYSTEM_USER_TOKEN || '').trim();
 var acct = (keys.META_AD_ACCOUNT_ID || '').trim();
-var crmBase = (keys.CRM_API_URL || 'https://pcrm.fineko.space').replace(/\/$/, '') + '/api';
+// 2026-09-13 (живий тест — таймаут 60с): CRM_API_URL (pcrm.fineko.space) — публічний домен,
+// кожен виклик ішов зовнішнім round-trip замість локального 127.0.0.1, як в усіх інших нодах.
+// CRM_API_BASE (внутрішній) — той самий патерн, що n_lookup-crm-code.js/n_crm_order-crm-code.js.
+var crmBase = (keys.CRM_API_BASE || 'http://127.0.0.1:4700/api').replace(/\/$/, '');
 var crmKey = (keys.CRM_API_KEY || '').trim();
 if (!token || !acct || !crmKey) {
   return { metaSyncError: 'META_SYSTEM_USER_TOKEN, META_AD_ACCOUNT_ID або CRM_API_KEY не заповнено' };
@@ -42,8 +45,9 @@ do {
   var ads = Array.isArray(metaJson.data) ? metaJson.data : [];
   results.fetched += ads.length;
 
-  for (var i = 0; i < ads.length; i++) {
-    var a = ads[i];
+  // Паралельно в межах сторінки (CRM тепер локальний виклик — швидко й безпечно робити
+  // одразу пачкою, а не по одному послідовно; це й було причиною таймауту 60с раніше).
+  await Promise.all(ads.map(async function (a) {
     try {
       var body = {
         externalId: String(a.id),
@@ -59,9 +63,7 @@ do {
       var crmJson = await crmRes.json().catch(function () { return {}; });
       if (crmJson && crmJson.reused) results.updated++; else if (crmJson && crmJson.ok) results.created++; else results.errors++;
     } catch (e) { results.errors++; }
-    // CRM-виклик локальний (127.0.0.1) — затримка тут не потрібна, вона була
-    // причиною надто довгого виконання (JS-нода впиралась у таймаут двигуна).
-  }
+  }));
 
   after = (metaJson.paging && metaJson.paging.cursors && metaJson.paging.next) ? metaJson.paging.cursors.after : null;
   pages++;

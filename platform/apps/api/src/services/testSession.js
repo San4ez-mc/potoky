@@ -1582,7 +1582,13 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
     const _returnRe = ctx.crmOrderId
         ? /поверн(ення|ути|іть)|обмін(яти|яю)?|обмен/i
         : /хочу\s+(поверну|обміня|вернут)|поверн(ути|іть)\s+(товар|гроші|кошти|замовлення|посилку)|обміня(ти|ю)\s+(товар|розмір|на\s)|вернуть\s+(товар|деньги)/i;
-    if (_handoffPossible && incomingUserMessage && !ctx.returnHandledAt && _returnRe.test(String(incomingUserMessage))) {
+    // 2026-09-12 (goverla, власник: "роби" — статична гілка повернення в самому графі):
+    // якщо у воронки Є власна нода n_return_intent_cond — там повний сценарій ("Легке
+    // повернення" НП, збір ТТН, переведення стадії в CRM), а не лише канстрий "передала
+    // менеджеру". Легасі-перехоплювач нижче тоді свідомо МОВЧИТЬ і віддає хід графу —
+    // інакше він ніколи не досягав би нової ноди (спрацьовував раніше будь-якого routing).
+    const _hasNodeReturnFlow = nodesById.has('n_return_intent_cond');
+    if (!_hasNodeReturnFlow && _handoffPossible && incomingUserMessage && !ctx.returnHandledAt && _returnRe.test(String(incomingUserMessage))) {
         ctx.returnHandledAt = new Date().toISOString();
         const retMsg = 'Звичайно, допоможемо! 🙂 Передала ваш запит на повернення/обмін менеджеру — він зв\'яжеться з деталями найближчим часом. Якщо тим часом є ще питання — я тут 💛';
         await persistAssistantMessage(session.id, retMsg, { source: 'return_keyword' });

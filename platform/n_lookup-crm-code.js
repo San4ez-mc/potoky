@@ -297,6 +297,33 @@ try {
   var __refImg = '';
   try { var __acd = (context.lastReferral && context.lastReferral.ads_context_data) || {}; __refImg = String(__acd.photo_url || __acd.image_url || __acd.video_url || ''); } catch (e) { __refImg = ''; }
   var __visionUrl = context.lastUserImageUrl || (!found && context.sharedPost && context.sharedPost.url) || (!found && __adImage) || (!found && __refImg) || '';
+  // 2026-09-12 (власник: "рілс — беремо 1-2 скріншоти з різних моментів, не аналізуємо ціле відео"):
+  // zernioHandler.js (повний Node-процес, ffmpeg) best-effort витягує 2 кадри рілсу в різні моменти
+  // й кладе публічні /bot-files/ URL у context.sharedPost.frameUrls — тут просто шлемо ОБИДВА в ОДИН
+  // Gemini-запит разом (дешевше й точніше за один статичний thumbnail_url з першого кадру).
+  var __frameUrls = (!found && context.sharedPost && Array.isArray(context.sharedPost.frameUrls) && context.sharedPost.frameUrls.length) ? context.sharedPost.frameUrls : null;
+  if (!found && __frameUrls && keys.GEMINI_API_KEY) {
+    var acf = new AbortController(); var tof = setTimeout(function () { try { acf.abort(); } catch (e) { } }, 10000);
+    try {
+      var __frameParts = [];
+      for (var __fi = 0; __fi < __frameUrls.length; __fi++) {
+        try {
+          var __fr = await fetch(__frameUrls[__fi], { signal: acf.signal });
+          var __fab = await __fr.arrayBuffer();
+          if (__fab.byteLength > 0 && __fab.byteLength <= 8000000) __frameParts.push({ inline_data: { mime_type: 'image/jpeg', data: Buffer.from(__fab).toString('base64') } });
+        } catch (e) { /* один кадр не завантажився — шлемо решту */ }
+      }
+      if (__frameParts.length) {
+        var catListF = all.map(function (p, i) { return i + ': ' + (p.displayName || p.name || ''); }).join('\n').slice(0, 6000);
+        var promptf = 'Це ' + __frameParts.length + ' кадри з одного рілсу/відео клієнта, зняті в РІЗНІ моменти — ймовірно, товар з нашого магазину. Опиши коротко, що на них (тип товару, колір, помітний текст/бренд), враховуючи ВСІ кадри разом. Потім знайди НАЙБЛИЖЧИЙ відповідник у каталозі нижче (формат: індекс: назва). Якщо жодного релевантного немає — bestMatchIndex null. Поверни ЛИШЕ JSON {"description":"...","bestMatchIndex":число_або_null}.\nКаталог:\n' + catListF;
+        var grf = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + encodeURIComponent(keys.GEMINI_API_KEY), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: promptf }].concat(__frameParts) }] }) });
+        var gjf = await grf.json();
+        var tf = ((((gjf.candidates || [])[0] || {}).content || {}).parts || [{}])[0].text || '';
+        var mmf = tf.match(/\{[\s\S]*\}/);
+        if (mmf) { var ff = JSON.parse(mmf[0]); if (ff.bestMatchIndex != null && all[ff.bestMatchIndex]) { found = all[ff.bestMatchIndex]; via = 'video_frames'; mk = 'frames_' + ff.bestMatchIndex; } }
+      }
+    } catch (e) { /* best-effort — фолбек на __visionUrl нижче, якщо не спрацювало */ } finally { clearTimeout(tof); }
+  }
   if (!found && __visionUrl && keys.GEMINI_API_KEY) {
     // 2026-09-12 (масовий живий баг: raw lookaside.fbsbx.com часто 403 навіть свіже — підписані Meta-посилання,
     // схоже, прив'язані до того, хто їх отримав (Zernio), не до нас) — zernioHandler.js тепер best-effort

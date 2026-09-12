@@ -15,6 +15,61 @@ const { db } = require('@platform/db');
 const logger = require('@platform/logger');
 const { executeFlowStep } = require('./testSession');
 const { isBlockedByTestMode, isTestModeOn } = require('./testModeGate');
+const { execFile } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+
+// 2026-09-12 (власник: "рілс/відео — беремо один-два скріншоти і кидаємо на перевірку, не аналізуємо
+// ціле відео і не тратимо токени"): витяг кадрів з відео потребує ffmpeg — це можливо ЛИШЕ тут
+// (повноцінний Node-процес), НЕ в js-ноді (пісочниця без доступу до дочірніх процесів/файлової
+// системи). Той самий каталог, що вже роздає /bot-files (apps/api/src/index.js) — пишемо туди ж.
+const BOT_FILES_DIR = process.env.BOT_FILES_DIR || path.join(__dirname, '..', '..', '..', 'uploads', 'bot-files');
+const VIDEO_FRAMES_DIR = path.join(BOT_FILES_DIR, 'video-frames');
+try { fs.mkdirSync(VIDEO_FRAMES_DIR, { recursive: true }); } catch (e) { /* best-effort */ }
+const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || 'https://flows.fineko.space').replace(/\/$/, '');
+
+function execFileP(cmd, args, opts) {
+    return new Promise((resolve, reject) => {
+        execFile(cmd, args, opts || {}, (err, stdout, stderr) => { if (err) reject(err); else resolve({ stdout, stderr }); });
+    });
+}
+// Витягує 1-2 кадри з ВІДДАЛЕНОГО відео-URL напряму (ffmpeg сам стрімить/сікає — БЕЗ повного
+// завантаження файлу в память Node), зберігає як окремі JPEG у /bot-files/video-frames, повертає
+// публічні URL. Best-effort з жорстким таймаутом — при будь-якій помилці повертає [] (фолбек на
+// вже наявний thumbnail_url лишається чинним, нічого не ламаємо).
+async function extractVideoFrames(videoUrl, mediaIdForName) {
+    const urls = [];
+    const offsets = ['00:00:01', '00:00:03']; // 2 кадри, різні моменти — не весь ролик
+    for (let i = 0; i < offsets.length; i++) {
+        try {
+            const fname = 'vf-' + String(mediaIdForName || 'x').replace(/[^a-z0-9]/gi, '') + '-' + i + '-' + Date.now() + '.jpg';
+            const fpath = path.join(VIDEO_FRAMES_DIR, fname);
+            await execFileP('ffmpeg', ['-y', '-ss', offsets[i], '-i', videoUrl, '-frames:v', '1', '-q:v', '4', '-vf', 'scale=720:-1', fpath], { timeout: 10000 });
+            if (fs.existsSync(fpath) && fs.statSync(fpath).size > 500) urls.push(PUBLIC_BASE_URL + '/bot-files/video-frames/' + fname);
+        } catch (e) { logger.warn('[zernioHandler] extractVideoFrames failed: ' + e.message, { videoUrl: String(videoUrl).slice(0, 100) }); }
+    }
+    return urls;
+}
+// Для рілсу (mediaId) дістає РЕАЛЬНИЙ відео-URL через Graph API (thumbnail_url веде лише на ОДИН
+// кадр; тут — сам .mp4) і викликає extractVideoFrames. Best-effort — жодних токенів/збоїв не кидає
+// назовні, просто повертає [].
+async function getReelVideoFramesForVision(botId, mediaId) {
+    if (!mediaId) return [];
+    try {
+        const igKey = await db.funnelKey.findFirst({ where: { botId, key: 'INSTAGRAM_ACCESS_TOKEN' }, select: { value: true } });
+        const igToken = (igKey && igKey.value || '').trim();
+        if (!igToken || igToken === 'REPLACE_ME') return [];
+        const ac = new AbortController(); const to = setTimeout(() => { try { ac.abort(); } catch (e) { } }, 5000);
+        let md = {};
+        try {
+            const mr = await fetch(`https://graph.instagram.com/v21.0/${encodeURIComponent(mediaId)}?fields=media_type,media_url&access_token=${encodeURIComponent(igToken)}`, { signal: ac.signal });
+            md = await mr.json().catch(() => ({}));
+            if (!mr.ok) { logger.warn('[zernioHandler] getReelVideoFramesForVision: media fetch failed', { botId, mediaId, status: mr.status }); return []; }
+        } finally { clearTimeout(to); }
+        if (String(md.media_type || '').toUpperCase() !== 'VIDEO' || !md.media_url) return [];
+        return await extractVideoFrames(md.media_url, mediaId);
+    } catch (e) { logger.warn('[zernioHandler] getReelVideoFramesForVision error: ' + e.message, { botId, mediaId }); return []; }
+}
 
 async function getZernioKeys(botId) {
     const keys = await db.funnelKey.findMany({
@@ -1098,6 +1153,16 @@ async function handleIncomingMessage(botId, body) {
             sharedPost = { kind: ot.includes('reel') ? 'reel' : 'post', mediaId: pl.ig_post_media_id || pl.reel_video_id || pl.media_id || null, caption: pl.title || pl.caption || null, url: a.url || pl.url || null };
             break;
         }
+    }
+    // 2026-09-12 (власник: рілс/відео — беремо 1-2 скріншоти з різних моментів і кидаємо на vision-
+    // перевірку, а не весь ролик і не thumbnail_url з ОДНИМ кадром). Best-effort, короткий бюджет —
+    // якщо не вийшло (немає токена/ffmpeg впав/таймаут), sharedPost лишається як був, vision-код
+    // (n_lookup-crm-code.js) фолбечиться на thumbnail_url, як і раніше.
+    if (sharedPost && sharedPost.kind === 'reel' && sharedPost.mediaId) {
+        try {
+            const frames = await getReelVideoFramesForVision(botId, sharedPost.mediaId);
+            if (frames.length) sharedPost = { ...sharedPost, frameUrls: frames };
+        } catch (e) { logger.warn('[zernioHandler] reel frame extraction skipped: ' + e.message, { botId }); }
     }
     const patch = { conversationId, psid: String(contactId), senderName: contactName || undefined, igUsername: contactUsername || undefined };
     if (adId) { patch.entryAdId = String(adId); patch.lastReferral = ref; }

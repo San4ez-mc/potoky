@@ -1698,6 +1698,30 @@ async function handleSideEvent(botId, event, body) {
             // 2026-09-08 (Maltsev): у «готовій відповіді» менеджера є «Артикул: A0187» — запамʼятовуємо, щоб після відновлення бот знав товар.
             const _artM = String(_sentText || '').match(/Артикул:?\s*([A-Za-z]{1,4}\d{3,8}|set\d{3,6}|\d{5,8})/i);
             if (_artM) { _pc.managerArticleHint = _artM[1]; _pc.managerArticleAt = new Date().toISOString(); if (_pc.funnelPaused) await db.session.update({ where: { id: session.id }, data: { context: _pc } }).catch(() => {}); }
+            // 2026-09-13 (власник: "по АПІ НП щоб це перевірялось" — крон статусів ТТН потребує
+            // ТТН у CRM, а менеджер зараз пише його ПРЯМО в Instagram, повз бота й CRM повністю).
+            // Той самий детект-патерн, що managerArticleHint вище — 14-цифрове число, формат
+            // ТТН Нової пошти (перевірено живими прикладами, не вигадано). Best-effort: не має
+            // ламати паузу/збереження контексту вище через помилку CRM.
+            const _ttnM = String(_sentText || '').match(/(?<!\d)\d{14}(?!\d)/);
+            if (_ttnM && _pc.crmOrderId && String(_pc.crmOrderId).indexOf('TEST-') !== 0) {
+                try {
+                    const _crmBaseRow = await db.funnelKey.findFirst({ where: { botId, key: 'CRM_API_BASE' }, select: { value: true } });
+                    const _crmKeyRow = await db.funnelKey.findFirst({ where: { botId, key: 'CRM_API_KEY' }, select: { value: true } });
+                    const _crmBase = (_crmBaseRow?.value || 'http://127.0.0.1:4700/api').replace(/\/$/, '');
+                    const _crmKey = (_crmKeyRow?.value || '').trim();
+                    if (_crmKey) {
+                        const _hdr = { Authorization: 'Bearer ' + _crmKey, Accept: 'application/json' };
+                        const _orr = await fetch(_crmBase + '/orders/' + _pc.crmOrderId, { headers: _hdr });
+                        const _orj = _orr.ok ? await _orr.json().catch(() => ({})) : {};
+                        const _existingTtn = Array.isArray(_orj && _orj.data && _orj.data.ttn) ? _orj.data.ttn : [];
+                        if (_existingTtn.indexOf(_ttnM[0]) === -1) {
+                            await fetch(_crmBase + '/orders/' + _pc.crmOrderId, { method: 'PATCH', headers: Object.assign({ 'Content-Type': 'application/json' }, _hdr), body: JSON.stringify({ ttn: _existingTtn.concat([_ttnM[0]]) }) });
+                            logger.info('[zernioHandler] captured customer TTN from manager message', { botId, sessionId: session.id, ttn: _ttnM[0] });
+                        }
+                    }
+                } catch (_ttnErr) { logger.warn('[zernioHandler] TTN capture from manager message failed: ' + _ttnErr.message); }
+            }
             if (!_pc.funnelPaused) {
                 await db.session.update({ where: { id: session.id }, data: { context: { ..._pc, funnelPaused: true, pausedBy: 'manager_message', pausedAt: new Date().toISOString() } } });
                 await logDelivery(session.id, botId, 'zernio_inbound', true, null, { reason: 'manager_message → funnelPaused (бот на паузі, зняти можна в адмінці)' });

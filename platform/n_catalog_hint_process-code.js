@@ -83,7 +83,20 @@ if (__hintColorWords.length) {
 var __mw = msg.replace(/[^a-zа-яіїєґ0-9\s]/gi, ' ').split(/\s+/).filter(function (w) { return w.length >= 4; }).map(function (w) { return w.slice(0, 5); });
 function __ov(p) { var h = hay(p); var n = 0; __mw.forEach(function (w) { if (h.indexOf(w) >= 0 && !wants.some(function (s) { return w.indexOf(s.slice(0, 4)) === 0; })) n++; }); return n; }
 hits.sort(function (a, b) { return (__ov(b) - __ov(a)) || ((Number(a.price) || 0) - (Number(b.price) || 0)); });
-var top = hits.slice(0, 4);
+// 2026-09-12 (регресія test-live: set_post_pick): клієнт явно каже "комплект", але в CRM є кілька
+// майже ідентичних наборів (set1111..set1116 — відрізняються ЛИШЕ головним предметом: кофта
+// ангора/Сейн ангора/Мажор, бомбер шкіряний/замш, кожанка), а top-4 обрізав список ще ДО того, як
+// клієнт побачив усі варіанти — дешевші одиночні товари (кофта окремо) займали слоти першими,
+// частина наборів губилась. Коли "комплект" — явний want і збігів-наборів більше одного, показуємо
+// СПЕРШУ усі набори (клієнт явно просить комплект, не одиночний товар), і розширюємо ліміт, щоб не
+// губити схожі варіанти; до 2 одиночних товарів лишаються в кінці як запасний варіант.
+var topCap = 4;
+if (wants.indexOf('комплект') >= 0) {
+  var __setHits = hits.filter(function (p) { return p.isSet; });
+  var __restHits = hits.filter(function (p) { return !p.isSet; });
+  if (__setHits.length > 1) { hits = __setHits.concat(__restHits); topCap = Math.min(8, __setHits.length + 2); }
+}
+var top = hits.slice(0, topCap);
 var lines = top.map(function (p) { return (p.sku ? ('Артикул ' + p.sku + ' — ') : '') + String(p.name || '').trim() + (Number(p.price) ? (' — ' + Number(p.price) + ' грн') : ''); });
 // 2026-09-11 (Олексій: клієнт бачить фото одразу, не питає артикул).
 var __publicBase = (keys.CRM_PUBLIC_BASE || 'https://pcrm.fineko.space').replace(/\/$/, '');

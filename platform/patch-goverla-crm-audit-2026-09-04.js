@@ -203,6 +203,13 @@ var ttnLine = ttn.length > 3
   : 'Номер накладної (ТТН) надішлемо прямо сюди, щойно передамо посилку Новій Пошті 📦';
 return { confirmLead: lead, ttnLine: ttnLine };`;
 
+// 2026-09-12 (живий кейс, Anton Yatskov): "Передала ваше повідомлення менеджеру" повторювалось
+// ДОСЛІВНО на 3 РІЗНІ репліки за день ("Дякую", "Доброго!...скину після 20-30", "Скинув 200") —
+// n_post_order_once_cond (30-хв гейт, v12.9) працює за задумом (це пауза між СПАМом, не між
+// повідомленнями годинами пізніше), але сама фраза щоразу ФАЛЬШИВО стверджує "щойно передала",
+// хоча нічого нового не передавалось — прибрано конкретну заяву, лишено чесний загальний текст.
+const POST_ORDER_MSG_TEXT = 'Ваше замовлення в роботі 💛 {{context.ttnLine}}\nЯкщо є питання — менеджер відповість найближчим часом 🙂 Хочете додати щось до посилки — скиньте пост або артикул.';
+
 // ── розкладка: сітка 360×200, нові/переміщені ноди на вільних клітинках ──
 const GX = 360, GY = 200;
 function makePlacer(nodes) {
@@ -930,6 +937,7 @@ function refresh(flow, opts) {
     // mariia__dmytr/Олексій: "невірно відповідає"), уже задеплоєні боти цей фікс так і НЕ отримали —
     // клієнти й далі бачили стару, фактично неточну фразу. Синхронізуємо безумовно, як n_shop_profile.
     if (byId.n_confirm_prep && byId.n_confirm_prep.data.code !== CONFIRM_PREP_CODE) { byId.n_confirm_prep.data.code = CONFIRM_PREP_CODE; notes.push('n_confirm_prep code resynced (ttnLine text)'); }
+    if (byId.n_post_order_msg && byId.n_post_order_msg.data.text !== POST_ORDER_MSG_TEXT) { byId.n_post_order_msg.data.text = POST_ORDER_MSG_TEXT; notes.push('n_post_order_msg text resynced'); }
     if (byId.n_collect) { byId.n_collect.data.systemPrompt = COLLECT_PROMPT; byId.n_collect.data.detectPaymentChange = true; }
     if (byId.n_welcome_back && byId.n_welcome_back.type === 'claude') byId.n_welcome_back.data.systemPrompt = WELCOME_BACK_PROMPT;
     if (byId.n_upsell2_wait) byId.n_upsell2_wait.data.systemPrompt = UPSELL2_PROMPT;
@@ -1114,7 +1122,7 @@ function transform(flow, keysMap, opts) {
     retarget('n_lookup', 'n_returning_check', 'n_post_order_cond');
     addNode('n_post_order_cond', 'condition', { label: '1.85 Пише після оформленого замовлення?', condition: 'context.crmOrderId && !context.hasFreshSignalThisTurn', description: 'TRUE → статус + сигнал менеджеру (не питаємо "ще актуально?" у покупця). FALSE → звичайний шлях.' }, pos('n_lookup').x + GX, pos('n_lookup').y);
     addEdge('n_post_order_cond', 'n_returning_check', 'false');
-    addNode('n_post_order_msg', 'message', { label: '1.86 Замовлення в роботі', text: 'Ваше замовлення в роботі 💛 {{context.ttnLine}}\nПередала ваше повідомлення менеджеру — відповість найближчим часом. Якщо хочете щось додати до посилки — скиньте пост або артикул 🙂', variants: [], description: 'Клієнт написав після оформлення (до автоскидання сесії воркером).' }, pos('n_lookup').x + 2 * GX, pos('n_lookup').y);
+    addNode('n_post_order_msg', 'message', { label: '1.86 Замовлення в роботі', text: POST_ORDER_MSG_TEXT, variants: [], description: 'Клієнт написав після оформлення (до автоскидання сесії воркером).' }, pos('n_lookup').x + 2 * GX, pos('n_lookup').y);
     addEdge('n_post_order_cond', 'n_post_order_msg', 'true');
     addNode('n_post_order_admin', 'notifyTg', { label: '1.87 Сигнал: клієнт пише після замовлення', targetKey: 'ADMIN_TELEGRAM_ID', message: '💬 <b>Клієнт написав після оформлення</b> — замовлення {{context.orderRef}} (CRM {{context.crmOrderId}})\n\n👤 {{context.senderName}} ({{context.igUsername}})\n💬 «{{context.lastCustomerMessage}}»', description: 'Термінальна після повідомлення: менеджер відповідає в Instagram.' }, pos('n_lookup').x + 3 * GX, pos('n_lookup').y);
     addEdge('n_post_order_msg', 'n_post_order_admin');

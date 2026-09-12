@@ -148,4 +148,20 @@ for(var li=0;li<lines.length;li++){ var cart=await bd('/api/carts',{method:'POST
 var o=await bd('/api/marketplace/orders',{method:'POST',body:JSON.stringify(payload)});
 if(o.status>=400) return { supplierOrderResult:'❌ brewdrop marketplace/orders: '+JSON.stringify(o.json).slice(0,300), supplierOrderStatus:'error', supplierNeedsManual:true, supplierOrderPayload:JSON.stringify(payload) };
 var od2=(o.json&&o.json.data)||o.json||{};
+// 2026-09-12 (власник, CRM Ads-панель: "Замовлення оформлене в постачальника: 0" попри реально
+// створені brewdrop-замовлення): n_crm_order переводить стадію ЛИШЕ на "замовлення прийняте" при
+// оплаті — жодна нода досі не переводила в стадію "Замовлення оформлене в постачальника" після
+// РЕАЛЬНОГО успішного відправлення постачальнику. Best-effort, не блокує основний результат.
+if(context.crmOrderId && String(context.crmOrderId).indexOf('TEST-')!==0){
+  try{
+    var __cb=(keys.CRM_API_BASE||'http://127.0.0.1:4700/api').replace(/\/$/,''); var __ck=(keys.CRM_API_KEY||'').trim();
+    if(__ck){
+      var __pr=await fetch(__cb+'/pipelines',{headers:{Authorization:'Bearer '+__ck,Accept:'application/json'}});
+      var __pj=__pr.ok?await __pr.json().catch(function(){return {};}):{};
+      var __pls=Array.isArray(__pj.data)?__pj.data:[]; var __sid=null;
+      for(var __q=0;__q<__pls.length&&!__sid;__q++){ var __sh=(__pls[__q].stages||[]).filter(function(s){return String(s.name||'').trim().toLowerCase()==='замовлення оформлене в постачальника';})[0]; if(__sh) __sid=__sh.id; }
+      if(__sid) await fetch(__cb+'/orders/'+context.crmOrderId,{method:'PATCH',headers:{Authorization:'Bearer '+__ck,'Content-Type':'application/json'},body:JSON.stringify({stageId:__sid})});
+    }
+  }catch(e){ /* best-effort — не блокуємо результат постачальника */ }
+}
 return { supplierOrderResult:summary+'\n✅ ID: '+(od2.id||'?')+(od2.ttn?(' | ТТН: '+od2.ttn):''), supplierOrderStatus:'created', supplierOrderId:od2.id||null, supplierTtn:od2.ttn||'', supplierNeedsManual:missing.length>0 };

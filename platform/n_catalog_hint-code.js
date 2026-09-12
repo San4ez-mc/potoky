@@ -95,6 +95,20 @@ function hay(p) { return (String(p.name || '') + ' ' + String(p.customerName || 
 var pool = wants.indexOf('комплект') >= 0 ? all : active;
 var hits = pool.filter(function (p) { var h = hay(p); return wants.some(function (w) { return h.indexOf(w) >= 0; }); });
 if (!hits.length) return out('', 0, catList);
+// 2026-09-12 (власник: "а є чорні лофери?" — колір і категорія в ОДНОМУ, ПЕРШОМУ повідомленні,
+// без попереднього списку): фільтр за кольором вище (рядки 58-68) працює лише коли клієнт називає
+// колір ДРУГИМ ходом, після вже показаного списку (catalogHintSkus). Тут — той самий фільтр, але
+// одразу на ПОВНОМУ hits (перший прохід). Fallback на неотфільтрований список, якщо звуження дало 0
+// (краще показати щось, ніж нічого) — узгоджено з тим самим принципом, що й n_avail_search-code.js.
+var __hintColorWords = msg.match(/(чорн\w*|сір\w*|біл\w*|син\w*|графіт\w*|бордов\w*|беж\w*|коричнев\w*|зелен\w*|червон\w*|хакі|олив\w*|молочн\w*|блакитн\w*)/gi) || [];
+if (__hintColorWords.length) {
+  var __hitsByColor = hits.filter(function (p) {
+    var offs = p.offers || []; var pc = [];
+    for (var oi2 = 0; oi2 < offs.length; oi2++) { var props2 = offs[oi2].properties || []; for (var pi2 = 0; pi2 < props2.length; pi2++) { var pn2 = String(props2[pi2].name || '').toLowerCase(); if (pn2.indexOf('колір') >= 0 || pn2.indexOf('цвет') >= 0) pc.push(String(props2[pi2].value || '').toLowerCase()); } }
+    return __hintColorWords.some(function (cw) { return pc.some(function (c) { return c.indexOf(cw.toLowerCase().slice(0, 4)) >= 0; }); });
+  });
+  if (__hitsByColor.length) hits = __hitsByColor;
+}
 // 2026-09-08 (_grigoriy_: «чорний замшевий костюм» → у списку з 4 не було замшевого): спершу товари, чиї назви
 // перетинаються з іншими словами повідомлення (замшев, плюш, мажор…), далі — за ціною.
 var __mw = msg.replace(/[^a-zа-яіїєґ0-9\s]/gi, ' ').split(/\s+/).filter(function (w) { return w.length >= 4; }).map(function (w) { return w.slice(0, 5); });

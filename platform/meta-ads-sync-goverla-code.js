@@ -59,11 +59,13 @@ do {
       var crmJson = await crmRes.json().catch(function () { return {}; });
       if (crmJson && crmJson.reused) results.updated++; else if (crmJson && crmJson.ok) results.created++; else results.errors++;
     } catch (e) { results.errors++; }
-    await sleep(120); // best-effort, не б'ємо CRM чергою без пауз
+    // CRM-виклик локальний (127.0.0.1) — затримка тут не потрібна, вона була
+    // причиною надто довгого виконання (JS-нода впиралась у таймаут двигуна).
   }
 
   after = (metaJson.paging && metaJson.paging.cursors && metaJson.paging.next) ? metaJson.paging.cursors.after : null;
   pages++;
+  if (after) await sleep(300); // пауза лише МІЖ сторінками Meta API (rate-limit), не на кожен ad
 } while (after && pages < 40); // guard — до 2000 оголошень за прохід
 
 return { metaSyncResult: results, metaSyncAt: new Date().toISOString() };

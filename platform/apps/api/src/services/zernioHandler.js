@@ -58,14 +58,28 @@ async function recoverMissedConversationMessages(botId, sessionId, conversationI
                 : Array.isArray((j.data || {}).messages) ? j.data.messages : [];
         logger.info('[zernioHandler] recovery probe', { botId, sessionId, conversationId, foundMessagesField: !!msgs.length, rawKeys: Object.keys(j).slice(0, 20) });
         if (!msgs.length) return;
-        const existing = await db.message.findMany({ where: { sessionId }, select: { metadata: true } });
-        const knownIds = new Set(existing.map((m) => String((m.metadata || {}).zernioMessageId || '')).filter(Boolean));
+        // 2026-09-12 (КРИТИЧНИЙ БАГ, знайдено одразу після деплою вище — живий доказ, сесія
+        // cbb7f608): REST /messages повертає id у ФОРМАТІ INSTAGRAM (довгий base64-рядок), а
+        // вебхук (звичайний inbound-потік, metadata.zernioMessageId) зберігає КОРОТКИЙ Mongo
+        // ObjectId (24 hex) — ДВА РІЗНІ ID-ПРОСТОРИ, які ніколи не збігаються. Дедуп за mid
+        // тому НІКОЛИ не спрацьовував — КОЖЕН виклик re-інсертив ВСЮ історію розмови як "нову"
+        // (підтверджено: 8 дублікатів за 12мс, точні повтори "Кофта"/"Зріст 186 вага 68" тощо,
+        // уже присутніх у сесії). Замінено на дедуп за ЧАСОМ (лише повідомлення СТРОГО пізніше
+        // за останнє вже відоме — це і є визначення "пропущене") + вторинний guard за точним
+        // текстом серед недавньої історії, і жорсткий ліміт на кількість за виклик.
+        const existing = await db.message.findMany({ where: { sessionId }, select: { content: true, createdAt: true }, orderBy: { createdAt: 'desc' }, take: 50 });
+        const lastKnownAt = existing.length ? existing[0].createdAt.getTime() : 0;
+        const knownTexts = new Set(existing.map((m) => String(m.content || '').trim()).filter(Boolean));
         let recovered = 0;
         for (const m of msgs) {
+            if (recovered >= 10) break; // запобіжник від runaway-вставки
             if (m && m.direction && m.direction !== 'incoming') continue; // лише вхідні від клієнта
+            const mCreatedRaw = m.createdAt || m.sentAt || m.timestamp || null;
+            const mCreatedAt = mCreatedRaw ? new Date(mCreatedRaw).getTime() : NaN;
+            if (!Number.isFinite(mCreatedAt) || mCreatedAt <= lastKnownAt) continue; // не строго новіше за вже відоме — пропускаємо
             const mid = String(m.id || m._id || m.messageId || '');
-            if (!mid || knownIds.has(mid)) continue;
             const mtext = String(m.text || m.message || m.content || m.body || '').slice(0, 2000);
+            if (mtext && knownTexts.has(mtext.trim())) continue; // вторинний guard: точний текст уже є в недавній історії
             const matt = Array.isArray(m.attachments) && m.attachments[0] ? { type: m.attachments[0].type === 'video' ? 'video' : 'photo', url: m.attachments[0].refreshUrl || m.attachments[0].url } : null;
             if (!mtext && !matt) continue;
             await db.message.create({ data: { sessionId, role: 'user', content: mtext || '[фото]', metadata: { source: 'zernio_recovered', zernioMessageId: mid, recoveredAt: new Date().toISOString(), ...(matt ? { attachment: matt } : {}) } } }).catch(() => {});

@@ -1026,10 +1026,37 @@ async function handleIncomingMessage(botId, body) {
         const url = a.url || a.payload?.url || a.src || a.mediaUrl || a.link || null;
         const rawType = String(a.type || a.mimeType || a.contentType || '').toLowerCase();
         const type = /video|animation|gif/.test(rawType) ? 'video' : /image|photo/.test(rawType) ? 'photo' : (a.type || 'file');
-        return url ? { type, url } : null;
+        const refreshUrl = a.refreshUrl || a.refresh_url || null;
+        return url ? { type, url, refreshUrl } : null;
     }).filter(Boolean);
     const attachment = mappedAtts[0] || null;
     const imgCount = mappedAtts.filter((a) => a.type === 'photo').length;
+    // 2026-09-12 (масовий живий баг — Vision по фото клієнта майже завжди мовчки провалювався,
+    // напр. n_lookup-crm-code.js "не бачу товар на фото"): raw attachment.url з вебхука
+    // (lookaside.fbsbx.com) — підписане посилання Meta, яке НАШ сервер часто НЕ може завантажити
+    // напряму (403 — живий тест: навіть 6-хвилинної давнини посилання дало 403). Zernio REST
+    // GET /inbox/conversations/{id}/messages?accountId=... повертає для того ж вкладення робоче
+    // поле "refreshUrl" (авторизований проксі-URL, підтверджено живим тестом: 200 + реальні
+    // байти image/jpeg). Якщо вебхук не приніс refreshUrl напряму (перевірено вище) — best-effort
+    // дістаємо його цим REST-викликом і ПІДМІНЯЄМО attachment.url на нього; vision-код нижче за
+    // течією (n_lookup-crm-code.js, n_calc-code.js, n_reconcile-code.js) додає
+    // Authorization:Bearer ZERNIO_API_TOKEN, коли хост посилання — zernio.com.
+    if (attachment && !attachment.refreshUrl && (attachment.type === 'photo' || attachment.type === 'video') && conversationId) {
+        try {
+            const zkImg = await getZernioKeys(botId);
+            if (isReal(zkImg.ZERNIO_API_TOKEN) && isReal(zkImg.ZERNIO_ACCOUNT_ID)) {
+                const acImg = new AbortController(); const toImg = setTimeout(() => { try { acImg.abort(); } catch (e) { } }, 5000);
+                try {
+                    const mrImg = await fetch('https://zernio.com/api/v1/inbox/conversations/' + encodeURIComponent(conversationId) + '/messages?accountId=' + encodeURIComponent(zkImg.ZERNIO_ACCOUNT_ID), { headers: { Authorization: 'Bearer ' + zkImg.ZERNIO_API_TOKEN }, signal: acImg.signal });
+                    const mjImg = await mrImg.json().catch(() => ({}));
+                    const msgsImg = Array.isArray(mjImg.messages) ? mjImg.messages : [];
+                    const matchMsg = msgsImg.slice().reverse().find((m) => m && m.direction === 'incoming' && Array.isArray(m.attachments) && m.attachments.some((a) => a.url === attachment.url));
+                    const matchAtt = matchMsg && matchMsg.attachments.find((a) => a.url === attachment.url);
+                    if (matchAtt && matchAtt.refreshUrl) { attachment.refreshUrl = matchAtt.refreshUrl; attachment.url = matchAtt.refreshUrl; }
+                } finally { clearTimeout(toImg); }
+            }
+        } catch (e) { logger.warn('[zernioHandler] refreshUrl lookup failed: ' + e.message, { botId, conversationId }); }
+    } else if (attachment && attachment.refreshUrl) { attachment.url = attachment.refreshUrl; }
     // 2026-09-07 (OsmanoV поділився сторіс «Переглянути світлину» — до нас дійшов лише текст): фіксуємо СИРІ типи
     // вкладень і ключі payload у метаданих, щоб бачити, що саме Zernio (не) передає; вкладення без url → мітка.
     const rawAttTypes = rawAtts.map((a) => String((a && (a.type || a.mimeType || a.contentType)) || 'unknown')).slice(0, 10);

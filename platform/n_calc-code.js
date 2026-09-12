@@ -172,7 +172,10 @@ try {
   if (__needsColorAsk && __imgUrl && /^https?:/.test(__imgUrl) && __colorsArr.length >= 2 && keys.GEMINI_API_KEY) {
     var __acc = new AbortController(); var __tmr = setTimeout(function () { try { __acc.abort(); } catch (e) { } }, 9000);
     try {
-      var __ir = await fetch(__imgUrl, { signal: __acc.signal }); var __ab = await __ir.arrayBuffer();
+      // 2026-09-12: __imgUrl може бути Zernio-проксі refreshUrl (домен zernio.com, замінює 403-нуче
+      // підписане Meta-посилання) — такі запити потребують Bearer ZERNIO_API_TOKEN.
+      var __ihdr = {}; try { if (new URL(__imgUrl).hostname.toLowerCase() === 'zernio.com' && keys.ZERNIO_API_TOKEN) __ihdr.Authorization = 'Bearer ' + keys.ZERNIO_API_TOKEN; } catch (e) { }
+      var __ir = await fetch(__imgUrl, { signal: __acc.signal, headers: __ihdr }); var __ab = await __ir.arrayBuffer();
       if (__ab.byteLength <= 8000000) {
         var __mime = ((__ir.headers.get('content-type') || '').split(';')[0]) || 'image/jpeg'; if (__mime === 'application/octet-stream') __mime = 'image/jpeg';
         var __pp = 'На фото клієнта може бути товар «' + String(context.product.customerName || context.product.name || '') + '» (можливо разом з іншими речами). Доступні кольори цього товару: ' + __colorsArr.join(', ') + '. Який із цих кольорів має САМЕ цей товар на фото? Відповідай лише JSON: {"color":"<точна назва зі списку або порожній рядок, якщо товару на фото нема або колір не зі списку>","confidence":0..1}';

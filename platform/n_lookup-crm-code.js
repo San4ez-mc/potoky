@@ -298,11 +298,17 @@ try {
   try { var __acd = (context.lastReferral && context.lastReferral.ads_context_data) || {}; __refImg = String(__acd.photo_url || __acd.image_url || __acd.video_url || ''); } catch (e) { __refImg = ''; }
   var __visionUrl = context.lastUserImageUrl || (!found && context.sharedPost && context.sharedPost.url) || (!found && __adImage) || (!found && __refImg) || '';
   if (!found && __visionUrl && keys.GEMINI_API_KEY) {
-    function imgOk(u) { try { var h = new URL(u).hostname.toLowerCase(); if (h === 'api.telegram.org') return true; return ['cdninstagram.com', 'fbcdn.net', 'fbsbx.com', 'lookaside.fbsbx.com', 'facebook.com'].some(function (d) { return h === d || h.endsWith('.' + d); }); } catch (e) { return false; } }
+    // 2026-09-12 (масовий живий баг: raw lookaside.fbsbx.com часто 403 навіть свіже — підписані Meta-посилання,
+    // схоже, прив'язані до того, хто їх отримав (Zernio), не до нас) — zernioHandler.js тепер best-effort
+    // підміняє attachment.url на Zernio-проксі refreshUrl (домен zernio.com), тому додаємо його у whitelist і
+    // шлемо Bearer ZERNIO_API_TOKEN на такі запити.
+    function imgOk(u) { try { var h = new URL(u).hostname.toLowerCase(); if (h === 'api.telegram.org' || h === 'zernio.com') return true; return ['cdninstagram.com', 'fbcdn.net', 'fbsbx.com', 'lookaside.fbsbx.com', 'facebook.com'].some(function (d) { return h === d || h.endsWith('.' + d); }); } catch (e) { return false; } }
     if (imgOk(__visionUrl)) {
       var acp = new AbortController(); var top = setTimeout(function () { try { acp.abort(); } catch (e) { } }, 10000);
       try {
-        var irp = await fetch(__visionUrl, { signal: acp.signal });
+        var __visHdr = {};
+        try { if (new URL(__visionUrl).hostname.toLowerCase() === 'zernio.com' && keys.ZERNIO_API_TOKEN) __visHdr.Authorization = 'Bearer ' + keys.ZERNIO_API_TOKEN; } catch (e) { }
+        var irp = await fetch(__visionUrl, { signal: acp.signal, headers: __visHdr });
         var abp = await irp.arrayBuffer();
         if (abp.byteLength <= 8000000) {
           var b64p = Buffer.from(abp).toString('base64');

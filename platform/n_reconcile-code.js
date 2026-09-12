@@ -42,11 +42,15 @@ if(!found){
     }catch(e){}finally{clearTimeout(to);} }
 }
 // Крок 3: скрін — ШІ-візія (лише коли Mono не знайшов). Останній резерв.
-function imgOk(u){ try{ var h=new URL(u).hostname.toLowerCase(); if(h==='api.telegram.org') return true; return ['cdninstagram.com','fbcdn.net','fbsbx.com'].some(function(d){return h===d||h.endsWith('.'+d);}); }catch(e){return false;} }
+// 2026-09-12 (живий кейс Елена Грановська: квитанція надіслана, звірка не спрацювала) — raw
+// lookaside.fbsbx.com часто 403 навіть свіже; zernioHandler.js тепер best-effort підміняє
+// attachment.url на Zernio-проксі refreshUrl (домен zernio.com) — додано у whitelist + Bearer.
+function imgOk(u){ try{ var h=new URL(u).hostname.toLowerCase(); if(h==='api.telegram.org'||h==='zernio.com') return true; return ['cdninstagram.com','fbcdn.net','fbsbx.com'].some(function(d){return h===d||h.endsWith('.'+d);}); }catch(e){return false;} }
 if(!found && context.lastReceiptImageUrl && keys.GEMINI_API_KEY && imgOk(context.lastReceiptImageUrl)){
   var ac2=new AbortController(); var to2=setTimeout(function(){try{ac2.abort();}catch(e){}},10000);
   try{
-    var ir=await fetch(context.lastReceiptImageUrl,{signal:ac2.signal}); var ab=await ir.arrayBuffer(); if(ab.byteLength>8000000) throw new Error('img too large'); var b64=Buffer.from(ab).toString('base64');
+    var __rhdr={}; try{ if(new URL(context.lastReceiptImageUrl).hostname.toLowerCase()==='zernio.com' && keys.ZERNIO_API_TOKEN) __rhdr.Authorization='Bearer '+keys.ZERNIO_API_TOKEN; }catch(e){}
+    var ir=await fetch(context.lastReceiptImageUrl,{signal:ac2.signal,headers:__rhdr}); var ab=await ir.arrayBuffer(); if(ab.byteLength>8000000) throw new Error('img too large'); var b64=Buffer.from(ab).toString('base64');
     var mime=(ir.headers.get('content-type')||'image/jpeg').split(';')[0];
     var gr=await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key='+encodeURIComponent(keys.GEMINI_API_KEY),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:'Це банківська квитанція про переказ. Поверни ЛИШЕ JSON {"amount":число,"recipientCode":"код одержувача","iban":"IBAN одержувача","payerName":"ПІБ платника","purpose":"призначення"}'},{inline_data:{mime_type:mime,data:b64}}]}]})});
     var gj=await gr.json(); var t=((((gj.candidates||[])[0]||{}).content||{}).parts||[{}])[0].text||''; var mm=t.match(/\{[\s\S]*\}/);

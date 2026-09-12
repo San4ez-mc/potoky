@@ -454,12 +454,38 @@ async function sendAdminAlert({ session, ctx, funnelEnv, runtime, title, main, d
     const txt = buildAdminAlert({ funnelEnv, title, main, details, ctx, sessionId: session && session.id });
     let j = {};
     const _photo = /^https?:\/\//.test(String(photoUrl || '')) ? String(photoUrl) : '';
+    // 2026-09-13 (живий баг, Геник: "Посилання треба робити прихованими" — знайдено агентом-
+    // розслідувачем, testSession.js:461-463): zernio.com-хостовані фото вимагають наш власний
+    // Bearer-заголовок (imgOk()/ZERNIO_API_TOKEN у n_lookup-crm-code.js) — Telegram сам НЕ вміє
+    // додати цей заголовок при завантаженні URL, тому sendPhoto(url) на такі посилання ЗАВЖДИ
+    // падає, і код падав у sendMessage-фолбек, який дописував СИРЕ посилання у видимий текст.
+    // Фікс: для zernio.com качаємо байти самі (з Bearer) і шлемо як multipart-файл; фолбек — БЕЗ
+    // сирого URL у тексті (HTML-посилання прихованим текстом, не гола адреса).
+    let _photoBuf = null;
     if (_photo && txt.length <= 1000) {
-        const rp = await fetch('https://api.telegram.org/bot' + tok + '/sendPhoto', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(adminId), photo: _photo, caption: txt, parse_mode: 'HTML' }) }).catch(() => null);
-        j = rp ? await rp.json().catch(() => ({})) : {};
+        try {
+            const _pu = new URL(_photo);
+            if (_pu.hostname.toLowerCase() === 'zernio.com' && funnelEnv.ZERNIO_API_TOKEN) {
+                const ir = await fetch(_photo, { headers: { Authorization: 'Bearer ' + funnelEnv.ZERNIO_API_TOKEN } });
+                if (ir.ok) _photoBuf = Buffer.from(await ir.arrayBuffer());
+            }
+        } catch (_e) { /* best-effort, падаємо на звичайний sendPhoto(url) нижче */ }
+        if (_photoBuf) {
+            const fd = new FormData();
+            fd.append('chat_id', String(adminId));
+            fd.append('caption', txt);
+            fd.append('parse_mode', 'HTML');
+            fd.append('photo', new Blob([_photoBuf]), 'photo.jpg');
+            const rp = await fetch('https://api.telegram.org/bot' + tok + '/sendPhoto', { method: 'POST', body: fd }).catch(() => null);
+            j = rp ? await rp.json().catch(() => ({})) : {};
+        } else {
+            const rp = await fetch('https://api.telegram.org/bot' + tok + '/sendPhoto', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(adminId), photo: _photo, caption: txt, parse_mode: 'HTML' }) }).catch(() => null);
+            j = rp ? await rp.json().catch(() => ({})) : {};
+        }
     }
     if (!j.ok) {
-        const r = await fetch('https://api.telegram.org/bot' + tok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(adminId), text: txt + (_photo ? '\n🖼 ' + _photo : ''), parse_mode: 'HTML', disable_web_page_preview: true }) }).catch(() => null);
+        const _hiddenLinkText = _photo ? (txt + '\n<a href="' + _photo.replace(/"/g, '&quot;') + '">📷 фото</a>') : txt;
+        const r = await fetch('https://api.telegram.org/bot' + tok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(adminId), text: _hiddenLinkText, parse_mode: 'HTML', disable_web_page_preview: true }) }).catch(() => null);
         j = r ? await r.json().catch(() => ({})) : {};
     }
     pushDelivery(runtime, 'telegram_notify', !!j.ok, j.ok ? null : (j.description || 'fetch failed'), { chatId: String(adminId), reason, nodeId });

@@ -32,25 +32,39 @@ var crmHdr = { Authorization: 'Bearer ' + crmKey, 'Content-Type': 'application/j
 
 function sleep(ms) { return new Promise(function (res) { setTimeout(res, ms); }); }
 
-var configuredAccts = (keys.META_AD_ACCOUNT_ID || '').trim();
+// 2026-09-13 (власник: "це я хочу вибирати на сторінці", не хардкодити один акаунт у funnelKey):
+// пріоритет вибору кабінету(-ів) для ЦЬОГО проходу:
+//   1) context.metaAdAccountIds (масив) — ручний запуск із кнопки "Отримати дані зараз" на сторінці
+//      Оголошення, власник сам обрав кабінет(и) у мультивиборі (CRM POST /ad-spend/sync-now
+//      прокидає це через contextOverride при старті тестової сесії).
+//   2) funnelKey META_AD_ACCOUNT_ID (явний override, кома-розділений список) — для щоденного крону.
+//   3) інакше — auto-discovery через /me/adaccounts (усі кабінети, які бачить токен ЗАРАЗ).
 var accounts = []; // [{id, name}]
-if (configuredAccts && configuredAccts.toLowerCase() !== 'auto') {
-  accounts = configuredAccts.split(',').map(function (s) { return { id: s.trim(), name: null }; }).filter(function (a) { return a.id; });
+if (Array.isArray(context.metaAdAccountIds) && context.metaAdAccountIds.length) {
+  accounts = context.metaAdAccountIds.map(function (id) { return { id: String(id), name: null }; });
 } else {
-  try {
-    var acctRes = await fetch('https://graph.facebook.com/v21.0/me/adaccounts?fields=name,account_status&limit=100&access_token=' + encodeURIComponent(token));
-    var acctJson = await acctRes.json().catch(function () { return {}; });
-    if (acctJson.error) { return { metaSyncError: 'Meta API (me/adaccounts): ' + (acctJson.error.message || JSON.stringify(acctJson.error)) }; }
-    accounts = (Array.isArray(acctJson.data) ? acctJson.data : []).map(function (a) { return { id: a.id, name: a.name || null }; });
-  } catch (e) { return { metaSyncError: 'не вдалось отримати список рекламних кабінетів: ' + e.message }; }
+  var configuredAccts = (keys.META_AD_ACCOUNT_ID || '').trim();
+  if (configuredAccts && configuredAccts.toLowerCase() !== 'auto') {
+    accounts = configuredAccts.split(',').map(function (s) { return { id: s.trim(), name: null }; }).filter(function (a) { return a.id; });
+  } else {
+    try {
+      var acctRes = await fetch('https://graph.facebook.com/v21.0/me/adaccounts?fields=name,account_status&limit=100&access_token=' + encodeURIComponent(token));
+      var acctJson = await acctRes.json().catch(function () { return {}; });
+      if (acctJson.error) { return { metaSyncStatus: 'error', metaSyncError: 'Meta API (me/adaccounts): ' + (acctJson.error.message || JSON.stringify(acctJson.error)) }; }
+      accounts = (Array.isArray(acctJson.data) ? acctJson.data : []).map(function (a) { return { id: a.id, name: a.name || null }; });
+    } catch (e) { return { metaSyncStatus: 'error', metaSyncError: 'не вдалось отримати список рекламних кабінетів: ' + e.message }; }
+  }
 }
-if (!accounts.length) { return { metaSyncError: 'жодного рекламного кабінету не знайдено (перевір права токена)' }; }
+if (!accounts.length) { return { metaSyncStatus: 'error', metaSyncError: 'жодного рекламного кабінету не знайдено (перевір права токена або вибір на сторінці)' }; }
 
 var overallResults = { accountsChecked: accounts.length, fetched: 0, created: 0, updated: 0, errors: 0, byAccount: {} };
 
-for (var ai = 0; ai < accounts.length; ai++) {
-  var acct = accounts[ai].id;
-  var acctName = accounts[ai].name;
+// 2026-09-13 (2-й таймаут 60с підряд): з ДВОМА кабінетами послідовний for-цикл сумарно
+// перевищив ліміт (кожен окремо вкладався, разом — ні). Кабінети незалежні одне від одного —
+// синкаємо всі ПАРАЛЕЛЬНО (Promise.all), час обмежує НАЙПОВІЛЬНІШИЙ кабінет, не сума всіх.
+async function syncAccount(acctInfo) {
+  var acct = acctInfo.id;
+  var acctName = acctInfo.name;
   var results = { fetched: 0, created: 0, updated: 0, errors: 0 };
   var after = null;
   var pages = 0;
@@ -94,11 +108,28 @@ for (var ai = 0; ai < accounts.length; ai++) {
     if (after) await sleep(300); // пауза лише МІЖ сторінками Meta API (rate-limit), не на кожен ad
   } while (after && pages < 40); // guard — до 2000 оголошень за прохід на кабінет
 
-  overallResults.byAccount[acct] = results;
-  overallResults.fetched += results.fetched;
-  overallResults.created += results.created;
-  overallResults.updated += results.updated;
-  overallResults.errors += results.errors;
+  return { acct: acct, results: results };
 }
 
-return { metaSyncResult: overallResults, metaSyncAt: new Date().toISOString() };
+var perAccount = await Promise.all(accounts.map(syncAccount));
+perAccount.forEach(function (r) {
+  overallResults.byAccount[r.acct] = r.results;
+  overallResults.fetched += r.results.fetched;
+  overallResults.created += r.results.created;
+  overallResults.updated += r.results.updated;
+  overallResults.errors += r.results.errors;
+});
+
+// 2026-09-13: metaSyncStatus/metaSyncDate/metaSyncAdsCount/metaSyncWritten — контракт, який ВЖЕ
+// очікує CRM-кнопка "Отримати дані зараз" (apps/api/src/routes/ads.js POST /ad-spend/sync-now,
+// існувала з 2026-09-01, чекала на бота, якого досі не було). metaSyncResult — повний деталізований
+// об'єкт для власне debug/логів, лишаємо для сумісності з попередніми живими тестами цього крону.
+return {
+  metaSyncStatus: overallResults.errors > 0 && overallResults.fetched === 0 ? 'error' : 'ok',
+  metaSyncDate: new Date().toISOString().slice(0, 10),
+  metaSyncAdsCount: overallResults.fetched,
+  metaSyncWritten: overallResults.created + overallResults.updated,
+  metaSyncError: null,
+  metaSyncResult: overallResults,
+  metaSyncAt: new Date().toISOString(),
+};

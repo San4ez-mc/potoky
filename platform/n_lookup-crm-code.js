@@ -592,6 +592,23 @@ try {
     });
   }
   var setList = setItems.map(function (x) { return x.name + (x.price ? (' — ' + x.price + ' грн') : '') + ' [арт. ' + x.article + ']' + (x.colors && x.colors.length ? ' (кольори: ' + x.colors.join(', ') + ')' : '') + (x.sizes && x.sizes.length ? ' (розміри: ' + x.sizes.join(', ') + ')' : ''); }).join('; ');
+  // 2026-09-13 (живий баг, MaksimKapelyan: "лофери 5934, стелька 30 см — чи є такий розмір?" —
+  // ескалювало на менеджера, хоча sizeChartData компонента вже мав дані для відповіді. Знайдено
+  // агентом-розслідувачем: n_set_choice бачить лише setList (голі номери розмірів, БЕЗ довжини
+  // стопи/см) — sizeChartData кожного компонента ніде в промпт не потрапляло). Рендеримо окремим
+  // текстовим полем — messagesTemplate/systemPrompt тут підтримують лише прості рядки, не JSON/цикли.
+  var setSizeChartText = setItems.filter(function (x) { return x.sizeChartData && Array.isArray(x.sizeChartData.sizes) && x.sizeChartData.sizes.length; }).map(function (x) {
+    var scd = x.sizeChartData;
+    var unit = scd.unit || 'см';
+    var rows = scd.sizes.map(function (sz, idx) {
+      var measureLine = Object.keys(scd.measurements || {}).map(function (mk) {
+        var arr = scd.measurements[mk];
+        return Array.isArray(arr) && arr[idx] != null ? (mk + ' ' + arr[idx] + unit) : '';
+      }).filter(Boolean).join(', ');
+      return sz + (measureLine ? (' (' + measureLine + ')') : '');
+    }).join('; ');
+    return 'Артикул ' + x.article + ' (' + x.name + ') — сітка: ' + rows;
+  }).join('\n');
   // 2026-09-11 (власник: "в таких випадках відправляй розмірну сітку по кожному товару
   // окремо" — сет свого sizeChartData НЕ має, тому __sizeChartNote вище завжди падав у "нема
   // сітки взагалі", модель чесно казала клієнту "немає" замість спробувати wantsSizeChart):
@@ -732,7 +749,7 @@ try {
     product: {
       _source: 'crm', supplier: (found.supplier && found.supplier.name) || '', supplierId: (found.supplier && found.supplier.id) || '',
       supplierInfo: supplierInfo, // {mechanism, loginUsername, loginPassword, aiNotes, telegramGroupId, website, contactInfo, description} — §4 ТЗ
-      setComponents: rawComponents.map(function (c) { return c.sku; }).join(', '), isSet: !!found.isSet, setItems: setItems, setList: setList,
+      setComponents: rawComponents.map(function (c) { return c.sku; }).join(', '), isSet: !!found.isSet, setItems: setItems, setList: setList, setSizeChartText: setSizeChartText,
       matchNote: __matchNote, matchConfidence: __lowConfidence ? 'low' : 'high',
       _matchKey: mk, _via: via, _matchedSharedPostId: (context.sharedPost && context.sharedPost.mediaId) ? String(context.sharedPost.mediaId) : '', _matchedEntryAd: String(context.entryAd || context.entryAdId || ''),
       id: found.id, sku: found.sku || '', article: found.sku || '', categoryId: found.categoryId, categoryName: (categoryFull && categoryFull.name) || '',

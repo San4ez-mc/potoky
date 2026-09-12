@@ -1162,6 +1162,14 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
     const nodesById = new Map(flow.nodes.map((node) => [node.id, node]));
     const { ctx, runtime } = getFlowRuntime(session.context);
 
+    // 2026-09-12 (власник, CRM "Замовлення" §дата першого контакту): Order.firstTouchAt/
+    // firstTouchAdId в CRM ніколи не заповнювались воронкою (завжди null на всіх існуючих
+    // замовленнях) — фільтр по цій даті на боці CRM ховав би все. Фіксуємо ОДНОРАЗОВО за сесію
+    // (перший крок, де взагалі відомий entryAdId) — n_crm_order-crm-code.js далі читає ці два
+    // поля при створенні замовлення.
+    if (!ctx.firstContactAt) ctx.firstContactAt = session.startedAt.toISOString();
+    if (!ctx.firstEntryAdId && ctx.entryAdId) ctx.firstEntryAdId = ctx.entryAdId;
+
     // Повторний клієнт (ідея користувача 2026-08-27): якщо в ЦІЙ воронці підключена
     // нода n_recall_cond, одноразово за сесію підтягуємо зріст/вагу і дані доставки
     // з ОСТАННЬОГО завершеного замовлення цього ж клієнта в ЦІЙ ЖЕ воронці — щоб не

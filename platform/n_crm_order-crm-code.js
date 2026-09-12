@@ -138,8 +138,23 @@ try {
     var unit = x.qty > 1 && Number(x.sum) ? Math.round((Number(x.sum) / x.qty) * 100) / 100 : (Number(x.price) || 0);
     items.push({ productId: x.id || null, offerId: of ? of.id : null, name: x.name + ' (арт. ' + x.sku + ')', price: unit, quantity: Number(x.qty) || 1, properties: props.length ? props : null, isUpsell: false });
   });
+  // 2026-09-12 (власник, CRM "Замовлення" §дата першого контакту): Order.firstTouchAt/firstTouchAdId
+  // НІКОЛИ не заповнювались — фільтр по цій даті на боці CRM ховав би все. testSession.js уже поклав
+  // context.firstContactAt/firstEntryAdId (перший крок сесії) — тут шукаємо внутрішній CRM Ad.id за
+  // externalId (best-effort, не блокує створення замовлення при помилці).
+  var firstTouchAdId = null;
+  try {
+    if (context.firstEntryAdId) {
+      var __far = await fetch(base + '/ads?take=500', { headers: hdr });
+      var __faj = __far.ok ? await __far.json().catch(function () { return {}; }) : {};
+      var __faHit = (Array.isArray(__faj.data) ? __faj.data : []).filter(function (a) { return String(a.externalId || '') === String(context.firstEntryAdId); })[0];
+      if (__faHit) firstTouchAdId = __faHit.id;
+    }
+  } catch (e) { /* best-effort */ }
   var body = {
     buyerId: buyerId,
+    firstTouchAdId: firstTouchAdId,
+    firstTouchAt: context.firstContactAt || null,
     // 2026-09-09: картка цієї розмови вже на дошці CRM (з funnel-events) — CRM доповнить її, а не створить другу.
     funnelSessionId: (typeof session !== 'undefined' && session && session.id) ? String(session.id) : null,
     sourceName: 'Instagram' + (shopTag ? (' ' + shopTag) : ''),

@@ -1911,6 +1911,17 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
         const node = nodesById.get(runtime.currentNodeId);
         if (!node) break;
 
+      // 2026-09-12 (запит власника: "в адмінці бачу трейс, але не до кінця деталізовано" —
+      // готуємо ґрунт для розслідування рідкісного паралельного дубль-багу). Раніше падіння
+      // ноди ловилось ЛИШЕ на виклику executeFlowStep (zernioHandler: try/catch навколо
+      // всього виклику) — помилка йшла тільки в pm2 logs, ПОВНІСТЮ невидима в trail самої
+      // сесії (вкладка «Ноди»), і pendingTrace цієї ноди НІКОЛИ не фіналізувався (обрив
+      // історії без пояснення). Тепер кожна нода обгорнута в try/catch: помилка потрапляє
+      // в trace (tr.error), клієнт отримує людяне повідомлення замість тиші чи 500-ки, і
+      // виконання ГРАЦІОЗНО зупиняється (а не падає всім запитом) — той самий принцип, що
+      // §0.5 стандарту воронок вимагає для кожної ноди, тепер він і на рівні двигуна.
+      try {
+
         // Аудит 2026-08-30 (дублювання презентації товару, живий кейс oleksii_sirazetdinov,
         // артикул C0043): одноразові контекстні прапорці, виставлені ПОПЕРЕДНЬОЮ нодою через
         // data.setContext, мають лишатись видимими, доки їх реально не прочитає нода, що щось
@@ -4799,6 +4810,24 @@ ${_baseUrl}/legal/terms — Правила використання`;
         }
 
         runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
+
+      } catch (_nodeErr) {
+        // Помилка ноди — раніше повністю невидима в trail сесії (лише pm2 logs). Тепер:
+        // 1) записуємо в trace (видно у вкладці «Ноди»), 2) клієнту — людяне повідомлення
+        // замість тиші/сирого стеку, 3) зупиняємось граціозно (waitingForUser), НЕ падаємо
+        // всім запитом — наступне повідомлення клієнта обробиться як завжди.
+        if (pendingTrace) { pendingTrace.error = String((_nodeErr && _nodeErr.message) || _nodeErr).slice(0, 2000); }
+        try {
+            logger.error('[flow] node execution failed', { botId: session.botId, sessionId: session.id, nodeId: node.id, nodeType: node.type, error: (_nodeErr && _nodeErr.stack) || String(_nodeErr) });
+        } catch (_e) { /* logger сам не має ламати обробку */ }
+        if (!lastAssistant) {
+            const errFallback = 'Вибачте, у нас технічний збій 🙏 Менеджер вже дивиться — напишіть, будь ласка, ще раз за хвилину або зачекайте відповіді тут.';
+            try { await persistAssistantMessage(session.id, errFallback, { nodeId: node.id, nodeType: 'flow_error', error: true }); lastAssistant = errFallback; } catch (_e) { /* best-effort */ }
+        }
+        runtime.lastUserMessage = '';
+        runtime.waitingForUser = true;
+        break;
+      }
     }
     if (pendingTrace) _finalizeTrace(pendingTrace);
 

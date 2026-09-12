@@ -924,6 +924,12 @@ function refresh(flow, opts) {
         notes.push('n_is_clothing condition includes isSet');
     }
     if (byId.n_order_intent) byId.n_order_intent.data.systemPrompt = ORDER_INTENT_PROMPT;
+    // 2026-09-12 (регресія виявила живий баг): n_confirm_prep.data.code ставився ЛИШЕ через addNode
+    // у transform() (перший застосунок) — --refresh --apply його НІКОЛИ не синхронізував. Коли текст
+    // ТТН виправили з "вже в дорозі" на "передано в обробку постачальнику" (2692970c, аудит
+    // mariia__dmytr/Олексій: "невірно відповідає"), уже задеплоєні боти цей фікс так і НЕ отримали —
+    // клієнти й далі бачили стару, фактично неточну фразу. Синхронізуємо безумовно, як n_shop_profile.
+    if (byId.n_confirm_prep && byId.n_confirm_prep.data.code !== CONFIRM_PREP_CODE) { byId.n_confirm_prep.data.code = CONFIRM_PREP_CODE; notes.push('n_confirm_prep code resynced (ttnLine text)'); }
     if (byId.n_collect) { byId.n_collect.data.systemPrompt = COLLECT_PROMPT; byId.n_collect.data.detectPaymentChange = true; }
     if (byId.n_welcome_back && byId.n_welcome_back.type === 'claude') byId.n_welcome_back.data.systemPrompt = WELCOME_BACK_PROMPT;
     if (byId.n_upsell2_wait) byId.n_upsell2_wait.data.systemPrompt = UPSELL2_PROMPT;

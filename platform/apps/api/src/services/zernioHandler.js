@@ -24,6 +24,46 @@ async function getZernioKeys(botId) {
     return Object.fromEntries(keys.map((k) => [k.key, (k.value || '').trim()]));
 }
 function isReal(v) { return typeof v === 'string' && v.length > 3 && v !== 'REPLACE_ME'; }
+// 2026-09-12 (власник: "підключив уже" — гібридний підхід до затримок Zernio, обговорено
+// разом): реактивний, а не постійний polling. Тригер — повідомлення, яке ЩОЙНО прийшло, вже
+// саме по собі запізніле (>60с, див. виклик нижче біля channelLatencyMs) — це сигнал, що канал
+// зараз "тупить" САМЕ для цієї розмови, а значить могли застрягти й СУСІДНІ повідомлення того
+// самого клієнта (кейс igorigor_ 95ef30ab підтвердив: застрягання йшло пачками). Один-разовий
+// GET /inbox/conversations/{id}, дедуп за zernioMessageId (той самий принцип, що dedup()
+// нижче). НЕ запускаємо флоу на "відновлених" повідомленнях (уникаємо ризику подвійної
+// обробки того самого ходу) — лише зберігаємо в історію; природний наступний хід клієнта чи
+// menedzher бачать їх у сесії. Структура відповіді conversations/{id} документована лише
+// частково (metadata.meta_ad_id, вже використовується вище) — тому best-effort вгадування
+// поля зі списком повідомлень + лог сирої відповіді, щоб уточнити при першому реальному
+// спрацюванні на живому трафіку.
+async function recoverMissedConversationMessages(botId, sessionId, conversationId) {
+    if (!conversationId) return;
+    try {
+        const zk = await getZernioKeys(botId);
+        if (!isReal(zk.ZERNIO_API_TOKEN)) return;
+        const r = await fetch('https://zernio.com/api/v1/inbox/conversations/' + encodeURIComponent(conversationId), { headers: { Authorization: 'Bearer ' + zk.ZERNIO_API_TOKEN } });
+        if (!r.ok) { logger.warn('[zernioHandler] recovery fetch failed', { botId, sessionId, status: r.status }); return; }
+        const j = await r.json().catch(() => ({}));
+        const data = (j && j.data) || {};
+        const msgs = Array.isArray(data.messages) ? data.messages
+            : Array.isArray(data.recentMessages) ? data.recentMessages
+                : Array.isArray(data.items) ? data.items : [];
+        logger.info('[zernioHandler] recovery probe', { botId, sessionId, conversationId, foundMessagesField: !!msgs.length, rawKeys: Object.keys(data).slice(0, 20) });
+        if (!msgs.length) return;
+        const existing = await db.message.findMany({ where: { sessionId }, select: { metadata: true } });
+        const knownIds = new Set(existing.map((m) => String((m.metadata || {}).zernioMessageId || '')).filter(Boolean));
+        let recovered = 0;
+        for (const m of msgs) {
+            const mid = String(m.id || m._id || m.messageId || '');
+            if (!mid || knownIds.has(mid)) continue;
+            const mtext = String(m.text || m.content || m.body || '').slice(0, 2000);
+            if (!mtext) continue;
+            await db.message.create({ data: { sessionId, role: 'user', content: mtext, metadata: { source: 'zernio_recovered', zernioMessageId: mid, recoveredAt: new Date().toISOString() } } }).catch(() => {});
+            recovered++;
+        }
+        if (recovered) logger.info('[zernioHandler] recovered missed messages via conversations API', { botId, sessionId, conversationId, recovered });
+    } catch (e) { logger.warn('[zernioHandler] recoverMissedConversationMessages failed: ' + e.message, { botId, sessionId }); }
+}
 // Власні ідентифікатори (бізнес-акаунт, Zernio-акаунт) — щоб не плодити сесії на самих себе.
 async function getSelfIds(botId) {
     const rows = await db.funnelKey.findMany({ where: { botId, key: { in: ['INSTAGRAM_BUSINESS_ID', 'ZERNIO_ACCOUNT_ID', 'INSTAGRAM_BUSINESS_ACCOUNT_ID'] } }, select: { value: true } });
@@ -1113,6 +1153,8 @@ async function handleIncomingMessage(botId, body) {
     if (channelLatencyMs != null && channelLatencyMs > 60 * 1000) {
         logger.warn('[zernioHandler] inbound arrived late from channel', { botId, sessionId: session.id, latencySec: Math.round(channelLatencyMs / 1000), stale: staleInbound, text: String(text || '').slice(0, 60) });
         await logDelivery(session.id, botId, 'zernio_inbound', true, null, { latencyMs: channelLatencyMs, stale: staleInbound, text: String(text || '').slice(0, 80), reason: staleInbound ? 'stale: skipped flow (older than last bot reply)' : 'late but processed' });
+        // Fire-and-forget: не блокуємо основний потік обробки цього повідомлення.
+        recoverMissedConversationMessages(botId, session.id, conversationId).catch(() => {});
     }
     if (staleInbound) {
         logger.info('[zernioHandler] stale inbound — stored, flow not run', { botId, sessionId: session.id });

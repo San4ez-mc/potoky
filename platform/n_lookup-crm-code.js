@@ -97,17 +97,18 @@ function offerPreColorSize(all, art) {
 }
 
 try {
-  var __apiCalls = await Promise.all([
-    fetch(base + '/products?take=300', { headers: hdr() }),
-    fetch(base + '/ads?take=300', { headers: hdr() })
-  ]);
-  var pr = __apiCalls[0], adsR = __apiCalls[1];
-  if (!pr.ok) return fallback('CRM /products HTTP ' + pr.status);
-  var pd = await pr.json();
-  var all = (pd && pd.data) || [];
+  // 2026-09-12 (власник: "поправ по всій воронці, щоб ці запити витягнуті були в окремі ноди"):
+  // products+ads раніше запитувались тут напряму — тепер це роблять n_lookup_fetch_products/
+  // _fetch_ads (httpRequest-ноди, БЕЗУМОВНО перед n_lookup — ці два запити потрібні завжди,
+  // на відміну від vision/buyer/suppliers/set-компонентів нижче, які лишаються тут: вони умовні
+  // й іноді циклічні (по кожному компоненту сету) — статичний граф не може виразити динамічну
+  // кількість ітерацій, тому повне "усе в нодах" для n_lookup архітектурно неможливе без
+  // переписування всього матчинг-алгоритму на явну умовну маршрутизацію графом (~15-20 нод
+  // замість читабельної js-функції) — свідомий компроміс, не недогляд.
+  var all = Array.isArray(context.lookupProductsRaw) ? context.lookupProductsRaw : null;
+  if (!all) return fallback('CRM /products недоступний (httpRequest-нода не повернула дані)');
   if (!all.length) return fallback('Каталог CRM порожній');
-  var adsList = [];
-  if (adsR && adsR.ok) { try { var adsJ = await adsR.json(); adsList = (adsJ && adsJ.data) || []; } catch (e) { } }
+  var adsList = Array.isArray(context.lookupAdsRaw) ? context.lookupAdsRaw : [];
 
   var found = null, via = '', mk = '', preColor = '', preSize = '', preFromUser = false;
 

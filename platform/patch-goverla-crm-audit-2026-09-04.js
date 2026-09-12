@@ -785,6 +785,21 @@ function applyV12(nodes, edges, notes) {
         byId().n_catalog_hint_prep.data.code = CODE.n_catalog_hint_prep();
         notes.push('code n_catalog_hint_prep (sync)');
     }
+    // 2026-09-12: n_lookup — той самий принцип, лише БЕЗУМОВНА частина (products+ads запитуються
+    // ЗАВЖДИ, на відміну від catalog_hint де ще був "чи взагалі треба" гейт) — тому без prep/condition,
+    // просто 2 httpRequest-ноди перед n_lookup. Решта (vision/buyer/suppliers/set-компоненти) — умовні
+    // й циклічні, лишаються в самій n_lookup (див. коментар у n_lookup-crm-code.js чому саме так).
+    if (byId().n_lookup && !byId().n_lookup_fetch_products) {
+        const l = pos('n_lookup');
+        const pF1 = placer.place(l.x - GX, l.y - GY * 0.5);
+        const pF2 = placer.place(l.x - GX, l.y + GY * 0.5);
+        nodes.push({ id: 'n_lookup_fetch_products', type: 'httpRequest', position: pF1, data: { label: '2a. CRM: товари (для пошуку)', method: 'GET', url: '{{env.CRM_API_BASE}}/products?take=300', headers: { Authorization: 'Bearer {{env.CRM_API_KEY}}' }, responseField: 'data', outputVar: 'context.lookupProductsRaw', description: 'Повний каталог товарів — джерело для всіх пріоритетів матчингу в n_lookup.' } });
+        nodes.push({ id: 'n_lookup_fetch_ads', type: 'httpRequest', position: pF2, data: { label: '2b. CRM: рекламні прив\'язки', method: 'GET', url: '{{env.CRM_API_BASE}}/ads?take=300', headers: { Authorization: 'Bearer {{env.CRM_API_KEY}}' }, responseField: 'data', outputVar: 'context.lookupAdsRaw', description: 'Ручні прив\'язки Ad.externalId→Ad.productId (Пріоритет 0 матчингу).' } });
+        edges = edges.map((e) => (e.target === 'n_lookup' && e.source !== 'n_lookup_fetch_ads' ? { ...e, target: 'n_lookup_fetch_products' } : e));
+        edges.push({ id: 'e_n_lookup_fetch_products_ads', source: 'n_lookup_fetch_products', target: 'n_lookup_fetch_ads' });
+        edges.push({ id: 'e_n_lookup_fetch_ads_lookup', source: 'n_lookup_fetch_ads', target: 'n_lookup' });
+        notes.push('+ n_lookup_fetch_products/_fetch_ads (HTTP винесено в окремі ноди)');
+    }
     return { nodes, edges };
 }
 

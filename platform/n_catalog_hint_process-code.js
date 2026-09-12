@@ -13,6 +13,20 @@ var catsRaw = Array.isArray(context.catalogHintCategoriesRaw) ? context.catalogH
 var cats = {};
 catsRaw.forEach(function (c) { cats[c.id] = String(c.name || '').trim(); });
 function out(hint, cnt, catList) { return { catalogHint: hint || '', catalogHintCount: cnt || 0, catalogHintSkus: '', catalogHintPick: '', catalogCategories: catList || '', unknownTurns: unknownTurns }; }
+// 2026-09-12 (живий тест: "а є чорні лофери?" показав УСІ лофери, включно з коричневими) — лофери
+// 5932-5935 (дропшип) не мають offers-варіантів взагалі (offersCount:0), колір є ЛИШЕ в назві
+// товару ("Чорні класичні замшеві лофери"). Той самий факт уже виявлено й виправлено раніше цієї
+// сесії в n_avail_search-code.js — тут той самий fallback: offers, а якщо порожньо — назва/customerName.
+function colorsOf(p) {
+  var c = [];
+  (p.offers || []).forEach(function (o) { (o.properties || []).forEach(function (pr) { var n = String(pr.name || '').toLowerCase(); if (n.indexOf('колір') >= 0 || n.indexOf('цвет') >= 0) { var v = String(pr.value || '').trim(); if (v && c.indexOf(v) < 0) c.push(v); } }); });
+  if (!c.length) {
+    var src = (String(p.name || '') + ' ' + String(p.customerName || '')).toLowerCase();
+    var m = src.match(/(чорн\w*|сір\w*|біл\w*|син\w*|графіт\w*|бордов\w*|беж\w*|коричнев\w*|зелен\w*|червон\w*|хакі|олив\w*|молочн\w*|блакитн\w*)/);
+    if (m) c.push(m[1]);
+  }
+  return c;
+}
 var active = all.filter(function (p) { return p.isActive !== false && !p.archived && !/^set/i.test(String(p.sku || '')); });
 // Категорії з кількістю товарів — для привітання («що цікавить: кофти (6), бомбери (4)…»)
 var counts = {};
@@ -36,8 +50,7 @@ try {
     if (__prev.length && __hintColorWords.length) {
       var __prevProducts = active.filter(function (p) { return __prev.indexOf(String(p.sku || '').toUpperCase()) >= 0; });
       var __colorHits = __prevProducts.filter(function (p) {
-        var offs = p.offers || []; var pc = [];
-        for (var oi = 0; oi < offs.length; oi++) { var props = offs[oi].properties || []; for (var pi = 0; pi < props.length; pi++) { var pn = String(props[pi].name || '').toLowerCase(); if (pn.indexOf('колір') >= 0 || pn.indexOf('цвет') >= 0) pc.push(String(props[pi].value || '').toLowerCase()); } }
+        var pc = colorsOf(p).map(function (c) { return c.toLowerCase(); });
         return __hintColorWords.some(function (cw) { return pc.some(function (c) { return c.indexOf(cw.toLowerCase().slice(0, 4)) >= 0; }); });
       });
       if (__colorHits.length === 1) __pick = __colorHits[0];
@@ -60,8 +73,7 @@ if (!hits.length) return out('', 0, catList);
 // фільтр за кольором одразу на повному hits; fallback на неотфільтрований список, якщо звуження дало 0.
 if (__hintColorWords.length) {
   var __hitsByColor = hits.filter(function (p) {
-    var offs = p.offers || []; var pc = [];
-    for (var oi2 = 0; oi2 < offs.length; oi2++) { var props2 = offs[oi2].properties || []; for (var pi2 = 0; pi2 < props2.length; pi2++) { var pn2 = String(props2[pi2].name || '').toLowerCase(); if (pn2.indexOf('колір') >= 0 || pn2.indexOf('цвет') >= 0) pc.push(String(props2[pi2].value || '').toLowerCase()); } }
+    var pc = colorsOf(p).map(function (c) { return c.toLowerCase(); });
     return __hintColorWords.some(function (cw) { return pc.some(function (c) { return c.indexOf(cw.toLowerCase().slice(0, 4)) >= 0; }); });
   });
   if (__hitsByColor.length) hits = __hitsByColor;

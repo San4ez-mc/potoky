@@ -49,23 +49,30 @@ function useNodeStats(nodeId) {
 }
 
 // ─── Base node wrapper ─────────────────────────────────────────────────────────
-function BaseNode({ id, selected, color, icon, label, description, children, hasInput = true, hasOutput = true }) {
+function BaseNode({ id, selected, color, icon, label, description, children, hasInput = true, hasOutput = true, external = false, bodyClassName }) {
     return (
         <div
             title={description || undefined}
             className={clsx(
-                'min-w-[220px] max-w-[320px] rounded-xl border-2 bg-gray-900 shadow-xl transition-all cursor-pointer select-none group',
-                selected ? 'border-brand shadow-brand/20' : 'border-gray-700 hover:border-gray-500 hover:shadow-gray-600/20'
+                'min-w-[220px] max-w-[320px] rounded-xl bg-gray-900 shadow-xl transition-all cursor-pointer select-none group',
+                // 2026-09-12 (власник: "хочу щоб дивлячись на граф зразу бачив відправки, сильно
+                // відрізнятись"): ноди, що йдуть кудись ЗОВНІ воронки (httpRequest, connector),
+                // отримують товсту ПУНКТИРНУ яскраву рамку замість звичайної тонкої суцільної —
+                // силует картки виділяється навіть при швидкому скролі графа, не лише колір заголовка.
+                external
+                    ? (selected ? 'border-[3px] border-dashed border-brand shadow-brand/30' : 'border-[3px] border-dashed border-amber-400/80 shadow-amber-500/10 hover:border-amber-300')
+                    : clsx('border-2', selected ? 'border-brand shadow-brand/20' : 'border-gray-700 hover:border-gray-500 hover:shadow-gray-600/20')
             )}
         >
             {/* Header */}
             <div className={clsx('flex items-center gap-2 px-3 py-2 rounded-t-lg', color)}>
                 <span className="text-base">{icon}</span>
                 <span className="text-sm font-semibold text-white truncate">{label}</span>
+                {external && <span className="ml-auto text-sm" title="Зовнішній виклик — воронка звертається кудись назовні">📡</span>}
             </div>
             {/* Body */}
             {children && (
-                <div className="px-3 py-2 text-xs text-gray-400">{children}</div>
+                <div className={clsx('px-3 py-2 text-xs text-gray-400 rounded-b-[10px]', bodyClassName)}>{children}</div>
             )}
             {/* Handles */}
             {hasInput && (
@@ -300,6 +307,8 @@ export const ConnectorNode = memo(({ id, selected, data }) => (
         icon={data.connectorType === 'wayforpay' ? '💳' : (data.connectorIcon || '🔌')}
         label={data.label || data.connectorType || 'Конектор'}
         description={data.description}
+        external
+        bodyClassName="bg-gray-700/50"
     >
         {/* Show connector name if available, otherwise type */}
         {data.savedConnectorName
@@ -456,13 +465,24 @@ export const FunnelStageNode = memo(({ id, selected, data }) => (
 ));
 
 // ─── HTTP Request Node ─────────────────────────────────────────────────────────
-export const HttpRequestNode = memo(({ id, selected, data }) => (
-    <BaseNode id={id} selected={selected} color="bg-teal-700" icon="🌐" label={data.label || 'HTTP запит'} description={data.description}>
-        {data.method && <span className="text-[10px] font-bold text-teal-300 bg-teal-900/50 rounded px-1">{data.method}</span>}
-        {data.url && <div className="text-teal-400 text-[11px] truncate mt-0.5">{data.url}</div>}
-        {data.outputVar && <div className="text-teal-200 text-[11px]">→ {data.outputVar}</div>}
-    </BaseNode>
-));
+export const HttpRequestNode = memo(({ id, selected, data }) => {
+    const bodyPreview = data.bodyFields
+        ? (typeof data.bodyFields === 'string' ? data.bodyFields : JSON.stringify(data.bodyFields))
+        : (data.body || '');
+    return (
+        <BaseNode id={id} selected={selected} color="bg-teal-700" icon="🌐" label={data.label || 'HTTP запит'} description={data.description} external bodyClassName="bg-gray-700/50">
+            <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-bold text-teal-200 bg-teal-800/70 rounded px-1.5 py-0.5">{data.method || 'GET'}</span>
+                <span className="text-amber-300">➡️</span>
+                {data.url && <span className="text-teal-100 text-[11px] truncate">{data.url}</span>}
+            </div>
+            {bodyPreview && (
+                <div className="mt-1 rounded bg-black/40 px-1.5 py-1 text-[10px] text-teal-300 line-clamp-2 break-all font-mono">{bodyPreview}</div>
+            )}
+            {data.outputVar && <div className="text-teal-200 text-[11px] mt-1">⬅ {data.outputVar}</div>}
+        </BaseNode>
+    );
+});
 
 // ─── Send Photo Node ────────────────────────────────────────────────────────────
 export const SendPhotoNode = memo(({ id, selected, data }) => (

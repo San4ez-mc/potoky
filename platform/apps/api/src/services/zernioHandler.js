@@ -41,24 +41,34 @@ async function recoverMissedConversationMessages(botId, sessionId, conversationI
     try {
         const zk = await getZernioKeys(botId);
         if (!isReal(zk.ZERNIO_API_TOKEN)) return;
-        const r = await fetch('https://zernio.com/api/v1/inbox/conversations/' + encodeURIComponent(conversationId), { headers: { Authorization: 'Bearer ' + zk.ZERNIO_API_TOKEN } });
+        // 2026-09-12 (живий баг знайдено при аудиті — ЦЯ функція давала status:400 БУКВАЛЬНО
+        // на КОЖНОМУ виклику відколи задеплоєна, підтверджено логами pm2 за весь сьогоднішній
+        // день): GET /inbox/conversations/{id} без ?accountId= повертає
+        // {"error":"...","param":"accountId"} — детекція затримки (channelLatencyMs>60s)
+        // спрацьовувала коректно, але сам запит відновлення взагалі ніколи не отримував дані.
+        // Живий тест підтвердив: з ?accountId=ZERNIO_ACCOUNT_ID той самий endpoint → 200.
+        if (!isReal(zk.ZERNIO_ACCOUNT_ID)) { logger.warn('[zernioHandler] recovery skipped: ZERNIO_ACCOUNT_ID не налаштований', { botId, sessionId }); return; }
+        // GET .../conversations/{id} (без accountId) повертає лише метадані розмови (lastMessage
+        // підсумком), не список повідомлень — реальні тексти/вкладення дає САМЕ .../messages.
+        const r = await fetch('https://zernio.com/api/v1/inbox/conversations/' + encodeURIComponent(conversationId) + '/messages?accountId=' + encodeURIComponent(zk.ZERNIO_ACCOUNT_ID), { headers: { Authorization: 'Bearer ' + zk.ZERNIO_API_TOKEN } });
         if (!r.ok) { logger.warn('[zernioHandler] recovery fetch failed', { botId, sessionId, status: r.status }); return; }
         const j = await r.json().catch(() => ({}));
-        const data = (j && j.data) || {};
-        const msgs = Array.isArray(data.messages) ? data.messages
-            : Array.isArray(data.recentMessages) ? data.recentMessages
-                : Array.isArray(data.items) ? data.items : [];
-        logger.info('[zernioHandler] recovery probe', { botId, sessionId, conversationId, foundMessagesField: !!msgs.length, rawKeys: Object.keys(data).slice(0, 20) });
+        const msgs = Array.isArray(j.messages) ? j.messages
+            : Array.isArray(j.data) ? j.data
+                : Array.isArray((j.data || {}).messages) ? j.data.messages : [];
+        logger.info('[zernioHandler] recovery probe', { botId, sessionId, conversationId, foundMessagesField: !!msgs.length, rawKeys: Object.keys(j).slice(0, 20) });
         if (!msgs.length) return;
         const existing = await db.message.findMany({ where: { sessionId }, select: { metadata: true } });
         const knownIds = new Set(existing.map((m) => String((m.metadata || {}).zernioMessageId || '')).filter(Boolean));
         let recovered = 0;
         for (const m of msgs) {
+            if (m && m.direction && m.direction !== 'incoming') continue; // лише вхідні від клієнта
             const mid = String(m.id || m._id || m.messageId || '');
             if (!mid || knownIds.has(mid)) continue;
-            const mtext = String(m.text || m.content || m.body || '').slice(0, 2000);
-            if (!mtext) continue;
-            await db.message.create({ data: { sessionId, role: 'user', content: mtext, metadata: { source: 'zernio_recovered', zernioMessageId: mid, recoveredAt: new Date().toISOString() } } }).catch(() => {});
+            const mtext = String(m.text || m.message || m.content || m.body || '').slice(0, 2000);
+            const matt = Array.isArray(m.attachments) && m.attachments[0] ? { type: m.attachments[0].type === 'video' ? 'video' : 'photo', url: m.attachments[0].refreshUrl || m.attachments[0].url } : null;
+            if (!mtext && !matt) continue;
+            await db.message.create({ data: { sessionId, role: 'user', content: mtext || '[фото]', metadata: { source: 'zernio_recovered', zernioMessageId: mid, recoveredAt: new Date().toISOString(), ...(matt ? { attachment: matt } : {}) } } }).catch(() => {});
             recovered++;
         }
         if (recovered) logger.info('[zernioHandler] recovered missed messages via conversations API', { botId, sessionId, conversationId, recovered });

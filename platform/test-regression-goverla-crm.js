@@ -272,7 +272,10 @@ async function runNode(id, context, extra) {
     x = await runNode('n_confirm_prep', { payStatus: 'not_found', payAmount: 200, supplierTtn: '' });
     ok('B-CF1', 'confirm без оплати не каже "вже оформили"', !/вже його оформили/.test(x.confirmLead) && /ТТН\) надішлемо/.test(x.ttnLine));
     x = await runNode('n_confirm_prep', { payStatus: 'confirmed', payAmount: 200, supplierTtn: '20450012345678' });
-    ok('B-CF2', 'confirm з ТТН → "вже в дорозі"', /в дорозі/.test(x.ttnLine) && /20450012345678/.test(x.ttnLine));
+    // 2026-09-11 (mariia__dmytr, Олексій: "посилка не відправлена, невірно відповідає"): ТТН
+    // присвоюється при СТВОРЕННІ замовлення постачальнику, а не коли Нова Пошта фізично забрала
+    // посилку — текст оновлено з "вже в дорозі" на "передано в обробку постачальнику" (2692970c).
+    ok('B-CF2', 'confirm з ТТН → "передано в обробку постачальнику"', /передано в обробку постачальнику/.test(x.ttnLine) && /20450012345678/.test(x.ttnLine));
 
     const failed = results.filter((t) => !t.pass);
     console.log('\n===== ПІДСУМОК: ' + (results.length - failed.length) + '/' + results.length + ' PASS' + (failed.length ? ('; FAIL: ' + failed.map((t) => t.id).join(', ')) : '') + ' =====');

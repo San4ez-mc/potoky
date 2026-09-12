@@ -355,7 +355,21 @@ try {
 
   // Реєструємо НОВУ рекламу в CRM (ad_id, якого ще нема в /ads): з товаром, якщо визначили, або без —
   // тоді рядок підсвітиться менеджеру на сторінці «Рекламні витрати» для ручної привʼязки. Best-effort.
-  if (context.entryAd && !context.testMode && !adsList.some(function (a) { return String(a.externalId || '') === String(context.entryAd); })) {
+  // 2026-09-13 (власник, живий баг "реклама приходить по кілька разів"): перевірка "чи вже є"
+  // раніше дивилась ЛИШЕ в adsList (top-300 найновіших /ads, client-side) — стара реклама, що
+  // випала з цього вікна через ріст таблиці, штампувала дублікат щоразу, коли на неї писав
+  // НОВИЙ клієнт (Олексій не запускав нових кампаній, а вони "з'являлись" — це воно). Тепер —
+  // точковий GET /ads?externalId=X, не залежить від розміру таблиці. (POST /ads також тепер
+  // сам ідемпотентний — findFirst-or-update — це другий рубіж захисту, не єдиний).
+  var __adAlreadyExists = false;
+  if (context.entryAd && !context.testMode) {
+    try {
+      var __existsResp = await fetch(base + '/ads?externalId=' + encodeURIComponent(String(context.entryAd)) + '&take=1', { headers: hdr() });
+      var __existsJson = __existsResp.ok ? await __existsResp.json().catch(function () { return {}; }) : {};
+      __adAlreadyExists = !!(Array.isArray(__existsJson.data) && __existsJson.data.length);
+    } catch (e) { __adAlreadyExists = adsList.some(function (a) { return String(a.externalId || '') === String(context.entryAd); }); }
+  }
+  if (context.entryAd && !context.testMode && !__adAlreadyExists) {
     try {
       var __campaign = (context.lastReferral && context.lastReferral.ads_context_data) || {};
       // 2026-09-10 (власник: "чому фото не отримались?"): органічні/реферальні оголошення

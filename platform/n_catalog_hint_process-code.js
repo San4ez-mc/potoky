@@ -64,10 +64,22 @@ try {
     if (__pick && __pick.sku) return { catalogHint: '', catalogHintCount: 0, catalogHintSkus: '', catalogHintPick: String(__pick.sku), hasProductSignal: true, hasFreshSignalThisTurn: true, catalogCategories: catList, unknownTurns: unknownTurns - 1 };
   }
 } catch (e) { /* best-effort */ }
-if (!wants.length) return out('', 0, catList);
 function hay(p) { return (String(p.name || '') + ' ' + String(p.customerName || '') + ' ' + (cats[p.categoryId] || '')).toLowerCase(); }
 var pool = wants.indexOf('комплект') >= 0 ? all : active;
-var hits = pool.filter(function (p) { var h = hay(p); return wants.some(function (w) { return h.indexOf(w) >= 0; }); });
+var hits = [];
+if (wants.length) {
+  hits = pool.filter(function (p) { var h = hay(p); return wants.some(function (w) { return h.indexOf(w) >= 0; }); });
+}
+// 2026-09-12 (живий доказ, yaroslav.reel: клієнт написав лише "Ангора" — жоден категорійний стем не
+// збігся, wants лишився порожнім, підказка не запускалась ВЗАГАЛІ, і модель без даних СБРЕХАЛА "у нас
+// немає товарів саме з ангори", хоча "Кофта Ангора"/"Кофта Сейн ангора" буквально так називаються).
+// Замість хардкодити список матеріалів — використовуємо той самий загальний пошук по НАЗВІ товару
+// (__uw/hitsBy вище), що вже рахує "явного лідера": коли категорійних стемів нема, але слово клієнта
+// реально є в назві кількох товарів — показуємо їх як звичайний список кандидатів, а не мовчимо.
+if (!hits.length && typeof __hitsBy === 'function' && __uw && __uw.length) {
+  var __general = __hitsBy(active);
+  if (__general.length) hits = __general;
+}
 if (!hits.length) return out('', 0, catList);
 // 2026-09-12 (власник: "а є чорні лофери?" — колір і категорія в ОДНОМУ, ПЕРШОМУ повідомленні):
 // фільтр за кольором одразу на повному hits; fallback на неотфільтрований список, якщо звуження дало 0.
@@ -97,7 +109,15 @@ if (wants.indexOf('комплект') >= 0) {
   if (__setHits.length > 1) { hits = __setHits.concat(__restHits); topCap = Math.min(8, __setHits.length + 2); }
 }
 var top = hits.slice(0, topCap);
-var lines = top.map(function (p) { return (p.sku ? ('Артикул ' + p.sku + ' — ') : '') + String(p.name || '').trim() + (Number(p.price) ? (' — ' + Number(p.price) + ' грн') : ''); });
+// 2026-09-12 (живий доказ, igorigor_: клієнт спитав "кофта чорного кольору", модель СБРЕХАЛА "серед
+// них немає чорної", хоча ВСІ 3 кофти в списку мали чорний офер) — catalogHint раніше показував
+// лише назву/ціну, БЕЗ кольорів, тому модель відповідала про наявність кольору НАВМАННЯ. Додаємо
+// колір(и) кожного товару в сам рядок підказки — модель тепер має реальні дані, а не вгадує.
+var lines = top.map(function (p) {
+  var __clrs = colorsOf(p);
+  var __clrPart = __clrs.length ? (' [кольори: ' + __clrs.join(', ') + ']') : '';
+  return (p.sku ? ('Артикул ' + p.sku + ' — ') : '') + String(p.name || '').trim() + (Number(p.price) ? (' — ' + Number(p.price) + ' грн') : '') + __clrPart;
+});
 // 2026-09-11 (Олексій: клієнт бачить фото одразу, не питає артикул).
 var __publicBase = (keys.CRM_PUBLIC_BASE || 'https://pcrm.fineko.space').replace(/\/$/, '');
 function __resolveUrl(u) { if (!u) return ''; return /^https?:\/\//i.test(u) ? u : (__publicBase + (u.charAt(0) === '/' ? u : '/' + u)); }

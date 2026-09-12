@@ -2535,11 +2535,26 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                 // "continue" (див. вище) показав би клієнту сирий ```json{"wantsPhoto":true}``` блок.
                 // data.silentOnExit (2026-09-07, дубль «підійде XL» від моделі + n_size_reply): при json-виході
                 // видимий текст моделі не показуємо — підтвердження пише наступна детермінована нода.
-                const visibleAssistantText = (data.silentOnExit === true && exit.done && exit.parsed)
+                let visibleAssistantText = (data.silentOnExit === true && exit.done && exit.parsed)
                     ? ''
                     : ((isJsonExit && typeof exit.jsonStart === 'number')
                         ? stripJsonAndTrailingText(responseText, exit.jsonStart)
                         : responseText);
+                // 2026-09-12 (агент-аудит: живий доказ витоку сирого ```json{"handoff":true}``` у
+                // видиму відповідь клієнту — точний корінь не відтворено live, підозра на
+                // паралельне/повторне виконання цієї ж ноди в тому ж ході). Safety-net: незалежно
+                // від ЧОМУ основний stripJsonAndTrailingText не спрацював (jsonStart не визначено),
+                // для json_output-нод додатково прибираємо будь-який залишковий JSON-блок із
+                // типовими СЛУЖБОВИМИ ключами (не чіпаємо звичайний текст — лише розпізнані
+                // службові сигнали) з кінця тексту. Це лікує симптом (клієнт ніколи не бачить
+                // сирий JSON), не корінь — окрема debug-сесія все ще потрібна для race condition.
+                if (isJsonExit && visibleAssistantText) {
+                    const _svcKeyRe = '(?:handoff|wantsPhoto|askManager|colorUnavailable|paymentMethodChange|alsoWants|backToOrder|wantsSizeChart|photoArticle|wantsManualReq|wantsUpsellPhoto)';
+                    visibleAssistantText = visibleAssistantText
+                        .replace(new RegExp('```(?:json[\\w-]*)?\\s*\\{[\\s\\S]*?"' + _svcKeyRe + '"[\\s\\S]*?\\}\\s*```\\s*$', 'i'), '')
+                        .replace(new RegExp('\\{[^{}]*"' + _svcKeyRe + '"\\s*:[^{}]*\\}\\s*$', 'i'), '')
+                        .trim();
+                }
 
                 if (visibleAssistantText) {
                     await persistAssistantMessage(session.id, visibleAssistantText, { nodeId: node.id, nodeType: node.type });

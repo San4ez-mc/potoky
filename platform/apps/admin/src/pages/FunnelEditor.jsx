@@ -428,7 +428,7 @@ export function FunnelEditor() {
                     )}
 
                     {isLeftPanelOpen && (
-                        <div className="absolute inset-y-0 left-0 z-20 w-[320px] max-w-[92vw] bg-gray-950 border-r border-gray-800 flex flex-col overflow-hidden shadow-2xl shadow-black/40 xl:static xl:z-auto xl:w-80 xl:max-w-none xl:shadow-none">
+                        <div className="absolute inset-y-0 left-0 z-20 w-[264px] max-w-[92vw] bg-gray-950 border-r border-gray-800 flex flex-col overflow-hidden shadow-2xl shadow-black/40 xl:static xl:z-auto xl:w-[264px] xl:max-w-none xl:shadow-none">
                             <div className="px-4 py-3 border-b border-gray-800 flex items-start justify-between gap-3">
                                 <div>
                                     <div className="text-sm font-semibold text-white">Панель</div>
@@ -464,7 +464,7 @@ export function FunnelEditor() {
                     <FunnelCanvas onNodeClick={openRightPanel} readOnly={readOnly} />
 
                     {isRightPanelOpen && (
-                        <div className="absolute inset-y-0 right-0 z-20 w-[320px] max-w-[92vw] bg-gray-950 border-l border-gray-800 flex flex-col overflow-hidden shadow-2xl shadow-black/40 xl:static xl:z-auto xl:w-80 xl:max-w-none xl:shadow-none">
+                        <div className="absolute inset-y-0 right-0 z-20 w-[264px] max-w-[92vw] bg-gray-950 border-l border-gray-800 flex flex-col overflow-hidden shadow-2xl shadow-black/40 xl:static xl:z-auto xl:w-[264px] xl:max-w-none xl:shadow-none">
                             <div className="px-4 py-3 border-b border-gray-800 flex items-start justify-between gap-3">
                                 <div className="min-w-0">
                                     {selectedNode ? (

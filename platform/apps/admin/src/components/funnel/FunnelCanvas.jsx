@@ -68,6 +68,8 @@ export function FunnelCanvas({ onNodeClick, readOnly = false }) {
                 onMoveEnd={(_, vp) => setViewport(vp)}
                 fitView
                 fitViewOptions={{ padding: 0.2 }}
+                minZoom={0.05}
+                maxZoom={2}
                 nodesDraggable={!readOnly}
                 nodesConnectable={!readOnly}
                 edgesReconnectable={!readOnly}
@@ -81,6 +83,8 @@ export function FunnelCanvas({ onNodeClick, readOnly = false }) {
                 <Background color="#1f2937" gap={20} size={1} />
                 <Controls />
                 <MiniMap
+                    pannable
+                    zoomable
                     nodeColor={(n) => {
                         const colors = {
                             start: '#059669', message: '#1d4ed8', claude: '#7c3aed',

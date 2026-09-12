@@ -36,24 +36,49 @@ function TextInput({ value, onChange, placeholder, multiline }) {
     );
 }
 
+const CODE_EDITOR_OPTIONS = {
+    minimap: { enabled: false },
+    fontSize: 13,
+    fontFamily: 'JetBrains Mono, monospace',
+    scrollBeyondLastLine: false,
+    lineNumbers: 'on',
+    tabSize: 2,
+    wordWrap: 'on',
+    automaticLayout: true,
+};
+
 function CodeBlock({ value, onChange, language = 'javascript' }) {
     const editorRef = React.useRef(null);
+    const expandedEditorRef = React.useRef(null);
+    const [expanded, setExpanded] = useState(false);
     const canFormat = language === 'javascript' || language === 'typescript' || language === 'json';
-    const doFormat = async () => {
-        const ed = editorRef.current;
+
+    const doFormat = async (ref) => {
+        const ed = ref.current;
         if (!ed) return;
         const act = ed.getAction('editor.action.formatDocument');
         if (act) await act.run();
     };
+
+    useEffect(() => {
+        if (!expanded) return;
+        const onKey = (e) => { if (e.key === 'Escape') setExpanded(false); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [expanded]);
+
     return (
         <div className="border border-gray-700 rounded-lg overflow-hidden">
-            {canFormat && (
-                <div className="flex justify-end px-2 py-1 bg-gray-900 border-b border-gray-800">
-                    <button type="button" onClick={doFormat}
+            <div className="flex justify-end items-center gap-1 px-2 py-1 bg-gray-900 border-b border-gray-800">
+                {canFormat && (
+                    <button type="button" onClick={() => doFormat(editorRef)}
                         className="text-[11px] text-gray-300 hover:text-white px-2 py-0.5 rounded hover:bg-gray-700 transition-colors"
                         title="Відформатувати код (розбити на рядки з відступами)">✨ Формат</button>
-                </div>
-            )}
+                )}
+                <button type="button" onClick={() => setExpanded(true)}
+                    className="text-[11px] text-gray-300 hover:text-white px-2 py-0.5 rounded hover:bg-gray-700 transition-colors"
+                    title="Розгорнути на весь екран">⛶</button>
+            </div>
             <div className="h-64 min-h-[120px] max-h-[70vh] resize-y overflow-hidden">
                 <Suspense fallback={<div className="flex items-center justify-center h-full text-gray-500 text-sm">Завантаження редактора...</div>}>
                     <MonacoEditor
@@ -62,19 +87,42 @@ function CodeBlock({ value, onChange, language = 'javascript' }) {
                         onChange={onChange}
                         onMount={(editor) => { editorRef.current = editor; }}
                         theme="vs-dark"
-                        options={{
-                            minimap: { enabled: false },
-                            fontSize: 13,
-                            fontFamily: 'JetBrains Mono, monospace',
-                            scrollBeyondLastLine: false,
-                            lineNumbers: 'on',
-                            tabSize: 2,
-                            wordWrap: 'on',
-                            automaticLayout: true,
-                        }}
+                        options={CODE_EDITOR_OPTIONS}
                     />
                 </Suspense>
             </div>
+
+            {expanded && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6" onClick={() => setExpanded(false)}>
+                    <div className="w-full h-full max-w-[96vw] max-h-[92vh] bg-gray-950 border border-gray-700 rounded-lg overflow-hidden flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
+                        <div className="flex justify-between items-center gap-2 px-3 py-2 bg-gray-900 border-b border-gray-800">
+                            <span className="text-xs text-gray-400">Редактор коду</span>
+                            <div className="flex items-center gap-1">
+                                {canFormat && (
+                                    <button type="button" onClick={() => doFormat(expandedEditorRef)}
+                                        className="text-[11px] text-gray-300 hover:text-white px-2 py-1 rounded hover:bg-gray-700 transition-colors"
+                                        title="Відформатувати код">✨ Формат</button>
+                                )}
+                                <button type="button" onClick={() => setExpanded(false)}
+                                    className="h-7 w-7 rounded-lg border border-gray-800 bg-gray-900 text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+                                    title="Закрити (Esc)">✕</button>
+                            </div>
+                        </div>
+                        <div className="flex-1">
+                            <Suspense fallback={<div className="flex items-center justify-center h-full text-gray-500 text-sm">Завантаження редактора...</div>}>
+                                <MonacoEditor
+                                    defaultLanguage={language}
+                                    value={value || ''}
+                                    onChange={onChange}
+                                    onMount={(editor) => { expandedEditorRef.current = editor; }}
+                                    theme="vs-dark"
+                                    options={CODE_EDITOR_OPTIONS}
+                                />
+                            </Suspense>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

@@ -1116,6 +1116,22 @@ async function handleIncomingMessage(botId, body) {
     }
     if (staleInbound) {
         logger.info('[zernioHandler] stale inbound — stored, flow not run', { botId, sessionId: session.id });
+        // 2026-09-12 (живий кейс, igorigor_ 95ef30ab): "Яка ціна кофти?" прийшла stale — flow
+        // на неї не пускали взагалі, і текст ("кофти" — категорійний сигнал) губився повністю.
+        // Наступні повідомлення оброблялись без жодного сигналу товару → 2x "не знаю товару".
+        // Мінімально-інвазивний фікс: НЕ відповідаємо на це повідомлення окремо (щоб не
+        // дублювати вже дану відповідь), але зберігаємо його текст у context.pendingStaleText —
+        // testSession.js долучає його до сигналу НАСТУПНОГО реального ходу (n_signal_check/
+        // n_catalog_hint), щоб дані не втрачались назавжди. Обмежено 3 останніми записами.
+        if (text && String(text).trim()) {
+            try {
+                const freshS = await db.session.findUnique({ where: { id: session.id }, select: { context: true } });
+                const fc = (freshS && freshS.context) || {};
+                const pending = (Array.isArray(fc.pendingStaleText) ? fc.pendingStaleText : []).slice(-2);
+                pending.push(String(text).slice(0, 300));
+                await db.session.update({ where: { id: session.id }, data: { context: { ...fc, pendingStaleText: pending } } });
+            } catch (e) { logger.warn('[zernioHandler] failed to store pendingStaleText: ' + e.message, { botId, sessionId: session.id }); }
+        }
         return { ok: true, processed: 1, stale: true };
     }
     // 2026-09-08 (реальні замовлення 01:53, 02:14, 03:14): після тексту з адресою Instagram досилає порожнє вкладення

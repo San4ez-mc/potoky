@@ -754,6 +754,28 @@ try {
       if (!(result.colorChoice && result.colorChoice.color) && __clist.length === 1) result.colorChoice = { color: __clist[0], _single: true };
     }
   } catch (e) { }
+  // 2026-09-12 (живий кейс, igorigor_: клієнт написав "Кофта чорного кольору" ДО того, як
+  // товар визначився, а презентаційне фото (n_photo, поле photoUrl) все одно взяло ДЕФОЛТНЕ
+  // imgs[0] — перше фото з product.images (не з offers конкретного кольору), яке виявилось
+  // світло-сірим і виглядало як "біле" на фото. Якщо колір вже відомий (щойно визначений вище
+  // з цього ж повідомлення, або вже стояв у context.colorChoice з попереднього ходу) — беремо
+  // фото САМЕ цього offer'а замість дефолтного, щоб перше ж фото відповідало заявленому кольору.
+  try {
+    var __wantedColor = (result.colorChoice && result.colorChoice.color) || (context.colorChoice && context.colorChoice.color) || '';
+    if (__wantedColor) {
+      var __wc = String(__wantedColor).toLowerCase().replace(/ий$|а$|у$|ого$|ому$/, '').slice(0, 6);
+      var __colorOffer = (offers || []).filter(function (o) {
+        return (o.properties || []).some(function (pr) { return /кол|цвет/i.test(pr.name || '') && String(pr.value || '').toLowerCase().indexOf(__wc) >= 0; });
+      })[0];
+      if (__colorOffer && Array.isArray(__colorOffer.images) && __colorOffer.images.length) {
+        var __ci = resolveUrl(__colorOffer.images[0]);
+        if (__ci) {
+          result.product.photoUrl = __ci;
+          result.product.imageUrls = __colorOffer.images.map(function (u) { return resolveUrl(u); }).filter(Boolean).slice(0, 5);
+        }
+      }
+    }
+  } catch (e) { }
   if (preColor) result.product.preColor = preColor;
   if (preSize) { result.product.preSize = preSize; }
   if (__earlyBuyerId && !context.crmClientId) result.crmClientId = __earlyBuyerId;

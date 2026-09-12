@@ -1780,6 +1780,16 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
         // Знайдено 2026-08-19: клієнт скинув скрін оплати на кроці n_collect — бот
         // не відповів і не обробив фото взагалі.
         runtime.lastUserMessage = incomingUserMessage || (incomingImageUrl && !incomingFile ? '[фото]' : '');
+        // 2026-09-12 (живий кейс igorigor_, 95ef30ab; затримки каналу Zernio до 3+ год):
+        // повідомлення, позначені stale в zernioHandler.js, НЕ запускали flow взагалі — їх
+        // текст (часто з категорійним словом чи артикулом) губився назавжди. Зберігали його в
+        // context.pendingStaleText — тут долучаємо до сигналу ЦЬОГО ходу (n_signal_check/
+        // n_catalog_hint читають runtime.lastUserMessage/ctx.lastCustomerMessage), щоб дані не
+        // зникали, навіть коли пряма відповідь на саме те повідомлення вже пропущена.
+        if (Array.isArray(ctx.pendingStaleText) && ctx.pendingStaleText.length) {
+            runtime.lastUserMessage = ctx.pendingStaleText.join(' ') + ' ' + runtime.lastUserMessage;
+            delete ctx.pendingStaleText;
+        }
         // Аудит 2026-08-29 (живий кейс, covercar_ua/mashadelrey): notifyTg-ноди типу
         // n_unknown_admin, що йдуть ПІСЛЯ claude-ноди (напр. n_unknown_msg) в тому ж
         // ході, рендерились з ПОРОЖНІМ "Останнє:" — не через помилку в шаблоні

@@ -5,6 +5,7 @@ const { z } = require('zod');
 const path = require('path');
 const fs = require('fs');
 const { db } = require('@platform/db');
+const logger = require('@platform/logger');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const { authMiddleware } = require('../middleware/auth');
 const { validateParams } = require('../middleware/validateParams');
@@ -141,28 +142,34 @@ router.put('/:botId',
 );
 
 // GET /api/funnels/:botId/export — export full funnel as JSON
+// NOTE: funnel keys (secrets AND plain values) are intentionally NEVER included here —
+// export is meant to be shareable/importable without leaking any per-bot credentials.
 router.get('/:botId/export',
     validateParams({ params: z.object({ botId: z.string().uuid() }) }),
     asyncHandler(async (req, res) => {
         const bot = await db.bot.findUnique({ where: { id: req.params.botId } });
         if (!bot) throw new NotFoundError('Bot', req.params.botId);
 
-        const [flow, keys] = await Promise.all([
-            db.flowDefinition.findUnique({ where: { botId: req.params.botId } }),
-            db.funnelKey.findMany({ where: { botId: req.params.botId } }),
-        ]);
+        const flow = await db.flowDefinition.findUnique({ where: { botId: req.params.botId } });
 
         const exportData = {
             version: '1.0',
             exportedAt: new Date().toISOString(),
             bot: { name: bot.name, slug: bot.slug, description: bot.description },
             flow: flow || { nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 } },
-            keys: keys.map(k => ({ key: k.key, label: k.label, isSecret: k.isSecret, value: k.isSecret ? '' : k.value })),
         };
+
+        let body;
+        try {
+            body = JSON.stringify(exportData, null, 2);
+        } catch (e) {
+            logger.error(`Funnel export failed to serialize for bot ${bot.id} (${bot.slug}): ${e.message}`);
+            throw e;
+        }
 
         res.setHeader('Content-Disposition', `attachment; filename="${bot.slug}-funnel.json"`);
         res.setHeader('Content-Type', 'application/json');
-        res.send(JSON.stringify(exportData, null, 2));
+        res.send(body);
     })
 );
 

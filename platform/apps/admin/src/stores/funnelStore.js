@@ -95,14 +95,26 @@ export const useFunnelStore = create((set, get) => ({
     exportFunnel: async () => {
         const { bot } = get();
         if (!bot) return;
-        const res = await api.exportFunnel(bot.id);
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${bot.slug}-funnel.json`;
-        a.click();
-        URL.revokeObjectURL(url);
+        try {
+            const res = await api.exportFunnel(bot.id);
+            if (!res.ok) {
+                let msg = `Експорт не вдався (HTTP ${res.status})`;
+                try {
+                    const body = await res.json();
+                    if (body?.error?.message) msg = body.error.message;
+                } catch { /* response wasn't JSON — keep generic message */ }
+                throw new Error(msg);
+            }
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${bot.slug}-funnel.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (e) {
+            alert('Помилка експорту: ' + (e.message || 'не вдалося експортувати воронку'));
+        }
     },
 
     // Import

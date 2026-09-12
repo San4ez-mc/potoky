@@ -54,7 +54,7 @@ function CodeBlock({ value, onChange, language = 'javascript' }) {
                         title="Відформатувати код (розбити на рядки з відступами)">✨ Формат</button>
                 </div>
             )}
-            <div className="h-64">
+            <div className="h-64 min-h-[120px] max-h-[70vh] resize-y overflow-hidden">
                 <Suspense fallback={<div className="flex items-center justify-center h-full text-gray-500 text-sm">Завантаження редактора...</div>}>
                     <MonacoEditor
                         defaultLanguage={language}
@@ -1641,19 +1641,17 @@ export function NodeEditor({ embedded = false, onClose }) {
                         className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-brand resize-none"
                     />
                 </div>
-                <label className="flex items-start gap-2 text-xs text-gray-400 cursor-pointer">
+                <label
+                    className="flex items-center gap-2 text-xs text-gray-400 cursor-pointer"
+                    title="Коли бот у тестовому режимі (Настройки бота → Тестовий режим) і виконання доходить сюди — сесія скидається на старт, клієнту приходить «воронка перезапущена». Став на ноди де воронка передає діалог менеджеру/зупиняється (після повідомлення клієнту й сповіщення в Telegram), щоб тестувальник міг одразу почати новий сценарій."
+                >
                     <input
                         type="checkbox"
                         checked={Boolean(data.testRestartAfter)}
                         onChange={e => update({ testRestartAfter: e.target.checked })}
-                        className="mt-0.5 rounded border-gray-600 bg-gray-800"
+                        className="rounded border-gray-600 bg-gray-800"
                     />
-                    <span>
-                        🔁 Перезапустити воронку в тестовому режимі після цієї ноди
-                        <span className="block text-gray-600 mt-0.5">
-                            Коли бот у тестовому режимі (Настройки бота → Тестовий режим) і виконання доходить сюди — сесія скидається на старт, клієнту приходить «воронка перезапущена». Став на ноди де воронка передає діалог менеджеру/зупиняється (після повідомлення клієнту й сповіщення в Telegram), щоб тестувальник міг одразу почати новий сценарій.
-                        </span>
-                    </span>
+                    <span>🔁 Перезапустити воронку в тестовому режимі після цієї ноди <span className="text-gray-600">(підказка при наведенні)</span></span>
                 </label>
             </div>
 

@@ -2780,6 +2780,44 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                         else if (exit.parsed.color) ctx.colorUnavailable = false;
                     }
 
+                    // 2026-09-12 (власник підтвердив: "чи хочете, щоб той самий скрипт довіри
+                    // спрацьовував на кожному кроці, а не лише на оплаті? - так"). УНІВЕРСАЛЬНИЙ
+                    // сигнал — той самий патерн, що colorUnavailable/paymentMethodChange/handoff
+                    // вище: БУДЬ-ЯКА claude dialog-нода (крім самої n_pay_collect, де це вже
+                    // штатний власний сценарій) може повернути {"prepaymentObjection":true}, коли
+                    // клієнт виражає недовіру до передоплати ЩЕ ДО кроку оплати (напр. під час
+                    // вибору розміру/кольору). Двигун показує ТОЙ САМИЙ перевірений 2-кроковий
+                    // скрипт, що й n_pay_collect (дослівно), і НЕ вигадує нового тексту. Рахунок —
+                    // ctx.trustScriptStep, спільний на всю сесію (щоб другий раз десь-інде вже
+                    // вважався кроком 2, а не знову кроком 1). 3+ раз — скрипт вичерпано, кличемо
+                    // людину (той самий handoff-патерн, що вище в цій же ноді).
+                    if (node.id !== 'n_pay_collect' && exit.parsed && typeof exit.parsed === 'object' && exit.parsed.prepaymentObjection === true) {
+                        const _trustStep = Number(ctx.trustScriptStep || 0);
+                        let _trustScript = '';
+                        if (_trustStep === 0) {
+                            _trustScript = 'Накладний платіж у нас із частковою передплатою 200 грн.\n\nЯкщо прийдете на пошту і вам щось не підійде — ми повернемо ці 200 грн одразу.\n\nРаніше відправляли без передплати, і більшість людей просто не приходили на пошту.\n\nДля нас 200 грн — це гарантія, що:\n1) ви не чат-бот 🙂\n2) ви не передумаєте завтра\n3) ви прийдете на пошту\n\nОформимо замовлення із частковою передплатою 200 грн?';
+                            ctx.trustScriptStep = 1;
+                        } else if (_trustStep === 1) {
+                            _trustScript = 'Якщо зробимо виняток і відправимо без передплати — обіцяєте, що завтра не передумаєте і що справді прийдете на пошту?';
+                            ctx.trustScriptStep = 2;
+                        } else {
+                            ctx.adminEngaged = true;
+                            _trustScript = 'Добре, зараз покличу менеджера 🙂 Незабаром вам відповість жива людина — дякую за терпіння 💛';
+                            try {
+                                const adminId = funnelEnv.ADMIN_TELEGRAM_ID || await getSystemKeyValue('ADMIN_TELEGRAM_ID');
+                                const hoTok = funnelEnv.TELEGRAM_BOT_TOKEN || '';
+                                if (adminId && /^\d+:[A-Za-z0-9_-]{20,}$/.test(hoTok)) {
+                                    await sendAdminAlert({ session, ctx, funnelEnv, runtime, reason: 'prepayment_objection_exhausted', nodeId: node.id, title: '🙋 Клієнт наполягає без передоплати (скрипт довіри вичерпано)', main: 'Відповідайте клієнту в чаті — бот на паузі, доки клієнт не напише знову.', details: ['💬 Останнє: «' + _escHtml(String(ctx.lastCustomerMessage || runtime.lastUserMessage || '').slice(0, 160)) + '»'] });
+                                }
+                            } catch (_e) { /* silent */ }
+                        }
+                        await persistAssistantMessage(session.id, _trustScript, { nodeId: node.id, nodeType: node.type, source: 'prepayment_objection_universal' });
+                        lastAssistant = _trustScript;
+                        runtime.lastUserMessage = '';
+                        runtime.waitingForUser = true;
+                        break;
+                    }
+
                     // Проблема 1 (аудит 2026-09-03, живий кейс goverla_shop, ФІНАНСОВИЙ
                     // РИЗИК): клієнт уже обрав спосіб оплати (n_pay_collect позаду, лінк
                     // на оплату вже надіслано), і на будь-якій НАСТУПНІЙ claude dialog-ноді

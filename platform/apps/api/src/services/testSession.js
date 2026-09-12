@@ -2103,6 +2103,16 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                 runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
                 continue;
             }
+            // 2026-09-12 (живий тест ПІСЛЯ фіксу вище: клієнт попросив замінити колір ПРЯМО всередині
+            // n_order_intent, ще НЕ дійшовши до оплати — n_pay_collect/backToOrder тут узагалі не бере
+            // участі, бо ми вже в потрібній ноді). Записуємо orderChangeNote детерміновано вже тут (без
+            // редиректу — просто позначка), щоб n_pay_amount при фінальному ready:yes міг форсувати
+            // правильний колір/розмір, навіть якщо модель не повторить його в units на виході.
+            if (node.id === 'n_order_intent' && mode === 'dialog' && runtime.lastUserMessage
+                && /(замін|поміня|зміни(ти)?).{0,20}(колір|розмір|товар|варіант)/i.test(runtime.lastUserMessage)) {
+                ctx.orderChangeNote = String(runtime.lastUserMessage);
+                pushDelivery(runtime, 'order_change_detected', true, null, { nodeId: node.id, via: 'regex_inline', note: ctx.orderChangeNote.slice(0, 100) });
+            }
             // Аудит 2026-09-04 (живий кейс власника, "дубль опису товару на кроці зріст/вага"):
             // data.waitAfterPresentation===true — якщо в ЦЬОМУ Ж ході щойно показали картку
             // товару (ctx.productJustPresented, ставить n_welcome через setContext) і нода ще не

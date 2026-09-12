@@ -3365,7 +3365,12 @@ ${sourceContent || '(немає даних)'}
                         } else {
                             const chunks = [];
                             res.on('data', (chunk) => chunks.push(chunk));
-                            res.on('end', () => resolve({ statusCode: res.statusCode, body: Buffer.concat(chunks).toString('utf8') }));
+                            // responseEncoding: 'utf8' (дефолт, текст/JSON) або 'base64' — для бінарних
+                            // відповідей (фото/файли), де примусовий utf8 псує байти. Дозволяємо тільки
+                            // безпечні кодування Buffer.toString, інше тихо падає назад на utf8.
+                            const _allowedEnc = ['utf8', 'base64', 'hex', 'latin1', 'ascii', 'utf16le'];
+                            const _enc = _allowedEnc.includes(data.responseEncoding) ? data.responseEncoding : 'utf8';
+                            res.on('end', () => resolve({ statusCode: res.statusCode, body: Buffer.concat(chunks).toString(_enc) }));
                             res.on('error', reject);
                         }
                     });

@@ -33,7 +33,8 @@ const NODE_TYPES = [
     'notifyTg',             // ⭐ ОСНОВНЕ сповіщення менеджеру: chat_id з КЛЮЧА ВОРОНКИ; data: { targetKey:'ADMIN_TELEGRAM_ID', message }
     'notifyAdmin',          // легасі (має системні фолбеки → може піти не туди); data: { targetKey|telegramId, message, notifyUser, userMessage }
     // ── Інтеграції ────────────────────────────────────────────────
-    'httpRequest',          // простий виклик API; data: { url, method, headers, body|bodyFields, outputVar, responseField }
+    'httpRequest',          // простий виклик API; data: { url, method, headers, body|bodyFields, outputVar, responseField, responseEncoding }
+                            // responseEncoding: 'utf8' (дефолт, текст/JSON) | 'base64' — для бінарних відповідей (фото/файли), інакше utf8 псує байти
     'httpEncode',           // base64; data: { sourceVar, outputVar }
     'connector',            // data: { connectorType:'wayforpay'|'ibanoplata'|'monobank'|'browser_agent', action, outputVar, ... } — ключі читаються з funnelEnv
     'wait_payment',         // блокує до вебхука WayForPay; data: { timeoutHours }

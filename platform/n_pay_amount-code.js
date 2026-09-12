@@ -8,6 +8,28 @@ var baseUnits=(Array.isArray(context.orderUnits)&&context.orderUnits.length)?con
 var units=(Array.isArray(oi.units)&&oi.units.length)
   ? oi.units.map(function(u){ return { color:String((u&&u.color)||'').trim(), size:String((u&&u.size)||context.recommendedSize||'').trim() }; })
   : baseUnits.map(function(u){ return { color:String((u&&u.color)||'').trim(), size:String((u&&u.size)||context.recommendedSize||'').trim() }; });
+// v13 (2026-09-12, живий кейс Олег Таран): навіть з явним прикладом json у промпті n_order_intent,
+// модель на ФІНАЛЬНОМУ ("Так, підтверджую") ході часто НЕ повторює units з новим кольором — вона вже
+// показала його текстом кроком раніше і вважає це зробленим. Наслідок: правильний текст клієнту,
+// але у CRM/постачальника йде СТАРИЙ колір (context.orderUnits не оновлюється). Це впливає на реальне
+// замовлення, тому НЕ покладаємось лише на oi.units — колір/розмір із примітки зміни (яку n_pay_back_clear
+// поклав як orderChangeNote) рахуємо детерміновано regex'ом і форсуємо його поверх того, що дала модель.
+var changeNote=String(context.orderChangeNote||'').trim();
+if(changeNote){
+  var CW='[а-яіїєґ]*'; // \w НЕ покриває кирилицю в JS-regex — інакше "чорний" матчиться як "чорн"
+  var COLOR_RE='(чорн'+CW+'|сір'+CW+'|біл'+CW+'|син'+CW+'|графіт'+CW+'|бордов'+CW+'|беж'+CW+'|коричнев'+CW+'|зелен'+CW+'|червон'+CW+'|хакі|олив'+CW+'|молочн'+CW+'|блакитн'+CW+'|рожев'+CW+'|фіолетов'+CW+'|жовт'+CW+'|помаранч'+CW+')';
+  var mOn=changeNote.match(new RegExp('на\\s+'+COLOR_RE,'i'));
+  var mAll=changeNote.match(new RegExp(COLOR_RE,'gi'));
+  var newColorRaw=mOn?mOn[1]:(mAll&&mAll.length?mAll[mAll.length-1]:null);
+  var mSize=changeNote.match(/\b(XXS|XS|S|M|L|XL|XXL|XXXL)\b/i);
+  if(newColorRaw){
+    var newColor=newColorRaw.charAt(0).toUpperCase()+newColorRaw.slice(1).toLowerCase();
+    units=units.map(function(u){ return { color:newColor, size:u.size }; });
+  } else if(mSize){
+    var newSize=mSize[1].toUpperCase();
+    units=units.map(function(u){ return { color:u.color, size:newSize }; });
+  }
+}
 var qty=Number(oi.qty)||units.length; if(!(qty>=1)) qty=units.length||1;
 if(qty>units.length&&units.length===1){ while(units.length<qty) units.push({ color:units[0].color, size:units[0].size }); }
 if(qty<units.length) qty=units.length;

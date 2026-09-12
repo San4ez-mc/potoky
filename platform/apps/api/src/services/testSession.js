@@ -2082,6 +2082,27 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                     continue;
                 }
             }
+            // 2026-09-12 (агент-аудит + живе розслідування, Oleg Taran 9675dad7): клієнт написав
+            // "Будь ласка треба замінити колір на чорний" на кроці n_pay_collect (вже під час
+            // вибору оплати) — існує PAY_BACK_RULE (промпт n_pay_collect каже повернути
+            // {"backToOrder":true,"note":"..."} у такому випадку), АЛЕ модель іноді ігнорує
+            // правило і просто текстом ПІДТВЕРДЖУЄ зміну, якої НЕ виконує — context.colorChoice/
+            // orderUnits лишаються старими, замовлення йде в CRM зі старим кольором (клієнту
+            // відправили дві кофти замість заміни). Той самий принцип, що й detectPaymentChange
+            // вище — детермінований regex ДО виклику моделі, не покладаємось на те, що LLM сама
+            // поверне правильний json щоразу.
+            if (node.id === 'n_pay_collect' && mode === 'dialog' && runtime.lastUserMessage
+                && !(ctx.paymentInfo && ctx.paymentInfo.backToOrder)
+                && /(замін|поміня|зміни(ти)?).{0,20}(колір|розмір|товар|варіант)/i.test(runtime.lastUserMessage)) {
+                const _orderChangeNote = String(runtime.lastUserMessage);
+                pushDelivery(runtime, 'order_change_detected', true, null, { nodeId: node.id, via: 'regex', note: _orderChangeNote.slice(0, 100) });
+                ctx.paymentInfo = Object.assign({}, ctx.paymentInfo, { backToOrder: true, note: _orderChangeNote });
+                runtime.lastUserMessage = '';
+                runtime.waitingForUser = false;
+                runtime.userConfirmationReceived = false;
+                runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
+                continue;
+            }
             // Аудит 2026-09-04 (живий кейс власника, "дубль опису товару на кроці зріст/вага"):
             // data.waitAfterPresentation===true — якщо в ЦЬОМУ Ж ході щойно показали картку
             // товару (ctx.productJustPresented, ставить n_welcome через setContext) і нода ще не

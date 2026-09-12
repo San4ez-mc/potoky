@@ -633,9 +633,15 @@ try {
     knownColor: (context.colorChoice && context.colorChoice.color) || preColor || '',
     knownSize: context.recommendedSize || preSize || '',
     sizeAsked: context.sizeAskedFor === found.categoryId,
+    sizeOutOfRange: !!context.sizeOutOfRange,
     orderStatus: context.crmOrderId ? ('створено #' + context.crmOrderId) : (context.orderData ? 'збираємо адресу' : 'ще не оформлено')
   };
-  var dialogStateText = 'Товар у розмові: ' + dialogState.productName + (dialogState.knownColor ? (', колір ' + dialogState.knownColor) : '') + (dialogState.knownSize ? (', розмір/параметр ' + dialogState.knownSize) : '') + '. Презентація щойно показана: ' + (dialogState.productPresented ? 'так' : 'ні') + '. Розмір/параметри вже питали цього товару: ' + (dialogState.sizeAsked ? 'так' : 'ні') + '. Замовлення: ' + dialogState.orderStatus + '.';
+  // 2026-09-12 (живий кейс, Віктор Петров: зріст 2м/вага 115кг → n_size коректно ескалював
+  // "поза сіткою", АЛЕ n_welcome_back (claude-нода після handoff_auto_resume на "Ок") сама
+  // вигадала "рекомендую XXL" — суперечність із щойно виданою ескалацією. dialogStateText —
+  // єдиний спільний канал стану для decal-нод (n_welcome_back і подібні), тому явний прапорець
+  // сюди ж, а не лише в n_size-специфічний контекст.
+  var dialogStateText = 'Товар у розмові: ' + dialogState.productName + (dialogState.knownColor ? (', колір ' + dialogState.knownColor) : '') + (dialogState.knownSize ? (', розмір/параметр ' + dialogState.knownSize) : '') + '. Презентація щойно показана: ' + (dialogState.productPresented ? 'так' : 'ні') + '. Розмір/параметри вже питали цього товару: ' + (dialogState.sizeAsked ? 'так' : 'ні') + (dialogState.sizeOutOfRange ? '. Розмір КЛІЄНТА ПОЗА СІТКОЮ товару (ескальовано менеджеру) — НІКОЛИ не називай конкретний розмір/рекомендацію, лише підтверди що менеджер зв’яжеться' : '') + '. Замовлення: ' + dialogState.orderStatus + '.';
 
   // Завдання «памʼять вимірів клієнта» (Buyer.knownMeasurements, нова CRM): впізнаємо
   // покупця РАНІШЕ, ніж дізнаємось телефон — Instagram дає igUsername із першого дотику,

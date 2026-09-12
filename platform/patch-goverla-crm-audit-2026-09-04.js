@@ -68,7 +68,14 @@ const CODE = {
     n_supplier_order: () => readCode('brewdrop-supplier-code.js'),
     n_supplier_order_ed: () => readCode('easydrop-offline-code.js'),
     n_supplier_order_cart: () => readCode('easydrop-cart-code.js'),
-    n_catalog_hint: () => readCode('n_catalog_hint-code.js'),
+    // 2026-09-12 (власник: "поправ по всій воронці, щоб ці HTTP-запити витягнуті були в окремі
+    // ноди"): n_catalog_hint більше не сама ходить у CRM — вона тепер ФІНАЛЬНА обробка (process),
+    // запит роблять окремі httpRequest-ноди n_catalog_hint_fetch_products/_categories, а перед
+    // ними — легка n_catalog_hint_prep (текстова підготовка, БЕЗ мережі). Ім'я 'n_catalog_hint'
+    // навмисно ЗБЕРЕЖЕНО для process-коду (не перейменовано) — на нього посилаються інші місця
+    // графа (n_hint_pick_cond тощо), retarget усіх них при перейменуванні означав би зайвий ризик.
+    n_catalog_hint: () => readCode('n_catalog_hint_process-code.js'),
+    n_catalog_hint_prep: () => readCode('n_catalog_hint_prep-code.js'),
     n_shop_profile: () => readCode('n_shop_profile-code.js'),
     n_extra_resolve: () => readCode('n_extra_resolve-code.js'),
     n_signal_check: () => readCode('n_signal_check-code.js'),
@@ -549,6 +556,12 @@ function applyV11(nodes, edges, notes) {
 // одразу після презентації — без відповіді; (5) SIZE_FIRST_MSG_RE ловить «31 размера», «кофта М», S/M/L;
 // (6) n_unknown_admin шле саме фото клієнта; (7) розбіжність привʼязки реклами → у деталі n_create.
 const ALSO_WANTS_RULE = '\nЯКЩО клієнт згадує ІНШІ речі (кофта, футболка, лофери, куртка…), їхні кольори чи розміри — НЕ ігноруй і НЕ відмовляй: одним реченням скажи, що це теж підберемо/додамо після поточного товару, і додай у той самий json_output поле "alsoWants":"<що саме: річ, колір, розмір, кількість>" (разом із параметрами/кольором, коли вони є). На «спершу поточний товар» не наполягай зайвий раз.';
+// 2026-09-12 (агент-аудит, Кондаревич 1ce2be7d): бот сам вигадав "комфортно до -5...-7°C" для куртки
+// D0005, хоча в aiNotes лише "утеплювач — силікон, сезон осінь/євро-зима" — жодної температури. У
+// тому ж повідомленні бот КОРЕКТНО сказав "не знаю" про застібки — правило застосовувалось
+// непослідовно. Явно поширюємо "не вигадуй" на ТОЧНІ технічні характеристики (температура/склад у
+// %/вага тощо), яких нема дослівно в даних товару.
+const NO_GUESS_SPECS_RULE = '\nЯКЩО клієнт питає ТОЧНІ технічні характеристики товару (температурний режим, склад у %, вага тощо), яких немає ДОСЛІВНО в описі/aiInfo вище — НЕ вигадуй конкретних цифр (навіть "приблизно"): чесно скажи, що уточниш, і поверни json_output {"askManager":"<що саме спитав клієнт>"} — так само, як для будь-якого іншого параметру, якого нема в даних.';
 const ALSO_WANTS_INTENT = '\nКЛІЄНТ ТАКОЖ ХОЧЕ (з попередніх кроків; порожньо = нічого): «{{context.alsoWants}}». ЯКЩО непорожньо: те, що є допродажем зі списку (футболка) з названим кольором/кількістю — ОДРАЗУ включи в підсумок як позицію допродажу і при згоді поверни addUpsell/upsellQty/upsellNote з цими даними, НЕ перепитуй колір; інші речі (кофта, лофери, інший товар) — скажи одним реченням, що менеджер додасть їх у цю ж посилку і напише ціну, і при згоді поверни їх у "extraProducts".';
 const UPSELL_SAME_MSG = '\nЯКЩО в ОДНОМУ повідомленні клієнт і погоджується оформити («так», «давай», «оформляємо»), і називає допродаж з кількістю/кольорами («так, і дві футболки: білу і чорну») — це ФІНАЛЬНА згода: поверни ТІЛЬКИ json_output {"ready":"yes","addUpsell":true,"upsellQty":<n>,"upsellNote":"<кольори/розміри>"} БЕЗ тексту і БЕЗ повторного підсумку (підсумок із допродажем і сумою покаже наступний крок). Повторний підсумок з «Оформляємо?» — лише коли згоди ще НЕ було.';
 // 2026-09-08 (Юрій Жила: «Яка ціна кофти?» одразу після картки з ціною → бот повторив ціну): + назва речі після «ціна».
@@ -563,6 +576,7 @@ function applyV12(nodes, edges, notes) {
         const n = byId()[id]; if (!n) continue;
         if (!/"alsoWants"/.test(n.data.systemPrompt || '')) { n.data.systemPrompt = String(n.data.systemPrompt || '') + ALSO_WANTS_RULE; notes.push('alsoWants ' + id); }
         if (n.data.silentOnExit !== true) { n.data.silentOnExit = true; notes.push('silentOnExit ' + id); }
+        if (!/ТОЧНІ технічні характеристики/.test(n.data.systemPrompt || '')) { n.data.systemPrompt = String(n.data.systemPrompt || '') + NO_GUESS_SPECS_RULE; notes.push('noGuessSpecs ' + id); }
     }
     if (byId().n_size && byId().n_size.data.ignoreRightAfterPresentationRe !== PRICE_AFTER_PRESENTATION_RE) { byId().n_size.data.ignoreRightAfterPresentationRe = PRICE_AFTER_PRESENTATION_RE; notes.push('n_size ignore price-after-presentation'); }
     if (byId().n_order_intent && !/ФІНАЛЬНА згода/.test(byId().n_order_intent.data.systemPrompt || '')) { byId().n_order_intent.data.systemPrompt = String(byId().n_order_intent.data.systemPrompt || '') + UPSELL_SAME_MSG; notes.push('upsellSameMsg n_order_intent'); }
@@ -743,6 +757,34 @@ function applyV12(nodes, edges, notes) {
     { const n = byId().n_prev_match_snapshot; if (n && /!!context\.lastUserImageUrl \};/.test(n.data.code || '') && !/catalogHintPick/.test(n.data.code || '')) { n.data.code = String(n.data.code).replace('!!context.lastUserImageUrl };', '!!context.lastUserImageUrl || !!context.catalogHintPick };'); notes.push('hintPick n_prev_match_snapshot'); } }
     const cr = byId().n_create;
     if (cr && !/adLinkMismatch/.test(cr.data.alertDetails || '')) { cr.data.alertDetails = String(cr.data.alertDetails || '') + '\n{{context.adLinkMismatchLine}}'; notes.push('n_create adLinkMismatch'); }
+    // 2026-09-12 (власник: "поправ по всій воронці, щоб HTTP-запити були винесені в окремі ноди —
+    // щоб дивлячись на граф зразу бачив відправки"): n_catalog_hint раніше сама робила fetch() до
+    // CRM (products+categories) всередині js-коду — на графі це виглядало як звичайна js-нода,
+    // непомітно від решти. Тепер: n_catalog_hint_prep (текстова підготовка, БЕЗ мережі) →
+    // n_catalog_hint_fetch_cond (чи взагалі є сенс питати CRM) → 2 httpRequest-ноди (видно на графі
+    // товстою пунктирною рамкою + 📡) → n_catalog_hint (та сама, лишень тепер це ФІНАЛЬНА обробка,
+    // process-код; ID навмисно НЕ змінено — на нього посилається n_hint_pick_cond вище).
+    if (byId().n_catalog_hint && !byId().n_catalog_hint_prep) {
+        const c = pos('n_catalog_hint');
+        const pPrep = placer.place(c.x - GX * 2, c.y);
+        const pCond = placer.place(c.x - GX, c.y);
+        const pFetch1 = placer.place(c.x - GX, c.y - GY);
+        const pFetch2 = placer.place(c.x - GX * 0.5, c.y - GY);
+        nodes.push({ id: 'n_catalog_hint_prep', type: 'js', position: pPrep, data: { label: '1a. Підказка з каталогу — підготовка', code: CODE.n_catalog_hint_prep(), description: 'Нормалізує повідомлення, визначає STEM категорії/кольорові слова, вирішує чи взагалі потрібен запит до CRM. Без мережі.' } });
+        nodes.push({ id: 'n_catalog_hint_fetch_cond', type: 'condition', position: pCond, data: { label: '1b. Чи треба питати CRM?', condition: 'context.catalogHintNeedsFetch === true', description: 'FALSE — товар уже відомий, повідомлення порожнє, або вже готова підказка від n_lookup (setComponentHint) — CRM питати нема сенсу.' } });
+        nodes.push({ id: 'n_catalog_hint_fetch_products', type: 'httpRequest', position: pFetch1, data: { label: '1c. CRM: товари', method: 'GET', url: '{{env.CRM_API_BASE}}/products?take=300', headers: { Authorization: 'Bearer {{env.CRM_API_KEY}}' }, responseField: 'data', outputVar: 'context.catalogHintProductsRaw', description: 'Список товарів магазину для підказки-каталогу за категорією/кольором.' } });
+        nodes.push({ id: 'n_catalog_hint_fetch_categories', type: 'httpRequest', position: pFetch2, data: { label: '1d. CRM: категорії', method: 'GET', url: '{{env.CRM_API_BASE}}/categories', headers: { Authorization: 'Bearer {{env.CRM_API_KEY}}' }, responseField: 'data', outputVar: 'context.catalogHintCategoriesRaw', description: 'Категорії магазину — для підрахунку кількості товарів у привітанні.' } });
+        edges = edges.map((e) => (e.target === 'n_catalog_hint' && e.source !== 'n_catalog_hint_fetch_products' && e.source !== 'n_catalog_hint_fetch_categories' && e.source !== 'n_catalog_hint_fetch_cond' ? { ...e, target: 'n_catalog_hint_prep' } : e));
+        edges.push({ id: 'e_n_catalog_hint_prep_cond', source: 'n_catalog_hint_prep', target: 'n_catalog_hint_fetch_cond' });
+        edges.push({ id: 'e_n_catalog_hint_fetch_cond_true', source: 'n_catalog_hint_fetch_cond', target: 'n_catalog_hint_fetch_products', sourceHandle: 'true' });
+        edges.push({ id: 'e_n_catalog_hint_fetch_cond_false', source: 'n_catalog_hint_fetch_cond', target: 'n_catalog_hint', sourceHandle: 'false' });
+        edges.push({ id: 'e_n_catalog_hint_fetch_products_categories', source: 'n_catalog_hint_fetch_products', target: 'n_catalog_hint_fetch_categories' });
+        edges.push({ id: 'e_n_catalog_hint_fetch_categories_process', source: 'n_catalog_hint_fetch_categories', target: 'n_catalog_hint' });
+        notes.push('+ n_catalog_hint_prep/_fetch_cond/_fetch_products/_fetch_categories (HTTP винесено в окремі ноди)');
+    } else if (byId().n_catalog_hint_prep && byId().n_catalog_hint_prep.data.code !== CODE.n_catalog_hint_prep()) {
+        byId().n_catalog_hint_prep.data.code = CODE.n_catalog_hint_prep();
+        notes.push('code n_catalog_hint_prep (sync)');
+    }
     return { nodes, edges };
 }
 

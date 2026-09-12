@@ -1094,6 +1094,35 @@ async function handleIncomingMessage(botId, body) {
     const hasProductSignal = !!(sharedPost || adId || postId || storyId || (Array.isArray(mappedAtts) && mappedAtts.length) || /(?:артикул|арт\.?|art|код|sku|#|№)\s*[:#№.\-]?\s*[A-Za-zА-Яа-яІЇЄҐіїєґ]{0,5}\d{2,8}/i.test(String(text || '')) || /\b[A-Za-z]\d{3,6}\b/.test(String(text || '')));
     const staleInbound = !!(msgCreatedAt && lastAssistantMsg && !hasProductSignal && (lastAssistantMsg.createdAt.getTime() - msgCreatedAt.getTime()) > 90 * 1000);
 
+    // 2026-09-12 (живий доказ, сесія 7bfe46ab, Таня Назаренко): "Які є кольори кофт?" доставлено
+    // ДВІЧІ з РІЗНИМИ zernioMessageId — одне за 12с, інше із затримкою 1 113 944 мс (18.57 хв,
+    // та сама цифра, що системний патерн затримок в іншому аналізі). Той самий подвійний
+    // прихід — переслані пости тієї ж розмови (~2 хв різниці). Zernio, схоже, ретраїть доставку
+    // ОДНОГО Й ТОГО САМОГО вхідного повідомлення з наростаючим інтервалом (backoff), і КОЖНА
+    // спроба отримує НОВИЙ messageId — тому dedup() за messageId (нижче за подіями) фізично не
+    // може це впіймати. Тут — дедуп за текстом + близьким channelCreatedAt (реальний час
+    // відправки клієнтом, не час доставки нам) у межах цієї сесії. Наслідок бага без цього
+    // фіксу: та сама claude-нода (n_size) виконувалась ДВІЧІ на дублюючому вхідному — клієнт
+    // бачив два майже ідентичних повідомлення поспіль ("Є три кольори"/"Доступні три кольори").
+    if (text && msgCreatedAt) {
+        try {
+            const recentSame = await db.message.findMany({
+                where: { sessionId: session.id, role: 'user', content: text, createdAt: { gte: new Date(Date.now() - 4 * 3600 * 1000) } },
+                orderBy: { createdAt: 'desc' }, take: 5, select: { metadata: true },
+            });
+            const dup = recentSame.find((m) => {
+                const md = m.metadata || {};
+                if (String(md.zernioMessageId || '') === String(zMsgId || '')) return false; // те саме повідомлення (dedup() нижче це й так ловить)
+                const prevCreated = md.channelCreatedAt ? Date.parse(md.channelCreatedAt) : NaN;
+                return Number.isFinite(prevCreated) && Math.abs(prevCreated - msgCreatedAt.getTime()) <= 30 * 1000;
+            });
+            if (dup) {
+                logger.info('[zernioHandler] retry-duplicate inbound (same text, close channelCreatedAt, different messageId) — ignored', { botId, sessionId: session.id, zernioMessageId: zMsgId, text: text.slice(0, 60) });
+                return { ok: true, processed: 0, duplicate: 'zernio_retry' };
+            }
+        } catch (e) { logger.warn('[zernioHandler] retry-dup check failed: ' + e.message, { botId, sessionId: session.id }); }
+    }
+
     await db.message.create({
         data: cleanJsonDeep({
             sessionId: session.id, role: 'user', content: text || (sharedPost && sharedPost.caption ? ('[переслав ' + sharedPost.kind + '] ' + sharedPost.caption.slice(0, 80)) : mediaLabel),

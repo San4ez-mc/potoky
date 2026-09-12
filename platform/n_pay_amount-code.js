@@ -90,7 +90,12 @@ if(!ref){
 // Реквізити АКТИВНОГО ФОП з нової СРМ (Fop.isActive) — для ручних реквізитів (n_req_*_v) і
 // звірки квитанцій (n_reconcile). Раніше бралися лише зі статичних funnelKey FOP_* (застарілий
 // ФОП). Фолбек на funnelKey, якщо CRM недоступна. Двигун для ibanoplata робить те саме.
-var fop={ name:String(keys.FOP_NAME||''), code:String(keys.FOP_CODE||''), iban:String(keys.FOP_IBAN||''), source:'funnelKey' };
+// 2026-09-12 (живий кейс, реальний грошовий ризик — Зайцев Руслан): клієнт попросив "карту",
+// а воронці НІКУДИ було її взяти (лише IBAN) — модель ВИГАДАЛА номер картки, клієнт двічі отримав
+// від банку "неправильний номер картки". Додано Fop.cardNumber у CRM (власник заповнює сам,
+// адмінка → Автоматизації → ФОП) — читаємо його тут так само, як iban, і кладемо готовий
+// cardLine для n_requisites (порожньо, якщо картка не задана — рядок просто не показується).
+var fop={ name:String(keys.FOP_NAME||''), code:String(keys.FOP_CODE||''), iban:String(keys.FOP_IBAN||''), cardNumber:String(keys.FOP_CARD||''), source:'funnelKey' };
 if(true){ // read-only, працює і в testMode
   try{
     var base=(keys.CRM_API_BASE||'http://127.0.0.1:4700/api').replace(/\/$/,''); var apiKey=(keys.CRM_API_KEY||'').trim();
@@ -99,11 +104,12 @@ if(true){ // read-only, працює і в testMode
       try{
         var r=await fetch(base+'/fops',{headers:{Authorization:'Bearer '+apiKey,Accept:'application/json'},signal:ac.signal});
         if(r.ok){ var j=await r.json().catch(function(){return {};}); var list=Array.isArray(j.data)?j.data:[]; var act=list.filter(function(f){ return f&&f.isActive===true&&f.iban; })[0];
-          if(act){ fop={ name:String(act.name||fop.name), code:String(act.taxId||act.code||fop.code), iban:String(act.iban), source:'crm' }; } }
+          if(act){ fop={ name:String(act.name||fop.name), code:String(act.taxId||act.code||fop.code), iban:String(act.iban), cardNumber:String(act.cardNumber||fop.cardNumber||''), source:'crm' }; } }
       } finally { clearTimeout(to); }
     }
   }catch(e){ /* best-effort — фолбек на funnelKey вище */ }
 }
+var cardLine=fop.cardNumber?('\n💳 Або карткою: '+fop.cardNumber+' ('+fop.name+')'):'';
 var od0=context.orderData||{};
 var haveAddr = !!(context.recalledDeliveryReady || (od0.fullName && od0.phone && od0.city && od0.branch));
 var addressAskLine = haveAddr
@@ -115,7 +121,7 @@ var upsellLine = upsellSum>0 ? (' + допродаж: '+String(((context.product
 var extraProducts=[String(context.extraUnresolved||'').trim(), (orderExtras.length?'':String((oi.extraProducts)||'').trim())].filter(Boolean).join('; ');
 var extraProductsLine=extraProducts?('➕ ДОДАТКОВО просить (додати в цю ж посилку вручну, ціну/розмір узгодити): '+extraProducts+'\n'):'';
 var adLinkMismatchLine=String(context.adLinkMismatch||'').trim()?('⚠️ '+String(context.adLinkMismatch).trim()):'';
-var out={ orderRef:ref, orderRefAt:refAt, orderQty:qty, orderUnits:units, orderUnitsText:orderUnitsText, orderUnitsTotal:mainTotal, extraProducts:extraProducts, extraProductsLine:extraProductsLine, orderExtras:orderExtras, extrasSum:extrasSum, extrasLine:extrasLine, upsellLine:upsellLine+extrasLine, adLinkMismatchLine:adLinkMismatchLine, orderChangeNote:'', fop:fop, upsellSum:upsellSum, upsellQty:upsellQty, addressAskLine:addressAskLine };
+var out={ orderRef:ref, orderRefAt:refAt, orderQty:qty, orderUnits:units, orderUnitsText:orderUnitsText, orderUnitsTotal:mainTotal, extraProducts:extraProducts, extraProductsLine:extraProductsLine, orderExtras:orderExtras, extrasSum:extrasSum, extrasLine:extrasLine, upsellLine:upsellLine+extrasLine, adLinkMismatchLine:adLinkMismatchLine, orderChangeNote:'', fop:fop, cardLine:cardLine, upsellSum:upsellSum, upsellQty:upsellQty, addressAskLine:addressAskLine };
 // 2026-09-09 (r.ruslin.l: brewdrop «orderTotal=0» при cod_trust): загальна сума потрібна і без передоплати.
 out.orderTotal = full;
 if(method==='cod_trust'){ out.payAmount=0; out.payLabel='без передоплати (виняток за домовленістю, накладений платіж повністю)'; return out; }

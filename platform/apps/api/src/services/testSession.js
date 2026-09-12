@@ -2566,6 +2566,18 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                         .trim();
                 }
 
+                // 2026-09-12 (живий кейс, реальний грошовий ризик — Зайцев Руслан/79be1547): клієнт
+                // попросив "Так киньте карту" → модель, ПОПРИ явну заборону в промптах n_pay_collect
+                // ("ЗАБОРОНЕНО: вигадувати реквізити, номери карток") і n_collect ("ніяких «UA1234…»,
+                // «ПриватБанк»"), все одно ВИГАДАЛА два номери карток ("Приватбанк 4149...",
+                // "Monobank 4441...") — клієнт двічі отримав від банку "неправильний номер картки".
+                // Ми НІКОЛИ не приймаємо оплату на номер картки (лише IBAN/посилання) — будь-яка
+                // 16-значна послідовність у видимій відповіді ГАРАНТОВАНО вигадана. Промпт-заборона
+                // явно недостатня сама по собі (Корінь 2 стандарту) — детермінований safety-net.
+                if (visibleAssistantText && /(?<!\d)\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}(?!\d)/.test(visibleAssistantText)) {
+                    pushDelivery(runtime, 'fake_card_number_blocked', true, null, { nodeId: node.id, snippet: visibleAssistantText.slice(0, 200) });
+                    visibleAssistantText = 'Оплата в нас лише за посиланням або IBAN-реквізитами (окремого номера картки в нас немає) — гляньте повідомлення з реквізитами трохи вище, або напишіть, якщо не бачите 🙂';
+                }
                 if (visibleAssistantText) {
                     await persistAssistantMessage(session.id, visibleAssistantText, { nodeId: node.id, nodeType: node.type });
                     lastAssistant = visibleAssistantText;

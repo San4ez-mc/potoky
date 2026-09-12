@@ -931,6 +931,30 @@ function refresh(flow, opts) {
         notes.push('n_is_clothing condition includes isSet');
     }
     if (byId.n_order_intent) byId.n_order_intent.data.systemPrompt = ORDER_INTENT_PROMPT;
+    // 2026-09-12 (живий кейс, реальний грошовий ризик — Зайцев Руслан): додано Fop.cardNumber у CRM
+    // (n_pay_amount-code.js рахує готовий context.cardLine, порожній якщо картка не задана) — вставляємо
+    // токен у n_requisites ідемпотентно (не перезаписуємо весь текст, щоб не загубити ручні правки владельца).
+    if (byId.n_requisites && !/cardLine/.test(byId.n_requisites.data.text || '')) {
+        const _reqText = String(byId.n_requisites.data.text || '');
+        const _anchor = 'Якщо бажаєте оплатити вручну за реквізитами';
+        if (_reqText.includes(_anchor)) {
+            byId.n_requisites.data.text = _reqText.replace(_anchor, '{{context.cardLine}}\n\n' + _anchor);
+            notes.push('n_requisites cardLine inserted');
+        } else {
+            byId.n_requisites.data.text = _reqText + '\n{{context.cardLine}}';
+            notes.push('n_requisites cardLine appended (anchor not found)');
+        }
+    }
+    // 2026-09-12: n_collect (claude dialog, приймає адресу) вже мав явну заборону вигадувати
+    // "ПриватБанк"/номери карток — уточнюємо формулювання, щоб явно включало й cardLine (тепер
+    // теж «вже надіслано системою», якщо задано).
+    if (byId.n_collect && !/cardLine/.test(byId.n_collect.data.systemPrompt || '')) {
+        byId.n_collect.data.systemPrompt = String(byId.n_collect.data.systemPrompt || '').replace(
+            'Посилання на оплату, реквізити (IBAN/ЄДРПОУ/назва), суму',
+            'Посилання на оплату, реквізити (IBAN/ЄДРПОУ/назва, картка — якщо є, context.cardLine), суму'
+        );
+        notes.push('n_collect cardLine mention');
+    }
     // 2026-09-12 (регресія виявила живий баг): n_confirm_prep.data.code ставився ЛИШЕ через addNode
     // у transform() (перший застосунок) — --refresh --apply його НІКОЛИ не синхронізував. Коли текст
     // ТТН виправили з "вже в дорозі" на "передано в обробку постачальнику" (2692970c, аудит

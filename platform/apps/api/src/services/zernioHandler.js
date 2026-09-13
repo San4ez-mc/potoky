@@ -1446,6 +1446,7 @@ async function runFlowAndDeliver(sessionId, entry) {
     // Для DM-ходів (не коментар-вхід: там текст — сам коментар, а не повідомлення розмови).
     if (conversationId && !commentId) {
         const sync = await syncConversationTruth(botId, sessionId, conversationId);
+        logger.info('[zernioHandler] truth-sync', { botId, sessionId, ok: sync.ok, reason: sync.reason || null, managerLed: !!sync.managerLed, unanswered: (sync.unanswered || []).length, inserted: sync.inserted || null, rest: sync.restCount || 0 });
         if (sync.ok && !sync.empty) {
             if (sync.managerLed && !entry.resumeFromManagerSilence) {
                 try {

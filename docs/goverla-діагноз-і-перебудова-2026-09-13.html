@@ -1,0 +1,229 @@
+<title>Діагноз goverla_shop</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=IBM+Plex+Serif:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --ground:#F2F4F5; --paper:#FFFFFF; --ink:#16202A; --ink-2:#4A5661; --ink-3:#7B8790;
+  --line:#D6DCE0; --accent:#2F6F5E; --accent-soft:#DDEBE5; --warn:#9A6B12; --warn-soft:#F5E9CF;
+  --crit:#A63A3A; --crit-soft:#F4DCDC; --ok:#2F6F5E;
+  --display:"Manrope",system-ui,Segoe UI,Arial,sans-serif;
+  --body:"IBM Plex Serif",Georgia,"Times New Roman",serif;
+  --mono:"IBM Plex Mono",Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --ground:#10171C; --paper:#17212A; --ink:#E4EAEE; --ink-2:#AEB9C1; --ink-3:#7E8A93;
+  --line:#2B3843; --accent:#6FBFA6; --accent-soft:#1E3A32; --warn:#D9A84A; --warn-soft:#3A2E14;
+  --crit:#E07A7A; --crit-soft:#3E1F1F; --ok:#6FBFA6;
+}}
+:root[data-theme="dark"]{
+  --ground:#10171C; --paper:#17212A; --ink:#E4EAEE; --ink-2:#AEB9C1; --ink-3:#7E8A93;
+  --line:#2B3843; --accent:#6FBFA6; --accent-soft:#1E3A32; --warn:#D9A84A; --warn-soft:#3A2E14;
+  --crit:#E07A7A; --crit-soft:#3E1F1F; --ok:#6FBFA6;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.6}
+.page{max-width:1040px;margin:0 auto;padding:40px 24px 80px}
+header{display:grid;grid-template-columns:1fr;gap:16px;margin-bottom:36px}
+.eyebrow{font-family:var(--display);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);font-weight:700}
+h1{font-family:var(--display);font-weight:800;font-size:clamp(30px,4.2vw,44px);line-height:1.08;margin:0;text-wrap:balance;letter-spacing:-.01em}
+.lede{font-size:18px;color:var(--ink-2);max-width:68ch;margin:0}
+.verdict{background:var(--paper);border-left:4px solid var(--accent);padding:18px 22px;max-width:76ch}
+.verdict p{margin:0 0 8px}
+.verdict p:last-child{margin:0}
+h2{font-family:var(--display);font-weight:800;font-size:24px;margin:48px 0 12px;letter-spacing:-.01em;text-wrap:balance}
+h3{font-family:var(--display);font-weight:700;font-size:17px;margin:24px 0 8px}
+p{max-width:72ch}
+ul,ol{max-width:72ch;padding-left:22px}
+li{margin:4px 0}
+.tablewrap{overflow-x:auto;background:var(--paper);border:1px solid var(--line)}
+table{border-collapse:collapse;width:100%;font-size:14.5px}
+th,td{padding:9px 12px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+th{font-family:var(--display);font-weight:700;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);background:var(--ground)}
+td.num,th.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+tr:last-child td{border-bottom:none}
+.tag{display:inline-block;font-family:var(--display);font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:2px 8px;border-radius:3px;background:var(--accent-soft);color:var(--accent);white-space:nowrap}
+.tag.warn{background:var(--warn-soft);color:var(--warn)}
+.tag.crit{background:var(--crit-soft);color:var(--crit)}
+.root{background:var(--paper);border:1px solid var(--line);padding:18px 22px;margin:14px 0}
+.root h3{margin:0 0 6px}
+.root .ev{font-size:14.5px;color:var(--ink-2);margin:6px 0}
+.root .why{margin:8px 0 0}
+code,.mono{font-family:var(--mono);font-size:13.5px}
+code{background:var(--ground);padding:1px 5px;border-radius:3px}
+pre{background:var(--paper);border:1px solid var(--line);padding:14px 16px;overflow-x:auto;font-family:var(--mono);font-size:13px;line-height:1.5;max-width:100%}
+.timeline{display:grid;grid-template-columns:110px 1fr;gap:4px 14px;font-size:14px;font-family:var(--mono);background:var(--paper);border:1px solid var(--line);padding:12px 16px;max-width:76ch}
+.timeline .t{color:var(--ink-3)}
+.timeline .m{font-family:var(--body);font-size:14.5px}
+.timeline .mgr{color:var(--warn)}
+.timeline .bot{color:var(--crit)}
+.timeline .cli{color:var(--ink)}
+.arch{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:14px 0}
+.arch .box{background:var(--paper);border:1px solid var(--line);padding:12px;font-size:13.5px}
+.arch .box b{font-family:var(--display);display:block;margin-bottom:4px;font-size:13px}
+.arch .box.core{border-color:var(--accent);background:var(--accent-soft)}
+.phases{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+.phase{background:var(--paper);border:1px solid var(--line);padding:14px 16px;font-size:14.5px}
+.phase b{font-family:var(--display);display:block;font-size:14px;margin-bottom:4px}
+.phase .dur{font-family:var(--mono);font-size:12px;color:var(--ink-3)}
+.note{font-size:14px;color:var(--ink-2)}
+@media (max-width:820px){.arch{grid-template-columns:1fr 1fr}.phases{grid-template-columns:1fr}.timeline{grid-template-columns:90px 1fr}}
+@media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<div class="page">
+<header>
+  <div class="eyebrow">Воронка goverla_shop (Instagram / Zernio / Fineko CRM) · аудит 13 вересня 2026</div>
+  <h1>Чому бот goverla ламається і що з ним робити</h1>
+  <p class="lede">150 правок у Edits, 3 351 жива розмова за 7 днів і код двигуна прочитані разом. Нижче — не список багів, а шість коренів, з яких вони виростають, один структурний фікс, який уже на проді, і план перебудови воронки.</p>
+  <div class="verdict">
+    <p><b>Вердикт.</b> Точкові фікси більше не окупаються: 101 «виправлена» правка за 4 дні, а 13 нових за сьогодні описують ті самі класи проблем. Воронка побудована як лінійний автомат зі 164 нод і 201 ребра, який керує розмовою, що насправді веде менеджер, через канал, який губить чверть повідомлень.</p>
+    <p><b>Що вже зроблено сьогодні.</b> Бот тепер перед кожним ходом читає саму розмову в Zernio (а не запізнілий вебхук) і мовчить, якщо останнім писав менеджер. Це прибирає найгучніший клас за сьогодні («Відключи його бо це піздєц»).</p>
+    <p><b>Пропозиція.</b> Перебудувати воронку на «одна памʼять розмови + детермінована політика + ті самі інструменти», зберігши CRM, Zernio, постачальників і оплати. Оцінка: 2–3 тижні, з тіньовим прогоном на реальних розмовах до перемикання.</p>
+  </div>
+</header>
+
+<h2>1. Що показують живі дані (7 днів, 6–13 вересня)</h2>
+<div class="tablewrap"><table>
+<thead><tr><th>Показник</th><th class="num">Значення</th><th>Що це означає</th></tr></thead>
+<tbody>
+<tr><td>Живих розмов</td><td class="num">3 351</td><td>з них 2 429 — з хоча б однією відповіддю бота</td></tr>
+<tr><td>Розмов, у які писав менеджер</td><td class="num">2 065 (62%)</td><td>менеджери — основний канал продажу; бот у меншості</td></tr>
+<tr><td>Повідомлень менеджерів / бота</td><td class="num">11 027 / 9 790</td><td>люди пишуть більше, ніж бот</td></tr>
+<tr><td>Розмов на паузі</td><td class="num">1 841 (55%)</td><td>1 330 — через повідомлення менеджера, 510 — бекфіл</td></tr>
+<tr><td>Бот відповів клієнту одразу після репліки менеджера</td><td class="num">163 розмови</td><td>247 випадків «бот влазить у розмову» — категорія сьогоднішніх скарг</td></tr>
+<tr><td>Повідомлень клієнта, що прийшли з затримкою &gt; 60 с</td><td class="num">3 744 з 15 201 (25%)</td><td>типова затримка Zernio-вебхука 113–116 с; окремі — 19 хв і 2 доби</td></tr>
+<tr><td>Розмов, де бот ≥3 рази просив зріст і вагу</td><td class="num">107</td><td>клас «перепитує те, що вже написали»</td></tr>
+<tr><td>Реплік «не впевнена, про який товар мова»</td><td class="num">284</td><td>частина — норма (список категорії), частина — втрачений сигнал</td></tr>
+<tr><td>«Привіт! Я Оля» після вже показаного товару</td><td class="num">21 розмова</td><td>рестарт графа посеред діалогу</td></tr>
+<tr><td>Замовлень у CRM</td><td class="num">117 (3,5%)</td><td>решту закривають менеджери вручну або не закривають</td></tr>
+</tbody></table></div>
+
+<h2>2. 150 правок за категоріями</h2>
+<p>Усі 47 записів без категорії розподілено; додано три категорії, яких бракувало, щоб побачити картину: <b>Памʼять діалогу</b>, <b>Бот vs менеджер</b>, <b>Не скарга</b>. Порожню категорію з битим кодуванням перейменовано на видалення.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Категорія</th><th class="num">Усього</th><th class="num">Відкриті</th><th>Корінь (розділ 3)</th></tr></thead>
+<tbody>
+<tr><td>Розпізнавання товару / недоставлені повідомлення</td><td class="num">31</td><td class="num">5</td><td>R1 канал · R5 дані й інфраструктура</td></tr>
+<tr><td>Каталог товарів (CRM)</td><td class="num">16</td><td class="num">3</td><td>R5 дані</td></tr>
+<tr><td>Розмірні рекомендації</td><td class="num">15</td><td class="num">1</td><td>R2 стан · R4 межа LLM</td></tr>
+<tr><td>UX діалогу з клієнтом</td><td class="num">13</td><td class="num">0</td><td>R3 хто говорить · R4</td></tr>
+<tr><td>Не скарга (контекст, дублікат, тест)</td><td class="num">12</td><td class="num">0</td><td>—</td></tr>
+<tr><td>Сповіщення менеджеру (Telegram)</td><td class="num">9</td><td class="num">0</td><td>R3</td></tr>
+<tr><td>Оплата / звірка платежів</td><td class="num">8</td><td class="num">4</td><td>R5 інфраструктура · рішення власника</td></tr>
+<tr><td>Технічний борг движка</td><td class="num">7</td><td class="num">2</td><td>R2 · R6</td></tr>
+<tr><td>Реклама (CRM Ads-панель)</td><td class="num">6</td><td class="num">1</td><td>R5 дані</td></tr>
+<tr><td>Бот vs менеджер (втручання в розмову)</td><td class="num">5</td><td class="num">5</td><td><b>R1</b> — закрито сьогоднішнім фіксом</td></tr>
+<tr><td>База знань (KB)</td><td class="num">5</td><td class="num">0</td><td>R4</td></tr>
+<tr><td>Затримки Zernio (канал)</td><td class="num">4</td><td class="num">0</td><td>R1</td></tr>
+<tr><td>Ключі та інтеграції</td><td class="num">4</td><td class="num">0</td><td>R5 інфраструктура</td></tr>
+<tr><td>Продажі / заперечення клієнтів</td><td class="num">4</td><td class="num">2</td><td>R4 (скрипт живе в одній ноді з дванадцяти)</td></tr>
+<tr><td>Постачальник BrewDrop</td><td class="num">4</td><td class="num">0</td><td>—</td></tr>
+<tr><td>Памʼять діалогу / втрата контексту</td><td class="num">3</td><td class="num">3</td><td><b>R2</b> — тільки перебудова</td></tr>
+<tr><td>Доставка / Нова Пошта</td><td class="num">3</td><td class="num">0</td><td>—</td></tr>
+</tbody></table></div>
+<p class="note">Показово: із 101 «fixed» щонайменше 20 записів — повторні репорти вже закритих класів (розмірні пороги, той самий vision-баг 403 у пʼяти тікетах, «оформіть постачальнику» у шести). Кожен фікс живий у коді, але клас повертається під іншим прикладом, бо корінь не в тому місці, куди ставили латку.</p>
+
+<h2>3. Шість коренів</h2>
+
+<div class="root">
+<h3><span class="tag crit">R1</span> Бот бачить розмову через вебхук, який запізнюється і губить повідомлення</h3>
+<p class="ev">Доказ — розмова farrakhova401 сьогодні. Ліворуч час у Zernio (справжня розмова), праворуч — що і коли отримав бот:</p>
+<div class="timeline">
+<span class="t">12:42:19</span><span class="m cli">клієнт: «Як підібрати розмір?» — до бота дійшло о 13:00:56</span>
+<span class="t">12:43:11</span><span class="m mgr">менеджер: презентація бомбера, фото — до бота не дійшло взагалі</span>
+<span class="t">12:43:49</span><span class="m cli">клієнт: «184, вага около 80» — не дійшло взагалі</span>
+<span class="t">12:44:47</span><span class="m mgr">менеджер: «Розмір Л», «Обмін/повернення 14 днів…» — не дійшло</span>
+<span class="t">12:47:19</span><span class="m cli">клієнт: адреса доставки — дійшло о 12:47:33 як ПЕРШЕ повідомлення розмови</span>
+<span class="t">12:47:39</span><span class="m bot">бот: «Привіт! 👋 Я Оля. Це ваші дані для доставки, чи ви хочете замовити щось?»</span>
+</div>
+<p class="why">Те саме в pol_natka («Часткова» після питання менеджера про оплату), matifeyy («185+ 79 кг» загублено — бот перепитав параметри), vasyafaliuta (перша година розмови з менеджером до бота не дійшла). Усі захисти від цього в коді — дебаунс, stale-вікно 90 с, дедуп echo 2 год, recovery при затримці &gt;60 с, manager_last — сперечаються з симптомами одного факту: вебхук не є джерелом істини.</p>
+<p class="why"><b>Що зроблено:</b> REST-звірка з розмовою перед кожним ходом (розділ 4). Клас закривається структурно, а не ще одним вікном.</p>
+</div>
+
+<div class="root">
+<h3><span class="tag crit">R2</span> Памʼять діалогу локальна для ноди, а стан — це 164 ноди і десятки прапорців</h3>
+<p class="ev">vasyafaliuta написав «178см, 88кг» 7 вересня. 11 вересня нода n_size тричі перепитала і зрештою відповіла клієнту: «у мене зараз немає доступу до попереднього діалогу». Це правда: параметри пішли в n_unknown_msg (товар ще не був визначений), у структурний sizeInput не потрапили, а кожна claude-нода тримає власну історію. Категорія «Розмірні рекомендації» (15 правок) наполовину про це ж.</p>
+<p class="why">У графі є n_recall_cond для повторних клієнтів, knownMeasurements у CRM, dialogStateText для нод, pendingStaleText, prevProductSnapshot, hasFreshSignalThisTurn — сім різних механізмів памʼяті, кожен закриває свій випадок і не знає про інші. Коли currentNodeId стає null (термінальні ноди, паузи), двигун падає на стартову ноду і граф починає з «Привіт! Я Оля» (21 розмова за тиждень). Це лікується лише одним обʼєктом стану на розмову, який читають усі кроки.</p>
+</div>
+
+<div class="root">
+<h3><span class="tag crit">R3</span> Рішення «хто зараз говорить з клієнтом» розкидане по трьох шарах</h3>
+<p class="ev">vasyafaliuta 11.09, 07:05–07:11: клієнт пише «Живу людину давайте». Бот: «покличу менеджера» → через 2 хв «Перепрошуємо за очікування! Я знову тут» → просить дані доставки → ще раз «покличу менеджера» → ще раз «Я знову тут» → ще раз «покличу менеджера». Три автовідновлення за 5 хвилин проти прямого прохання клієнта. Менеджер потім вибачалась: «вам відповідав бот».</p>
+<p class="why">Пауза/хендоф/резюме живуть у адаптері Zernio (manager_last, client_return_24h, resumeAfterManagerSilence), у двигуні (handoff_auto_resume, product_unknown re-check, _justResumedFromProductUnknown) і в нодах графа (n_unknown_stop, n_size_oor_stop, softHandoffOff). executeFlowStep — 3 800 рядків, з яких ~700 — передперевірки, специфічні для goverla. Три шари не мають спільного визначення «розмова менеджерська», тому кожен новий випадок — нове правило в новому місці.</p>
+</div>
+
+<div class="root">
+<h3><span class="tag warn">R4</span> Межа між LLM і детермінованим кодом проведена не там</h3>
+<p class="ev">Дослівний скрипт заперечення передоплати існує лише в промпті n_pay_collect; клієнт із Харкова 15 ходів заперечував у n_size — бот імпровізував (b37106e5). Модель вигадала два номери карток (79be1547), температурний режим куртки (1ce2be7d), «немає чорної» при трьох чорних оферах (b4024218). Одна й та сама «довідка магазину» скопійована у 12 системних промптів; правило про тон розміру — в n_size, n_unknown_msg, n_welcome_back окремо.</p>
+<p class="why">LLM-нода зобовʼязана і вести розмову, і видати точний JSON-вихід зі схемою, і памʼятати правила магазину. Детерміновані частини (n_calc, n_avail, brewdrop) працюють правильно, але граф не завжди доводить до них (комплекти рахувались вільним текстом, c5e66117). Правильна межа: LLM тільки розуміє повідомлення і формулює відповідь з готових фактів; що казати і що робити — вирішує код.</p>
+</div>
+
+<div class="root">
+<h3><span class="tag warn">R5</span> Розпізнавання товару залежить від даних і зовнішніх сервісів, які падають мовчки</h3>
+<p class="ev">Gemini 2.5 Flash ретайрнута 10.09 — три дні весь vision (товар з фото, чеки, колір) не працював, ніхто не дізнався (третій такий випадок). Meta-посилання lookaside дають 403. Список реклам читався вікном top-300 — правильна привʼязка випадала. У CRM: у A0189 текст презентації скопійований з іншого товару, у j0032 нема жодного розміру, комплекти без категорії, у половини товарів порожні sizes, у 101 запису бази знань порожня відповідь.</p>
+<p class="why">Чотири шляхи матчингу (реклама → підпис → ключові слова → vision) плюс окремі Zernio-автоматизації коментарів — і жодного «light» стану готовності даних. Потрібні: щоденний синтетичний прогін (товар з фото, чек, розмір, CRM, модель) з алертом і перевірка повноти каталогу в CRM з підсвіткою прогалин. Це не про перебудову діалогу, це окремий і дешевий шар.</p>
+</div>
+
+<div class="root">
+<h3><span class="tag warn">R6</span> Процес змін примножує ризик: патч-файл на 1 310 рядків, applyV2…V12 і пастки</h3>
+<p class="ev">Задокументовані самим процесом: правка в transform() замість refresh() не діяла на бойовому клоні; ідемпотентний «створи ноду один раз» більше ніколи не оновлює її код; applyV5 мовчки перезаписує промпт, знищуючи попередній допис; хотфікс, перевірений у сесії, загубився при стисканні контексту і не потрапив у git; v12.7 на 2 години залишила 43 нові розмови без картки товару.</p>
+<p class="why">Кожна правка — ще один особливий випадок у графі або в передперевірках двигуна. Немає регресійного набору на реальних розмовах: 23 живі сценарії є, але вони перевіряють «щасливий шлях», а не ті 25% розмов із затримками і менеджером. Перебудова має принести реплей-харнес на 500 реальних сесій без відправки повідомлень.</p>
+</div>
+
+<h2>4. Що зроблено сьогодні і що воно закриває</h2>
+<h3>Задеплоєно (коміт a078741, platform-api перезапущено 17:0x Київ)</h3>
+<ul>
+<li><b>Джерело істини розмови = Zernio REST.</b> Новий модуль <code>zernioConversationSync.js</code>: перед кожним ходом бота читаються останні 60 повідомлень розмови (<code>sentVia=api</code> — наш бот, <code>comment_automation</code> — автоматизація, порожнє — менеджер). Пропущені повідомлення клієнта й менеджера довантажуються в сесію зі справжнім часом. Якщо останнім серед вихідних писав менеджер — бот ставить звичайну паузу і мовчить. У воронку йдуть усі невідповіджені репліки клієнта у правильному порядку, а не текст одного вебхука.</li>
+<li><b>Голе фото більше не знімає паузу менеджера через 24 год</b> — лише реклама, пост, рілс або артикул.</li>
+<li>Перевірено сухим прогоном на сьогоднішніх розмовах у момент до помилки: farrakhova401, pol_natka, matifeyy, vasyafaliuta — усі чотири бот би промовчав; три розмови, які веде бот (з коментарів) — не зачеплено. Вимикач: ключ воронки <code>ZERNIO_TRUTH_SYNC=0</code>.</li>
+</ul>
+<h3>Які тікети це закриває</h3>
+<p>Бот vs менеджер: 639ea966, 02b55398, ecc7c581 (частина «По передоплаті»), 309ca3be, 40ba13a5. Памʼять: 59f87cd0 (повторна відповідь 13.09 після обміну), cfba1d52 (загублене «185+ 79 кг» тепер довантажилось би). Не закриває: перепитування параметрів усередині бот-діалогу (R2), сторіс-репліки без медіа (Zernio не передає), розпізнавання довільних фото клієнта (R5).</p>
+
+<h2>5. Пропозиція: перебудувати воронку як агента з однією памʼяттю</h2>
+<p>Не «ще один граф», а інша модель керування. Ті самі інструменти, той самий транспорт, та сама CRM.</p>
+<div class="arch">
+<div class="box"><b>1. Розмова</b>Zernio REST як істина; вебхук — лише тригер «щось сталось». Уже є.</div>
+<div class="box core"><b>2. Памʼять розмови</b>Один типізований стан: клієнт (зріст, вага, відомі розміри), інтереси [{товар, розмір, колір, к-сть}], замовлення, оплата, доставка, хто веде розмову, відкриті питання. Читає кожен крок, пишуть тільки інструменти.</div>
+<div class="box core"><b>3. Розуміння</b>Один LLM-виклик зі схемою: з останніх N реплік (разом із менеджерськими) витягнути наміри й слоти. Не пише клієнту.</div>
+<div class="box core"><b>4. Політика</b>Чиста функція ~300 рядків: за станом вирішує наступний крок. Тут живуть усі правила магазину: скрипт передоплати, «поза сіткою», лише Нова Пошта, «не перепитуй відоме», «клієнт просив людину = мовчи до відпуску менеджером».</div>
+<div class="box"><b>5. Інструменти</b>Без змін: пошук товару (n_lookup), n_calc, наявність, CRM-замовлення, BrewDrop/EasyDrop, звірка оплати, НП, база знань, Telegram-алерти.</div>
+</div>
+<p>Відповідь клієнту: для фіксованих скриптів — шаблон дослівно; для решти — LLM формулює з фактів, які дала політика, і не має права вигадувати дані (їх просто нема в промпті).</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Корінь</th><th>Як закривається</th></tr></thead>
+<tbody>
+<tr><td>R1 канал</td><td>Розмова читається з REST перед кожним ходом; черга на розмову; повідомлення зі справжнім часом.</td></tr>
+<tr><td>R2 памʼять</td><td>Один стан на розмову і на клієнта (між розмовами). «Привіт! Я Оля» можливе тільки при порожньому стані.</td></tr>
+<tr><td>R3 хто говорить</td><td>Одне поле <code>conversationOwner: bot | manager | none</code> з трьома правилами переходу. Немає автовідновлень поза цими правилами.</td></tr>
+<tr><td>R4 межа LLM</td><td>LLM не приймає рішень і не тримає правил; політика — код із тестами на фікстурах.</td></tr>
+<tr><td>R5 дані</td><td>Щоденний health-check (vision, чек, CRM, модель) + звіт готовності каталогу. Незалежний етап, можна робити паралельно.</td></tr>
+<tr><td>R6 процес</td><td>Реплей-харнес: 500 реальних розмов проганяються офлайн, результат порівнюється з тим, що робив менеджер. Правки — у коді політики, під тестами, без патч-файлу.</td></tr>
+</tbody></table></div>
+
+<h2>6. План і оцінка</h2>
+<div class="phases">
+<div class="phase"><b>Ф0 · Джерело істини</b><span class="dur">зроблено 13.09</span><br>REST-звірка, паузи менеджера, сильний сигнал для відновлення. Спостерігати 2–3 дні за категорією «Бот vs менеджер» у Edits.</div>
+<div class="phase"><b>Ф1 · Памʼять + політика + реплей</b><span class="dur">5–7 днів</span><br>Стан розмови, крок «розуміння» зі схемою, політика з тестами на 40 фікстурах із реальних тікетів, реплей-харнес на 500 сесій без відправки. Інструменти підключаються як є.</div>
+<div class="phase"><b>Ф2 · Тіньовий прогін</b><span class="dur">3–4 дні</span><br>Новий бот рахує відповідь на кожне живе повідомлення, але не шле; логуємо і порівнюємо з тим, що відповіли старий бот або менеджер. Власник дивиться дашборд розбіжностей.</div>
+<div class="phase"><b>Ф3 · Перемикання</b><span class="dur">3–5 днів</span><br>10% нових розмов → 50% → 100% з кнопкою відкату на старий граф. Health-check і звіт готовності каталогу — до 100%.</div>
+<div class="phase"><b>Ф4 · Прибирання</b><span class="dur">2 дні</span><br>Видалити 164-нодовий граф, patch-файл applyV2…V12, ~700 рядків goverla-передперевірок із двигуна. Covercar переїжджає тим самим кодом.</div>
+<div class="phase"><b>Ризики</b><span class="dur">і як їх тримаємо</span><br>Регресія на «щасливому шляху» — реплей + тіньовий прогін до перемикання. Вартість токенів — крок «розуміння» на Haiku, формулювання на Sonnet лише там, де є текст. Zernio REST недоступний — фолбек на вебхук уже вбудовано.</div>
+</div>
+
+<h2>7. Що не потребує перебудови і треба зробити незалежно</h2>
+<ul>
+<li><b>Дані в CRM:</b> розміри для всіх товарів (sizes/sizeChartData), картинки сіток там, де їх бракує (93384917), привʼязка реклам без товару, категорія «Джинси» з обхватом талії або справжня таблиця (4bd5e28e), 101 порожня відповідь у базі знань.</li>
+<li><b>Zernio:</b> лист у підтримку з фактами: затримка вебхука 113–116 с системно, 19 хв і 2 доби — епізодично; повідомлення менеджера і клієнта губляться; сторіс-репліки без медіа; ретраї з новим id.</li>
+<li><b>Оплати не через Monobank</b> (17344038, 33a3dc68, ad21e82a): це рішення власника — або ручна звірка менеджером за чеком, або підключення ще одного банку; код тут не винен.</li>
+<li><b>Zernio-автоматизація коментарів</b> на пост 17961876417131768 презентує лофери замість костюма (f260ce9c) — перевірити в кабінеті Zernio.</li>
+</ul>
+
+<h2>8. Рішення, які потрібні від власника</h2>
+<ol>
+<li>Дозвіл на перебудову за планом Ф1–Ф4 (або обмежитись Ф0 + даними + health-check і жити з рештою класів).</li>
+<li>Правило «клієнт попросив живу людину»: бот мовчить до явного відпуску менеджером (рекомендую) чи автовідновлення через N хвилин, як зараз.</li>
+<li>Як менеджер повертає розмову боту: кнопка в адмінці (є) чи службове слово в чаті, наприклад «#бот» (простіше для менеджерів).</li>
+<li>Чи можна на час Ф1–Ф2 залишити бота лише на розмовах, що починаються з реклами/поста (найбільш передбачувані), а решту віддати менеджерам.</li>
+</ol>
+<p class="note">Джерела: Edits (edits.fineko.space, 150 записів), БД Flows (сесії 6–13.09), Zernio REST-розмови 6aa69a2d…, 6aa68cf0…, 6aa697ea…, 6a9ee47a…, код platform (testSession.js, zernioHandler.js, patch-goverla-crm-audit-2026-09-04.js, n_lookup-crm-code.js). Коміт фіксу: a078741.</p>
+</div>

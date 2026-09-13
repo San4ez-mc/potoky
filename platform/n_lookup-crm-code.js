@@ -689,6 +689,10 @@ try {
       supplierArticle: (compFull && compFull.supplierArticle) || '',
       colors: cColors, sizes: cSizes,
       structuredSizes: cRawSizes, sizeChartData: (compFull && compFull.sizeChartData) || null,
+      // 2026-09-13 (тікет ae8c2f85/1790c81b, власник: "фото розмірної сітки, текстом не треба —
+      // дуже складно для клієнта"): той самий фікс, що вже є для ОДИНОЧНОГО товару (n_size_photo),
+      // тепер і для КОМПОНЕНТА комплекту — resolveUrl тут же, готовий URL для sendPhoto нижче.
+      sizeChartUrl: (compFull && compFull.sizeChartImage) ? resolveUrl(compFull.sizeChartImage) : '',
       categoryId: (compFull && (compFull.categoryId || (compFull.category && compFull.category.id))) || null,
       photoUrl: cImgs[0] || '', imageUrls: cImgs.slice(0, 5)
     });

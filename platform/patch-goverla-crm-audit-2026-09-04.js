@@ -984,6 +984,17 @@ function refresh(flow, opts) {
         byId.n_set_choice.data.systemPrompt = String(byId.n_set_choice.data.systemPrompt || '') + SET_CHOICE_SINGLE_COLOR_RULE;
         notes.push('n_set_choice singleColorRule');
     }
+    // 2026-09-13 (тікет ae8c2f85, власник: "надсилати фото розмірної сітки, текстом не треба —
+    // дуже складно для клієнта"): раніше n_set_choice сам ЦИТУВАВ таблицю setSizeChartText як
+    // текст, коли клієнт просив сітку КОНКРЕТНОЇ позиції набору — той самий антипатерн, що вже
+    // виправлений для одиночного товару (n_size_photo). Тепер: якщо клієнт просить САМУ СІТКУ
+    // (не окрему цифру виміру — це лишається текстом, як і було) — сигнал {"wantsComponentSizeChart":
+    // "<артикул>"}, рушій сам надішле фото (є) чи текст-фолбек (нема фото), як для основного товару.
+    var SET_CHOICE_SIZECHART_PHOTO_RULE = '\nЯКЩО клієнт просить САМУ РОЗМІРНУ СІТКУ/ТАБЛИЦЮ конкретної позиції набору ("скиньте сітку на кофту", "яка сітка у джинсів") — НЕ цитуй таблицю з даних вище текстом: одним реченням скажи, що зараз покажеш сітку, і додай у json_output {"wantsComponentSizeChart":"<артикул цієї позиції>"} (можна разом з іншими полями). Це ІНШЕ, ніж питання про ОДНЕ конкретне число виміру ("яка довжина рукава у L?", "стелька 27 підійде?") — на такі відповідай ПРЯМО цифрою з даних вище, як і раніше, БЕЗ wantsComponentSizeChart.';
+    if (byId.n_set_choice && byId.n_set_choice.type === 'claude' && !String(byId.n_set_choice.data.systemPrompt || '').includes('wantsComponentSizeChart')) {
+        byId.n_set_choice.data.systemPrompt = String(byId.n_set_choice.data.systemPrompt || '') + SET_CHOICE_SIZECHART_PHOTO_RULE;
+        notes.push('n_set_choice wantsComponentSizeChart');
+    }
     // 2026-09-13 (тікет 6c2e2792, власник дав дослівний скрипт замість "почекайте менеджера"
     // на "розмір поза сіткою"): n_calc-code.js тепер рахує context.sizeOorAlternative (флісові
     // костюми до ХХХЛ / взуття до 46) для одягу, що вийшов за межі своєї сітки. Вставляємо

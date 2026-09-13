@@ -2487,6 +2487,12 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                     const otherKeys = Object.keys(exit.parsed).filter((k) => k !== 'wantsPhoto' && k !== 'photoArticle');
                     if (otherKeys.length === 0) exit.done = false;
                 }
+                // 2026-09-13 (тікет ae8c2f85): той самий принцип — прохання показати РОЗМІРНУ СІТКУ
+                // компонента саме по собі не є "рішенням" (setChoice), нода не має просуватись далі.
+                if (exit.parsed && exit.parsed.wantsComponentSizeChart) {
+                    const otherKeys = Object.keys(exit.parsed).filter((k) => k !== 'wantsComponentSizeChart');
+                    if (otherKeys.length === 0) exit.done = false;
+                }
                 // Те саме для wantsUpsellPhoto (фото товару з допродажу, не основного) —
                 // окремий, незалежний сигнал, той самий принцип (аудит 2026-08-26).
                 if (exit.parsed && exit.parsed.wantsUpsellPhoto === true) {
@@ -2502,7 +2508,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                 // нагадувань"), бо штатний блок промоції нижче виконується лише при exit.done.
                 if (exit.parsed && exit.parsed.colorUnavailable === true && !exit.parsed.color) {
                     ctx.colorUnavailable = true;
-                    const otherKeys = Object.keys(exit.parsed).filter((k) => k !== 'colorUnavailable' && k !== 'wantsPhoto' && k !== 'photoArticle');
+                    const otherKeys = Object.keys(exit.parsed).filter((k) => k !== 'colorUnavailable' && k !== 'wantsPhoto' && k !== 'photoArticle' && k !== 'wantsComponentSizeChart');
                     if (otherKeys.length === 0) exit.done = false;
                 }
                 // v3 (реальні переписки 2026-09-04: "хто виробник?", "чи можна підʼїхати приміряти?"): питання, на
@@ -2527,7 +2533,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                             await fetch(`${_fdApiUrl}/knowledge/from-dialog`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${_fdApiKey}` }, body: JSON.stringify({ question: String(exit.parsed.askManager).slice(0, 500), sessionId: session.id, productId: (ctx.product && ctx.product.id) || null }) }).catch(() => {});
                         }
                     } catch (_e) { /* best-effort */ }
-                    const otherKeys = Object.keys(exit.parsed).filter((k) => k !== 'askManager' && k !== 'wantsPhoto' && k !== 'photoArticle' && k !== 'wantsSizeChart' && k !== 'alsoWants');
+                    const otherKeys = Object.keys(exit.parsed).filter((k) => k !== 'askManager' && k !== 'wantsPhoto' && k !== 'photoArticle' && k !== 'wantsSizeChart' && k !== 'wantsComponentSizeChart' && k !== 'alsoWants');
                     if (otherKeys.length === 0) exit.done = false;
                 }
                 // alsoWants посеред діалогу («Футболочку білу тоже, S» на кроці розміру): накопичуємо в context, нода
@@ -2536,7 +2542,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                     const _aw = exit.parsed.alsoWants.trim();
                     const _prev = String(ctx.alsoWants || '').trim();
                     if (!_prev.toLowerCase().includes(_aw.toLowerCase())) ctx.alsoWants = _prev ? (_prev + '; ' + _aw) : _aw;
-                    const _awKeys = Object.keys(exit.parsed).filter((k) => !['alsoWants', 'askManager', 'wantsPhoto', 'photoArticle', 'wantsSizeChart'].includes(k));
+                    const _awKeys = Object.keys(exit.parsed).filter((k) => !['alsoWants', 'askManager', 'wantsPhoto', 'photoArticle', 'wantsSizeChart', 'wantsComponentSizeChart'].includes(k));
                     if (_awKeys.length === 0) exit.done = false;
                 }
                 // 2026-09-07 (Купцова: «Зараз покажу розмірну сітку» — і нічого): {"wantsSizeChart":true} → картинка
@@ -2623,7 +2629,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                 // службові сигнали) з кінця тексту. Це лікує симптом (клієнт ніколи не бачить
                 // сирий JSON), не корінь — окрема debug-сесія все ще потрібна для race condition.
                 if (isJsonExit && visibleAssistantText) {
-                    const _svcKeyRe = '(?:handoff|wantsPhoto|askManager|colorUnavailable|paymentMethodChange|alsoWants|backToOrder|wantsSizeChart|photoArticle|wantsManualReq|wantsUpsellPhoto)';
+                    const _svcKeyRe = '(?:handoff|wantsPhoto|askManager|colorUnavailable|paymentMethodChange|alsoWants|backToOrder|wantsSizeChart|wantsComponentSizeChart|photoArticle|wantsManualReq|wantsUpsellPhoto)';
                     visibleAssistantText = visibleAssistantText
                         .replace(new RegExp('```(?:json[\\w-]*)?\\s*\\{[\\s\\S]*?"' + _svcKeyRe + '"[\\s\\S]*?\\}\\s*```\\s*$', 'i'), '')
                         .replace(new RegExp('\\{[^{}]*"' + _svcKeyRe + '"\\s*:[^{}]*\\}\\s*$', 'i'), '')
@@ -2695,6 +2701,35 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                         // обіцянка, ніхто нічого не пришле. Сигналимо менеджеру одразу.
                         pushDelivery(runtime, 'photo_on_demand', false, 'немає валідного product.imageUrls/photoUrl', { nodeId: node.id });
                         await notifyAdminPhotoMissing(session, ctx, funnelEnv, runtime, _photoLabel);
+                    }
+                }
+                // 2026-09-13 (тікет ae8c2f85, власник: "фото розмірної сітки, текстом не треба"):
+                // дзеркало логіки photoArticle вище, лише для розмірної сітки КОМПОНЕНТА набору —
+                // n_set_choice сигналить {"wantsComponentSizeChart":"<артикул>"} замість того, щоб
+                // самій цитувати таблицю текстом. Є фото сітки в setItems цього компонента → шлемо
+                // фото; нема — чесний текстовий фолбек із того самого setSizeChartText (не вигадуємо).
+                if (exit.parsed && exit.parsed.wantsComponentSizeChart) {
+                    const _scArticle = String(exit.parsed.wantsComponentSizeChart).toUpperCase().trim();
+                    const _scComp = ctx.product && Array.isArray(ctx.product.setItems)
+                        ? ctx.product.setItems.find((it) => it && String(it.article || '').toUpperCase().trim() === _scArticle)
+                        : null;
+                    if (_scComp && _scComp.sizeChartUrl && String(_scComp.sizeChartUrl).startsWith('http')) {
+                        await persistAssistantMessage(session.id, '', { nodeId: node.id, nodeType: 'component_size_chart_photo', attachment: { type: 'photo', url: _scComp.sizeChartUrl, caption: '' } });
+                        pushDelivery(runtime, 'component_size_chart_photo', true, null, { nodeId: node.id, article: _scArticle });
+                    } else if (_scComp && _scComp.sizeChartData && Array.isArray(_scComp.sizeChartData.sizes) && _scComp.sizeChartData.sizes.length) {
+                        const _scd = _scComp.sizeChartData; const _scUnit = _scd.unit || 'см';
+                        const _scRows = _scd.sizes.map((sz, idx) => {
+                            const _line = Object.keys(_scd.measurements || {}).map((mk) => {
+                                const arr = _scd.measurements[mk];
+                                return Array.isArray(arr) && arr[idx] != null ? (mk + ' ' + arr[idx] + _scUnit) : '';
+                            }).filter(Boolean).join(', ');
+                            return sz + (_line ? (' (' + _line + ')') : '');
+                        }).join('\n');
+                        await persistAssistantMessage(session.id, 'Розмірна сітка — ' + (_scComp.name || _scArticle) + ':\n' + _scRows, { nodeId: node.id, nodeType: 'component_size_chart_text' });
+                        pushDelivery(runtime, 'component_size_chart_photo', true, null, { nodeId: node.id, article: _scArticle, fallbackText: true });
+                    } else {
+                        pushDelivery(runtime, 'component_size_chart_photo', false, 'немає sizeChartUrl/sizeChartData для цього компонента', { nodeId: node.id, article: _scArticle });
+                        await notifyAdminPhotoMissing(session, ctx, funnelEnv, runtime, 'розмірної сітки позиції набору (арт. ' + _scArticle + ')');
                     }
                 }
 

@@ -10,9 +10,10 @@
 const { db } = require('./lib');
 const { handleTurn } = require('./index');
 
-async function findOrCreateReplayUser() {
+async function findOrCreateReplayUser(realUserId) {
     const tg = BigInt(-9000000000000) - BigInt(Math.floor(Math.random() * 1e9));
-    return db.user.create({ data: { telegramId: tg, username: 'replay_' + Date.now().toString(36), firstName: 'Replay', metadata: { replay: true } } });
+    const realUser = realUserId ? await db.user.findUnique({ where: { id: realUserId }, select: { projectId: true } }).catch(() => null) : null;
+    return db.user.create({ data: { telegramId: tg, username: 'replay_' + Date.now().toString(36), firstName: 'Replay', metadata: { replay: true }, ...(realUser && realUser.projectId ? { projectId: realUser.projectId } : {}) } });
 }
 
 async function replaySession(realSessionId, { maxTurns = 30, keep = false, log = () => {} } = {}) {
@@ -20,7 +21,7 @@ async function replaySession(realSessionId, { maxTurns = 30, keep = false, log =
     if (!real) throw new Error('real session not found');
     const rc = real.context || {};
     const msgs = await db.message.findMany({ where: { sessionId: realSessionId }, orderBy: { createdAt: 'asc' }, select: { role: true, content: true, metadata: true, createdAt: true } });
-    const user = await findOrCreateReplayUser();
+    const user = await findOrCreateReplayUser(real.userId);
     const seed = { testMode: true, replayOf: realSessionId, psid: rc.psid, igUsername: rc.igUsername, senderName: rc.senderName, entryAdId: rc.entryAdId, entryAd: rc.entryAd, lastReferral: rc.lastReferral, adTitle: rc.adTitle, postId: rc.postId, commentProductArticle: rc.commentProductArticle, commentProductAt: rc.commentProductAt };
     for (const k of Object.keys(seed)) if (seed[k] === undefined) delete seed[k];
     const test = await db.session.create({ data: { userId: user.id, botId: real.botId, state: 'inbox', isTest: true, context: seed } });

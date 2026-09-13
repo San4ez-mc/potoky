@@ -34,6 +34,7 @@ const RULES = `ПРАВИЛА РОЗБОРУ:
 - color: як сказав клієнт; colorMatched — ЛИШЕ назва зі СПИСКУ КОЛЬОРІВ (сірий → «Сірий» або «Світло-сірий» лише якщо такий один; графіт → «Графітовий»; чорн → «Чорний»; синь → «Синій/Темно-синій» лише якщо один). Нема однозначного збігу → null.
 - payMethod: «1», «часткова», «наложка/накладений/при отриманні», «200» → cod; «2», «повна», «повністю», «передоплата», «по передоплаті», «зараз всю суму» → full. Питання «а можна накладеним?» без вибору → payMethod null + questions.
 - prepaymentObjection: клієнт відмовляється платити 200 грн наперед / не довіряє / «тільки при отриманні, без передоплати» / «звідки я знаю, що не обманете». trustPromise: після питання «обіцяєте прийти на пошту?» — так/обіцяю → true, ні → false.
+- Відмова лише від ДОПРОДАЖУ («футболка не потрібна», «без футболки», «тільки бомбер») → addUpsell=false, ready НЕ "no" (це не відмова від замовлення; якщо при цьому є згода — ready "yes").
 - ready "yes": явна згода оформити («так», «давайте», «оформляйте», «беру», «+», «ок» у відповідь на «Оформляємо?»); також якщо клієнт одразу шле дані доставки. "no" — явна відмова. Вагання («подумаю», «пізніше») → intent hesitate/postpone, ready null.
 - Дані доставки: phone — 10 цифр з 0 (прибери +38, пробіли, дефіси); fullName — 2–3 слова прізвище/імʼя; branch — число (1–3 цифри = відділення, 4+ = поштомат: пиши «поштомат 12345»); homeAddress=true якщо вулиця/будинок/квартира/«додому»/«таксі» замість відділення.
 - wantsHuman: явно просить людину/менеджера, «ви бот?», «дайте живу людину». isComplaint: претензія (не той товар, брак, не прийшло). returnRequest: хоче повернути/обміняти вже отриманий товар.
@@ -41,7 +42,8 @@ const RULES = `ПРАВИЛА РОЗБОРУ:
 - questions: усі питання не про слоти (ціна, склад, доставка за кордон, чи є в наявності інший розмір/колір, гарантія…). Питання «яка ціна?» коли товар ЩЕ не показано — це product_query, не question.
 - productHint.fromList: якщо бот щойно показував список товарів, а клієнт відповів словом/кольором/номером, що вказує на один із них — назви його артикул зі списку.
 - Порожнє/тільки емодзі/«[фото]» без тексту → intent other, усе null; «[фото]» разом із «є така?» → product_query.
-- Ніколи не вигадуй слоти, яких немає в повідомленні. Поверни ЛИШЕ JSON, без пояснень.`;
+- Ніколи не вигадуй слоти, яких немає в повідомленні. Поверни ЛИШЕ JSON, без пояснень.
+- ЕКОНОМНО: включай у JSON лише intent, summary, questions (може бути []) і ті ключі, що мають НЕ-null/НЕ-false значення. Ключі зі значенням null/false пропускай.`;
 
 function summarizeState(ctx) {
     const p = ctx.product || null;
@@ -81,7 +83,7 @@ function extractJson(text) {
  */
 async function understand(A) {
     const { ctx, keys } = A;
-    const model = keys.AGENT_UNDERSTAND_MODEL || 'claude-sonnet-4-6';
+    const model = process.env.AGENT_UNDERSTAND_MODEL || keys.AGENT_UNDERSTAND_MODEL || 'claude-sonnet-4-6';
     const hist = (A.history || []).slice(-14).map((m) => (m.who === 'client' ? 'КЛІЄНТ' : m.who === 'manager' ? 'МЕНЕДЖЕР' : 'БОТ') + ': ' + stripLoneSurrogates(String(m.text || '')).replace(/\s+/g, ' ').slice(0, 400)).join('\n');
     const systemPrompt = 'Ти — модуль розуміння повідомлень клієнта Instagram-магазину чоловічого одягу. Не відповідаєш клієнту. Витягуєш наміри й дані у JSON.\n\nСХЕМА ВІДПОВІДІ (усі ключі обовʼязкові, null де даних нема):\n' + SCHEMA + '\n\n' + RULES;
     const user = summarizeState(ctx) + '\n\nІСТОРІЯ (старіше → новіше):\n' + (hist || '(порожньо)') + '\n\nОСТАННЄ ПОВІДОМЛЕННЯ КЛІЄНТА (розбирай саме його):\n' + stripLoneSurrogates(String(A.turnText || '[фото]')).slice(0, 1500) + (A.turnImage ? '\n[до повідомлення прикріплено фото]' : '') + (A.turnSharedPost ? '\n[клієнт переслав пост/рілс магазину' + (A.turnSharedPost.caption ? ': «' + String(A.turnSharedPost.caption).slice(0, 200) + '»' : '') + ']' : '');
@@ -94,6 +96,9 @@ async function understand(A) {
         return { intent: 'other', questions: [], _error: e.message };
     }
     const u = extractJson(raw) || { intent: 'other' };
+    for (const k of ['height', 'weight', 'clothingSize', 'chest', 'footLength', 'waist', 'color', 'colorMatched', 'qty', 'units', 'setChoice', 'setArticle', 'ready', 'addUpsell', 'upsellQty', 'upsellNote', 'extraProducts', 'alsoWants', 'changeRequest', 'payMethod', 'country', 'trustPromise', 'fullName', 'phone', 'city', 'region', 'branch', 'paymentMethodChange', 'receiptLink']) if (u[k] === undefined) u[k] = null;
+    for (const k of ['belly', 'prepaymentObjection', 'homeAddress', 'wantsManualReq', 'claimsPaid', 'wantsSizeChart', 'wantsPhoto', 'wantsUpsellPhoto', 'wantsHuman', 'isComplaint', 'returnRequest', 'statusQuestion']) u[k] = !!u[k];
+    u.intent = u.intent || 'other';
     u.questions = Array.isArray(u.questions) ? u.questions.filter((q) => q && String(q).trim()).map(String) : [];
     u.productHint = u.productHint && typeof u.productHint === 'object' ? u.productHint : { article: null, category: null, fromList: null };
     for (const k of ['height', 'weight', 'chest', 'footLength', 'waist', 'qty', 'upsellQty']) { const v = Number(u[k]); u[k] = Number.isFinite(v) && v > 0 ? v : null; }

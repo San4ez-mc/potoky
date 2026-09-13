@@ -19,6 +19,11 @@ function productFacts(ctx) {
     if (p.qtyPromoText) f.push('Акція за кількість: ' + p.qtyPromoText);
     if (p.upsell) f.push('Допродаж: ' + p.upsell);
     if (p.isSet && p.setList) f.push('Склад комплекту: ' + p.setList);
+    if (ctx.recommendedSize) f.push('ПІДІБРАНИЙ СИСТЕМОЮ РОЗМІР: ' + ctx.recommendedSize + ' — називай лише його, НІКОЛИ не рахуй розмір сам за сіткою/зростом/вагою і не пропонуй інший.');
+    else if (ctx.sizeInput && (ctx.sizeInput.height || ctx.sizeInput.weight)) f.push('Розмір ще НЕ підібрано (рахує система) — не називай жодного розміру.');
+    if (ctx.colorChoice && ctx.colorChoice.color) f.push('Обраний колір: ' + ctx.colorChoice.color + '.');
+    if (ctx.orderUnitsText) f.push('Позиції замовлення: ' + ctx.orderUnitsText + (ctx.orderUnitsTotal ? ' — ' + ctx.orderUnitsTotal + ' грн' : '') + '.');
+    if (ctx.payAmount != null && ctx.paymentInfo && ctx.paymentInfo.method) f.push('Оплата: ' + ctx.payLabel + ' — до сплати зараз ' + ctx.payAmount + ' грн.');
     return f.join('\n');
 }
 function shopFacts(ctx) {
@@ -39,7 +44,7 @@ async function compose(A, o = {}) {
     const model = keys.AGENT_COMPOSE_MODEL || 'claude-sonnet-4-6';
     const persona = keys.PERSONA_NAME || 'Оля'; const shop = keys.SHOP_TAG || 'магазин';
     const facts = [productFacts(ctx), shopFacts(ctx), o.extraFacts || '', (o.kb || []).length ? 'БАЗА ЗНАНЬ (факти саме про цей магазин, точніші за будь-які припущення):\n' + o.kb.map((h) => '• ' + (h.q ? 'Питання: ' + h.q + ' → ' : '') + 'Відповідь: ' + h.a).join('\n') : '', o.availAnswer ? 'НАЯВНІСТЬ (система щойно перевірила каталог):\n' + o.availAnswer : ''].filter(Boolean).join('\n\n');
-    const systemPrompt = 'Ти — ' + persona + ', жива тепла консультантка ' + shop + ' в Instagram. Українською, на «ви», коротко (до ' + (o.maxSentences || 4) + ' речень), доречні емодзі без перебору. ' + (o.noGreeting === false ? '' : 'НЕ вітайся — клієнта вже привітали. ') + 'НЕ вигадуй фактів: відповідай ЛИШЕ з блоку ФАКТИ; якщо відповіді там нема — скажи «уточню в менеджера і напишу сюди». Ніколи не називай реквізити, номери карток, посилання, суми, розміри чи кольори, яких нема у ФАКТАХ. Не називай конкретний день відправки. Не пиши списків із зірочок, не повторюй картку товару.\n\nФАКТИ:\n' + facts;
+    const systemPrompt = 'Ти — ' + persona + ', жива тепла консультантка ' + shop + ' в Instagram. Українською, на «ви», коротко (до ' + (o.maxSentences || 4) + ' речень), доречні емодзі без перебору. ' + (o.noGreeting === false ? '' : 'НЕ вітайся — клієнта вже привітали. ') + 'НЕ вигадуй фактів: відповідай ЛИШЕ з блоку ФАКТИ; якщо відповіді там нема — скажи «уточню в менеджера і напишу сюди». Ніколи не називай реквізити, номери карток, посилання, суми, розміри чи кольори, яких нема у ФАКТАХ. Не називай конкретний день відправки. Не повторюй картку товару. БЕЗ markdown: жодних зірочок, «---», заголовків, нумерованих списків — звичайний текст як у месенджері. Розмір НІКОЛИ не підбирай сам (це робить система за сіткою).\n\nФАКТИ:\n' + facts;
     const task = [
         o.questions && o.questions.length ? 'Спершу коротко відповідай на питання клієнта: ' + o.questions.map((q) => '«' + q + '»').join(', ') + '.' : '',
         o.ack ? 'Підтверди коротко: ' + o.ack : '',

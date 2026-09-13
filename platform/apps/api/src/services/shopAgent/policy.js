@@ -29,7 +29,9 @@ function matchColor(p, want) {
 function ttnIn(text) { const m = String(text || '').match(/(?<!\d)\d{14}(?!\d)/); return m ? m[0] : ''; }
 
 async function answerThenAsk(A, u, askText, o = {}) {
-    // Питання клієнта → факти (KB, наявність) → одна відповідь + крок. Без питань — сам крок.
+    // askText — ГОТОВИЙ текст для клієнта (не інструкція). Без питань клієнта він іде як є;
+    // з питаннями → факти (KB, наявність) → одна відповідь + той самий крок своїми словами.
+    if (u.intent === 'greeting' && !o.ack) o = { ...o, ack: 'коротко привітайся у відповідь (тим самим часом доби, якщо клієнт його назвав)' };
     if (!u.questions.length && !o.ack) return askText;
     let kb = []; let availAnswer = '';
     try { kb = await T.kbSearch(A, u.questions[0]); } catch (e) { /* best-effort */ }
@@ -38,9 +40,10 @@ async function answerThenAsk(A, u, askText, o = {}) {
         A.ctx.agent.askManagerAt = Date.now(); await T.kbAsk(A, u.questions[0]);
         await T.alert(A, { title: '❓ Клієнт спитав те, чого бот не знає', main: 'Бот продовжує діалог; відповідь допишіть у чат — вона також потрапить у Базу знань CRM.', details: '💬 «' + u.questions[0].slice(0, 200) + '»' });
     }
-    const txt = await compose(A, { questions: u.questions, ack: o.ack, nextStep: askText ? 'скажи/спитай: ' + askText : '', kb, availAnswer, fallback: askText });
+    const txt = await compose(A, { questions: u.questions, ack: o.ack, nextStep: askText ? 'скажи/спитай (можна своїми словами, зміст той самий): «' + askText + '»' : '', kb, availAnswer, fallback: askText });
     return txt || askText;
 }
+function colorsOf(p) { return String((p && p.colors) || '').trim(); }
 
 async function pause(A, reason, alertNode, extraDetails) {
     A.ctx.funnelPaused = true; A.ctx.pausedBy = reason; A.ctx.pausedAt = new Date().toISOString(); A.ctx.adminEngaged = true; A.ctx.handoffKind = reason;
@@ -148,7 +151,7 @@ async function runPolicy(A, u) {
     if (ctx.returnFlow && ctx.returnFlow.stage === 'await_ttn') {
         const ttn = ttnIn(text);
         if (ttn) { ctx.returnFlow = { ...ctx.returnFlow, ttn, stage: 'done' }; ctx.returnTtn = ttn; await T.returnCrmUpdate(A); A.out.push({ text: messageTextMultiline(A.assets, 'n_return_confirm_msg', ctx, A.session.id), step: 'return_confirm' }); await T.alert(A, 'n_return_admin'); return; }
-        A.out.push({ text: await answerThenAsk(A, u, 'нагадай мʼяко: щойно відправите посилку — напишіть номер нової накладної, і ми одразу оформимо обмін/повернення'), step: 'return_wait' });
+        A.out.push({ text: await answerThenAsk(A, u, 'Щойно відправите посилку — напишіть, будь ласка, номер нової накладної, і ми одразу оформимо обмін/повернення 🤗'), step: 'return_wait' });
         return;
     }
     if (u.returnRequest) {
@@ -175,13 +178,25 @@ async function runPolicy(A, u) {
         }
         const since = Date.now() - Number(ctx.postOrderMsgAt || 0);
         if (u.questions.length && !u.statusQuestion) {
-            A.out.push({ text: await answerThenAsk(A, u, 'і нагадай одним реченням, що замовлення в роботі'), step: 'post_q' });
+            A.out.push({ text: await answerThenAsk(A, u, 'Ваше замовлення в роботі 💛'), step: 'post_q' });
         } else if (since > 30 * 60 * 1000) {
             A.out.push({ text: messageText(A.assets, 'n_post_order_msg', ctx, A.session.id), step: 'post_order' }); ctx.postOrderMsgAt = Date.now();
         }
         if (since > 30 * 60 * 1000 || u.statusQuestion) await T.alert(A, 'n_post_order_admin');
         return;
     }
+
+    // 1b. Раннє захоплення даних доставки і чеків — незалежно від стадії (клієнт може написати
+    //     адресу чи скинути чек ще до підбору розміру; нічого не губимо і не перепитуємо потім).
+    if ((u.phone || u.fullName || u.city || u.branch) && !u.homeAddress) {
+        ctx.orderData = { ...(ctx.orderData || {}), ...(u.fullName ? { fullName: u.fullName } : {}), ...(u.phone ? { phone: u.phone } : {}), ...(u.city ? { city: u.city } : {}), ...(u.region ? { region: u.region } : {}), ...(u.branch ? { branch: u.branch } : {}) };
+    }
+    const earlyReceipt = (u.receiptLink || u.claimsPaid) && !ctx.crmOrderId && !(ctx.paymentInfo && ctx.paymentInfo.method);
+    if (earlyReceipt && !ctx.agent.receiptEarlyAlertAt) {
+        ctx.agent.receiptEarlyAlertAt = Date.now();
+        await T.alert(A, { title: '🧾 Клієнт пише про оплату до оформлення', main: 'Замовлення в боті ще не оформлене (нема розміру/кольору/адреси) — перевірте вручну, бот продовжує збирати дані.', details: '💬 «' + text.slice(0, 200) + '»' }, { photoUrl: A.turnImage || '' });
+    }
+    const preNote = (earlyReceipt ? 'Дякую, оплату бачу — звіримо 🙏 Щоб оформити відправку, лишилось кілька кроків. ' : '') + (u.intent === 'wants_requisites' && !(ctx.paymentInfo && ctx.paymentInfo.method) ? 'Реквізити надішлю одразу після підбору розміру і кольору 🙂 ' : '');
 
     // 2. Товар
     if (!P(ctx) || freshSignal) {
@@ -219,7 +234,7 @@ async function runPolicy(A, u) {
     if (p.isSet && !ctx.setMode) {
         if (u.setChoice === 'item' && u.setArticle) { ctx.setPick = { setChoice: 'item', article: u.setArticle }; await T.setApply(A); }
         else if (u.setChoice === 'set') { ctx.setPick = { setChoice: 'set' }; await T.setApply(A); ctx.setMode = 'set'; }
-        else { A.out.push({ text: await answerThenAsk(A, u, 'спитай: вас цікавить весь комплект чи окремі речі з нього (перелічи склад: ' + (p.setList || p.setComponents) + ')'), step: 'set_ask' }); ctx.agent.lastAsk = 'весь комплект чи окремі речі'; return; }
+        else { A.out.push({ text: await answerThenAsk(A, u, preNote + 'Підкажіть, будь ласка, вас цікавить весь комплект чи окремі речі з нього? 🙂\nСклад: ' + (p.setList || p.setComponents)), step: 'set_ask' }); ctx.agent.lastAsk = 'весь комплект чи окремі речі'; return; }
     }
     const pp = P(ctx);
 
@@ -251,8 +266,11 @@ async function runPolicy(A, u) {
         } else {
             if (u.wantsSizeChart && pp.sizeChartUrl && ctx.agent.chartSentFor !== pp.sku) { A.out.push({ photoUrls: [pp.sizeChartUrl], caption: 'Ось розмірна сітка 📏', step: 'size_chart' }); ctx.agent.chartSentFor = pp.sku; }
             const missing = si.height && !si.weight ? 'вагу' : (!si.height && si.weight ? 'зріст' : '');
-            const ask = pp.categoryParamsIsHeightWeight === 'false' ? ('спитай параметри для підбору: ' + (pp.categoryParamsPrompt || 'розмір')) : (missing ? 'подякуй і попроси ще ' + missing : 'попроси зріст і вагу, щоб підібрати розмір');
-            A.out.push({ text: await answerThenAsk(A, u, ask), step: 'ask_params' }); ctx.agent.lastAsk = 'зріст і вага';
+            const colorNote = u.color && !u.colorMatched && colorsOf(pp) ? ('Щодо кольору «' + u.color + '»: у цієї моделі є ' + colorsOf(pp) + ' — який ближче? ') : (u.colorMatched ? 'Колір ' + u.colorMatched + ' — записала 🎨 ' : '');
+            const ask = pp.categoryParamsIsHeightWeight === 'false'
+                ? ('Підкажіть, будь ласка, ' + (pp.categoryParamsPrompt || 'ваш розмір') + ' 🙂')
+                : (missing ? 'Дякую! Підкажіть ще ' + missing + ', будь ласка — і одразу підберу розмір 🙂' : 'Підкажіть, будь ласка, ваш зріст і вагу — підберу розмір 📏');
+            A.out.push({ text: await answerThenAsk(A, u, preNote + colorNote + ask), step: 'ask_params' }); ctx.agent.lastAsk = 'зріст і вага';
             return;
         }
     }
@@ -262,8 +280,8 @@ async function runPolicy(A, u) {
         const c = u.colorMatched || matchColor(pp, u.color) || (ctx.sizeInput && ctx.sizeInput.color) || null;
         if (c) ctx.colorChoice = { color: c, qty: u.qty || undefined };
         else {
-            const ask = u.color ? 'скажи, що кольору «' + u.color + '» у цієї моделі нема, і запропонуй обрати з наявних: ' + pp.colors : 'спитай, який колір обрати: ' + pp.colors;
-            A.out.push({ text: await answerThenAsk(A, u, ask), step: 'ask_color' }); ctx.agent.lastAsk = 'колір'; return;
+            const ask = u.color ? 'Кольору «' + u.color + '» саме у цієї моделі нема 😔 Є: ' + pp.colors + ' — який обираєте?' : 'Який колір обираєте: ' + pp.colors + '? 🎨';
+            A.out.push({ text: await answerThenAsk(A, u, preNote + ask), step: 'ask_color' }); ctx.agent.lastAsk = 'колір'; return;
         }
     }
 
@@ -283,11 +301,11 @@ async function runPolicy(A, u) {
     if (!(ctx.orderIntent && ctx.orderIntent.ready === 'yes')) {
         if (u.extraProducts || u.alsoWants) { ctx.extraProductMention = u.extraProducts || u.alsoWants; await T.extraResolve(A); }
         if (u.ready === 'no') { A.out.push({ text: messageText(A.assets, 'n_declined_msg', ctx, A.session.id), step: 'declined' }); ctx.declinedAt = Date.now(); ctx.agent.lastAsk = ''; return; }
-        const gaveAddress = !!(u.phone || u.city || u.branch);
+        const gaveAddress = !!(u.phone || u.city || u.branch || u.fullName);
         if (u.ready === 'yes' || gaveAddress || u.payMethod) {
             ctx.orderIntent = { ready: 'yes', addUpsell: !!u.addUpsell, upsellQty: u.upsellQty || undefined, upsellNote: u.upsellNote || undefined, units: u.units || undefined, qty: u.qty || undefined, extras: undefined, extraProducts: undefined };
             if (gaveAddress) { ctx.orderIntent.prefill = { fullName: u.fullName || undefined, phone: u.phone || undefined, city: u.city || undefined, branch: u.branch || undefined, region: u.region || undefined }; await T.orderPrefill(A); }
-            if (pp.upsell && u.addUpsell == null && u.ready === 'yes' && ctx.agent.upsellOffered && !u.upsellNote && !u.phone) {
+            if (pp.upsell && u.addUpsell == null && u.ready === 'yes' && ctx.agent.upsellOffered && !u.upsellNote && !gaveAddress && !u.payMethod) {
                 // згода без відповіді на допродаж — одне уточнення
                 ctx.orderIntent = null;
                 A.out.push({ text: 'Оформляю ' + (pp.customerName || pp.name) + ' 🙌 Додаємо ' + pp.upsell + ' до посилки (яку і скільки) чи без нього?', step: 'upsell_clarify' }); ctx.agent.lastAsk = 'з допродажем чи без'; return;
@@ -297,16 +315,34 @@ async function runPolicy(A, u) {
             const units = ctx.orderUnitsText || ((ctx.colorChoice && ctx.colorChoice.color ? ctx.colorChoice.color : '') + (ctx.recommendedSize ? ' ' + ctx.recommendedSize : ''));
             const total = ctx.orderUnitsTotal || pp.price;
             if (pp.upsellPhotoUrl && !ctx.agent.upsellPhotoSent) { A.out.push({ photoUrls: [pp.upsellPhotoUrl], caption: '', step: 'upsell_photo' }); ctx.agent.upsellPhotoSent = true; }
-            const summary = 'Ваше замовлення: ' + (pp.customerName || pp.name) + (units ? ' — ' + units : '') + ' — ' + total + ' грн' + (ctx.extraItemsText ? '\n' + ctx.extraItemsText : '') + (ctx.shop && ctx.shop.terms ? '\n' + ctx.shop.terms : '');
-            const next = pp.upsell ? 'подай підсумок: ' + summary + '. Спитай: оформляємо? І чи додати ' + pp.upsell + ' до цієї ж посилки, чи лише основний товар (одне рішення з двома варіантами)' : 'подай підсумок: ' + summary + '. Спитай: «Оформляємо замовлення? 🙂»';
+            // Підсумок — ДЕТЕРМІНОВАНО (розмір/колір/сума з інструментів, LLM їх не перераховує); LLM лише
+            // відповідає на питання клієнта перед підсумком або мʼяко працює з ваганням.
+            const summary = 'Ось ваше замовлення 🙌\n' + (pp.customerName || pp.name) + (units ? ' — ' + units : '') + ' — ' + total + ' грн' + (ctx.extraItemsText ? '\n' + ctx.extraItemsText : '') + (ctx.shop && ctx.shop.terms ? '\n' + ctx.shop.terms : '');
+            const askLine = pp.upsell ? 'Оформляємо? І підкажіть: додати ще ' + pp.upsell + ' до цієї ж посилки, чи лише основний товар? 🙂' : 'Оформляємо замовлення? 🙂';
             if (pp.upsell) ctx.agent.upsellOffered = true;
-            const hes = (u.intent === 'hesitate' || u.intent === 'postpone') ? ' Клієнт вагається — без тиску наведи один реальний аргумент оформити сьогодні (раніше отримає, черга на відправку) і спитай «Оформляємо сьогодні?».' : '';
-            A.out.push({ text: await compose(A, { questions: u.questions, nextStep: next + hes, extraFacts: ctx.availAnswer ? '' : '', fallback: summary + '\n\nОформляємо замовлення? 🙂' }), step: 'order_intent' });
+            const hesitating = (u.intent === 'hesitate' || u.intent === 'postpone');
+            let txt = summary + '\n\n' + askLine;
+            if (ctx.agent.lastAsk === 'оформляємо?' && !u.questions.length && !hesitating) {
+                // «Оформляємо?» уже питали, клієнт написав щось без рішення — коротка реакція + те саме питання, без повторного підсумку
+                txt = await compose(A, { ack: 'відреагуй одним реченням на репліку клієнта', nextStep: 'і спитай: «' + askLine + '»', maxSentences: 2, fallback: askLine });
+                A.out.push({ text: txt, step: 'order_intent_repeat' }); return;
+            }
+            if (u.questions.length || hesitating) {
+                const pre = await compose(A, { questions: u.questions, nextStep: hesitating ? 'клієнт вагається — без тиску наведи ОДИН реальний аргумент оформити сьогодні (раніше отримає, черга на відправку) і заверши питанням «Оформляємо сьогодні?»' : 'заверши коротким переходом до підсумку (без самого підсумку — його додасть система)', maxSentences: 3, fallback: '' });
+                txt = (pre ? pre + '\n\n' : '') + (hesitating ? summary : txt);
+            }
+            A.out.push({ text: txt, step: 'order_intent' });
             ctx.agent.lastAsk = 'оформляємо?'; return;
         }
     }
 
-    // 8. Спосіб оплати
+    // 8. Спосіб оплати (якщо клієнт саме зараз надсилає дані доставки частинами — спершу дозбираємо адресу)
+    const givingAddressNow = !!(u.phone || u.fullName || u.city || u.branch || u.region) && !addressComplete(ctx.orderData);
+    if (!(ctx.paymentInfo && ctx.paymentInfo.method) && givingAddressNow && !u.payMethod && !u.prepaymentObjection) {
+        const od = ctx.orderData || {};
+        const missing = [!od.fullName && 'ПІБ', !od.phone && 'телефон', !od.city && 'місто', !od.branch && '№ відділення або поштомата'].filter(Boolean);
+        A.out.push({ text: await answerThenAsk(A, u, 'Записала 📝 Ще підкажіть, будь ласка: ' + missing.join(', ')), step: 'ask_address_partial' }); ctx.agent.lastAsk = 'дані доставки: ' + missing.join(', '); return;
+    }
     if (!(ctx.paymentInfo && ctx.paymentInfo.method)) {
         if (u.prepaymentObjection && !ctx.trustScriptStep) { A.out.push({ text: TRUST_STEP1, step: 'trust1' }); ctx.trustScriptStep = 1; ctx.agent.lastAsk = 'оформимо з передплатою 200?'; return; }
         if (ctx.trustScriptStep === 1 && (u.prepaymentObjection || u.trustPromise === false || u.ready === 'no')) { A.out.push({ text: TRUST_STEP2, step: 'trust2' }); ctx.trustScriptStep = 2; ctx.agent.lastAsk = 'обіцяєте прийти на пошту?'; return; }
@@ -314,7 +350,12 @@ async function runPolicy(A, u) {
         if (ctx.trustScriptStep === 2 && (u.trustPromise === true || u.ready === 'yes')) ctx.paymentInfo = { method: 'cod_trust' };
         else if (ctx.trustScriptStep === 1 && (u.ready === 'yes' || u.payMethod === 'cod')) ctx.paymentInfo = { method: 'cod' };
         else if (u.payMethod) ctx.paymentInfo = { method: u.payMethod, ...(u.country ? { country: u.country } : {}) };
-        else { A.out.push({ text: await answerThenAsk(A, u, 'скажи: ' + messageText(A.assets, 'n_pay', ctx, A.session.id + ':pay')), step: 'pay_options' }); ctx.agent.lastAsk = 'спосіб оплати 1 чи 2'; return; }
+        else {
+            const payTpl = messageTextMultiline(A.assets, 'n_pay', ctx, A.session.id + ':pay');
+            if (u.questions.length) A.out.push({ text: await compose(A, { questions: u.questions, nextStep: 'потім скажи, що лишилось обрати спосіб оплати (сам список дасть система)', maxSentences: 3, fallback: '' }), step: 'pay_q' });
+            A.out.push({ text: (u.intent === 'order_no' && ctx.agent.upsellOffered ? 'Добре, лише основний товар 🙂\n\n' : '') + payTpl, step: 'pay_options' });
+            ctx.agent.lastAsk = 'спосіб оплати 1 чи 2'; return;
+        }
         await T.payAmount(A);
         if (ctx.paymentInfo.country) { await T.intlRoute(A); if (ctx.intlStatus === 'unsupported') { A.out.push({ text: messageText(A.assets, 'n_intl_unsupported_msg', ctx, A.session.id), step: 'intl' }); await pause(A, 'intl_unsupported', { title: '🌍 Міжнародна доставка', main: 'Клієнт просить доставку в ' + ctx.intlCountry, details: '' }); return; } }
         await T.funnelStage(A, ...STAGES.awaiting);
@@ -331,16 +372,16 @@ async function runPolicy(A, u) {
         const mem = ctx.customer || {};
         if (!od.phone && !od.fullName && mem.phone && mem.fullName && mem.city && mem.branch) {
             if (ctx.agent.addressConfirmAsked && (u.ready === 'yes' || /^(так|да|ті ?самі|те ?саме|ок|окей|на ті|актуальн)/i.test(text.trim()))) { Object.assign(od, { fullName: mem.fullName, phone: mem.phone, city: mem.city, branch: mem.branch }); }
-            else if (!ctx.agent.addressConfirmAsked) { ctx.agent.addressConfirmAsked = true; ctx.orderData = od; A.out.push({ text: await answerThenAsk(A, u, 'скажи: минулого разу відправляли на ' + mem.fullName + ', ' + mem.phone + ', ' + mem.city + ', відділення ' + mem.branch + ' — відправляємо туди ж? Якщо так — напишіть «так», якщо ні — нові дані одним повідомленням'), step: 'address_confirm' }); ctx.agent.lastAsk = 'ті самі дані доставки?'; return; }
+            else if (!ctx.agent.addressConfirmAsked) { ctx.agent.addressConfirmAsked = true; ctx.orderData = od; A.out.push({ text: await answerThenAsk(A, u, 'Минулого разу відправляли на: ' + mem.fullName + ', ' + mem.phone + ', ' + mem.city + ', відділення ' + mem.branch + '. Відправляємо туди ж? Якщо так — напишіть «так», якщо ні — нові дані одним повідомленням 🙂'), step: 'address_confirm' }); ctx.agent.lastAsk = 'ті самі дані доставки?'; return; }
         }
         ctx.orderData = od;
         if (u.wantsManualReq) { await sendManualRequisites(A, true); return; }
         if (u.claimsPaid || u.receiptLink || A.turnImage) await tryReconcile(A);
-        if (u.homeAddress) { A.out.push({ text: await answerThenAsk(A, u, 'поясни тепло, що доставляємо лише Новою Поштою на відділення або поштомат (доставки додому/таксі нема), і попроси номер відділення чи поштомата в місті ' + (od.city || '')), step: 'home_address' }); ctx.agent.lastAsk = 'номер відділення'; return; }
+        if (u.homeAddress) { A.out.push({ text: await answerThenAsk(A, u, 'Ми відправляємо лише Новою Поштою — на відділення або поштомат (доставки додому чи таксі, на жаль, нема) 🙏 Підкажіть, будь ласка, номер відділення або поштомата' + (od.city ? ' у м. ' + od.city : '') + ' 📦'), step: 'home_address' }); ctx.agent.lastAsk = 'номер відділення'; return; }
         if (!addressComplete(od)) {
             const missing = [!od.fullName && 'ПІБ', !od.phone && 'телефон', !od.city && 'місто', !od.branch && '№ відділення або поштомата'].filter(Boolean);
-            const ack = (ctx.payStatus === 'confirmed' ? 'оплату отримали ✅' : (u.claimsPaid ? 'оплату звіримо, щойно надійде' : ''));
-            A.out.push({ text: await answerThenAsk(A, u, 'попроси лише те, чого бракує для відправки Новою Поштою: ' + missing.join(', ') + (ctx.requisitesSentAt ? '' : '. Реквізити вже надіслано вище'), { ack }), step: 'ask_address' }); ctx.agent.lastAsk = 'дані доставки: ' + missing.join(', '); return;
+            const ackLine = ctx.payStatus === 'confirmed' ? 'Оплату отримали ✅ ' : (u.claimsPaid || u.receiptLink || A.turnImage ? 'Дякую! Оплату звіримо, щойно надійде 🙏 ' : '');
+            A.out.push({ text: await answerThenAsk(A, u, ackLine + 'Напишіть, будь ласка, для відправки Новою Поштою: ' + missing.join(', ') + ' 📦'), step: 'ask_address' }); ctx.agent.lastAsk = 'дані доставки: ' + missing.join(', '); return;
         }
         await T.npCheck(A);
         if (ctx.np && ctx.np.ask) { A.out.push({ text: messageText(A.assets, 'n_np_ask', ctx, A.session.id), step: 'np_ask' }); ctx.agent.lastAsk = 'уточнення адреси НП'; ctx.orderData = { ...od, branch: od.branch }; return; }
@@ -353,7 +394,7 @@ async function runPolicy(A, u) {
 
     // 11–13. CRM → постачальник → підтвердження
     const res = await afterOrderAccepted(A);
-    if (res === 'done' && Number(ctx.payAmount) > 0 && ctx.payStatus !== 'confirmed' && !ctx.agent.payNotFoundSaid) {
+    if (res === 'done' && Number(ctx.payAmount) > 0 && ctx.payStatus !== 'confirmed' && (u.claimsPaid || u.receiptLink || A.turnImage) && !ctx.agent.payNotFoundSaid) {
         A.out.push({ text: messageText(A.assets, 'n_pay_notfound_msg', ctx, A.session.id), step: 'pay_notfound' }); ctx.agent.payNotFoundSaid = true;
         if (!ctx.payNotFoundNotified) { ctx.payNotFoundNotified = true; }
     }

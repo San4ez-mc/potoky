@@ -1674,8 +1674,17 @@ async function handleSideEvent(botId, event, body) {
         // створював видимий дубль у сесії (той самий текст двічі).
         const _sentText = msg.text || '';
         const _norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+        // 2026-09-13 (свіжий аудит сесій: e66761b7/72552c59/37a12b9b — Zernio-echo нашого ж
+        // повідомлення (розмірна сітка, підсумок замовлення) приходив через message.sent із
+        // затримкою 15-19+ ХВИЛИН, далеко за межами старого вікна 180с/300с. Echo не впізнавався
+        // "нашим", логувався як НОВЕ повідомлення менеджера з інбокса → ХИБНО ставив funnelPaused=true,
+        // бот замовкав для реального клієнта без жодної причини (доки не спрацює auto-resume, і то не
+        // завжди). Вікно розширено до 2 годин — точний збіг НОРМАЛІЗОВАНОГО тексту робить хибний
+        // позитив (клієнт випадково написав слово в слово те саме, що бот) практично неможливим,
+        // тож ціна ширшого вікна мінімальна порівняно з ціною хибної паузи бота.
+        const _ECHO_WINDOW_MS = 2 * 3600 * 1000;
         if (_sentText) {
-            const _recent = await db.message.findMany({ where: { sessionId: session.id, role: 'assistant', createdAt: { gte: new Date(Date.now() - 180000) } }, orderBy: { createdAt: 'desc' }, take: 10 });
+            const _recent = await db.message.findMany({ where: { sessionId: session.id, role: 'assistant', createdAt: { gte: new Date(Date.now() - _ECHO_WINDOW_MS) } }, orderBy: { createdAt: 'desc' }, take: 30 });
             const _sentNorm = _norm(_sentText);
             const _ourEcho = _recent.find((r) => ((r.metadata || {}).source) !== 'zernio_inbox' && _norm(r.content) === _sentNorm);
             if (_ourEcho) { const _c = _ourEcho.metadata || {}; if (!_c.zernioMessageId && msg.id) await db.message.update({ where: { id: _ourEcho.id }, data: { metadata: { ..._c, zernioMessageId: msg.id, status: 'sent' } } }).catch(() => {}); return { ok: true, processed: 0 }; }
@@ -1685,11 +1694,26 @@ async function handleSideEvent(botId, event, body) {
         // Без тексту шукаємо своє свіже повідомлення з фото без zernioMessageId і дотегуємо його.
         const _sentAtts = Array.isArray(msg.attachments) ? msg.attachments : (Array.isArray(msg.media) ? msg.media : []);
         if (!_sentText) {
-            const _recentM = await db.message.findMany({ where: { sessionId: session.id, role: 'assistant', createdAt: { gte: new Date(Date.now() - 300000) } }, orderBy: { createdAt: 'desc' }, take: 15 });
+            const _recentM = await db.message.findMany({ where: { sessionId: session.id, role: 'assistant', createdAt: { gte: new Date(Date.now() - _ECHO_WINDOW_MS) } }, orderBy: { createdAt: 'desc' }, take: 15 });
             const _ourMedia = _recentM.find((r) => { const c = r.metadata || {}; return c.source !== 'zernio_inbox' && !c.zernioMessageId && (c.attachment || c.nodeType === 'sendPhoto' || /photo/.test(String(c.nodeType || '')) || (Array.isArray(c.attachments) && c.attachments.length)); });
             if (_ourMedia) { const _c = _ourMedia.metadata || {}; await db.message.update({ where: { id: _ourMedia.id }, data: { metadata: { ..._c, zernioMessageId: msg.id || null, platformMessageId: msg.platformMessageId || _c.platformMessageId || null, status: 'sent' } } }).catch(() => {}); return { ok: true, processed: 0 }; }
         }
         const _label = _sentText || (_sentAtts.length ? ('[' + (_sentAtts.length > 1 ? 'фото ×' + _sentAtts.length : ((_sentAtts[0] && /video/i.test(String(_sentAtts[0].type || ''))) ? 'відео' : 'фото')) + ' від менеджера]') : '[повідомлення від менеджера]');
+        // 2026-09-13 (свіжий аудит сесій, e9c51c2b: той самий текст менеджера/canned-reply "Підкажіть,
+        // ... куртка з реклами?" прийшов через message.sent 6 РАЗІВ поспіль за ~2.5 хв, різні
+        // zernioMessageId/platformMessageId кожного разу — НЕ echo нашого ж боту (перевірка _ourEcho
+        // вище цього не ловить, бо шукає лише серед НАШИХ message, не серед інших zernio_inbox).
+        // Схоже на повторну доставку з боку Zernio/Meta (retry вебхука чи дубльований quick-reply клік) —
+        // не можемо виправити джерело (стороння система), але МОЖЕМО не плодити видимі дублі в сесії:
+        // якщо останнє повідомлення в сесії (будь-якої ролі) — той самий нормалізований текст менше
+        // ніж 3 хв тому, це вже показано клієнту (і нам) — новий видимий запис не створюємо, лише
+        // дотегуємо zernioMessageId для трасування.
+        const _lastAny = await db.message.findFirst({ where: { sessionId: session.id }, orderBy: { createdAt: 'desc' }, select: { id: true, content: true, metadata: true, createdAt: true } });
+        if (_lastAny && _norm(_lastAny.content) === _norm(_label) && (Date.now() - new Date(_lastAny.createdAt).getTime()) < 180000) {
+            const _lc = _lastAny.metadata || {};
+            await db.message.update({ where: { id: _lastAny.id }, data: { metadata: { ..._lc, repeatedDeliveryIds: (_lc.repeatedDeliveryIds || []).concat([msg.id || null]).filter(Boolean) } } }).catch(() => {});
+            return { ok: true, processed: 0, dedupedRepeat: true };
+        }
         await db.message.create({ data: cleanJsonDeep({ sessionId: session.id, role: 'assistant', content: _label, metadata: { source: 'zernio_inbox', zernioMessageId: msg.id || null, platformMessageId: msg.platformMessageId || null, status: 'sent', ...(_sentAtts.length ? { attachments: _sentAtts.slice(0, 10) } : {}) } }) });
         // 2026-09-07 20:05 (рішення власника, бойовий старт): менеджер написав клієнту з інбокса → сесія стає на
         // ЗВИЧАЙНУ паузу (funnelPaused — та сама іконка в адмінці). Бот мовчить, доки менеджер сам не зніме паузу.

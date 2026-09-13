@@ -69,6 +69,12 @@ async function syncAccount(acctInfo) {
   var after = null;
   var pages = 0;
   do {
+    // 2026-09-13 (власник: "на сторінці оголошень дійсно треба щоб попадали тільки активні
+    // реклами, а не всі 1000"): НЕ фільтруємо тут на рівні Meta-запиту (fetching лише ACTIVE
+    // означало б, що ми ніколи не дізнаємось, коли реклама СТАЄ paused — effectiveStatus
+    // застряг би на старому значенні назавжди). Тягнемо ВСІ статуси й чесно пишемо
+    // effective_status у CRM — фільтр "показати лише активні" робить сторінка (GET /ads,
+    // дефолт), не сам синк. Так effectiveStatus завжди відображає ПОТОЧНИЙ реальний стан.
     var url = 'https://graph.facebook.com/v21.0/' + acct + '/ads'
       + '?fields=id,name,effective_status,campaign{id,name},adset{id,name},creative{thumbnail_url}'
       + '&limit=50' + (after ? '&after=' + encodeURIComponent(after) : '')
@@ -95,6 +101,7 @@ async function syncAccount(acctInfo) {
           adSetName: a.adset && a.adset.name ? String(a.adset.name).slice(0, 200) : null,
           adAccountId: acct,
           adAccountName: acctName,
+          effectiveStatus: a.effective_status || null,
           thumbnailUrl: (a.creative && a.creative.thumbnail_url) ? String(a.creative.thumbnail_url) : null,
         };
         var crmRes = await fetch(crmBase + '/ads', { method: 'POST', headers: crmHdr, body: JSON.stringify(body) });

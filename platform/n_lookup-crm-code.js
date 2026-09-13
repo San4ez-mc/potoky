@@ -118,8 +118,29 @@ try {
   // платних кампаній. Це пряме рішення власника — надійніше за будь-яке автоматичне вгадування
   // нижче (артикул/keyword/vision), тож якщо знайдено — ЖОДНОГО іншого матчингу далі не робимо.
   var __adExternalId = String(context.entryAd || (context.sharedPost && context.sharedPost.mediaId) || '').trim();
-  if (__adExternalId && adsList.length) {
-    var __adHit = adsList.filter(function (a) { return String(a.externalId || '').trim() === __adExternalId && a.productId; })[0];
+  // 2026-09-13 (КРИТИЧНА знахідка агента-розслідувача, olgakovalenko_ok — реальний гроші-вплив:
+  // клієнту показали ЗОВСІМ ІНШИЙ товар, D0005 замість A0182): Пріоритет 0 (найнадійніший —
+  // РУЧНА прив'язка) читав adsList = context.lookupAdsRaw, який n_lookup_fetch_ads тягне як
+  // ГОЛИЙ `/ads?take=300` (sorted DESC) — точнісінько той самий "топ-N губить старе" баг, що вже
+  // виправлено для реєстрації дублів (2026-09-13, GET /ads?externalId=). Через сплеск масового
+  // запису в Ad (Meta-синк) навіть 5-денна ПРАВИЛЬНО прив'язана реклама випадає з ЦЬОГО вікна —
+  // Пріоритет 0 мовчки НІКОЛИ не спрацьовує, матчинг падає аж до vision (Пріоритет 4), який
+  // вгадав неправильний товар. Тепер — точковий запит, не залежить від розміру/віку таблиці;
+  // adsList (bulk-фетч) лишається лише для Пріоритету 1.5 (заголовок реклами), де потрібен
+  // повний список для порівняння.
+  if (__adExternalId) {
+    var __adHit = null;
+    try {
+      var __adHitResp = await fetch(base + '/ads?externalId=' + encodeURIComponent(__adExternalId) + '&take=1', { headers: hdr() });
+      if (__adHitResp.ok) {
+        var __adHitJson = await __adHitResp.json().catch(function () { return {}; });
+        __adHit = (Array.isArray(__adHitJson.data) ? __adHitJson.data : []).filter(function (a) { return a.productId; })[0] || null;
+      }
+    } catch (e) { /* best-effort, падаємо на adsList нижче */ }
+    if (!__adHit && adsList.length) {
+      // Фолбек на bulk-список, якщо точковий запит з якоїсь причини не спрацював (мережа/CRM).
+      __adHit = adsList.filter(function (a) { return String(a.externalId || '').trim() === __adExternalId && a.productId; })[0] || null;
+    }
     if (__adHit) {
       var __byAdProd = all.filter(function (x) { return String(x.id) === String(__adHit.productId); })[0];
       if (__byAdProd) { found = __byAdProd; via = 'ad_manual_link'; mk = 'adlink_' + __adExternalId; }
@@ -348,6 +369,12 @@ try {
           var tp = ((((gjp.candidates || [])[0] || {}).content || {}).parts || [{}])[0].text || '';
           var mmp = tp.match(/\{[\s\S]*\}/);
           if (mmp) { var fp = JSON.parse(mmp[0]); if (fp.bestMatchIndex != null && all[fp.bestMatchIndex]) { found = all[fp.bestMatchIndex]; via = 'photo'; mk = 'photo_' + fp.bestMatchIndex; } }
+          // 2026-09-13 (олексій/olgakovalenko_ok: vision дав неправильний товар — розслідування
+          // впало в глухий кут, бо цей виклик НІКОЛИ не логувався, "що саме модель побачила"
+          // неможливо було перевірити пост-фактум). Raw fetch() у js-node не потрапляє в api_calls
+          // (та таблиця лише для httpRequest/claude-нод) — тож хоч би в pm2 logs лишаємо слід:
+          // URL фото, опис моделі, знайдений індекс/товар. Не блокує основний потік (try/catch вище).
+          console.log('[vision] photo_match url=' + String(__visionUrl).slice(0, 200) + ' description=' + String((fp && fp.description) || '').slice(0, 300) + ' bestMatchIndex=' + String((fp && fp.bestMatchIndex) != null ? fp.bestMatchIndex : 'null') + ' matchedProduct=' + (found ? (found.sku || found.id) : 'none'));
         }
       } catch (e) { } finally { clearTimeout(top); }
     }

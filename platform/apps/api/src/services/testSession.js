@@ -2585,9 +2585,15 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                     if (_scAlready) {
                         pushDelivery(runtime, 'size_chart_on_demand', true, null, { nodeId: node.id, skipped: 'already sent' });
                     } else if (/^https?:\/\//.test(String(_scUrl)) || _scText) {
-                        // Картинка (якщо є) + текстова таблиця з точними цифрами (якщо є) — одним ходом, один раз на товар.
-                        if (/^https?:\/\//.test(String(_scUrl))) await persistAssistantMessage(session.id, '', { nodeId: node.id, nodeType: 'size_chart_on_demand', attachment: { type: 'photo', url: _scUrl, caption: '' } });
-                        if (_scText) await persistAssistantMessage(session.id, _scText, { nodeId: node.id, nodeType: 'size_chart_on_demand' });
+                        // 2026-09-13 (тікет 1790c81b, власник: "це дуже складно для клієнта, краще фото
+                        // розмірної сітки скинути, а не текстом писати") — раніше слали КАРТИНКУ + текстову
+                        // таблицю ОДНИМ ходом, коли обидві є (двоповідомленнєвий "спам", саме на це й скаржився
+                        // власник: a_.korostashova отримала і повний текстовий блок, і картинку одразу після).
+                        // Тепер: є картинка → шлемо ЛИШЕ її (найзручніше клієнту); текстова таблиця — тільки
+                        // якщо картинки НЕМА (той самий фолбек, що й раніше, просто вже не разом із фото).
+                        const _hasScImg = /^https?:\/\//.test(String(_scUrl));
+                        if (_hasScImg) await persistAssistantMessage(session.id, '', { nodeId: node.id, nodeType: 'size_chart_on_demand', attachment: { type: 'photo', url: _scUrl, caption: '' } });
+                        else if (_scText) await persistAssistantMessage(session.id, _scText, { nodeId: node.id, nodeType: 'size_chart_on_demand' });
                         ctx.sizeChartSentAt = Date.now(); ctx.sizeChartSentSku = String((ctx.product && ctx.product.sku) || '');
                         pushDelivery(runtime, 'size_chart_on_demand', true, null, { nodeId: node.id, image: /^https?:\/\//.test(String(_scUrl)), text: !!_scText });
                         __sizeChartSentThisTurn = true;

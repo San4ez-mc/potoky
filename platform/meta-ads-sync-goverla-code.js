@@ -76,7 +76,7 @@ async function syncAccount(acctInfo) {
     // effective_status у CRM — фільтр "показати лише активні" робить сторінка (GET /ads,
     // дефолт), не сам синк. Так effectiveStatus завжди відображає ПОТОЧНИЙ реальний стан.
     var url = 'https://graph.facebook.com/v21.0/' + acct + '/ads'
-      + '?fields=id,name,effective_status,campaign{id,name},adset{id,name},creative{thumbnail_url}'
+      + '?fields=id,name,effective_status,created_time,campaign{id,name},adset{id,name},creative{thumbnail_url}'
       + '&limit=50' + (after ? '&after=' + encodeURIComponent(after) : '')
       + '&access_token=' + encodeURIComponent(token);
     var metaRes;
@@ -102,6 +102,7 @@ async function syncAccount(acctInfo) {
           adAccountId: acct,
           adAccountName: acctName,
           effectiveStatus: a.effective_status || null,
+          adCreatedAt: a.created_time || null,
           thumbnailUrl: (a.creative && a.creative.thumbnail_url) ? String(a.creative.thumbnail_url) : null,
         };
         var crmRes = await fetch(crmBase + '/ads', { method: 'POST', headers: crmHdr, body: JSON.stringify(body) });

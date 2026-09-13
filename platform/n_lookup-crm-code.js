@@ -257,6 +257,26 @@ try {
     if (__adImage) context.adImage = __adImage;
     if (typeof __gErr !== 'undefined' && __gErr.length) context.adCaptionError = __gErr.join(' | ').slice(0, 400);
     if (__adCaption) context.adCaptionError = ''; // текст отримано — старі помилки проміжних запитів не показуємо
+    // 2026-09-13 (тікет 4806e03e, власник: "зламані ключі падають ТИХО — має бути сповіщення"):
+    // якщо серед помилок __gErr є ознака саме АВТОРИЗАЦІЙНОГО збою токена (OAuthException/код 190/
+    // "Cannot parse access token"/401) — а не просто "пост не знайдено" чи мережевий таймаут —
+    // шлемо ОДНОРАЗОВЕ (на цю сесію, щоб не спамити на кожному ході) сповіщення в Telegram.
+    // Не через notifyTg-ноду (довелось би додавати нову ноду+ребро в граф) — напряму, той самий
+    // TELEGRAM_BOT_TOKEN/ADMIN_TELEGRAM_ID, що вже читає testSession.js для власних алертів.
+    try {
+      var __authErr = (typeof __gErr !== 'undefined' ? __gErr : []).find(function (e) { return /OAuthException|Cannot parse access token|Invalid OAuth access token|\b190\b|\b401\b/i.test(e); });
+      if (__authErr && !context.__tokenAuthAlertSent) {
+        context.__tokenAuthAlertSent = true;
+        var __tgTok = String(keys.TELEGRAM_BOT_TOKEN || '').trim();
+        var __adminId = String(keys.ADMIN_TELEGRAM_ID || '').trim();
+        if (__tgTok && __adminId) {
+          fetch('https://api.telegram.org/bot' + __tgTok + '/sendMessage', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: __adminId, parse_mode: 'HTML', text: '🔑 <b>Схоже, зламаний ключ Meta/Instagram (Graph API)</b>\n\n' + String(__authErr).slice(0, 300) + '\n\nЦе визначення товару по рекламі/посту — поки ключ не оновлять, ця частина мовчки не працюватиме (решта воронки — без змін). Перевірте INSTAGRAM_ACCESS_TOKEN / META_SYSTEM_USER_TOKEN в CRM → Автоматизації.' }),
+          }).catch(function () {});
+        }
+      }
+    } catch (e) { /* сповіщення best-effort — не має ламати основний потік */ }
     if (!__igTok && !__muTok) context.adCaptionError = 'немає META_SYSTEM_USER_TOKEN (задається в CRM → Автоматизації, передається у воронку автоматично)';
   }
 

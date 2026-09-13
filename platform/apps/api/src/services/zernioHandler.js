@@ -15,6 +15,7 @@ const { db } = require('@platform/db');
 const logger = require('@platform/logger');
 const { executeFlowStep } = require('./testSession');
 const { isBlockedByTestMode, isTestModeOn } = require('./testModeGate');
+const { syncConversationTruth, isTruthSyncEnabled } = require('./zernioConversationSync');
 const { execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -1260,7 +1261,12 @@ async function handleIncomingMessage(botId, body) {
     // 2026-09-08 05:45 (рішення власника): пауза від менеджера (manager_message / бекфіл 594 розмов) — не назавжди.
     // Клієнт повертається з НОВИМ сигналом товару (пост/рілс, реклама, артикул, фото) після ≥24 год тиші в розмові
     // (ні клієнт, ні менеджер, ні бот не писали) → пауза знімається, бот відповідає. Ручна пауза (manual) — ніколи.
-    if (ctxNow.funnelPaused && (ctxNow.pausedBy === 'manager_message' || ctxNow.pausedBy === 'manager_message_backfill') && hasProductSignal && !testModeBlocked) {
+    // 2026-09-13 (vasyafaliuta, 5161ae2d): голе ФОТО (без тексту) — НЕ «новий товар»: клієнт після
+    // закритого менеджером обміну скинув скрін/фото через 2 доби → пауза знялась, бот вивалив
+    // «оплати у виписці нема + дайте адресу». Паузу менеджера знімає лише СИЛЬНИЙ сигнал:
+    // реклама/пост/рілс/сторіс або артикул у тексті.
+    const strongProductSignal = !!(sharedPost || adId || postId || storyId || /(?:артикул|арт\.?|art|код|sku|#|№)\s*[:#№.\-]?\s*[A-Za-zА-Яа-яІЇЄҐіїєґ]{0,5}\d{2,8}/i.test(String(text || '')) || /\b[A-Za-z]\d{3,6}\b/.test(String(text || '')));
+    if (ctxNow.funnelPaused && (ctxNow.pausedBy === 'manager_message' || ctxNow.pausedBy === 'manager_message_backfill') && strongProductSignal && !testModeBlocked) {
         try {
             const prev = await db.message.findFirst({ where: { sessionId: session.id, createdAt: { lt: new Date(Date.now() - 5000) } }, orderBy: { createdAt: 'desc' }, select: { createdAt: true } });
             const quietMs = prev ? (Date.now() - prev.createdAt.getTime()) : Infinity;
@@ -1300,7 +1306,10 @@ async function handleIncomingMessage(botId, body) {
         logger.warn('[zernioHandler] inbound arrived late from channel', { botId, sessionId: session.id, latencySec: Math.round(channelLatencyMs / 1000), stale: staleInbound, text: String(text || '').slice(0, 60) });
         await logDelivery(session.id, botId, 'zernio_inbound', true, null, { latencyMs: channelLatencyMs, stale: staleInbound, text: String(text || '').slice(0, 80), reason: staleInbound ? 'stale: skipped flow (older than last bot reply)' : 'late but processed' });
         // Fire-and-forget: не блокуємо основний потік обробки цього повідомлення.
-        recoverMissedConversationMessages(botId, session.id, conversationId).catch(() => {});
+        // 2026-09-13: коли увімкнено звірку з REST (zernioConversationSync, у runFlowAndDeliver) —
+        // пропущені повідомлення довантажує вона, синхронно ПЕРЕД ходом бота; паралельний
+        // старий recovery тут лише плодив би дублі (інший простір id, інший createdAt).
+        if (!(await isTruthSyncEnabled(botId))) recoverMissedConversationMessages(botId, session.id, conversationId).catch(() => {});
     }
     if (staleInbound) {
         logger.info('[zernioHandler] stale inbound — stored, flow not run', { botId, sessionId: session.id });
@@ -1409,6 +1418,7 @@ function scheduleFlowRun(sessionId, msg) {
     if (msg.flowRuntimePatch && typeof msg.flowRuntimePatch === 'object') entry.flowRuntimePatch = { ...(entry.flowRuntimePatch || {}), ...msg.flowRuntimePatch };
     if (msg.contactName) entry.contactName = msg.contactName;
     if (msg.commentId) entry.commentId = msg.commentId;
+    if (msg.resumeFromManagerSilence) entry.resumeFromManagerSilence = true;
     if (entry.timer) clearTimeout(entry.timer);
     entry.timer = setTimeout(() => {
         _pendingFlowRuns.delete(sessionId);
@@ -1425,7 +1435,44 @@ function scheduleFlowRun(sessionId, msg) {
 async function runFlowAndDeliver(sessionId, entry) {
     const { botId, contactId, conversationId, contactName, commentId } = entry;
     const sendOpts = { sessionId, ...(commentId ? { commentId } : {}) };
-    const mergedText = entry.texts.filter(Boolean).join('\n').trim();
+    let mergedText = entry.texts.filter(Boolean).join('\n').trim();
+    let runImageUrl = entry.imageUrl;
+    // 2026-09-13 — ЗВІРКА З РОЗМОВОЮ (джерело істини = Zernio REST, не вебхук). Див. zernioConversationSync.js.
+    // Вебхук-потік губить і затримує повідомлення (клієнта — на 2 хв…2 доби, менеджера — на 2–19 хв або
+    // назавжди), тому бот «не знав», що розмову вже веде менеджер, і відповідав «Привіт! Я Оля…» посеред
+    // продажу (farrakhova401, pol_natka, matifeyy, 2026-09-13). Тепер ПЕРЕД кожним ходом: довантажуємо
+    // пропущене, і якщо останнім серед вихідних писав МЕНЕДЖЕР — бот мовчить (звичайна пауза
+    // manager_message, її знімає лише правило тиші менеджера / ручне зняття / сильний сигнал товару після 24 год).
+    // Для DM-ходів (не коментар-вхід: там текст — сам коментар, а не повідомлення розмови).
+    if (conversationId && !commentId) {
+        const sync = await syncConversationTruth(botId, sessionId, conversationId);
+        if (sync.ok && !sync.empty) {
+            if (sync.managerLed && !entry.resumeFromManagerSilence) {
+                try {
+                    const _s = await db.session.findUnique({ where: { id: sessionId }, select: { context: true } });
+                    const _c = { ...((_s && _s.context) || {}) };
+                    if (!_c.funnelPaused) {
+                        await db.session.update({ where: { id: sessionId }, data: { context: cleanJsonDeep({ ..._c, funnelPaused: true, pausedBy: 'manager_message', pausedAt: new Date(sync.lastManagerAt).toISOString() }) } });
+                    }
+                } catch (e) { logger.warn('[zernioHandler] truth-sync pause failed: ' + e.message, { sessionId }); }
+                await logDelivery(sessionId, botId, 'zernio_inbound', true, null, { reason: 'zernio_truth: останнім у розмові писав менеджер (' + new Date(sync.lastManagerAt).toISOString().slice(11, 16) + 'Z «' + String(sync.lastManagerText || '').slice(0, 60) + '») — бот мовчить', text: String(mergedText || '').slice(0, 80), inserted: sync.inserted });
+                logger.info('[zernioHandler] truth-sync: manager-led conversation — flow skipped', { botId, sessionId, inserted: sync.inserted });
+                return;
+            }
+            // Усі ще не відповіджені повідомлення клієнта в правильному порядку (включно з тими, що
+            // вебхук приніс пізно/не приніс) — замість лише тексту цього конкретного вебхука.
+            const _texts = sync.unanswered.map((u) => String(u.text || '').trim()).filter(Boolean);
+            if (_texts.length) {
+                const _joined = _texts.join('\n').trim();
+                if (_joined !== mergedText) logger.info('[zernioHandler] truth-sync: merged unanswered client messages', { botId, sessionId, fromWebhook: String(mergedText).slice(0, 60), fromRest: _joined.slice(0, 60), n: _texts.length });
+                mergedText = _joined;
+            }
+            if (!runImageUrl) {
+                const _ph = sync.unanswered.map((u) => (u.attachments || []).find((a) => a.type === 'photo' && a.url)).find(Boolean);
+                if (_ph) runImageUrl = _ph.url;
+            }
+        }
+    }
     // Повторне накладання патчу контексту (пост/реклама/реферал) — попередній прогін у черзі міг перезаписати його.
     if ((entry.ctxPatch && Object.keys(entry.ctxPatch).length) || entry.flowRuntimePatch) {
         try {
@@ -1437,7 +1484,7 @@ async function runFlowAndDeliver(sessionId, entry) {
         } catch (e) { logger.warn('[zernioHandler] ctxPatch re-apply failed: ' + e.message, { sessionId }); }
     }
     const sinceTime = new Date();
-    try { await executeFlowStep({ sessionId, incomingUserMessage: mergedText, incomingImageUrl: entry.imageUrl }); }
+    try { await executeFlowStep({ sessionId, incomingUserMessage: mergedText, incomingImageUrl: runImageUrl }); }
     catch (e) { logger.error('[zernioHandler] flow step failed', { botId, sessionId, error: e.message }); }
     const outMsgs = await db.message.findMany({ where: { sessionId, role: 'assistant', createdAt: { gt: sinceTime } }, orderBy: { createdAt: 'asc' } });
     for (const om of outMsgs) {
@@ -1846,7 +1893,7 @@ async function resumeAfterManagerSilence() {
                 const att = after.map((m) => (m.metadata || {}).attachment).find((a) => a && a.type === 'photo' && /^http/.test(a.url || ''));
                 await logDelivery(s.id, s.botId, 'zernio_inbound', true, null, { reason: 'manager_silence_resume: менеджер мовчить 10 хв — бот відновив і відповідає на накопичене', text: text.slice(0, 80) });
                 logger.info('[zernioHandler] resumed after manager silence', { sessionId: s.id });
-                if (text || att) scheduleFlowRun(s.id, { botId: s.botId, contactId: ctx.contactId || ctx.psid, conversationId: ctx.conversationId, contactName: ctx.senderName, text, imageUrl: att ? att.url : null });
+                if (text || att) scheduleFlowRun(s.id, { botId: s.botId, contactId: ctx.contactId || ctx.psid, conversationId: ctx.conversationId, contactName: ctx.senderName, text, imageUrl: att ? att.url : null, resumeFromManagerSilence: true });
                 // 2026-09-08 (власник): Telegram-сповіщення про відновлення не потрібне — лише лог доставки вище.
             } catch (e) { logger.warn('[zernioHandler] resumeAfterManagerSilence session error', { sessionId: s.id, error: e.message }); }
         }

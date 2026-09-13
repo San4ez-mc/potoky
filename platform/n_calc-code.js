@@ -328,7 +328,21 @@ if (avail.length && avail.indexOf(size) < 0) {
   // 2026-09-07 (Олена, 185/120, куртка S–XXL): за сіткою XXXL, найбільший наявний XXL — раніше мовчки брали XXL
   // («буде точно мала», менеджер). Більший за наявні → ескалація до менеджера, а не менший розмір.
   var __maxIdx = Math.max.apply(null, letterAvail.map(function (a) { return order.indexOf(a); }));
-  if (order.indexOf(size) > __maxIdx) return oor('за параметрами (' + h + ' см / ' + w + ' кг) виходить ' + size + ', а найбільший наявний розмір — ' + order[__maxIdx] + ' (буде малий)', size);
+  if (order.indexOf(size) > __maxIdx) {
+    // 2026-09-13 (тікет 6c2e2792, власник дав ДОСЛІВНИЙ скрипт замість "почекайте менеджера"):
+    // клієнт більший за найбільший наявний розмір цього товару (не взуття — там своя нумерація/
+    // логіка) — чесно кажемо, що буде малий, і пропонуємо конкретну відому альтернативу (флісові
+    // костюми до ХХХЛ, взуття до 46), а НЕ обіцяємо навмання те, чого можемо не мати. Менеджеру
+    // сигнал усе одно йде (n_size_oor_admin) — це доповнення до відповіді, не заміна контролю.
+    var __oorAlt = '';
+    if (!/взутт/i.test(String(context.product && context.product.categoryName || ''))) {
+      var __maxSizeUa = { S: 'S', M: 'M', L: 'L', XL: 'ХЛ', XXL: 'ХХЛ', XXXL: 'ХХХЛ' }[order[__maxIdx]] || order[__maxIdx];
+      __oorAlt = 'Нажаль цей товар йде тільки до ' + __maxSizeUa + ' розміру, а він вам буде малий. Можу запропонувати тільки флісові костюми, вони йдуть до ХХХЛ розміру. Також у нас є взуття до 46 розміру.';
+    }
+    var __o = oor('за параметрами (' + h + ' см / ' + w + ' кг) виходить ' + size + ', а найбільший наявний розмір — ' + order[__maxIdx] + ' (буде малий)', size);
+    if (__oorAlt) __o.sizeOorAlternative = __oorAlt;
+    return __o;
+  }
   var idx = order.indexOf(size), best = letterAvail[0], bestd = 999;
   for (var i = 0; i < letterAvail.length; i++){ var dd = Math.abs(order.indexOf(letterAvail[i]) - idx); if (dd < bestd){ bestd = dd; best = letterAvail[i]; } }
   size = best;

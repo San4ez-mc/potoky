@@ -504,7 +504,7 @@ const ALERTS = {
     n_create: { alertTitle: '🎉 {{context.createAlertTitle}} · {{context.orderRef}}', alertMain: '{{context.createAlertMain}}', alertDetails: '🛍️ {{context.product.name}} · арт. {{context.orderSku}}\n{{context.extraProductsLine}}🧾 {{context.orderUnitsText}}{{context.upsellLine}}\n💳 {{context.payLabel}} · у виписці: {{context.payStatus}}\n📦 {{context.orderData.fullName}}, {{context.orderData.phone}}\n📍 {{context.orderData.city}}, НП {{context.orderData.branch}}\n🏭 Постачальник: {{context.supplier}}' },
     n_receipt_alert: { alertTitle: '🧾 Чек отримано — у виписці не знайдено · {{context.orderRef}}', alertMain: 'Клієнт надіслав чек, але автозвірка з mono платіж не знайшла (не mono, інша сума або ще не надійшов). Перевірте вручну; якщо все гаразд — підтвердіть оплату в CRM.', alertDetails: '💰 {{context.payAmount}} грн ({{context.payLabel}})\n🛍️ {{context.product.name}} · {{context.orderUnitsText}}\n🖼 {{context.lastReceiptImageUrl}}' },
     n_unknown_admin: { alertTitle: '🔔 Бот не визначив товар', alertMain: 'Клієнт пише, але бот не зрозумів, про який товар мова, і попросив пост/артикул. Якщо бачите товар — підкажіть у чаті.', alertDetails: '💬 «{{context.lastCustomerMessage}}»\n\n{{context.unknownDetectionDebug}}' },
-    n_size_oor_admin: { alertTitle: '📏 Розмір поза сіткою', alertMain: 'Бот не зміг підібрати розмір і попросив клієнта зачекати — підкажіть розмір у чаті.', alertDetails: '🛍️ {{context.product.name}}\n📐 зріст {{context.sizeInput.height}} см, вага {{context.sizeInput.weight}} кг\n❗ {{context.sizeOorReason}}' },
+    n_size_oor_admin: { alertTitle: '📏 Розмір поза сіткою', alertMain: 'Бот не зміг підібрати розмір; якщо для цього товару вже є готова альтернатива — запропонував її клієнту (нижче), інакше просто чекає вас у чаті.', alertDetails: '🛍️ {{context.product.name}}\n📐 зріст {{context.sizeInput.height}} см, вага {{context.sizeInput.weight}} кг\n❗ {{context.sizeOorReason}}\n💬 Клієнту вже сказано: {{context.sizeOorAlternative}}' },
     // 2026-09-10 (плутанина менеджерів «оформлено чи ні»): в обох алертах тепер одразу видно
     // клієнта (клікабельне посилання) і чому саме вручну — щоб не було повторного оформлення
     // тим самим замовленням, бо менеджер не побачив, що бот вже щось зробив.
@@ -983,6 +983,21 @@ function refresh(flow, opts) {
     if (byId.n_set_choice && byId.n_set_choice.type === 'claude' && !String(byId.n_set_choice.data.systemPrompt || '').includes('ІНШИХ кольорів у цієї позиції НЕМА')) {
         byId.n_set_choice.data.systemPrompt = String(byId.n_set_choice.data.systemPrompt || '') + SET_CHOICE_SINGLE_COLOR_RULE;
         notes.push('n_set_choice singleColorRule');
+    }
+    // 2026-09-13 (тікет 6c2e2792, власник дав дослівний скрипт замість "почекайте менеджера"
+    // на "розмір поза сіткою"): n_calc-code.js тепер рахує context.sizeOorAlternative (флісові
+    // костюми до ХХХЛ / взуття до 46) для одягу, що вийшов за межі своєї сітки. Вставляємо
+    // ЯК ПЕРШЕ речення message-ноди (перед звичним "покличу менеджера") — і в message, і в
+    // кожен variant, ідемпотентно (перевірка по маркеру всередині тексту).
+    var _oorMsgNode = byId.n_size_oor_msg;
+    if (_oorMsgNode && _oorMsgNode.type === 'message') {
+        var _oorPrefix = '{{context.sizeOorAlternative}}';
+        var _addPrefix = function (t) { t = String(t || ''); return t.indexOf('sizeOorAlternative') >= 0 ? t : (_oorPrefix + ' ' + t); };
+        if (String(_oorMsgNode.data.text || '').indexOf('sizeOorAlternative') < 0) {
+            _oorMsgNode.data.text = _addPrefix(_oorMsgNode.data.text);
+            if (Array.isArray(_oorMsgNode.data.variants)) _oorMsgNode.data.variants = _oorMsgNode.data.variants.map(_addPrefix);
+            notes.push('n_size_oor_msg sizeOorAlternative prefix');
+        }
     }
     // 2026-09-13 (тікет 62b89641, Романа): клієнтка написала «Вага 78» + «Зріст 182» ОКРЕМИМИ підписаними
     // рядками (разом із фото) — модель це не побачила як готові дані й перепитала вагу ще раз; клієнтка

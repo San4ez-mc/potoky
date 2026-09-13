@@ -16,6 +16,7 @@ const logger = require('@platform/logger');
 const { executeFlowStep } = require('./testSession');
 const { isBlockedByTestMode, isTestModeOn } = require('./testModeGate');
 const { syncConversationTruth, isTruthSyncEnabled } = require('./zernioConversationSync');
+const shopAgent = require('./shopAgent');
 const { execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -1485,7 +1486,16 @@ async function runFlowAndDeliver(sessionId, entry) {
         } catch (e) { logger.warn('[zernioHandler] ctxPatch re-apply failed: ' + e.message, { sessionId }); }
     }
     const sinceTime = new Date();
-    try { await executeFlowStep({ sessionId, incomingUserMessage: mergedText, incomingImageUrl: runImageUrl }); }
+    try {
+        // 2026-09-13 — новий агент-продавець (shopAgent: одна памʼять + політика замість графа зі 164 нод).
+        // Вмикається per-bot (settings.engine='shop_agent_v2' або ключ SHOP_AGENT_V2=1). Коментар-вхід
+        // (commentId) лишається на старому шляху (n_comment_entry — публічна відповідь на коментар).
+        if (!commentId && await shopAgent.isAgentBot(botId)) {
+            await shopAgent.handleTurn({ botId, sessionId, text: mergedText, imageUrl: runImageUrl, sharedPost: entry.ctxPatch && entry.ctxPatch.sharedPost, entryAdId: entry.ctxPatch && entry.ctxPatch.entryAdId });
+        } else {
+            await executeFlowStep({ sessionId, incomingUserMessage: mergedText, incomingImageUrl: runImageUrl });
+        }
+    }
     catch (e) { logger.error('[zernioHandler] flow step failed', { botId, sessionId, error: e.message }); }
     const outMsgs = await db.message.findMany({ where: { sessionId, role: 'assistant', createdAt: { gt: sinceTime } }, orderBy: { createdAt: 'asc' } });
     for (const om of outMsgs) {

@@ -1698,7 +1698,40 @@ async function handleSideEvent(botId, event, body) {
             const _pc = (_fresh && _fresh.context) || {};
             // 2026-09-08 (Maltsev): у «готовій відповіді» менеджера є «Артикул: A0187» — запамʼятовуємо, щоб після відновлення бот знав товар.
             const _artM = String(_sentText || '').match(/Артикул:?\s*([A-Za-z]{1,4}\d{3,8}|set\d{3,6}|\d{5,8})/i);
-            if (_artM) { _pc.managerArticleHint = _artM[1]; _pc.managerArticleAt = new Date().toISOString(); if (_pc.funnelPaused) await db.session.update({ where: { id: session.id }, data: { context: _pc } }).catch(() => {}); }
+            if (_artM) {
+                _pc.managerArticleHint = _artM[1]; _pc.managerArticleAt = new Date().toISOString();
+                if (_pc.funnelPaused) await db.session.update({ where: { id: session.id }, data: { context: _pc } }).catch(() => {});
+            } else if (_sentText) {
+                // 2026-09-13 (тікети cc024108/668b9cab — «Фінальний розпродаж бомберів»/«...кофт»: канцелярні
+                // "готові відповіді" менеджера часто НЕ мають рядка "Артикул:" взагалі (продажний текст-шаблон
+                // без коду товару) — Maltsev-фікс вище на них не спрацьовує, бот після 10-хв auto-resume не знає
+                // товару і перепитує "костюми, взуття, кофти?" — це саме та "зайва відповідь", на яку скаржився
+                // власник. Фолбек: та сама категорія-стем + точна ціна з тексту («1279 ₴») — якщо в каталозі
+                // РІВНО один товар цієї категорії з такою ціною, це майже напевно він (best-effort, не критичний
+                // шлях — як і managerArticleHint вище, лише підказка для відновлення діалогу).
+                try {
+                    const _stemM = String(_sentText).toLowerCase().match(/(кофт|светр|футболк|джинс|бомбер|куртк|вітровк|костюм|штан|лофер|кросівк|черевик|худі|шапк|туфл|кед|накидк|підголівник)/);
+                    const _priceM = String(_sentText).match(/(\d{3,6})\s*(?:₴|грн)/i);
+                    if (_stemM && _priceM) {
+                        const _crmBaseRow2 = await db.funnelKey.findFirst({ where: { botId, key: 'CRM_API_BASE' }, select: { value: true } });
+                        const _crmKeyRow2 = await db.funnelKey.findFirst({ where: { botId, key: 'CRM_API_KEY' }, select: { value: true } });
+                        const _crmBase2 = (_crmBaseRow2?.value || 'http://127.0.0.1:4700/api').replace(/\/$/, '');
+                        const _crmKey2 = (_crmKeyRow2?.value || '').trim();
+                        if (_crmKey2) {
+                            const _pr = await fetch(_crmBase2 + '/products?take=300', { headers: { Authorization: 'Bearer ' + _crmKey2, Accept: 'application/json' } });
+                            const _pj = _pr.ok ? await _pr.json().catch(() => ({})) : {};
+                            const _all = Array.isArray(_pj.data) ? _pj.data : [];
+                            const _price = Number(_priceM[1]);
+                            const _cand = _all.filter((p) => Number(p.price) === _price && new RegExp(_stemM[1], 'i').test(String(p.name || '') + ' ' + String(p.customerName || '')));
+                            if (_cand.length === 1) {
+                                _pc.managerArticleHint = _cand[0].sku; _pc.managerArticleAt = new Date().toISOString();
+                                if (_pc.funnelPaused) await db.session.update({ where: { id: session.id }, data: { context: _pc } }).catch(() => {});
+                                logger.info('[zernioHandler] managerArticleHint via category+price fallback', { botId, sessionId: session.id, sku: _cand[0].sku });
+                            }
+                        }
+                    }
+                } catch (_hintErr) { logger.warn('[zernioHandler] managerArticleHint category+price fallback failed: ' + _hintErr.message); }
+            }
             // 2026-09-13 (власник: "по АПІ НП щоб це перевірялось" — крон статусів ТТН потребує
             // ТТН у CRM, а менеджер зараз пише його ПРЯМО в Instagram, повз бота й CRM повністю).
             // Той самий детект-патерн, що managerArticleHint вище — 14-цифрове число, формат

@@ -362,8 +362,16 @@ try {
           var b64p = Buffer.from(abp).toString('base64');
           var mimepRaw = (irp.headers.get('content-type') || '').split(';')[0];
           var mimep = (!mimepRaw || mimepRaw === 'application/octet-stream') ? 'image/jpeg' : mimepRaw;
-          var catList = all.map(function (p, i) { return i + ': ' + (p.displayName || p.name || ''); }).join('\n').slice(0, 6000);
-          var promptp = 'Це фото (скріншот, або обкладинка допису/рілсу), яке клієнт показав — ймовірно, товар з нашого магазину. Опиши коротко, що на фото (тип товару, колір, помітний текст/бренд). Потім знайди НАЙБЛИЖЧИЙ відповідник у каталозі нижче (формат: індекс: назва). Якщо жодного релевантного немає — bestMatchIndex null. Поверни ЛИШЕ JSON {"description":"...","bestMatchIndex":число_або_null}.\nКаталог:\n' + catList;
+          // 2026-09-13 (власник: "Джимінай кидати фото каталогу — наскільки дорожче?" —
+          // погоджено дешевий перший крок): БЕЗ жодних додаткових фото чи викликів — той самий
+          // ОДИН запит з ОДНИМ фото клієнта, просто з категорією поруч кожної назви в каталозі
+          // (текст, майже не впливає на вартість) і явною інструкцією СПОЧАТКУ визначити ЗАГАЛЬНИЙ
+          // тип товару, ПОТІМ шукати лише в межах тієї ж категорії. Раніше модель бачила плаский
+          // список 27 різнорідних назв одразу — легко переплутати схожі силуети з різних категорій
+          // (живий кейс olgakovalenko_ok: сіра вітрівка → чорна шкірянка, обидві "куртки"-типу).
+          // Якщо цього не вистачить — Етап 2 (реальні фото вузької категорії Gemini) розглянемо окремо.
+          var catList = all.map(function (p, i) { return i + ': ' + (p.displayName || p.name || '') + (p.category && p.category.name ? ' [категорія: ' + p.category.name + ']' : ''); }).join('\n').slice(0, 7000);
+          var promptp = 'Це фото (скріншот, або обкладинка допису/рілсу), яке клієнт показав — ймовірно, товар з нашого магазину. КРОК 1: визнач ЗАГАЛЬНИЙ ТИП товару на фото (напр. кофта/светр, куртка/вітровка, костюм, взуття, джинси/штани, футболка) — лише тип, не конкретну модель. КРОК 2: у каталозі нижче кожен товар має позначку [категорія: ...] — розглядай ЛИШЕ товари з категорією, що відповідає визначеному типу; серед НИХ знайди найближчий за кольором/фасоном/деталями. НІКОЛИ не вибирай товар з ІНШОЇ категорії, навіть якщо він на вигляд чимось схожий. Якщо в потрібній категорії жодного релевантного немає — bestMatchIndex null (не бери товар з іншої категорії як компроміс). Поверни ЛИШЕ JSON {"description":"...","detectedCategory":"...","bestMatchIndex":число_або_null}.\nКаталог:\n' + catList;
           var grp = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + encodeURIComponent(keys.GEMINI_API_KEY), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: promptp }, { inline_data: { mime_type: mimep, data: b64p } }] }] }) });
           var gjp = await grp.json();
           var tp = ((((gjp.candidates || [])[0] || {}).content || {}).parts || [{}])[0].text || '';
@@ -374,7 +382,7 @@ try {
           // неможливо було перевірити пост-фактум). Raw fetch() у js-node не потрапляє в api_calls
           // (та таблиця лише для httpRequest/claude-нод) — тож хоч би в pm2 logs лишаємо слід:
           // URL фото, опис моделі, знайдений індекс/товар. Не блокує основний потік (try/catch вище).
-          console.log('[vision] photo_match url=' + String(__visionUrl).slice(0, 200) + ' description=' + String((fp && fp.description) || '').slice(0, 300) + ' bestMatchIndex=' + String((fp && fp.bestMatchIndex) != null ? fp.bestMatchIndex : 'null') + ' matchedProduct=' + (found ? (found.sku || found.id) : 'none'));
+          console.log('[vision] photo_match url=' + String(__visionUrl).slice(0, 200) + ' description=' + String((fp && fp.description) || '').slice(0, 300) + ' detectedCategory=' + String((fp && fp.detectedCategory) || '') + ' bestMatchIndex=' + String((fp && fp.bestMatchIndex) != null ? fp.bestMatchIndex : 'null') + ' matchedProduct=' + (found ? (found.sku || found.id) : 'none') + (found ? (' matchedCategory=' + ((found.category && found.category.name) || '')) : ''));
         }
       } catch (e) { } finally { clearTimeout(top); }
     }

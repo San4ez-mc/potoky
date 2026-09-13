@@ -197,9 +197,19 @@ function done(size, source) {
   if (__alsoMerged) out.alsoWants = __alsoMerged;
   return out;
 }
-function oor(reason, size) {
+// 2026-09-13 (аудит нових розмов, тікет-кластер "поза сіткою"): скрипт власника (флісові
+// костюми до ХХХЛ / взуття до 46) стосується КОНКРЕТНО ситуації "клієнт БІЛЬШИЙ за те, що є" —
+// винесено в спільний хелпер, щоб усі гілки oor(), де це справді так (не "бракує даних", не
+// "замалий"), давали однакову підказку, а не лише одна вручну пропатчена гілка.
+function __oorAlternativeIfOversize() {
+  if (/взутт/i.test(String(context.product && context.product.categoryName || ''))) return '';
+  return 'Нажаль цей товар йде тільки до ' + (__oorMaxLabel || 'ХХЛ') + ' розміру, а він вам буде малий. Можу запропонувати тільки флісові костюми, вони йдуть до ХХХЛ розміру. Також у нас є взуття до 46 розміру.';
+}
+var __oorMaxLabel = '';
+function oor(reason, size, oversized) {
   var o = { sizeOutOfRange: true, sizeOorReason: reason, recommendedSize: size || '', sizeAskedFor: __askedFor, knownMeasurementsToSave: __kmSave };
   if (__alsoMerged) o.alsoWants = __alsoMerged;
+  if (oversized) { var alt = __oorAlternativeIfOversize(); if (alt) o.sizeOorAlternative = alt; }
   return o;
 }
 
@@ -271,7 +281,17 @@ var TOL_H=5, TOL_W=8;
 var oorH = h > 0 && isFinite(hMin) && (h < hMin - TOL_H || h > hMax + TOL_H);
 var oorW = w > 0 && isFinite(wMin) && (w < wMin - TOL_W || w > wMax + TOL_W);
 if (oorH || oorW) {
-  return oor((oorH?('зріст '+h+' см поза сіткою ('+hMin+'-'+hMax+')'):'') + (oorH&&oorW?'; ':'') + (oorW?('вага '+w+' кг поза сіткою ('+wMin+'-'+wMax+')'):''), '');
+  // 2026-09-13 (аудит): підказка-альтернатива доречна лише коли клієнт БІЛЬШИЙ за сітку
+  // (h>hMax або w>wMax) — при "замалий" (h<hMin/w<wMin) вона нічого не пояснює й лише плутає.
+  var __oorOversize = (h > 0 && h > hMax + TOL_H) || (w > 0 && w > wMax + TOL_W);
+  if (__oorOversize) {
+    var __letterAvailGen = avail.filter(function (a) { return order.indexOf(a) >= 0; });
+    if (__letterAvailGen.length) {
+      var __topSize = __letterAvailGen.reduce(function (best, a) { return order.indexOf(a) > order.indexOf(best) ? a : best; });
+      __oorMaxLabel = { S: 'S', M: 'M', L: 'L', XL: 'ХЛ', XXL: 'ХХЛ', XXXL: 'ХХХЛ' }[__topSize] || __topSize;
+    }
+  }
+  return oor((oorH?('зріст '+h+' см поза сіткою ('+hMin+'-'+hMax+')'):'') + (oorH&&oorW?'; ':'') + (oorW?('вага '+w+' кг поза сіткою ('+wMin+'-'+wMax+')'):''), '', __oorOversize && __oorMaxLabel);
 }
 // v10 (фідбек власника 2026-09-07: 190/63 бот дав XXL, 180/65 — L; правильно M і M): ВАГА — головний
 // критерій, зріст — поправка. Серед розмірів, куди влучає вага, беремо той, чий діапазон зросту містить
@@ -311,7 +331,15 @@ if (!size && clientSize) {
   if (avail.length && avail.indexOf(clientSize) < 0) return oor('клієнт просить розмір ' + clientSize + ', а в товарі є лише: ' + avail.join(', '), clientSize);
   return done(clientSize, 'client');
 }
-if (!size) return oor('не вдалося визначити розмір за зростом ' + h + ' / вагою ' + w + ' (SIZE_CHART не покриває)', '');
+if (!size) {
+  // 2026-09-13 (аудит нових розмов, сесія 3a6da0ca): якщо h=0 і w=0 — клієнт ФІЗИЧНО ще не називав
+  // зріст/вагу (це не "0 см/0 кг поза сіткою", а "даних немає взагалі") — попередній текст звучав
+  // так, ніби система отримала нульові виміри, хоча n_size просто вийшов без них (напр. клієнт
+  // одразу почав говорити про колір/інший товар). Формулювання тепер відрізняє ці два випадки.
+  return oor(h > 0 || w > 0
+    ? ('не вдалося визначити розмір за зростом ' + h + ' / вагою ' + w + ' (SIZE_CHART не покриває)')
+    : 'клієнт ще не назвав зріст і вагу (JSON без вимірів)', '');
+}
 size = String(size).toUpperCase();
 // 2026-09-08 (Мирошниченко: «в чоловіка обхват талії 113 см, є животик» — бот проігнорував, взяв L): талія ≥ 105 см або
 // згадка про живіт → на розмір більше за сіткою (якщо він є у товару), і кажемо про це клієнту.
@@ -334,14 +362,9 @@ if (avail.length && avail.indexOf(size) < 0) {
     // логіка) — чесно кажемо, що буде малий, і пропонуємо конкретну відому альтернативу (флісові
     // костюми до ХХХЛ, взуття до 46), а НЕ обіцяємо навмання те, чого можемо не мати. Менеджеру
     // сигнал усе одно йде (n_size_oor_admin) — це доповнення до відповіді, не заміна контролю.
-    var __oorAlt = '';
-    if (!/взутт/i.test(String(context.product && context.product.categoryName || ''))) {
-      var __maxSizeUa = { S: 'S', M: 'M', L: 'L', XL: 'ХЛ', XXL: 'ХХЛ', XXXL: 'ХХХЛ' }[order[__maxIdx]] || order[__maxIdx];
-      __oorAlt = 'Нажаль цей товар йде тільки до ' + __maxSizeUa + ' розміру, а він вам буде малий. Можу запропонувати тільки флісові костюми, вони йдуть до ХХХЛ розміру. Також у нас є взуття до 46 розміру.';
-    }
-    var __o = oor('за параметрами (' + h + ' см / ' + w + ' кг) виходить ' + size + ', а найбільший наявний розмір — ' + order[__maxIdx] + ' (буде малий)', size);
-    if (__oorAlt) __o.sizeOorAlternative = __oorAlt;
-    return __o;
+    // sizeOorAlternative тепер рахує спільний хелпер oor(..., true) — див. визначення функції вище.
+    __oorMaxLabel = { S: 'S', M: 'M', L: 'L', XL: 'ХЛ', XXL: 'ХХЛ', XXXL: 'ХХХЛ' }[order[__maxIdx]] || order[__maxIdx];
+    return oor('за параметрами (' + h + ' см / ' + w + ' кг) виходить ' + size + ', а найбільший наявний розмір — ' + order[__maxIdx] + ' (буде малий)', size, true);
   }
   var idx = order.indexOf(size), best = letterAvail[0], bestd = 999;
   for (var i = 0; i < letterAvail.length; i++){ var dd = Math.abs(order.indexOf(letterAvail[i]) - idx); if (dd < bestd){ bestd = dd; best = letterAvail[i]; } }

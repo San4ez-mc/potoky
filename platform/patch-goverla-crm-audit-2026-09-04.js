@@ -999,6 +999,18 @@ function refresh(flow, opts) {
             notes.push('n_size_oor_msg sizeOorAlternative prefix');
         }
     }
+    // 2026-09-13 (аудит нових розмов, сесія 3a6da0ca): клієнт написав «Курточка чорна цікавить»
+    // (інший товар + колір, без жодного зросту/ваги) — модель вийшла json_output-ом {"color":...,
+    // "alsoWants":...} БЕЗ height/weight, хоча правило 3 явно каже "JSON лише коли Є І ЗРІСТ, І
+    // ВАГА". Existing rule 45 (alsoWants) не забороняв явно виходити ЛИШЕ по alsoWants/color без
+    // основних параметрів — n_calc отримав h=0/w=0 і хибно ескалював "не вдалося визначити розмір".
+    // Уточнення дописом (idempotent) — не чіпає решту правила.
+    var _ALSOWANTS_ANCHOR = 'На «спершу поточний товар» не наполягай зайвий раз.';
+    var _ALSOWANTS_CLARIFY = ' ⚠️ alsoWants/color САМІ ПО СОБІ — НЕ причина виходити з json_output: якщо зросту й ваги (чи інших ПОТРІБНИХ ПАРАМЕТРІВ) ще нема, ти НЕ повертаєш JSON просто тому, що додала alsoWants/color — спершу текстом продовжуй питати параметри поточного товару, а alsoWants/color лише ДОДАЄШ у той самий json_output, коли він і так готовий вийти (є зріст+вага або clothingSize).';
+    if (byId.n_size && byId.n_size.type === 'claude' && String(byId.n_size.data.systemPrompt || '').indexOf(_ALSOWANTS_ANCHOR) >= 0 && String(byId.n_size.data.systemPrompt || '').indexOf('alsoWants/color САМІ ПО СОБІ') < 0) {
+        byId.n_size.data.systemPrompt = String(byId.n_size.data.systemPrompt).replace(_ALSOWANTS_ANCHOR, _ALSOWANTS_ANCHOR + _ALSOWANTS_CLARIFY);
+        notes.push('n_size alsoWants-alone guard');
+    }
     // 2026-09-13 (тікет 62b89641, Романа): клієнтка написала «Вага 78» + «Зріст 182» ОКРЕМИМИ підписаними
     // рядками (разом із фото) — модель це не побачила як готові дані й перепитала вагу ще раз; клієнтка
     // повторила «Вище / 78» (тобто «дивись вище» + число), бот знову не зрозумів з першого разу. Явний приклад

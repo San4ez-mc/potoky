@@ -191,7 +191,15 @@ async function runPolicy(A, u) {
     if ((u.phone || u.fullName || u.city || u.branch) && !u.homeAddress) {
         ctx.orderData = { ...(ctx.orderData || {}), ...(u.fullName ? { fullName: u.fullName } : {}), ...(u.phone ? { phone: u.phone } : {}), ...(u.city ? { city: u.city } : {}), ...(u.region ? { region: u.region } : {}), ...(u.branch ? { branch: u.branch } : {}) };
     }
-    const earlyReceipt = (u.receiptLink || u.claimsPaid) && !ctx.crmOrderId && !(ctx.paymentInfo && ctx.paymentInfo.method);
+    // 1c. Раннє захоплення параметрів розміру і кольору — теж незалежно від стадії (клієнт міг назвати
+    //     зріст/вагу, поки бот ще питав про комплект чи колір): нічого не губиться, потім не перепитується.
+    if (u.height || u.weight || u.clothingSize || u.chest || u.footLength || u.waist || u.belly) {
+        const si = { ...(ctx.sizeInput || {}) };
+        if (u.height) si.height = u.height; if (u.weight) si.weight = u.weight; if (u.clothingSize) si.clothingSize = u.clothingSize; if (u.chest) si.chest = u.chest; if (u.footLength) si.footLength = u.footLength; if (u.waist) si.waist = u.waist; if (u.belly) si.belly = true;
+        ctx.sizeInput = si;
+    }
+    if (u.colorMatched) ctx.agent.pendingColor = u.colorMatched; else if (u.color) ctx.agent.pendingColorRaw = u.color;
+    const earlyReceipt = (u.receiptLink || u.claimsPaid || (A.turnImage && addressComplete(ctx.orderData))) && !ctx.crmOrderId && !(ctx.paymentInfo && ctx.paymentInfo.method);
     if (earlyReceipt && !ctx.agent.receiptEarlyAlertAt) {
         ctx.agent.receiptEarlyAlertAt = Date.now();
         await T.alert(A, { title: '🧾 Клієнт пише про оплату до оформлення', main: 'Замовлення в боті ще не оформлене (нема розміру/кольору/адреси) — перевірте вручну, бот продовжує збирати дані.', details: '💬 «' + text.slice(0, 200) + '»' }, { photoUrl: A.turnImage || '' });
@@ -209,7 +217,9 @@ async function runPolicy(A, u) {
         const r = await T.resolveProduct(A, { forceSignal: !!(ctx.catalogHintPick || u.productHint.article) });
         if (r.status === 'found') {
             resetForNewProduct(A, P(ctx).sku);
-            if (!r.skipPresentation || ctx.agent.presentedSku !== P(ctx).sku) await present(A);
+            const samePresented = ctx.agent.presentedSku === P(ctx).sku && ctx.presentedAt && (Date.now() - Number(ctx.presentedAt)) < 6 * 3600 * 1000;
+            if (!samePresented) await present(A);
+            else if (u.wantsPhoto) { const urls = firstPhotoUrls(P(ctx)); if (urls.length) A.out.push({ photoUrls: urls, caption: '', step: 'photo_again' }); }
             if (ctx.adLinkMismatchAt && !ctx.adLinkMismatchAlertedAt) { await T.alert(A, 'n_ad_conflict_admin'); ctx.adLinkMismatchAlertedAt = Date.now(); }
             // нижче — продовжуємо тим самим ходом (параметри/колір могли бути вже в повідомленні)
         } else if (r.status === 'hint') {
@@ -232,8 +242,10 @@ async function runPolicy(A, u) {
 
     // 3. Комплект
     if (p.isSet && !ctx.setMode) {
+        // Клієнт дав параметри/колір/згоду або просить змінити склад, не обравши окрему річ → хоче весь комплект
+        const impliedSet = !u.setChoice && !u.setArticle && (u.height || u.weight || u.clothingSize || u.ready === 'yes' || u.changeRequest || u.colorMatched || u.color);
         if (u.setChoice === 'item' && u.setArticle) { ctx.setPick = { setChoice: 'item', article: u.setArticle }; await T.setApply(A); }
-        else if (u.setChoice === 'set') { ctx.setPick = { setChoice: 'set' }; await T.setApply(A); ctx.setMode = 'set'; }
+        else if (u.setChoice === 'set' || impliedSet) { ctx.setPick = { setChoice: 'set' }; await T.setApply(A); ctx.setMode = 'set'; }
         else { A.out.push({ text: await answerThenAsk(A, u, preNote + 'Підкажіть, будь ласка, вас цікавить весь комплект чи окремі речі з нього? 🙂\nСклад: ' + (p.setList || p.setComponents)), step: 'set_ask' }); ctx.agent.lastAsk = 'весь комплект чи окремі речі'; return; }
     }
     const pp = P(ctx);
@@ -277,8 +289,8 @@ async function runPolicy(A, u) {
 
     // 5. Колір
     if (pp.colors && !(ctx.colorChoice && ctx.colorChoice.color)) {
-        const c = u.colorMatched || matchColor(pp, u.color) || (ctx.sizeInput && ctx.sizeInput.color) || null;
-        if (c) ctx.colorChoice = { color: c, qty: u.qty || undefined };
+        const c = u.colorMatched || matchColor(pp, u.color) || (ctx.sizeInput && ctx.sizeInput.color) || matchColor(pp, ctx.agent.pendingColor) || matchColor(pp, ctx.agent.pendingColorRaw) || null;
+        if (c) { ctx.colorChoice = { color: c, qty: u.qty || undefined }; delete ctx.agent.pendingColor; delete ctx.agent.pendingColorRaw; }
         else {
             const ask = u.color ? 'Кольору «' + u.color + '» саме у цієї моделі нема 😔 Є: ' + pp.colors + ' — який обираєте?' : 'Який колір обираєте: ' + pp.colors + '? 🎨';
             A.out.push({ text: await answerThenAsk(A, u, preNote + ask), step: 'ask_color' }); ctx.agent.lastAsk = 'колір'; return;

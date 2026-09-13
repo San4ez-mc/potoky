@@ -40,8 +40,33 @@ function fallback(reason) {
   var o = { product: null, productUnknown: true, productUnknownReason: reason || '' };
   // конфлікт привʼязки реклами (список категорії замість хибної картки) теж має піти менеджеру — n_ad_conflict_cond
   if (context.adLinkMismatch && context.adLinkMismatch !== context.adLinkMismatchSeen) { o.adLinkMismatchAt = Date.now(); o.adLinkMismatchSeen = context.adLinkMismatch; }
+  // 2026-09-13 (власник: зібрати всі варіанти квитанцій/посилань про оплату, що система не
+  // розпізнала, довести до 100%): якщо детектори нижче (посилання на банк / vision-класифікація
+  // фото) визначили, що клієнт, схоже, надіслав КВИТАНЦІЮ, а не фото товару — не даємо алерту
+  // "не визначив товар" вводити менеджера в оману; лишаємо чіткий слід + URL для n_reconcile,
+  // якщо клієнт пізніше все ж дійде до кроку оплати.
+  if (context.looksLikeReceipt) { o.looksLikeReceipt = true; if (context.lastReceiptImageUrl) o.lastReceiptImageUrl = context.lastReceiptImageUrl; if (context.lastReceiptLink) o.lastReceiptLink = context.lastReceiptLink; }
   return o;
 }
+
+// 2026-09-13 (той самий набір доменів, що й n_reconcile Крок 2 — Monobank/Приват24/Portmone/
+// check.gov.ua/ibanoplata): клієнт іноді кидає ГОЛЕ ПОСИЛАННЯ на квитанцію без жодного тексту —
+// раніше це просто не розпізнавалось ЖОДНИМ пріоритетом матчингу і йшло в "не визначив товар".
+// Дешева детермінована перевірка (без Gemini) — працює НЕЗАЛЕЖНО від того, на якому кроці
+// діалогу клієнт це надіслав.
+(function () {
+  var __rcTxt = String(context.lastUserMessage || input || '');
+  var __rcLinkM = __rcTxt.match(/https?:\/\/[^\s]+/);
+  if (!__rcLinkM) return;
+  try {
+    var __rcHost = new URL(__rcLinkM[0]).hostname.toLowerCase();
+    var __rcHosts = ['check.monobank.ua', 'send.monobank.ua', 'pay.mono.ua', 'pb.ua', 'privatbank.ua', 'next.privat24.ua', 'portmone.com.ua', 'check.gov.ua', 'ibanoplata.com'];
+    if (__rcHosts.some(function (d) { return __rcHost === d || __rcHost.endsWith('.' + d); })) {
+      context.looksLikeReceipt = true;
+      context.lastReceiptLink = __rcLinkM[0];
+    }
+  } catch (e) { /* невалідний URL — ігноруємо */ }
+})();
 
 var apiKey = (keys.CRM_API_KEY || '').trim();
 var base = (keys.CRM_API_BASE || 'http://127.0.0.1:4700/api').replace(/\/$/, '');
@@ -384,12 +409,21 @@ try {
           // (живий кейс olgakovalenko_ok: сіра вітрівка → чорна шкірянка, обидві "куртки"-типу).
           // Якщо цього не вистачить — Етап 2 (реальні фото вузької категорії Gemini) розглянемо окремо.
           var catList = all.map(function (p, i) { return i + ': ' + (p.displayName || p.name || '') + (p.category && p.category.name ? ' [категорія: ' + p.category.name + ']' : ''); }).join('\n').slice(0, 7000);
-          var promptp = 'Це фото (скріншот, або обкладинка допису/рілсу), яке клієнт показав — ймовірно, товар з нашого магазину. КРОК 1: визнач ЗАГАЛЬНИЙ ТИП товару на фото (напр. кофта/светр, куртка/вітровка, костюм, взуття, джинси/штани, футболка) — лише тип, не конкретну модель. КРОК 2: у каталозі нижче кожен товар має позначку [категорія: ...] — розглядай ЛИШЕ товари з категорією, що відповідає визначеному типу; серед НИХ знайди найближчий за кольором/фасоном/деталями. НІКОЛИ не вибирай товар з ІНШОЇ категорії, навіть якщо він на вигляд чимось схожий. Якщо в потрібній категорії жодного релевантного немає — bestMatchIndex null (не бери товар з іншої категорії як компроміс). Поверни ЛИШЕ JSON {"description":"...","detectedCategory":"...","bestMatchIndex":число_або_null}.\nКаталог:\n' + catList;
+          // 2026-09-13 (власник: живі кейси, де клієнт кидав фото КВИТАНЦІЇ/платіжної інструкції
+          // замість фото товару — Елена Грановська, PrivatBank-переказ — а система мовчки трактувала
+          // це як "не визначив товар" і просила пост/артикул, хоча насправді треба звірити оплату):
+          // додано КРОК 0 — спершу відрізнити, чи це взагалі одяг/товар, чи документ/квитанція/скрін
+          // переказу грошей. isReceipt=true → НЕ шукаємо bestMatchIndex, немає товару на фото.
+          var promptp = 'Це фото від клієнта інтернет-магазину одягу. КРОК 0: це фото ОДЯГУ/ТОВАРУ, чи це банківська квитанція/платіжна інструкція/скріншот переказу грошей (IBAN, Monobank, ПриватБанк тощо)? Якщо це квитанція/документ про оплату — поверни ЛИШЕ {"isReceipt":true} і більше нічого, без опису й індексів. Якщо це одяг/товар — переходь до кроків нижче.\nКРОК 1: визнач ЗАГАЛЬНИЙ ТИП товару на фото (напр. кофта/светр, куртка/вітровка, костюм, взуття, джинси/штани, футболка) — лише тип, не конкретну модель. КРОК 2: у каталозі нижче кожен товар має позначку [категорія: ...] — розглядай ЛИШЕ товари з категорією, що відповідає визначеному типу; серед НИХ знайди найближчий за кольором/фасоном/деталями. НІКОЛИ не вибирай товар з ІНШОЇ категорії, навіть якщо він на вигляд чимось схожий. Якщо в потрібній категорії жодного релевантного немає — bestMatchIndex null (не бери товар з іншої категорії як компроміс). Поверни ЛИШЕ JSON {"isReceipt":false,"description":"...","detectedCategory":"...","bestMatchIndex":число_або_null}.\nКаталог:\n' + catList;
           var grp = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=' + encodeURIComponent(keys.GEMINI_API_KEY), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: promptp }, { inline_data: { mime_type: mimep, data: b64p } }] }] }) });
           var gjp = await grp.json();
           var tp = ((((gjp.candidates || [])[0] || {}).content || {}).parts || [{}])[0].text || '';
           var mmp = tp.match(/\{[\s\S]*\}/);
-          if (mmp) { var fp = JSON.parse(mmp[0]); if (fp.bestMatchIndex != null && all[fp.bestMatchIndex]) { found = all[fp.bestMatchIndex]; via = 'photo'; mk = 'photo_' + fp.bestMatchIndex; } }
+          if (mmp) {
+            var fp = JSON.parse(mmp[0]);
+            if (fp.isReceipt === true) { context.looksLikeReceipt = true; context.lastReceiptImageUrl = __visionUrl; }
+            else if (fp.bestMatchIndex != null && all[fp.bestMatchIndex]) { found = all[fp.bestMatchIndex]; via = 'photo'; mk = 'photo_' + fp.bestMatchIndex; }
+          }
           // 2026-09-13 (олексій/olgakovalenko_ok: vision дав неправильний товар — розслідування
           // впало в глухий кут, бо цей виклик НІКОЛИ не логувався, "що саме модель побачила"
           // неможливо було перевірити пост-фактум). Raw fetch() у js-node не потрапляє в api_calls

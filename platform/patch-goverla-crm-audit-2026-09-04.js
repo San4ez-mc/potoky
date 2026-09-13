@@ -470,6 +470,11 @@ function applyV9(nodes, edges, notes) {
 // v12.20.4 (2026-09-09, власник: «додай деталізацію… ід реклами не отримано, ід поста отримано, артикул не
 // знайдено, гарно напиши»): код n_unknown_debug — перевіряє, які способи визначення товару спрацювали.
 const UNKNOWN_DEBUG_CODE = `var lines = [];
+// 2026-09-13 (власник: "зібрати всі варіанти квитанцій/посилань про оплату, які система не
+// розпізнала, довести до 100%"): n_lookup (посилання на банк-домен АБО vision-класифікація
+// фото) міг визначити, що це схоже на КВИТАНЦІЮ, а не фото товару — виносимо це нагору
+// алерту, щоб менеджер одразу бачив "звірте оплату", а не шукав неіснуючий товар.
+if (context.looksLikeReceipt) lines.push('🧾 СХОЖЕ НА КВИТАНЦІЮ ОПЛАТИ, а не фото товару' + (context.lastReceiptLink ? (' — посилання: ' + context.lastReceiptLink) : (context.lastReceiptImageUrl ? (' — фото: ' + context.lastReceiptImageUrl) : '')));
 lines.push(context.entryAdId ? ('📢 ID реклами: отримано (' + context.entryAdId + ')') : '📢 ID реклами: не отримано');
 if (context.sharedPost && context.sharedPost.mediaId) lines.push('📎 ID поста/рілса: отримано (' + (context.sharedPost.kind === 'reel' ? 'рілс' : context.sharedPost.kind === 'story' ? 'сторіс' : 'пост') + ', ' + context.sharedPost.mediaId + ')');
 else if (context.postId) lines.push('📎 ID поста: отримано (' + context.postId + ')');

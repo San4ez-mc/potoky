@@ -2541,6 +2541,11 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                 }
                 // 2026-09-07 (Купцова: «Зараз покажу розмірну сітку» — і нічого): {"wantsSizeChart":true} → картинка
                 // сітки з CRM (product.sizeChartUrl); нема картинки → менеджеру сигнал, нода не виходить.
+                // 2026-09-13 (тест по всіх 27 товарах, 8/8 із реальною сіткою): протилежна проблема —
+                // деталермінована відповідь (картинка+таблиця) ВЖЕ пішла нижче, а модель ВСЕ ОДНО каже
+                // видиме "Звісно, зараз покажу розмірну сітку!" в тому ж ході — дубль-повідомлення.
+                // Прапорець нижче суне видимий текст моделі, коли сітку вже реально надіслано.
+                let __sizeChartSentThisTurn = false;
                 if (exit.parsed && exit.parsed.wantsSizeChart === true && !exit.parsed.askManager) {
                     const _scKeys = Object.keys(exit.parsed).filter((k) => k !== 'wantsSizeChart' && k !== 'wantsPhoto' && k !== 'photoArticle');
                     if (_scKeys.length === 0) exit.done = false;
@@ -2565,6 +2570,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                             await persistAssistantMessage(session.id, 'Розмірна сітка по кожній позиції комплекту:\n\n' + _setScLines.join('\n\n'), { nodeId: node.id, nodeType: 'size_chart_on_demand_set' });
                             ctx.sizeChartSentAt = Date.now(); ctx.sizeChartSentSku = String((ctx.product && ctx.product.sku) || '');
                             pushDelivery(runtime, 'size_chart_on_demand', true, null, { nodeId: node.id, setItems: _setScLines.length });
+                            __sizeChartSentThisTurn = true;
                         } else {
                             pushDelivery(runtime, 'size_chart_on_demand', false, 'жоден компонент сета не має sizeChartData', { nodeId: node.id });
                             await notifyAdminPhotoMissing(session, ctx, funnelEnv, runtime, 'розмірної сітки для компонентів комплекту (у CRM немає даних)');
@@ -2584,6 +2590,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                         if (_scText) await persistAssistantMessage(session.id, _scText, { nodeId: node.id, nodeType: 'size_chart_on_demand' });
                         ctx.sizeChartSentAt = Date.now(); ctx.sizeChartSentSku = String((ctx.product && ctx.product.sku) || '');
                         pushDelivery(runtime, 'size_chart_on_demand', true, null, { nodeId: node.id, image: /^https?:\/\//.test(String(_scUrl)), text: !!_scText });
+                        __sizeChartSentThisTurn = true;
                     } else {
                         pushDelivery(runtime, 'size_chart_on_demand', false, 'немає product.sizeChartUrl', { nodeId: node.id });
                         await notifyAdminPhotoMissing(session, ctx, funnelEnv, runtime, 'розмірної сітки (у CRM нема картинки сітки)');
@@ -2596,7 +2603,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
                 // "continue" (див. вище) показав би клієнту сирий ```json{"wantsPhoto":true}``` блок.
                 // data.silentOnExit (2026-09-07, дубль «підійде XL» від моделі + n_size_reply): при json-виході
                 // видимий текст моделі не показуємо — підтвердження пише наступна детермінована нода.
-                let visibleAssistantText = (data.silentOnExit === true && exit.done && exit.parsed)
+                let visibleAssistantText = ((data.silentOnExit === true && exit.done && exit.parsed) || __sizeChartSentThisTurn)
                     ? ''
                     : ((isJsonExit && typeof exit.jsonStart === 'number')
                         ? stripJsonAndTrailingText(responseText, exit.jsonStart)

@@ -219,7 +219,7 @@ async function runPolicy(A, u) {
             resetForNewProduct(A, P(ctx).sku);
             const samePresented = ctx.agent.presentedSku === P(ctx).sku && ctx.presentedAt && (Date.now() - Number(ctx.presentedAt)) < 6 * 3600 * 1000;
             if (!samePresented) await present(A);
-            else if (u.wantsPhoto) { const urls = firstPhotoUrls(P(ctx)); if (urls.length) A.out.push({ photoUrls: urls, caption: '', step: 'photo_again' }); }
+            else if (u.wantsPhoto && !A.turnImage && (Date.now() - Number(ctx.presentedAt)) > 2 * 60 * 1000) { const urls = firstPhotoUrls(P(ctx)); if (urls.length) A.out.push({ photoUrls: urls, caption: '', step: 'photo_again' }); }
             if (ctx.adLinkMismatchAt && !ctx.adLinkMismatchAlertedAt) { await T.alert(A, 'n_ad_conflict_admin'); ctx.adLinkMismatchAlertedAt = Date.now(); }
             // нижче — продовжуємо тим самим ходом (параметри/колір могли бути вже в повідомленні)
         } else if (r.status === 'hint') {
@@ -301,7 +301,10 @@ async function runPolicy(A, u) {
     if (pp.isSet && ctx.setMode === 'set') {
         const notes = [u.changeRequest, u.color ? 'колір: ' + u.color : '', u.clothingSize ? 'бажаний розмір: ' + u.clothingSize : ''].filter(Boolean);
         if (notes.length) { const n = 'побажання по комплекту: ' + notes.join(', '); if (!String(ctx.extraProducts || '').includes(n)) ctx.extraProducts = (ctx.extraProducts ? ctx.extraProducts + '; ' : '') + n; ctx.agent.setNoteAck = notes.join(', '); }
-        ctx.available = true; ctx.orderUnitsText = ctx.setSizesText || 'весь комплект'; ctx.orderUnitsTotal = Number(pp.price) || undefined; ctx.orderQty = 1; ctx.orderUnits = ctx.orderUnits || [{ color: '', size: '' }];
+        // ціна комплекту: з картки, а якщо в CRM 0 — сума позицій (інакше n_pay_amount дасть «решта −200 грн»)
+        const setTotal = Number(pp.price) > 0 ? Number(pp.price) : (Array.isArray(pp.setItems) ? pp.setItems.reduce((s, it) => s + (Number(it.price) || 0), 0) : 0);
+        if (setTotal > 0 && !(Number(pp.price) > 0)) ctx.product.price = setTotal;
+        ctx.available = true; ctx.orderUnitsText = ctx.setSizesText || 'весь комплект'; ctx.orderUnitsTotal = setTotal || undefined; ctx.orderQty = 1; ctx.orderUnits = ctx.orderUnits || [{ color: '', size: '' }];
         if (!ctx.agent.setStageSent) { await T.funnelStage(A, ...STAGES.color); ctx.agent.setStageSent = true; }
     }
 
@@ -375,8 +378,9 @@ async function runPolicy(A, u) {
         else {
             const payTpl = messageTextMultiline(A.assets, 'n_pay', ctx, A.session.id + ':pay');
             if (u.questions.length) A.out.push({ text: await compose(A, { questions: u.questions, nextStep: 'потім скажи, що лишилось обрати спосіб оплати (сам список дасть система)', maxSentences: 3, fallback: '' }), step: 'pay_q' });
+            const setAckPay = ctx.agent.setNoteAck ? 'Записала побажання: ' + ctx.agent.setNoteAck + ' — менеджер врахує при оформленні 📝\n\n' : ''; ctx.agent.setNoteAck = '';
             const payAck = (u.claimsPaid || u.receiptLink || A.turnImage) ? 'Дякую, бачу квитанцію 🙏 Підкажіть лише, це часткова передплата (200 грн) чи повна оплата — щоб я правильно оформила:\n\n' : ((u.phone || u.fullName || u.city || u.branch) ? 'Дані для відправки записала 📝 Лишилось обрати оплату:\n\n' : (u.addUpsell === false && ctx.agent.upsellOffered ? 'Добре, лише основний товар 🙂\n\n' : ''));
-            A.out.push({ text: payAck + payTpl, step: 'pay_options' });
+            A.out.push({ text: setAckPay + payAck + payTpl, step: 'pay_options' });
             ctx.agent.lastAsk = 'спосіб оплати 1 чи 2'; return;
         }
         await T.payAmount(A);

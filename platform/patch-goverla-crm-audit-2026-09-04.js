@@ -982,6 +982,21 @@ function refresh(flow, opts) {
         byId.n_set_choice.data.systemPrompt = String(byId.n_set_choice.data.systemPrompt || '') + SET_CHOICE_SINGLE_COLOR_RULE;
         notes.push('n_set_choice singleColorRule');
     }
+    // 2026-09-13 (власник: "зібрати всі варіанти квитанцій/посилань про оплату, довести до 100%"):
+    // n_lookup/n_signal_check тепер ставлять context.looksLikeReceipt, коли клієнт кинув квитанцію/
+    // посилання на банк замість фото товару — n_unknown_msg досі питав "який товар вас цікавить?",
+    // хоча правильна відповідь тут — визнати квитанцію й сказати, що менеджер перевірить оплату.
+    const N_UNKNOWN_RECEIPT_RULE = '0. ЯКЩО контекст нижче містить прапорець ПОХОЖЕ_НА_КВИТАНЦІЮ=true — це НЕ звичайне "товар не визначено": клієнт, схоже, надіслав квитанцію/посилання на оплату замість фото товару. НЕ питай "який товар вас цікавить" і НЕ пропонуй категорії. Замість цього одним теплим реченням підтверди отримання (напр. «Дякую, отримали! 💛 Зараз менеджер перевірить оплату і ми продовжимо») і БІЛЬШЕ НІЧОГО не питай у цьому повідомленні.\n🚩 ПОХОЖЕ_НА_КВИТАНЦІЮ: "{{context.looksLikeReceipt}}"\n';
+    if (byId.n_unknown_msg && byId.n_unknown_msg.type === 'claude' && !String(byId.n_unknown_msg.data.systemPrompt || '').includes('ПОХОЖЕ_НА_КВИТАНЦІЮ')) {
+        var _n_unk_sp = String(byId.n_unknown_msg.data.systemPrompt || '');
+        var _n_unk_anchor = '1. Якщо ПІДКАЗКА НЕ порожня';
+        if (_n_unk_sp.indexOf(_n_unk_anchor) >= 0) {
+            byId.n_unknown_msg.data.systemPrompt = _n_unk_sp.replace(_n_unk_anchor, N_UNKNOWN_RECEIPT_RULE + _n_unk_anchor);
+        } else {
+            byId.n_unknown_msg.data.systemPrompt = _n_unk_sp + '\n' + N_UNKNOWN_RECEIPT_RULE;
+        }
+        notes.push('n_unknown_msg receiptRule');
+    }
     // 2026-09-13 (тікет 62b89641, Романа): клієнтка написала «Вага 78» + «Зріст 182» ОКРЕМИМИ підписаними
     // рядками (разом із фото) — модель це не побачила як готові дані й перепитала вагу ще раз; клієнтка
     // повторила «Вище / 78» (тобто «дивись вище» + число), бот знову не зрозумів з першого разу. Явний приклад

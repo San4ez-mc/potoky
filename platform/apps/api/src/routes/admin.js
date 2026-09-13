@@ -102,19 +102,37 @@ router.get('/sessions/unread-count',
         // webhook/тести без telegramId не рахуємо). Інакше старі «активні» сесії з останнім
         // повідомленням юзера копляться назавжди і лічильник завжди показує те саме число.
         const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-        const activeBotSessions = await db.session.findMany({
-            where: {
-                isActive: true, isTest: false,
-                lastActive: { gte: since },
-                // User.telegramId — BigInt @unique (НЕ nullable), тому колишня умова `{ not: null }`
-                // падала в Prisma («Argument not must not be null») ~50 разів/день і лічильник
-                // завжди віддавав 500. Фільтр по telegramId зайвий; службового юзера виключаємо за username.
-                user: { NOT: { username: 'webhook_system' } },
-                ...(allowedProjectIds(req) ? { bot: { projectId: { in: allowedProjectIds(req) } } } : {}),
-            },
-            include: { messages: { orderBy: { createdAt: 'desc' }, take: 1 } },
-        });
-        const count = activeBotSessions.filter(s => s.messages[0]?.role === 'user').length;
+        // 2026-09-13 (OOM-шторм на проді: platform-api вбивався OOM-кілером кожні ~3 хв, dmesg
+        // «Killed process node … anon-rss 3–4 ГБ»; після кожного вбивства гинули дебаунс-черги
+        // Zernio → клієнти без відповіді). Корінь — САМЕ цей запит: адмінка смикає його щохвилини,
+        // а findMany без select вантажив у памʼять УСІ активні сесії за 7 днів РАЗОМ із context
+        // (~3 000 сесій × ~90 КБ JSON, у сумі сотні МБ на один поворот + include messages), і
+        // паралельні поли не встигали збиратись GC. Тепер — один SQL: лічильник рахує БД, у Node
+        // приходить одне число. Фільтр telegramId зайвий (BigInt @unique), службового юзера
+        // виключаємо за username, як і раніше.
+        const projects = allowedProjectIds(req);
+        const rows = projects
+            ? await db.$queryRaw`
+                SELECT COUNT(*)::int AS count FROM (
+                    SELECT s.id,
+                        (SELECT m.role FROM messages m WHERE m."sessionId" = s.id ORDER BY m."createdAt" DESC LIMIT 1) AS last_role
+                    FROM sessions s
+                    JOIN users u ON u.id = s."userId"
+                    JOIN bots b ON b.id = s."botId"
+                    WHERE s."isActive" = true AND s."isTest" = false AND s."lastActive" >= ${since}
+                      AND u.username IS DISTINCT FROM 'webhook_system'
+                      AND b."projectId" = ANY(${projects.map((p) => String(p))})
+                ) t WHERE t.last_role = 'user'`
+            : await db.$queryRaw`
+                SELECT COUNT(*)::int AS count FROM (
+                    SELECT s.id,
+                        (SELECT m.role FROM messages m WHERE m."sessionId" = s.id ORDER BY m."createdAt" DESC LIMIT 1) AS last_role
+                    FROM sessions s
+                    JOIN users u ON u.id = s."userId"
+                    WHERE s."isActive" = true AND s."isTest" = false AND s."lastActive" >= ${since}
+                      AND u.username IS DISTINCT FROM 'webhook_system'
+                ) t WHERE t.last_role = 'user'`;
+        const count = Number((rows && rows[0] && rows[0].count) || 0);
         res.json({ ok: true, data: { count } });
     })
 );

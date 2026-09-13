@@ -52,6 +52,13 @@ function resolveUrl(u) { if (!u) return ''; return /^https?:\/\//i.test(u) ? u :
 
 // 2026-09-08 (mashavoloshka: «артикул А0182» з кириличною «А» → товар не перемкнувся): схожі кириличні літери перед цифрами → латиниця.
 function latinizeLookalikes(x) { var M = { 'А': 'A', 'В': 'B', 'С': 'C', 'Е': 'E', 'Н': 'H', 'І': 'I', 'К': 'K', 'М': 'M', 'О': 'O', 'Р': 'P', 'Т': 'T', 'Х': 'X', 'У': 'Y', 'а': 'a', 'в': 'b', 'с': 'c', 'е': 'e', 'н': 'h', 'і': 'i', 'к': 'k', 'м': 'm', 'о': 'o', 'р': 'p', 'т': 't', 'х': 'x', 'у': 'y' }; return String(x || '').replace(/[АВСЕНІКМОРТХУавсенікмортху]{1,4}(?=\d{2,8})/g, function (seq) { return seq.split('').map(function (ch) { return M[ch] || ch; }).join(''); }); }
+// 2026-09-13 (КРИТИЧНО, знайдено агентом-аудитором): gemini-2.5-flash ретайрнута Google з
+// 2026-09-10 (404 "no longer available to new users") — вся vision-логіка мовчки не працювала
+// 3 ДНІ (best-effort try/catch ковтав помилку). Той самий клас проблеми, що вже стався
+// 2026-08-25 (gemini-1.5-flash → gemini-2.0-flash, обидва retired) — CLAUDE.md §11 вже
+// попереджав "перевіряти живим викликом, не вгадувати за назвою". Тепер gemini-flash-latest
+// (аліас, live-перевірено — завжди резолвиться в актуальну flash-модель, стійкіше до
+// повторення цієї ж проблеми) замість жорстко зашитої версії.
 function extractArticles(txt) {
   if (!txt) return [];
   var s = latinizeLookalikes(String(txt)); var out = []; var m;
@@ -343,7 +350,7 @@ try {
       if (__frameParts.length) {
         var catListF = all.map(function (p, i) { return i + ': ' + (p.displayName || p.name || ''); }).join('\n').slice(0, 6000);
         var promptf = 'Це ' + __frameParts.length + ' кадри з одного рілсу/відео клієнта, зняті в РІЗНІ моменти — ймовірно, товар з нашого магазину. Опиши коротко, що на них (тип товару, колір, помітний текст/бренд), враховуючи ВСІ кадри разом. Потім знайди НАЙБЛИЖЧИЙ відповідник у каталозі нижче (формат: індекс: назва). Якщо жодного релевантного немає — bestMatchIndex null. Поверни ЛИШЕ JSON {"description":"...","bestMatchIndex":число_або_null}.\nКаталог:\n' + catListF;
-        var grf = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + encodeURIComponent(keys.GEMINI_API_KEY), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: promptf }].concat(__frameParts) }] }) });
+        var grf = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=' + encodeURIComponent(keys.GEMINI_API_KEY), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: promptf }].concat(__frameParts) }] }) });
         var gjf = await grf.json();
         var tf = ((((gjf.candidates || [])[0] || {}).content || {}).parts || [{}])[0].text || '';
         var mmf = tf.match(/\{[\s\S]*\}/);
@@ -378,7 +385,7 @@ try {
           // Якщо цього не вистачить — Етап 2 (реальні фото вузької категорії Gemini) розглянемо окремо.
           var catList = all.map(function (p, i) { return i + ': ' + (p.displayName || p.name || '') + (p.category && p.category.name ? ' [категорія: ' + p.category.name + ']' : ''); }).join('\n').slice(0, 7000);
           var promptp = 'Це фото (скріншот, або обкладинка допису/рілсу), яке клієнт показав — ймовірно, товар з нашого магазину. КРОК 1: визнач ЗАГАЛЬНИЙ ТИП товару на фото (напр. кофта/светр, куртка/вітровка, костюм, взуття, джинси/штани, футболка) — лише тип, не конкретну модель. КРОК 2: у каталозі нижче кожен товар має позначку [категорія: ...] — розглядай ЛИШЕ товари з категорією, що відповідає визначеному типу; серед НИХ знайди найближчий за кольором/фасоном/деталями. НІКОЛИ не вибирай товар з ІНШОЇ категорії, навіть якщо він на вигляд чимось схожий. Якщо в потрібній категорії жодного релевантного немає — bestMatchIndex null (не бери товар з іншої категорії як компроміс). Поверни ЛИШЕ JSON {"description":"...","detectedCategory":"...","bestMatchIndex":число_або_null}.\nКаталог:\n' + catList;
-          var grp = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + encodeURIComponent(keys.GEMINI_API_KEY), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: promptp }, { inline_data: { mime_type: mimep, data: b64p } }] }] }) });
+          var grp = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=' + encodeURIComponent(keys.GEMINI_API_KEY), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: promptp }, { inline_data: { mime_type: mimep, data: b64p } }] }] }) });
           var gjp = await grp.json();
           var tp = ((((gjp.candidates || [])[0] || {}).content || {}).parts || [{}])[0].text || '';
           var mmp = tp.match(/\{[\s\S]*\}/);

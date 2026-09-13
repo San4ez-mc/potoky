@@ -659,7 +659,8 @@ async function matchByVision(all, imageUrl, geminiApiKey) {
             + 'завжди null, це нормальний очікуваний результат, краще чесно "не визначив", ніж вгадати '
             + 'найближчий. Поверни ЛИШЕ JSON {"description":"...","confident":true_або_false,"bestMatchIndex":число_або_null}.\n'
             + 'Каталог:\n' + catList;
-        const gr = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + encodeURIComponent(geminiApiKey), {
+        // 2026-09-13 (КРИТИЧНО): gemini-2.5-flash ретайрнута (404) з 2026-09-10 — gemini-flash-latest.
+        const gr = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=' + encodeURIComponent(geminiApiKey), {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mime, data: b64 } }] }] }),
         });

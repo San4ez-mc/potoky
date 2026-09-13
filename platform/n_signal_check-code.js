@@ -19,4 +19,18 @@ function latinizeLookalikes(x) {
 var msgLatinized = latinizeLookalikes(msg);
 var hasArticleLike = /(?:артикул|арт\.?|art|код|sku|#|№)\s*[:#№.\-]?\s*[A-Za-zА-Яа-яІЇЄҐіїєґ]{0,5}\d{2,8}/i.test(msg)
   || /\b[A-Za-z]\d{3,6}\b/.test(msgLatinized);
-return { hasProductSignal: hasPost || hasPhoto || hasArticleLike };
+// 2026-09-13 (власник: "зібрати всі варіанти квитанцій/посилань про оплату, довести до 100%"):
+// ГОЛЕ посилання на квитанцію (Monobank/Приват24/Portmone/check.gov.ua/ibanoplata) без жодного
+// іншого сигналу товару раніше падало у n_catalog_hint/n_unknown_msg (загальне "який товар вас
+// цікавить?") — n_lookup, де живе розпізнавання квитанцій (context.looksLikeReceipt), взагалі
+// не викликався. Пускаємо такі повідомлення через n_lookup теж — там і стоїть детектор.
+var hasReceiptLink = false;
+var __rcLinkM = msg.match(/https?:\/\/[^\s]+/);
+if (__rcLinkM) {
+  try {
+    var __rcHost = new URL(__rcLinkM[0]).hostname.toLowerCase();
+    var __rcHosts = ['check.monobank.ua', 'send.monobank.ua', 'pay.mono.ua', 'pb.ua', 'privatbank.ua', 'next.privat24.ua', 'portmone.com.ua', 'check.gov.ua', 'ibanoplata.com'];
+    hasReceiptLink = __rcHosts.some(function (d) { return __rcHost === d || __rcHost.endsWith('.' + d); });
+  } catch (e) { /* невалідний URL */ }
+}
+return { hasProductSignal: hasPost || hasPhoto || hasArticleLike || hasReceiptLink };

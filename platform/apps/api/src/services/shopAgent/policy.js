@@ -285,9 +285,17 @@ async function runPolicy(A, u) {
         }
     }
 
+    // 5b. Комплект цілком: побажання щодо складу/кольорів/розмірів позицій — у примітку для CRM/менеджера
+    if (pp.isSet && ctx.setMode === 'set') {
+        const notes = [u.changeRequest, u.color ? 'колір: ' + u.color : '', u.clothingSize ? 'бажаний розмір: ' + u.clothingSize : ''].filter(Boolean);
+        if (notes.length) { const n = 'побажання по комплекту: ' + notes.join(', '); if (!String(ctx.extraProducts || '').includes(n)) ctx.extraProducts = (ctx.extraProducts ? ctx.extraProducts + '; ' : '') + n; ctx.agent.setNoteAck = notes.join(', '); }
+        ctx.available = true; ctx.orderUnitsText = ctx.setSizesText || 'весь комплект'; ctx.orderUnitsTotal = Number(pp.price) || undefined; ctx.orderQty = 1; ctx.orderUnits = ctx.orderUnits || [{ color: '', size: '' }];
+        if (!ctx.agent.setStageSent) { await T.funnelStage(A, ...STAGES.color); ctx.agent.setStageSent = true; }
+    }
+
     // 6. Наявність
     const availKey = (ctx.colorChoice && ctx.colorChoice.color) + '|' + ctx.recommendedSize + '|' + (u.units ? JSON.stringify(u.units) : '');
-    if (ctx.agent.availKey !== availKey) {
+    if (ctx.agent.availKey !== availKey && !(pp.isSet && ctx.setMode === 'set')) {
         if (u.units && u.units.length) ctx.colorChoice = { ...(ctx.colorChoice || {}), colors: u.units.map((x) => x.color).filter(Boolean), qty: u.qty || u.units.length };
         await T.checkAvail(A); ctx.agent.availKey = availKey;
         if (ctx.available === false) {
@@ -312,8 +320,10 @@ async function runPolicy(A, u) {
             }
         } else {
             // підсумок + «Оформляємо?»
-            const units = ctx.orderUnitsText || ((ctx.colorChoice && ctx.colorChoice.color ? ctx.colorChoice.color : '') + (ctx.recommendedSize ? ' ' + ctx.recommendedSize : ''));
-            const total = ctx.orderUnitsTotal || pp.price;
+            const units = (pp.isSet && ctx.setMode === 'set') ? String(ctx.setSizesText || 'весь комплект').replace(/\s*\n\s*/g, '; ') : (ctx.orderUnitsText || ((ctx.colorChoice && ctx.colorChoice.color ? ctx.colorChoice.color : '') + (ctx.recommendedSize ? ' ' + ctx.recommendedSize : '')));
+            const total = (pp.isSet && ctx.setMode === 'set') ? pp.price : (ctx.orderUnitsTotal || pp.price);
+            const setAck = ctx.agent.setNoteAck ? 'Записала побажання: ' + ctx.agent.setNoteAck + ' — менеджер врахує при оформленні 📝\n\n' : '';
+            ctx.agent.setNoteAck = '';
             if (pp.upsellPhotoUrl && !ctx.agent.upsellPhotoSent) { A.out.push({ photoUrls: [pp.upsellPhotoUrl], caption: '', step: 'upsell_photo' }); ctx.agent.upsellPhotoSent = true; }
             // Підсумок — ДЕТЕРМІНОВАНО (розмір/колір/сума з інструментів, LLM їх не перераховує); LLM лише
             // відповідає на питання клієнта перед підсумком або мʼяко працює з ваганням.
@@ -321,10 +331,10 @@ async function runPolicy(A, u) {
             const askLine = pp.upsell ? 'Оформляємо? І підкажіть: додати ще ' + pp.upsell + ' до цієї ж посилки, чи лише основний товар? 🙂' : 'Оформляємо замовлення? 🙂';
             if (pp.upsell) ctx.agent.upsellOffered = true;
             const hesitating = (u.intent === 'hesitate' || u.intent === 'postpone');
-            let txt = summary + '\n\n' + askLine;
+            let txt = setAck + summary + '\n\n' + askLine;
             if (ctx.agent.lastAsk === 'оформляємо?' && !u.questions.length && !hesitating) {
                 // «Оформляємо?» уже питали, клієнт написав щось без рішення — коротка реакція + те саме питання, без повторного підсумку
-                txt = await compose(A, { ack: 'відреагуй одним реченням на репліку клієнта', nextStep: 'і спитай: «' + askLine + '»', maxSentences: 2, fallback: askLine });
+                txt = setAck ? (setAck + askLine) : await compose(A, { ack: 'відреагуй одним реченням на репліку клієнта (нічого не обіцяй і не змінюй склад замовлення сама)', nextStep: 'і спитай: «' + askLine + '»', maxSentences: 2, fallback: askLine });
                 A.out.push({ text: txt, step: 'order_intent_repeat' }); return;
             }
             if (u.questions.length || hesitating) {
@@ -353,7 +363,8 @@ async function runPolicy(A, u) {
         else {
             const payTpl = messageTextMultiline(A.assets, 'n_pay', ctx, A.session.id + ':pay');
             if (u.questions.length) A.out.push({ text: await compose(A, { questions: u.questions, nextStep: 'потім скажи, що лишилось обрати спосіб оплати (сам список дасть система)', maxSentences: 3, fallback: '' }), step: 'pay_q' });
-            A.out.push({ text: (u.intent === 'order_no' && ctx.agent.upsellOffered ? 'Добре, лише основний товар 🙂\n\n' : '') + payTpl, step: 'pay_options' });
+            const payAck = (u.claimsPaid || u.receiptLink || A.turnImage) ? 'Дякую, бачу квитанцію 🙏 Підкажіть лише, це часткова передплата (200 грн) чи повна оплата — щоб я правильно оформила:\n\n' : ((u.phone || u.fullName || u.city || u.branch) ? 'Дані для відправки записала 📝 Лишилось обрати оплату:\n\n' : (u.addUpsell === false && ctx.agent.upsellOffered ? 'Добре, лише основний товар 🙂\n\n' : ''));
+            A.out.push({ text: payAck + payTpl, step: 'pay_options' });
             ctx.agent.lastAsk = 'спосіб оплати 1 чи 2'; return;
         }
         await T.payAmount(A);

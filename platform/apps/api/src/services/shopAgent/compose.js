@@ -19,7 +19,8 @@ function productFacts(ctx) {
     if (p.qtyPromoText) f.push('Акція за кількість: ' + p.qtyPromoText);
     if (p.upsell) f.push('Допродаж: ' + p.upsell);
     if (p.isSet && p.setList) f.push('Склад комплекту: ' + p.setList);
-    if (ctx.recommendedSize) f.push('ПІДІБРАНИЙ СИСТЕМОЮ РОЗМІР: ' + ctx.recommendedSize + ' — називай лише його, НІКОЛИ не рахуй розмір сам за сіткою/зростом/вагою і не пропонуй інший.');
+    if (ctx.setSizesText) f.push('ПІДІБРАНІ СИСТЕМОЮ РОЗМІРИ ПО ПОЗИЦІЯХ КОМПЛЕКТУ: ' + String(ctx.setSizesText).replace(/\s+/g, ' ') + ' — називай лише їх, не перераховуй.');
+    else if (ctx.recommendedSize) f.push('ПІДІБРАНИЙ СИСТЕМОЮ РОЗМІР: ' + ctx.recommendedSize + ' — називай лише його, НІКОЛИ не рахуй розмір сам за сіткою/зростом/вагою і не пропонуй інший.');
     else if (ctx.sizeInput && (ctx.sizeInput.height || ctx.sizeInput.weight)) f.push('Розмір ще НЕ підібрано (рахує система) — не називай жодного розміру.');
     if (ctx.colorChoice && ctx.colorChoice.color) f.push('Обраний колір: ' + ctx.colorChoice.color + '.');
     if (ctx.orderUnitsText) f.push('Позиції замовлення: ' + ctx.orderUnitsText + (ctx.orderUnitsTotal ? ' — ' + ctx.orderUnitsTotal + ' грн' : '') + '.');

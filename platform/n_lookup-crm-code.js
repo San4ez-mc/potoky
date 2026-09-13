@@ -188,9 +188,15 @@ try {
       var __igTok = String(keys.INSTAGRAM_ACCESS_TOKEN || '').trim();
       var __muTok = String(keys.META_SYSTEM_USER_TOKEN || '').trim();
       var __gErr = [];
-      async function __gget(path, tok) { var acg = new AbortController(); var tog = setTimeout(function () { try { acg.abort(); } catch (e) {} }, 4000); try { var rg = await fetch('https://graph.facebook.com/v21.0/' + path + (path.indexOf('?') >= 0 ? '&' : '?') + 'access_token=' + encodeURIComponent(tok), { signal: acg.signal }); var jg = await rg.json().catch(function () { return {}; }); if (!rg.ok) { __gErr.push(path.split('?')[0] + ': ' + rg.status + ' ' + String((jg.error && jg.error.message) || '').slice(0, 160)); return null; } return jg; } catch (e) { __gErr.push(path.split('?')[0] + ': ' + e.message); return null; } finally { clearTimeout(tog); } }
+      // 2026-09-13 (власник, живий кейс olgakovalenko_ok — "400 Invalid OAuth access token"):
+      // токен ПЕРЕВІРЕНО живим викликом — РОБОЧИЙ ("id":"...","username":"goverla_shop"), просто
+      // "IGAA..."-токени (Instagram API with Instagram Login) фізично не приймаються хостом
+      // graph.facebook.com — лише graph.instagram.com. META_SYSTEM_USER_TOKEN (System User) —
+      // навпаки, працює саме на graph.facebook.com (перевірено — /me/adaccounts, /act_XXX/ads).
+      // Хост тепер параметр __gget, не хардкод.
+      async function __gget(path, tok, host) { var acg = new AbortController(); var tog = setTimeout(function () { try { acg.abort(); } catch (e) {} }, 4000); try { var rg = await fetch('https://' + (host || 'graph.facebook.com') + '/v21.0/' + path + (path.indexOf('?') >= 0 ? '&' : '?') + 'access_token=' + encodeURIComponent(tok), { signal: acg.signal }); var jg = await rg.json().catch(function () { return {}; }); if (!rg.ok) { __gErr.push(path.split('?')[0] + ': ' + rg.status + ' ' + String((jg.error && jg.error.message) || '').slice(0, 160)); return null; } return jg; } catch (e) { __gErr.push(path.split('?')[0] + ': ' + e.message); return null; } finally { clearTimeout(tog); } }
       if (__pid && __igTok) {
-        var __m = await __gget(__pid + '?fields=caption,media_url,thumbnail_url,permalink', __igTok);
+        var __m = await __gget(__pid + '?fields=caption,media_url,thumbnail_url,permalink', __igTok, 'graph.instagram.com');
         if (__m && (__m.caption || __m.media_url)) { __adCaption = String(__m.caption || ''); __adImage = String(__m.thumbnail_url || __m.media_url || ''); }
       }
       // 2026-09-05: системний токен (з CRM, має instagram_basic) — фолбек для post_id, коли IG-токена нема або він невалідний.

@@ -1955,6 +1955,53 @@ async function checkBotSilence() {
 }
 setTimeout(() => { checkBotSilence(); setInterval(checkBotSilence, 10 * 60 * 1000); }, 120 * 1000);
 
+// 2026-09-15 (живий тест власника, matsukoleksandr): звірка з розмовою (syncConversationTruth,
+// вище) — «джерело істини», яке ловить пропущене вебхуком, — РАНІШЕ спрацьовувала ЛИШЕ як побічний
+// ефект runFlowAndDeliver, тобто лише коли приходив НАСТУПНИЙ вебхук для тієї ж розмови. Якщо
+// вебхук не приходив УЗАГАЛІ (підтверджено двічі поспіль у живому тесті: 171с затримки, потім
+// повне ненадходження 4+ хв) — нічого САМО не перевіряло цю розмову: клієнт лишався без відповіді,
+// доки не написав ще раз. Ця функція — незалежний періодичний перевіряльник (та сама роль, що вже
+// має checkBotSilence для сповіщення власника, але тут — САМОЗЦІЛЕННЯ, а не лише алерт).
+//
+// Обережно з навантаженням (щоб не бомбити Zernio REST при сплеску розмов): вікно 45с–14хв від
+// lastActive — досить старе, щоб нормальний вебхук+обробка (секунди) точно встигли б, і досить
+// свіже, щоб не ганяти це вічно для розмов, які просто затихли (там уже працює checkZernioReminders
+// з іншого боку — для клієнта, не для нас). Батч ≤100 за тик, тик раз на 60с — для типового обсягу
+// цієї воронки це щонайбільше одиниці-десятки REST-викликів на тик, не сотні.
+async function retryMissedZernioTurns() {
+    try {
+        const now = Date.now();
+        const sessions = await db.session.findMany({
+            where: {
+                isActive: true, isTest: false,
+                context: { path: ['channel'], equals: 'zernio' },
+                lastActive: { lte: new Date(now - 45 * 1000), gte: new Date(now - 14 * 60 * 1000) },
+            },
+            select: { id: true, botId: true, context: true },
+            take: 100,
+        });
+        for (const s of sessions) {
+            try {
+                const ctx = s.context || {};
+                // Уже на паузі (менеджер веде) — не наша турбота тут; звичайний потік і
+                // resumeAfterManagerSilence вище вже покривають цей випадок окремо.
+                if (ctx.funnelPaused || !ctx.conversationId) continue;
+                if (await isBlockedByTestMode(s.botId, [ctx.igUsername, ctx.senderName])) continue;
+                const sync = await syncConversationTruth(s.botId, s.id, ctx.conversationId);
+                if (!sync.ok || sync.empty || sync.managerLed) continue;
+                const unanswered = Array.isArray(sync.unanswered) ? sync.unanswered : [];
+                if (!unanswered.length) continue;
+                const text = unanswered.map((u) => String(u.text || '').trim()).filter(Boolean).join('\n');
+                const att = unanswered.map((u) => (u.attachments || []).find((a) => a.type === 'photo' && a.url)).find(Boolean);
+                if (!text && !att) continue; // нема що обробляти — лише службові події без вмісту
+                logger.info('[zernioHandler] retryMissedZernioTurns: підхопив пропущене без нового вебхука', { botId: s.botId, sessionId: s.id, n: unanswered.length, textPreview: text.slice(0, 60) });
+                scheduleFlowRun(s.id, { botId: s.botId, contactId: ctx.contactId || ctx.psid, conversationId: ctx.conversationId, contactName: ctx.senderName, text, imageUrl: att ? att.url : null });
+            } catch (e) { logger.warn('[zernioHandler] retryMissedZernioTurns session error: ' + e.message, { sessionId: s.id }); }
+        }
+    } catch (e) { logger.warn('[zernioHandler] retryMissedZernioTurns error: ' + e.message); }
+}
+setTimeout(() => { retryMissedZernioTurns(); setInterval(retryMissedZernioTurns, 60 * 1000); }, 150 * 1000);
+
 // ensurePostAutomation/scheduleFlowRun експортовано для живого тестування (напр.
 // живий кейс mediaId без артикулу; Проблема Д — race condition у серіалізації
 // runFlowAndDeliver) і майбутніх регресійних тестів — не викликаються поза

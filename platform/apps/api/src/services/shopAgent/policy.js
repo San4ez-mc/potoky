@@ -65,7 +65,10 @@ function matchSetItem(text, items) {
     return best;
 }
 function setSelectionTotal(sel) { return sel.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 1), 0); }
-function setSelectionToExtras(sel) { return sel.map((it) => ({ id: it.id, sku: it.article, name: it.name, price: it.price, color: it.color, size: it.size, qty: it.qty, supplier: it.supplier, supplierArticle: it.supplierArticle, sum: it.price * it.qty, offers: [] })); }
+// Форма n_extra_resolve.extraItems (НЕ orderExtras!) — n_pay_amount рахує orderTotal/extrasSum
+// САМЕ з context.extraItems (свій резолвер), тому синтетичний orderExtras воно ігнорує й
+// перезаписує власним (тоді extrasSum=0 і сума комплекту губиться, «решта −200 грн»).
+function setSelectionToExtraItems(sel) { return sel.map((it) => ({ id: it.id, sku: it.article, name: it.name, price: it.price, qtyPrices: {}, color: it.color, size: it.size, qty: it.qty, colorsList: it.colors || [], sizes: it.sizes || [], supplier: it.supplier, supplierArticle: it.supplierArticle, offers: [] })); }
 /** Склад точно збігається з офіційно визначеним комплектом (той самий набір артикулів, по 1 шт) — лише тоді працює знижка комплекту. */
 function setMatchesOriginal(sel, original) {
     if (!original || sel.length !== original.length) return false;
@@ -79,11 +82,15 @@ function applySetPricing(ctx, pp) {
     const sel = ctx.setSelection;
     if (setMatchesOriginal(sel, ctx.agent.setOriginal)) {
         const total = Number(pp.price) > 0 ? Number(pp.price) : setSelectionTotal(sel);
-        ctx.orderExtras = []; ctx.orderUnitsTotal = total; ctx.orderUnits = [{ color: '', size: '' }]; ctx.orderUnitsText = ctx.setSizesText || 'весь комплект';
+        ctx.orderExtras = []; ctx.extraItems = []; ctx.orderUnitsTotal = total; ctx.orderUnits = [{ color: '', size: '' }]; ctx.orderUnitsText = ctx.setSizesText || 'весь комплект';
         ctx.agent.setPricing = { total, edited: false };
         return ctx.agent.setPricing;
     }
-    ctx.orderExtras = setSelectionToExtras(sel);
+    // extraItems (не orderExtras!) — n_pay_amount рахує звідси, а вже його результат (orderExtras
+    // з offerId) споживають n_crm_order і supplierDispatch. orderExtras тут лише як фолбек, доки
+    // T.payAmount ще не викликаний цього ходу (напр. підсумок «Оформляємо?» ще до оплати).
+    ctx.extraItems = setSelectionToExtraItems(sel);
+    ctx.orderExtras = ctx.extraItems.map((it) => ({ id: it.id, sku: it.sku, name: it.name, price: it.price, color: it.color, size: it.size, qty: it.qty, supplier: it.supplier, supplierArticle: it.supplierArticle, sum: it.price * it.qty, offers: [] }));
     ctx.orderUnitsTotal = 0; ctx.orderUnits = [{ color: '', size: '' }]; ctx.orderUnitsText = '';
     const total = setSelectionTotal(sel);
     ctx.agent.setPricing = { total, edited: true };
@@ -453,7 +460,7 @@ async function runPolicy(A, u) {
 
     // 7. Підсумок і згода
     if (!(ctx.orderIntent && ctx.orderIntent.ready === 'yes')) {
-        if (u.extraProducts || u.alsoWants) { ctx.extraProductMention = u.extraProducts || u.alsoWants; await T.extraResolve(A); }
+        if ((u.extraProducts || u.alsoWants) && !(pp.isSet && ctx.setMode === 'set')) { ctx.extraProductMention = u.extraProducts || u.alsoWants; await T.extraResolve(A); }
         if (u.ready === 'no') { A.out.push({ text: messageText(A.assets, 'n_declined_msg', ctx, A.session.id), step: 'declined' }); ctx.declinedAt = Date.now(); ctx.agent.lastAsk = ''; return; }
         const gaveAddress = !!(u.phone || u.city || u.branch || u.fullName);
         if (u.ready === 'yes' || gaveAddress || u.payMethod) {

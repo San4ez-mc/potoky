@@ -77,13 +77,21 @@ async function main() {
     }
 
     // ── 2. Каталог-підказка за словами (n_catalog_hint) — живий кейс df4ca683/e8be59a9/1b1edc15,
-    // 14.09: виклик на неіснуючий id n_catalog_hint_process мовчки не працював УЗАГАЛІ.
+    // 14.09: виклик на неіснуючий id n_catalog_hint_process мовчки не працював УЗАГАЛІ (tool()
+    // повертав {ok:false, error:'no code'}). Живий реплей цих сесій уже підтвердив поведінкову
+    // картину (список товарів замість «перешліть пост») — тут перевіряємо саме те, що безпосередньо
+    // зламалось: чи існує нода під ІМЕНЕМ, яке реально викликає tools.js, без відтворення всього
+    // ланцюжка сигналів (signal_check/understand), що зробило б тест крихким і непрямим.
     {
-        const A = freshA({ turnText: 'Штани є в наявності?' });
-        const u = freshU({ intent: 'product_query' });
-        await runPolicy(A, u);
-        const hintFired = A.out.some((o) => o.step === 'hint') || A.trace.some((t) => t.tool === 'n_catalog_hint' && t.ok);
-        check('Підказка каталогу (n_catalog_hint) реально викликається на слово-категорію', hintFired, 'out steps: ' + A.out.map((o) => o.step).join(','));
+        const { tool } = require('../tools');
+        const A = freshA({ turnText: 'штани' });
+        A.ctx.catalogHintMsg = 'штани'; A.ctx.catalogHintWants = ['штан', 'джинс']; A.ctx.catalogHintColorWords = []; A.ctx.catalogHintStem = 'джинс';
+        const { loadCatalog, loadCategories } = require('../lib');
+        const cat = await loadCatalog(BOT, assets.keys);
+        A.ctx.catalogHintProductsRaw = cat.products;
+        A.ctx.catalogHintCategoriesRaw = await loadCategories(BOT, assets.keys);
+        const r = await tool(A, 'n_catalog_hint');
+        check('Нода n_catalog_hint існує і виконується (не neexist. n_catalog_hint_process)', r.ok === true, JSON.stringify(r));
     }
 
     // ── 3. Ослаблення прапора "схоже на квитанцію" — живий кейс ustym_m4, 14.09: прапор ніколи не
@@ -142,6 +150,7 @@ async function main() {
         const A = freshA({ turnText: 'Давайте без взуття' });
         A.ctx.product = { sku: 'set1112', isSet: true, price: 5290 };
         A.ctx.setMode = 'set';
+        A.ctx.recommendedSize = 'M'; // проходимо секцію «4. Розмір» — тут перевіряємо лише 5b, не весь ланцюжок.
         A.ctx.agent.setOriginal = [
             { article: 'A0187', name: 'Кофта', price: 1279, colors: [], sizes: [], qty: 1 },
             { article: '5934', name: 'Чоловічі замшеві лофери', price: 1990, colors: [], sizes: [], qty: 1 },

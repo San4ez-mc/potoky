@@ -48,7 +48,10 @@ const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
 // МІСЦІ — у tools.js:alert() до КОЖНОГО сповіщення менеджеру, незалежно від того, звідки взявся
 // текст (літерал у policy.js чи шаблон ноди в CRM/Flows). Будь-яке майбутнє посилання, яке хтось
 // забуде явно приховати, все одно пройде через це один раз для всіх.
-function hideLinks(s) { return String(s || '').replace(/https?:\/\/\S+/g, (url) => '<a href="' + url.replace(/"/g, '&quot;') + '">🔗 посилання</a>'); }
+// Негативний lookbehind (?<!href=") — щоб подвійне застосування (напр. якщо колись хтось випадково
+// викличе hideLinks вдруге поверх уже прихованого тексту) НЕ перетворило href="URL" на вкладений
+// зламаний <a href="<a href=...">; URL зупиняється на " < > — реальні URL цих символів не містять.
+function hideLinks(s) { return String(s || '').replace(/(?<!href=")https?:\/\/[^\s"<>]+/g, (url) => '<a href="' + url.replace(/"/g, '&quot;') + '">🔗 посилання</a>'); }
 
 /** Вибір варіанта тексту message-ноди (text + variants[]) — рівномірно, але стабільно в межах ходу. */
 function pickVariant(tpl, seed) {

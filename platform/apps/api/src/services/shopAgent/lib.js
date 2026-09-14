@@ -41,6 +41,14 @@ function cleanJsonDeep(v) {
     return v;
 }
 const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+// 2026-09-14/15 (власник, повторний живий кейс — n_receipt_alert показував сирий Zernio-URL текстом
+// попри те, що для 7 інших місць це вже було виправлено): точкові фікси по кожному місцю окремо не
+// гарантують нічого — досить одного нового/забутого вузла з посиланням у шаблоні, і сире посилання
+// знову випливає. Тому hideLinks() тепер живе тут, у lib.js, і застосовується ЦЕНТРАЛЬНО, В ОДНОМУ
+// МІСЦІ — у tools.js:alert() до КОЖНОГО сповіщення менеджеру, незалежно від того, звідки взявся
+// текст (літерал у policy.js чи шаблон ноди в CRM/Flows). Будь-яке майбутнє посилання, яке хтось
+// забуде явно приховати, все одно пройде через це один раз для всіх.
+function hideLinks(s) { return String(s || '').replace(/https?:\/\/\S+/g, (url) => '<a href="' + url.replace(/"/g, '&quot;') + '">🔗 посилання</a>'); }
 
 /** Вибір варіанта тексту message-ноди (text + variants[]) — рівномірно, але стабільно в межах ходу. */
 function pickVariant(tpl, seed) {
@@ -137,4 +145,4 @@ async function loadCatalog(botId, keys, { force } = {}) {
 }
 async function loadCategories(botId, keys) { const r = await crmFetch(keys, '/categories'); return Array.isArray(r.data) ? r.data : []; }
 
-module.exports = { db, logger, getByPath, setByPath, renderTemplate, safeJsonStringify, stripLoneSurrogates, cleanJsonDeep, norm, pickVariant, loadAssets, nodeCode, nodeData, messageText, messageTextMultiline, alertFields, runNodeCode, crmBase, crmHeaders, crmFetch, loadCatalog, loadCategories };
+module.exports = { db, logger, getByPath, setByPath, renderTemplate, safeJsonStringify, stripLoneSurrogates, cleanJsonDeep, norm, hideLinks, pickVariant, loadAssets, nodeCode, nodeData, messageText, messageTextMultiline, alertFields, runNodeCode, crmBase, crmHeaders, crmFetch, loadCatalog, loadCategories };

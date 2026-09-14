@@ -44,12 +44,9 @@ function matchColor(p, want) {
     return null;
 }
 function ttnIn(text) { const m = String(text || '').match(/(?<!\d)\d{14}(?!\d)/); return m ? m[0] : ''; }
-// 2026-09-14 (власник): в ТГ-сповіщеннях менеджеру цитата клієнтського повідомлення інколи сама
-// є посиланням (клієнт кидає чек банку — https://check.monobank.ua/... тощо) — Telegram таке
-// автолінкує у велике видиме посилання, на відміну від решти системи, де посилання завжди
-// приховані за текстом (див. фолбек фото в tools.js: «<a href="URL">📷 фото</a>»). Той самий
-// підхід тут: будь-яке http(s)-посилання всередині цитати ховаємо за коротким текстом.
-function hideLinks(s) { return String(s || '').replace(/https?:\/\/\S+/g, (url) => '<a href="' + url.replace(/"/g, '&quot;') + '">🔗 посилання</a>'); }
+// 2026-09-15: hideLinks() переїхав у lib.js і застосовується ЦЕНТРАЛЬНО в tools.js:alert() для
+// КОЖНОГО сповіщення — тут його викликати більше не треба (і не можна: подвійне застосування
+// зламало б уже приховані посилання). Див. коментар над buildAdminAlert(...) у tools.js.
 
 // ── Склад комплекту: редагування з перерахунком ────────────────────────────────────────────────
 // Рішення власника 2026-09-14: бот сам реагує на «без взуття» / «додайте джинси» / «дві футболки»
@@ -168,7 +165,7 @@ async function answerThenAsk(A, u, askText, o = {}) {
     if (/наявн|є в наявн|залишил|є ще|маєте ще|чи є/i.test(String(A.turnText || ''))) { A.ctx.lastCustomerMessage = A.turnText; await T.availSearch(A); availAnswer = A.ctx.availAnswer || ''; }
     if (!kb.length && u.questions.some((q) => RE_UNKNOWN_Q.test(q)) && !A.ctx.agent.askManagerAt) {
         A.ctx.agent.askManagerAt = Date.now(); await T.kbAsk(A, u.questions[0]);
-        await T.alert(A, 'n_agent_unknown_question_admin', { details: '💬 «' + hideLinks(u.questions[0].slice(0, 200)) + '»' });
+        await T.alert(A, 'n_agent_unknown_question_admin', { details: '💬 «' + u.questions[0].slice(0, 200) + '»' });
     }
     // Живий кейс 2026-09-14 (Василенко): картка щойно сама попросила зріст/вагу; askText тут
     // порожній навмисно (нічого повторно просити не треба), АЛЕ без явної заборони LLM (compose)
@@ -271,7 +268,7 @@ async function afterOrderAccepted(A) {
         await T.funnelStage(A, ...(ctx.payStatus === 'confirmed' || Number(ctx.payAmount) === 0 ? STAGES.accepted : STAGES.awaiting));
     } else if (ctx.repeatPass || ctx.payStatus === 'confirmed') {
         await T.crmOrder(A); // повторний прохід: оплата в журнал + стадія
-        if (ctx.receiptNew) await T.alert(A, 'n_receipt_alert');
+        if (ctx.receiptNew) await T.alert(A, 'n_receipt_alert', { photoUrl: ctx.lastReceiptImageUrl || '' });
     }
     if ((ctx.payStatus === 'confirmed' || Number(ctx.payAmount) === 0) && !ctx.supplierHandled) {
         // Цикл по постачальниках (рішення власника 2026-09-14): кожна позиція йде своєму
@@ -326,12 +323,12 @@ async function runPolicy(A, u) {
     // 0. Людина / претензія / повернення
     if (u.wantsHuman) {
         A.out.push({ text: messageText(A.assets, 'n_agent_handoff', ctx, A.session.id), step: 'handoff' });
-        await pause(A, 'handoff', 'n_agent_handoff_admin', '💬 «' + hideLinks(text.slice(0, 200)) + '»');
+        await pause(A, 'handoff', 'n_agent_handoff_admin', '💬 «' + text.slice(0, 200) + '»');
         return;
     }
     if (u.isComplaint && !u.returnRequest) {
         A.out.push({ text: messageText(A.assets, 'n_agent_complaint_ack', ctx, A.session.id), step: 'complaint' });
-        await pause(A, 'complaint', 'n_agent_complaint_admin', '💬 «' + hideLinks(text.slice(0, 300)) + '»');
+        await pause(A, 'complaint', 'n_agent_complaint_admin', '💬 «' + text.slice(0, 300) + '»');
         return;
     }
     if (ctx.returnFlow && ctx.returnFlow.stage === 'await_ttn') {
@@ -343,7 +340,7 @@ async function runPolicy(A, u) {
     if (u.returnRequest) {
         A.out.push({ text: messageTextMultiline(A.assets, 'n_return_easy_msg', ctx, A.session.id), step: 'return_easy' });
         ctx.returnFlow = { stage: 'await_ttn', at: Date.now() };
-        await T.alert(A, 'n_agent_return_request_admin', { details: '💬 «' + hideLinks(text.slice(0, 200)) + '»' });
+        await T.alert(A, 'n_agent_return_request_admin', { details: '💬 «' + text.slice(0, 200) + '»' });
         return;
     }
 
@@ -367,7 +364,7 @@ async function runPolicy(A, u) {
         if (u.extraProducts || u.alsoWants) {
             A.out.push({ text: messageText(A.assets, 'n_agent_post_extra_ack', ctx, A.session.id), step: 'post_extra' });
             ctx.agent.orderRefDisplay = ctx.orderRef || ctx.crmOrderId;
-            await T.alert(A, 'n_agent_post_extra_admin', { details: '💬 «' + hideLinks(text.slice(0, 200)) + '»' });
+            await T.alert(A, 'n_agent_post_extra_admin', { details: '💬 «' + text.slice(0, 200) + '»' });
             return;
         }
         const since = Date.now() - Number(ctx.postOrderMsgAt || 0);
@@ -396,7 +393,7 @@ async function runPolicy(A, u) {
     const earlyReceipt = (u.receiptLink || u.claimsPaid || (A.turnImage && addressComplete(ctx.orderData))) && !ctx.crmOrderId && !(ctx.paymentInfo && ctx.paymentInfo.method);
     if (earlyReceipt && !ctx.agent.receiptEarlyAlertAt) {
         ctx.agent.receiptEarlyAlertAt = Date.now();
-        await T.alert(A, 'n_agent_early_payment_admin', { details: '💬 «' + hideLinks(text.slice(0, 200)) + '»', photoUrl: A.turnImage || '' });
+        await T.alert(A, 'n_agent_early_payment_admin', { details: '💬 «' + text.slice(0, 200) + '»', photoUrl: A.turnImage || '' });
     }
     const preNote = (earlyReceipt ? 'Дякую, оплату бачу — звіримо 🙏 Щоб оформити відправку, лишилось кілька кроків. ' : '') + (u.intent === 'wants_requisites' && !(ctx.paymentInfo && ctx.paymentInfo.method) ? 'Реквізити надішлю одразу після підбору розміру і кольору 🙂 ' : '');
 
@@ -436,7 +433,7 @@ async function runPolicy(A, u) {
                 // сповіщення менеджеру — новий сигнал «це квитанція» n_lookup виставить заново сам.
                 ctx.looksLikeReceipt = false;
                 A.out.push({ text: messageText(A.assets, 'n_agent_receipt_no_order', ctx, A.session.id), step: 'receipt_no_order' });
-                await T.alert(A, 'n_agent_receipt_no_order_admin', { details: '💬 «' + hideLinks(text.slice(0, 200)) + '»', photoUrl: A.turnImage || '' });
+                await T.alert(A, 'n_agent_receipt_no_order_admin', { details: '💬 «' + text.slice(0, 200) + '»', photoUrl: A.turnImage || '' });
                 return;
             }
             // Категорії — з CRM (ctx.catalogCategories); рядок нижче — лише останній фолбек, якщо
@@ -627,7 +624,7 @@ async function runPolicy(A, u) {
     if (!(ctx.paymentInfo && ctx.paymentInfo.method)) {
         if (u.prepaymentObjection && !ctx.trustScriptStep) { A.out.push({ text: messageTextMultiline(A.assets, 'n_agent_trust1', ctx, A.session.id), step: 'trust1' }); ctx.trustScriptStep = 1; ctx.agent.lastAsk = 'оформимо з передплатою 200?'; return; }
         if (ctx.trustScriptStep === 1 && (u.prepaymentObjection || u.trustPromise === false || u.ready === 'no')) { A.out.push({ text: messageText(A.assets, 'n_agent_trust2', ctx, A.session.id), step: 'trust2' }); ctx.trustScriptStep = 2; ctx.agent.lastAsk = 'обіцяєте прийти на пошту?'; return; }
-        if (ctx.trustScriptStep === 2 && u.trustPromise === false) { A.out.push({ text: messageText(A.assets, 'n_agent_handoff', ctx, A.session.id), step: 'trust_handoff' }); await pause(A, 'handoff', 'n_agent_trust_declined_admin', '💬 «' + hideLinks(text.slice(0, 200)) + '»'); return; }
+        if (ctx.trustScriptStep === 2 && u.trustPromise === false) { A.out.push({ text: messageText(A.assets, 'n_agent_handoff', ctx, A.session.id), step: 'trust_handoff' }); await pause(A, 'handoff', 'n_agent_trust_declined_admin', '💬 «' + text.slice(0, 200) + '»'); return; }
         if (ctx.trustScriptStep === 2 && (u.trustPromise === true || u.ready === 'yes')) ctx.paymentInfo = { method: 'cod_trust' };
         else if (ctx.trustScriptStep === 1 && (u.ready === 'yes' || u.payMethod === 'cod')) ctx.paymentInfo = { method: 'cod' };
         else if (u.payMethod) ctx.paymentInfo = { method: u.payMethod, ...(u.country ? { country: u.country } : {}) };

@@ -5,7 +5,7 @@
  * інтерфейсів). Коди js-нод беруться з flowDefinition бота за id (джерело істини — БД).
  * Мутації (CRM-замовлення, постачальник, інвойс, алерти) поважають ctx.testMode.
  */
-const { db, logger, runNodeCode, nodeCode, nodeData, crmFetch, crmBase, crmHeaders, loadCatalog, loadCategories, renderTemplate, alertFields } = require('./lib');
+const { db, logger, runNodeCode, nodeCode, nodeData, crmFetch, crmBase, crmHeaders, loadCatalog, loadCategories, renderTemplate, alertFields, hideLinks } = require('./lib');
 const { buildAdminAlert } = require('../testSession');
 const { redisClient } = require('../../lib/sessionStore');
 const { getMonoStatement, markConsumed: markMonoConsumed, getConsumedSet: getMonoConsumedSet } = require('@platform/mono-statement');
@@ -198,7 +198,12 @@ async function alert(A, nodeIdOrFields, extra = {}) {
     const f = typeof nodeIdOrFields === 'string' ? alertFields(A.assets, nodeIdOrFields, ctx) : nodeIdOrFields;
     const adminId = keys.ADMIN_TELEGRAM_ID || ''; const tok = keys.TELEGRAM_BOT_TOKEN || '';
     if (!adminId || !/^\d+:[A-Za-z0-9_-]{20,}$/.test(tok)) { A.trace.push({ alert: f.title, error: 'no ADMIN_TELEGRAM_ID/TELEGRAM_BOT_TOKEN' }); return false; }
-    const txt = buildAdminAlert({ funnelEnv: keys, title: f.title, main: f.main, details: [f.details, extra.details].filter(Boolean).join('\n'), ctx, sessionId: session.id });
+    // Централізовано, В ОДНОМУ МІСЦІ, для КОЖНОГО сповіщення менеджеру: будь-яке http(s)-посилання
+    // (сире посилання клієнта, посилання на квитанцію Zernio без авторизації тощо) ховається за
+    // коротким текстом — так само, як фото вже ховається у фолбеку нижче. Точкові виправлення по
+    // кожному окремому вузлу/виклику нічого не гарантують: досить одного забутого місця (живий
+    // приклад — n_receipt_alert), і сире посилання знову з'являється. Тут воно ловиться завжди.
+    const txt = buildAdminAlert({ funnelEnv: keys, title: hideLinks(f.title), main: hideLinks(f.main), details: hideLinks([f.details, extra.details].filter(Boolean).join('\n')), ctx, sessionId: session.id });
     let j = {};
     const photo = /^https?:\/\//.test(String(f.photoUrl || extra.photoUrl || '')) ? String(f.photoUrl || extra.photoUrl) : '';
     if (photo && txt.length <= 1000) {

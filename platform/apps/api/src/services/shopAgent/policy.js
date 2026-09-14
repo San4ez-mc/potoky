@@ -7,7 +7,7 @@
  */
 const T = require('./tools');
 const { compose } = require('./compose');
-const { messageText, messageTextMultiline, nodeData, norm } = require('./lib');
+const { messageText, messageTextMultiline, nodeData, norm, loadCategories } = require('./lib');
 const { dispatchOrder } = require('./supplierDispatch');
 
 const TRUST_STEP1 = 'Накладний платіж у нас із частковою передплатою 200 грн.\n\nЯкщо прийдете на пошту і вам щось не підійде — ми повернемо ці 200 грн одразу.\n\nРаніше відправляли без передплати, і більшість людей просто не приходили на пошту.\n\nДля нас 200 грн — це гарантія, що:\n1) ви не чат-бот 🙂\n2) ви не передумаєте завтра\n3) ви прийдете на пошту\n\nОформимо замовлення із частковою передплатою 200 грн?';
@@ -157,6 +157,28 @@ function colorsOf(p) { return String((p && p.colors) || '').trim(); }
 function isSoftDecline(u) { return u.intent === 'hesitate' || u.intent === 'postpone'; }
 /** Людський (не технічний) список позицій комплекту — без дублювання «Артикул: X» і без «;». */
 function humanSetList(pp) { return (pp.setItems || []).map((it) => '• ' + it.name + (it.price ? (' — ' + it.price + ' грн') : '')).join('\n'); }
+/** Обʼєднані параметри підбору розміру для КОМПЛЕКТУ — union CRM Category.requiredParams усіх
+ * категорій КОМПОНЕНТІВ, з дедублікацією за назвою (не параметри самого комплекту — set-товар у
+ * CRM зазвичай без власної категорії, categoryId=null). Живий кейс 2026-09-14 (власник, скрін
+ * налаштувань категорії): бот мав зайти в категорію КОЖНОГО товару в розмові й запитати РАЗОМ усі
+ * потрібні параметри — а не хардкодити «зріст і вагу» незалежно від складу (set1112 містить
+ * лофери з категорії «Взуття», якій потрібен окремий параметр «Розмір взуття», не зріст/вага). */
+async function resolveSetParams(A, pp) {
+    if (!Array.isArray(pp.setItems) || !pp.setItems.length) return { params: [], prompt: '', isOnlyHW: false };
+    let categories = []; try { categories = await loadCategories(A.botId, A.keys); } catch (e) { categories = []; }
+    const byId = new Map(categories.map((c) => [c.id, c]));
+    const seen = new Map();
+    for (const it of pp.setItems) {
+        const cat = it.categoryId && byId.get(it.categoryId);
+        for (const p of ((cat && Array.isArray(cat.requiredParams)) ? cat.requiredParams : [])) {
+            const key = String(p.name || '').toLowerCase().trim(); if (key && !seen.has(key)) seen.set(key, p);
+        }
+    }
+    const params = [...seen.values()];
+    const isOnlyHW = params.length > 0 && params.every((p) => /зріст|ріст|height|вага|weight/i.test(p.name || ''));
+    const prompt = params.map((p) => p.name + (p.unit ? ' (' + p.unit + ')' : '')).join(', ');
+    return { params, prompt, isOnlyHW };
+}
 
 async function pause(A, reason, alertNode, extraDetails) {
     A.ctx.funnelPaused = true; A.ctx.pausedBy = reason; A.ctx.pausedAt = new Date().toISOString(); A.ctx.adminEngaged = true; A.ctx.handoffKind = reason;
@@ -184,7 +206,7 @@ function resetForNewProduct(A, sku) {
     const { ctx } = A;
     if (ctx.agent.presentedSku && ctx.agent.presentedSku !== sku) {
         for (const k of ['sizeInput', 'recommendedSize', 'sizeSource', 'sizeReplyText', 'sizeColorFollowup', 'sizeOutOfRange', 'sizeOorReason', 'sizeOorAlternative', 'isSetSizeCalc', 'setSizesText', 'colorChoice', 'available', 'availReason', 'orderUnits', 'orderUnitsText', 'orderUnitsTotal', 'orderQty', 'orderIntent', 'setMode', 'setPick', 'setSelection', 'availChecked', 'extraItems', 'extraItemsText', 'extraUnresolved', 'orderExtras']) delete ctx[k];
-        for (const k of ['setOriginal', 'setPricing', 'setStageSent', 'setEditNote', 'upsellOffered', 'upsellPhotoSent', 'availKey']) delete ctx.agent[k];
+        for (const k of ['setOriginal', 'setPricing', 'setStageSent', 'setEditNote', 'setParams', 'upsellOffered', 'upsellPhotoSent', 'availKey']) delete ctx.agent[k];
         if (!ctx.crmOrderId) for (const k of ['paymentInfo', 'payAmount', 'payLabel', 'orderRef', 'orderRefAt', 'ibanPayUrl', 'ibanInvoiceUid', 'requisitesSentAt']) delete ctx[k];
     }
 }
@@ -393,6 +415,13 @@ async function runPolicy(A, u) {
     // 4. Розмір
     const needSize = (pp.isClothing || pp.isSet) && !ctx.recommendedSize && !ctx.isSetSizeCalc && !ctx.sizeOutOfRange;
     if (needSize) {
+        // categoryParamsIsHeightWeight — БУЛЕВЕ значення з n_lookup (не рядок 'false'!). Для
+        // комплекту беремо union параметрів усіх компонентів (resolveSetParams), бо сам set-товар
+        // у CRM без власної категорії — його власні categoryParams завжди порожні.
+        if (pp.isSet && !ctx.agent.setParams) ctx.agent.setParams = await resolveSetParams(A, pp);
+        const setParams = pp.isSet ? ctx.agent.setParams : null;
+        const isHW = setParams ? setParams.isOnlyHW : !!pp.categoryParamsIsHeightWeight;
+        const paramsPrompt = setParams ? setParams.prompt : pp.categoryParamsPrompt;
         const si = { ...(ctx.sizeInput || {}) };
         if (u.height) si.height = u.height; if (u.weight) si.weight = u.weight;
         if (u.clothingSize) si.clothingSize = u.clothingSize; if (u.chest) si.chest = u.chest; if (u.footLength) si.footLength = u.footLength; if (u.waist) si.waist = u.waist; if (u.belly) si.belly = true;
@@ -400,7 +429,7 @@ async function runPolicy(A, u) {
         if (u.alsoWants) si.alsoWants = u.alsoWants;
         const mem = ctx.customer || {};
         let usedMemory = false;
-        if (pp.categoryParamsIsHeightWeight !== 'false' && !si.height && !si.weight && mem.height && mem.weight && !u.clothingSize) { si.height = mem.height; si.weight = mem.weight; usedMemory = true; }
+        if (isHW && !si.height && !si.weight && mem.height && mem.weight && !u.clothingSize) { si.height = mem.height; si.weight = mem.weight; usedMemory = true; }
         ctx.sizeInput = si;
         const complete = (si.height && si.weight) || si.clothingSize || si.footLength || (si.chest && pp.sizeChartData);
         if (complete) {
@@ -430,12 +459,14 @@ async function runPolicy(A, u) {
             // проханням виглядало як збій («два рази ціну написав», «два рази питає»). Якщо картку щойно
             // показано і клієнту більше нічого відповісти (нема питання, нема сигналу кольору) — просто
             // чекаємо, не питаємо вдруге.
-            if (A.justPresented && !u.questions.length && !colorNote) { ctx.agent.lastAsk = 'зріст і вага'; return; }
-            const missing = si.height && !si.weight ? 'вагу' : (!si.height && si.weight ? 'зріст' : '');
-            const ask = A.justPresented ? '' : (pp.categoryParamsIsHeightWeight === 'false'
-                ? ('Підкажіть, будь ласка, ' + (pp.categoryParamsPrompt || 'ваш розмір') + ' 🙂')
-                : (missing ? 'Дякую! Підкажіть ще ' + missing + ', будь ласка — і одразу підберу розмір 🙂' : 'Підкажіть, будь ласка, ваш зріст і вагу — підберу розмір 📏'));
-            A.out.push({ text: await answerThenAsk(A, u, preNote + colorNote + ask), step: 'ask_params' }); ctx.agent.lastAsk = 'зріст і вага';
+            if (A.justPresented && !u.questions.length && !colorNote) { ctx.agent.lastAsk = paramsPrompt || 'зріст і вага'; return; }
+            const missing = isHW ? (si.height && !si.weight ? 'вагу' : (!si.height && si.weight ? 'зріст' : '')) : '';
+            const ask = A.justPresented ? '' : (
+                isHW
+                    ? (missing ? 'Дякую! Підкажіть ще ' + missing + ', будь ласка — і одразу підберу розмір 🙂' : 'Підкажіть, будь ласка, ваш зріст і вагу — підберу розмір 📏')
+                    : ('Підкажіть, будь ласка: ' + (paramsPrompt || 'ваш розмір') + ' 🙂')
+            );
+            A.out.push({ text: await answerThenAsk(A, u, preNote + colorNote + ask), step: 'ask_params' }); ctx.agent.lastAsk = paramsPrompt || 'зріст і вага';
             return;
         }
     }

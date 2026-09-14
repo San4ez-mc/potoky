@@ -28,6 +28,12 @@ function matchColor(p, want) {
     return cand.length === 1 ? cand[0] : null;
 }
 function ttnIn(text) { const m = String(text || '').match(/(?<!\d)\d{14}(?!\d)/); return m ? m[0] : ''; }
+// 2026-09-14 (власник): в ТГ-сповіщеннях менеджеру цитата клієнтського повідомлення інколи сама
+// є посиланням (клієнт кидає чек банку — https://check.monobank.ua/... тощо) — Telegram таке
+// автолінкує у велике видиме посилання, на відміну від решти системи, де посилання завжди
+// приховані за текстом (див. фолбек фото в tools.js: «<a href="URL">📷 фото</a>»). Той самий
+// підхід тут: будь-яке http(s)-посилання всередині цитати ховаємо за коротким текстом.
+function hideLinks(s) { return String(s || '').replace(/https?:\/\/\S+/g, (url) => '<a href="' + url.replace(/"/g, '&quot;') + '">🔗 посилання</a>'); }
 
 // ── Склад комплекту: редагування з перерахунком ────────────────────────────────────────────────
 // Рішення власника 2026-09-14: бот сам реагує на «без взуття» / «додайте джинси» / «дві футболки»
@@ -146,7 +152,7 @@ async function answerThenAsk(A, u, askText, o = {}) {
     if (/наявн|є в наявн|залишил|є ще|маєте ще|чи є/i.test(String(A.turnText || ''))) { A.ctx.lastCustomerMessage = A.turnText; await T.availSearch(A); availAnswer = A.ctx.availAnswer || ''; }
     if (!kb.length && u.questions.some((q) => RE_UNKNOWN_Q.test(q)) && !A.ctx.agent.askManagerAt) {
         A.ctx.agent.askManagerAt = Date.now(); await T.kbAsk(A, u.questions[0]);
-        await T.alert(A, { title: '❓ Клієнт спитав те, чого бот не знає', main: 'Бот продовжує діалог; відповідь допишіть у чат — вона також потрапить у Базу знань CRM.', details: '💬 «' + u.questions[0].slice(0, 200) + '»' });
+        await T.alert(A, { title: '❓ Клієнт спитав те, чого бот не знає', main: 'Бот продовжує діалог; відповідь допишіть у чат — вона також потрапить у Базу знань CRM.', details: '💬 «' + hideLinks(u.questions[0].slice(0, 200)) + '»' });
     }
     // Живий кейс 2026-09-14 (Василенко): картка щойно сама попросила зріст/вагу; askText тут
     // порожній навмисно (нічого повторно просити не треба), АЛЕ без явної заборони LLM (compose)
@@ -302,7 +308,7 @@ async function runPolicy(A, u) {
     // 0. Людина / претензія / повернення
     if (u.wantsHuman) {
         A.out.push({ text: HANDOFF_TEXT, step: 'handoff' });
-        await pause(A, 'handoff', { title: '🙋 Клієнт просить живу людину', main: 'Бот зупинився. Відповідайте в чаті; повернути бота — іконкою в сесії.', details: '💬 «' + text.slice(0, 200) + '»' });
+        await pause(A, 'handoff', { title: '🙋 Клієнт просить живу людину', main: 'Бот зупинився. Відповідайте в чаті; повернути бота — іконкою в сесії.', details: '💬 «' + hideLinks(text.slice(0, 200)) + '»' });
         return;
     }
     if (u.isComplaint && !u.returnRequest) {
@@ -319,7 +325,7 @@ async function runPolicy(A, u) {
     if (u.returnRequest) {
         A.out.push({ text: messageTextMultiline(A.assets, 'n_return_easy_msg', ctx, A.session.id), step: 'return_easy' });
         ctx.returnFlow = { stage: 'await_ttn', at: Date.now() };
-        await T.alert(A, { title: '🔄 Клієнт хоче обмін/повернення', main: 'Бот надіслав інструкцію «Легке повернення» і чекає ТТН. Втручання не потрібне, якщо все штатно.', details: '💬 «' + text.slice(0, 200) + '»' });
+        await T.alert(A, { title: '🔄 Клієнт хоче обмін/повернення', main: 'Бот надіслав інструкцію «Легке повернення» і чекає ТТН. Втручання не потрібне, якщо все штатно.', details: '💬 «' + hideLinks(text.slice(0, 200)) + '»' });
         return;
     }
 
@@ -342,7 +348,7 @@ async function runPolicy(A, u) {
         }
         if (u.extraProducts || u.alsoWants) {
             A.out.push({ text: 'Гарно, додамо до цієї ж посилки 🙌 Менеджер уточнить деталі й напише сюди 🙂', step: 'post_extra' });
-            await T.alert(A, { title: '➕ Клієнт хоче додати товар до оформленого замовлення', main: 'Додайте позицію вручну і напишіть клієнту.', details: '🧾 ' + (ctx.orderRef || ctx.crmOrderId) + '\n💬 «' + text.slice(0, 200) + '»' });
+            await T.alert(A, { title: '➕ Клієнт хоче додати товар до оформленого замовлення', main: 'Додайте позицію вручну і напишіть клієнту.', details: '🧾 ' + (ctx.orderRef || ctx.crmOrderId) + '\n💬 «' + hideLinks(text.slice(0, 200)) + '»' });
             return;
         }
         const since = Date.now() - Number(ctx.postOrderMsgAt || 0);
@@ -371,7 +377,7 @@ async function runPolicy(A, u) {
     const earlyReceipt = (u.receiptLink || u.claimsPaid || (A.turnImage && addressComplete(ctx.orderData))) && !ctx.crmOrderId && !(ctx.paymentInfo && ctx.paymentInfo.method);
     if (earlyReceipt && !ctx.agent.receiptEarlyAlertAt) {
         ctx.agent.receiptEarlyAlertAt = Date.now();
-        await T.alert(A, { title: '🧾 Клієнт пише про оплату до оформлення', main: 'Замовлення в боті ще не оформлене (нема розміру/кольору/адреси) — перевірте вручну, бот продовжує збирати дані.', details: '💬 «' + text.slice(0, 200) + '»' }, { photoUrl: A.turnImage || '' });
+        await T.alert(A, { title: '🧾 Клієнт пише про оплату до оформлення', main: 'Замовлення в боті ще не оформлене (нема розміру/кольору/адреси) — перевірте вручну, бот продовжує збирати дані.', details: '💬 «' + hideLinks(text.slice(0, 200)) + '»' }, { photoUrl: A.turnImage || '' });
     }
     const preNote = (earlyReceipt ? 'Дякую, оплату бачу — звіримо 🙏 Щоб оформити відправку, лишилось кілька кроків. ' : '') + (u.intent === 'wants_requisites' && !(ctx.paymentInfo && ctx.paymentInfo.method) ? 'Реквізити надішлю одразу після підбору розміру і кольору 🙂 ' : '');
 
@@ -400,7 +406,7 @@ async function runPolicy(A, u) {
             return;
         } else if (!P(ctx)) {
             if (ctx.hasProductSignal && !ctx.unknownNotifiedAt && !ctx.looksLikeReceipt) { ctx.lastCustomerMessage = text; await T.tool(A, 'n_unknown_debug'); await T.alert(A, 'n_unknown_admin', { photoUrl: A.turnImage || '' }); ctx.unknownNotifiedAt = Date.now(); }
-            if (ctx.looksLikeReceipt) { A.out.push({ text: 'Дякую! Схоже, це квитанція про оплату 🙏 Передала менеджеру на перевірку — він напише сюди 🙂', step: 'receipt_no_order' }); await T.alert(A, { title: '🧾 Квитанція без оформленого замовлення', main: 'Клієнт надіслав чек, але замовлення в боті нема — перевірте вручну.', details: '💬 «' + text.slice(0, 200) + '»' }, { photoUrl: A.turnImage || '' }); return; }
+            if (ctx.looksLikeReceipt) { A.out.push({ text: 'Дякую! Схоже, це квитанція про оплату 🙏 Передала менеджеру на перевірку — він напише сюди 🙂', step: 'receipt_no_order' }); await T.alert(A, { title: '🧾 Квитанція без оформленого замовлення', main: 'Клієнт надіслав чек, але замовлення в боті нема — перевірте вручну.', details: '💬 «' + hideLinks(text.slice(0, 200)) + '»' }, { photoUrl: A.turnImage || '' }); return; }
             const cats = ctx.catalogCategories ? ('Категорії в наявності: ' + ctx.catalogCategories) : 'Категорії: костюми, куртки, бомбери, кофти, футболки, джинси, взуття';
             const txt = await compose(A, { questions: u.questions, noGreeting: A.botSpokeBefore, extraFacts: cats, nextStep: A.turnImage ? 'скажи, що по фото не змогла впізнати модель, і спитай, що саме цікавить: назви категорії; або попроси переслати пост/рілс' : 'спитай, що саме цікавить (назви категорії) або попроси переслати пост/рілс з Instagram', fallback: (A.botSpokeBefore ? '' : 'Вітаю! 💛 ') + 'Підкажіть, що вас цікавить — костюми, куртки, бомбери, кофти, футболки, джинси чи взуття? Або перешліть пост/рілс 🙂' });
             A.out.push({ text: txt, step: 'unknown' }); ctx.agent.lastAsk = 'що цікавить';
@@ -579,7 +585,7 @@ async function runPolicy(A, u) {
     if (!(ctx.paymentInfo && ctx.paymentInfo.method)) {
         if (u.prepaymentObjection && !ctx.trustScriptStep) { A.out.push({ text: TRUST_STEP1, step: 'trust1' }); ctx.trustScriptStep = 1; ctx.agent.lastAsk = 'оформимо з передплатою 200?'; return; }
         if (ctx.trustScriptStep === 1 && (u.prepaymentObjection || u.trustPromise === false || u.ready === 'no')) { A.out.push({ text: TRUST_STEP2, step: 'trust2' }); ctx.trustScriptStep = 2; ctx.agent.lastAsk = 'обіцяєте прийти на пошту?'; return; }
-        if (ctx.trustScriptStep === 2 && u.trustPromise === false) { A.out.push({ text: HANDOFF_TEXT, step: 'trust_handoff' }); await pause(A, 'handoff', { title: '🙋 Клієнт не погодився на умови передоплати', main: 'Скрипт довіри пройдено, клієнт відмовляється — потрібне рішення менеджера.', details: '💬 «' + text.slice(0, 200) + '»' }); return; }
+        if (ctx.trustScriptStep === 2 && u.trustPromise === false) { A.out.push({ text: HANDOFF_TEXT, step: 'trust_handoff' }); await pause(A, 'handoff', { title: '🙋 Клієнт не погодився на умови передоплати', main: 'Скрипт довіри пройдено, клієнт відмовляється — потрібне рішення менеджера.', details: '💬 «' + hideLinks(text.slice(0, 200)) + '»' }); return; }
         if (ctx.trustScriptStep === 2 && (u.trustPromise === true || u.ready === 'yes')) ctx.paymentInfo = { method: 'cod_trust' };
         else if (ctx.trustScriptStep === 1 && (u.ready === 'yes' || u.payMethod === 'cod')) ctx.paymentInfo = { method: 'cod' };
         else if (u.payMethod) ctx.paymentInfo = { method: u.payMethod, ...(u.country ? { country: u.country } : {}) };

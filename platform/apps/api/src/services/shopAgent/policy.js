@@ -10,9 +10,11 @@ const { compose } = require('./compose');
 const { messageText, messageTextMultiline, nodeData, norm, loadCategories } = require('./lib');
 const { dispatchOrder } = require('./supplierDispatch');
 
-const TRUST_STEP1 = 'Накладний платіж у нас із частковою передплатою 200 грн.\n\nЯкщо прийдете на пошту і вам щось не підійде — ми повернемо ці 200 грн одразу.\n\nРаніше відправляли без передплати, і більшість людей просто не приходили на пошту.\n\nДля нас 200 грн — це гарантія, що:\n1) ви не чат-бот 🙂\n2) ви не передумаєте завтра\n3) ви прийдете на пошту\n\nОформимо замовлення із частковою передплатою 200 грн?';
-const TRUST_STEP2 = 'Якщо зробимо виняток і відправимо без передплати — обіцяєте, що завтра не передумаєте і що справді прийдете на пошту?';
-const HANDOFF_TEXT = 'Добре, зараз покличу менеджера 🙂 Незабаром вам відповість жива людина — дякую за терпіння 💛';
+// 2026-09-14 (власник: "я взагалі проти будь-якого хардкоду... все в ноди перенеси"): TRUST_STEP1/2,
+// HANDOFF_TEXT та решта клієнтських/менеджерських текстів цього файлу БУЛИ тут як JS-константи —
+// перенесено у звичайні message/notifyTg ноди flowDefinition бота (n_agent_*), редаговані у Flows
+// UI так само, як n_welcome/n_pay/n_confirm. РІШЕННЯ який вузол показати й коли — лишається тут
+// (детерміновану політику ходу свідомо НЕ повертаємо в граф-маршрутизацію — джерело R1-R7).
 const STAGES = { presented: ['Презентація товару', 1], params: ['Написав параметри', 2], color: ['Написав параметри та колір', 3], awaiting: ['Очікуємо дані та оплату', 4], accepted: ['Замовлення прийняте', 5], supplier: ['Замовлення оформлене в постачальника', 6] };
 const RE_UNKNOWN_Q = /гарант|знижк|пошит|оптом|розстроч|кредит|сертифік|повернен|обмін/i;
 
@@ -152,7 +154,7 @@ async function answerThenAsk(A, u, askText, o = {}) {
     if (/наявн|є в наявн|залишил|є ще|маєте ще|чи є/i.test(String(A.turnText || ''))) { A.ctx.lastCustomerMessage = A.turnText; await T.availSearch(A); availAnswer = A.ctx.availAnswer || ''; }
     if (!kb.length && u.questions.some((q) => RE_UNKNOWN_Q.test(q)) && !A.ctx.agent.askManagerAt) {
         A.ctx.agent.askManagerAt = Date.now(); await T.kbAsk(A, u.questions[0]);
-        await T.alert(A, { title: '❓ Клієнт спитав те, чого бот не знає', main: 'Бот продовжує діалог; відповідь допишіть у чат — вона також потрапить у Базу знань CRM.', details: '💬 «' + hideLinks(u.questions[0].slice(0, 200)) + '»' });
+        await T.alert(A, 'n_agent_unknown_question_admin', { details: '💬 «' + hideLinks(u.questions[0].slice(0, 200)) + '»' });
     }
     // Живий кейс 2026-09-14 (Василенко): картка щойно сама попросила зріст/вагу; askText тут
     // порожній навмисно (нічого повторно просити не треба), АЛЕ без явної заборони LLM (compose)
@@ -265,10 +267,12 @@ async function afterOrderAccepted(A) {
         ctx.parcelCount = dispatch.groups.length; ctx.multiParcel = dispatch.multiParcel;
         for (const g of dispatch.groups) {
             const itemsLine = g.items.map((l) => l.name + (l.color ? ' ' + l.color : '') + (l.size ? ' ' + l.size : '') + (l.qty > 1 ? ' ×' + l.qty : '')).join(', ');
+            ctx.agent.supplierName = g.supplier;
             if (g.needsManual) {
-                await T.alert(A, { title: '📦 Оформіть постачальнику вручну' + (dispatch.multiParcel ? ' — ' + g.supplier : ''), main: 'Для цього постачальника/позицій авто-замовлення не пройшло — оформіть вручну.', details: '🏭 ' + g.supplier + ' (' + g.mechanism + ')\n🛍️ ' + itemsLine + (g.result ? '\n' + g.result : '') + '\n👤 ' + (ctx.senderName || '') + ' — https://instagram.com/' + (ctx.igUsername || '') });
+                await T.alert(A, 'n_agent_supplier_manual_admin', { details: '🏭 ' + g.supplier + ' (' + g.mechanism + ')\n🛍️ ' + itemsLine + (g.result ? '\n' + g.result : '') + '\n👤 ' + (ctx.senderName || '') + ' — https://instagram.com/' + (ctx.igUsername || '') });
             } else {
-                await T.alert(A, { title: '🏭 Постачальнику' + (dispatch.multiParcel ? ' — ' + g.supplier : '') + ' · ' + (ctx.orderRef || ''), main: g.result || ('Оформлено (' + g.status + ').'), details: '👤 ' + (ctx.senderName || '') + ' — https://instagram.com/' + (ctx.igUsername || '') + (g.ttn ? '\n📦 ТТН: ' + g.ttn : '') });
+                ctx.agent.supplierResult = g.result || ('Оформлено (' + g.status + ').');
+                await T.alert(A, 'n_agent_supplier_ordered_admin', { details: '👤 ' + (ctx.senderName || '') + ' — https://instagram.com/' + (ctx.igUsername || '') + (g.ttn ? '\n📦 ТТН: ' + g.ttn : '') });
             }
         }
         ctx.supplierOrderStatus = dispatch.groups.map((g) => g.status).join(',') || 'manual';
@@ -307,25 +311,25 @@ async function runPolicy(A, u) {
 
     // 0. Людина / претензія / повернення
     if (u.wantsHuman) {
-        A.out.push({ text: HANDOFF_TEXT, step: 'handoff' });
-        await pause(A, 'handoff', { title: '🙋 Клієнт просить живу людину', main: 'Бот зупинився. Відповідайте в чаті; повернути бота — іконкою в сесії.', details: '💬 «' + hideLinks(text.slice(0, 200)) + '»' });
+        A.out.push({ text: messageText(A.assets, 'n_agent_handoff', ctx, A.session.id), step: 'handoff' });
+        await pause(A, 'handoff', 'n_agent_handoff_admin', '💬 «' + hideLinks(text.slice(0, 200)) + '»');
         return;
     }
     if (u.isComplaint && !u.returnRequest) {
-        A.out.push({ text: 'Розумію, це неприємно 😔 Передала менеджеру — він розбереться і напише вам сюди найближчим часом 💛', step: 'complaint' });
-        await pause(A, 'complaint', { title: '⚠️ Претензія клієнта', main: 'Бот зупинився, відповідайте в чаті.', details: '💬 «' + text.slice(0, 300) + '»' });
+        A.out.push({ text: messageText(A.assets, 'n_agent_complaint_ack', ctx, A.session.id), step: 'complaint' });
+        await pause(A, 'complaint', 'n_agent_complaint_admin', '💬 «' + hideLinks(text.slice(0, 300)) + '»');
         return;
     }
     if (ctx.returnFlow && ctx.returnFlow.stage === 'await_ttn') {
         const ttn = ttnIn(text);
         if (ttn) { ctx.returnFlow = { ...ctx.returnFlow, ttn, stage: 'done' }; ctx.returnTtn = ttn; await T.returnCrmUpdate(A); A.out.push({ text: messageTextMultiline(A.assets, 'n_return_confirm_msg', ctx, A.session.id), step: 'return_confirm' }); await T.alert(A, 'n_return_admin'); return; }
-        A.out.push({ text: await answerThenAsk(A, u, 'Щойно відправите посилку — напишіть, будь ласка, номер нової накладної, і ми одразу оформимо обмін/повернення 🤗'), step: 'return_wait' });
+        A.out.push({ text: await answerThenAsk(A, u, messageText(A.assets, 'n_agent_return_wait_ask', ctx, A.session.id)), step: 'return_wait' });
         return;
     }
     if (u.returnRequest) {
         A.out.push({ text: messageTextMultiline(A.assets, 'n_return_easy_msg', ctx, A.session.id), step: 'return_easy' });
         ctx.returnFlow = { stage: 'await_ttn', at: Date.now() };
-        await T.alert(A, { title: '🔄 Клієнт хоче обмін/повернення', main: 'Бот надіслав інструкцію «Легке повернення» і чекає ТТН. Втручання не потрібне, якщо все штатно.', details: '💬 «' + hideLinks(text.slice(0, 200)) + '»' });
+        await T.alert(A, 'n_agent_return_request_admin', { details: '💬 «' + hideLinks(text.slice(0, 200)) + '»' });
         return;
     }
 
@@ -347,8 +351,9 @@ async function runPolicy(A, u) {
             return;
         }
         if (u.extraProducts || u.alsoWants) {
-            A.out.push({ text: 'Гарно, додамо до цієї ж посилки 🙌 Менеджер уточнить деталі й напише сюди 🙂', step: 'post_extra' });
-            await T.alert(A, { title: '➕ Клієнт хоче додати товар до оформленого замовлення', main: 'Додайте позицію вручну і напишіть клієнту.', details: '🧾 ' + (ctx.orderRef || ctx.crmOrderId) + '\n💬 «' + hideLinks(text.slice(0, 200)) + '»' });
+            A.out.push({ text: messageText(A.assets, 'n_agent_post_extra_ack', ctx, A.session.id), step: 'post_extra' });
+            ctx.agent.orderRefDisplay = ctx.orderRef || ctx.crmOrderId;
+            await T.alert(A, 'n_agent_post_extra_admin', { details: '💬 «' + hideLinks(text.slice(0, 200)) + '»' });
             return;
         }
         const since = Date.now() - Number(ctx.postOrderMsgAt || 0);
@@ -377,7 +382,7 @@ async function runPolicy(A, u) {
     const earlyReceipt = (u.receiptLink || u.claimsPaid || (A.turnImage && addressComplete(ctx.orderData))) && !ctx.crmOrderId && !(ctx.paymentInfo && ctx.paymentInfo.method);
     if (earlyReceipt && !ctx.agent.receiptEarlyAlertAt) {
         ctx.agent.receiptEarlyAlertAt = Date.now();
-        await T.alert(A, { title: '🧾 Клієнт пише про оплату до оформлення', main: 'Замовлення в боті ще не оформлене (нема розміру/кольору/адреси) — перевірте вручну, бот продовжує збирати дані.', details: '💬 «' + hideLinks(text.slice(0, 200)) + '»' }, { photoUrl: A.turnImage || '' });
+        await T.alert(A, 'n_agent_early_payment_admin', { details: '💬 «' + hideLinks(text.slice(0, 200)) + '»', photoUrl: A.turnImage || '' });
     }
     const preNote = (earlyReceipt ? 'Дякую, оплату бачу — звіримо 🙏 Щоб оформити відправку, лишилось кілька кроків. ' : '') + (u.intent === 'wants_requisites' && !(ctx.paymentInfo && ctx.paymentInfo.method) ? 'Реквізити надішлю одразу після підбору розміру і кольору 🙂 ' : '');
 
@@ -401,14 +406,18 @@ async function runPolicy(A, u) {
             const photos = Array.isArray(ctx.catalogHintPhotos) ? ctx.catalogHintPhotos.filter((x) => /^https?:/.test(String(x))).slice(0, 4) : [];
             if (photos.length && ctx.agent.hintPhotosFor !== ctx.catalogHintSkus) { A.out.push({ photoUrls: photos, caption: '', step: 'hint_photos' }); ctx.agent.hintPhotosFor = ctx.catalogHintSkus; }
             const list = String(ctx.catalogHint || '');
-            const txt = await compose(A, { questions: u.questions, noGreeting: A.botSpokeBefore, extraFacts: 'СПИСОК ТОВАРІВ, ЯКІ ПІДХОДЯТЬ ПІД ЗАПИТ (покажи всі, з цінами, без артикулів у дужках можна):\n' + list, nextStep: 'коротко перелічи ці варіанти з цінами і спитай, який сподобався — по фото чи кольору (артикул просити не треба, фото вже надіслано)', fallback: 'Ось що є у нас у цій категорії:\n' + list + '\n\nЯкий сподобався? 😊' });
+            ctx.agent.hintList = list;
+            const txt = await compose(A, { questions: u.questions, noGreeting: A.botSpokeBefore, extraFacts: 'СПИСОК ТОВАРІВ, ЯКІ ПІДХОДЯТЬ ПІД ЗАПИТ (покажи всі, з цінами, без артикулів у дужках можна):\n' + list, nextStep: 'коротко перелічи ці варіанти з цінами і спитай, який сподобався — по фото чи кольору (артикул просити не треба, фото вже надіслано)', fallback: messageTextMultiline(A.assets, 'n_agent_catalog_hint_fallback', ctx, A.session.id) });
             A.out.push({ text: txt, step: 'hint' }); ctx.agent.lastAsk = 'який із показаних товарів цікавить';
             return;
         } else if (!P(ctx)) {
             if (ctx.hasProductSignal && !ctx.unknownNotifiedAt && !ctx.looksLikeReceipt) { ctx.lastCustomerMessage = text; await T.tool(A, 'n_unknown_debug'); await T.alert(A, 'n_unknown_admin', { photoUrl: A.turnImage || '' }); ctx.unknownNotifiedAt = Date.now(); }
-            if (ctx.looksLikeReceipt) { A.out.push({ text: 'Дякую! Схоже, це квитанція про оплату 🙏 Передала менеджеру на перевірку — він напише сюди 🙂', step: 'receipt_no_order' }); await T.alert(A, { title: '🧾 Квитанція без оформленого замовлення', main: 'Клієнт надіслав чек, але замовлення в боті нема — перевірте вручну.', details: '💬 «' + hideLinks(text.slice(0, 200)) + '»' }, { photoUrl: A.turnImage || '' }); return; }
-            const cats = ctx.catalogCategories ? ('Категорії в наявності: ' + ctx.catalogCategories) : 'Категорії: костюми, куртки, бомбери, кофти, футболки, джинси, взуття';
-            const txt = await compose(A, { questions: u.questions, noGreeting: A.botSpokeBefore, extraFacts: cats, nextStep: A.turnImage ? 'скажи, що по фото не змогла впізнати модель, і спитай, що саме цікавить: назви категорії; або попроси переслати пост/рілс' : 'спитай, що саме цікавить (назви категорії) або попроси переслати пост/рілс з Instagram', fallback: (A.botSpokeBefore ? '' : 'Вітаю! 💛 ') + 'Підкажіть, що вас цікавить — костюми, куртки, бомбери, кофти, футболки, джинси чи взуття? Або перешліть пост/рілс 🙂' });
+            if (ctx.looksLikeReceipt) { A.out.push({ text: messageText(A.assets, 'n_agent_receipt_no_order', ctx, A.session.id), step: 'receipt_no_order' }); await T.alert(A, 'n_agent_receipt_no_order_admin', { details: '💬 «' + hideLinks(text.slice(0, 200)) + '»', photoUrl: A.turnImage || '' }); return; }
+            // Категорії — з CRM (ctx.catalogCategories); рядок нижче — лише останній фолбек, якщо
+            // CRM взагалі не повернула жодної категорії (порожній каталог), не хардкод-заміна CRM.
+            ctx.agent.categoriesList = ctx.catalogCategories || 'костюми, куртки, бомбери, кофти, футболки, джинси, взуття';
+            const cats = ctx.catalogCategories ? ('Категорії в наявності: ' + ctx.catalogCategories) : 'Категорії: ' + ctx.agent.categoriesList;
+            const txt = await compose(A, { questions: u.questions, noGreeting: A.botSpokeBefore, extraFacts: cats, nextStep: A.turnImage ? 'скажи, що по фото не змогла впізнати модель, і спитай, що саме цікавить: назви категорії; або попроси переслати пост/рілс' : 'спитай, що саме цікавить (назви категорії) або попроси переслати пост/рілс з Instagram', fallback: (A.botSpokeBefore ? '' : 'Вітаю! 💛 ') + messageText(A.assets, 'n_agent_unknown_fallback', ctx, A.session.id) });
             A.out.push({ text: txt, step: 'unknown' }); ctx.agent.lastAsk = 'що цікавить';
             return;
         }
@@ -421,8 +430,8 @@ async function runPolicy(A, u) {
         const impliedSet = !u.setChoice && !u.setArticle && (u.height || u.weight || u.clothingSize || u.ready === 'yes' || u.changeRequest || u.colorMatched || u.color);
         if (u.setChoice === 'item' && u.setArticle) { ctx.setPick = { setChoice: 'item', article: u.setArticle }; await T.setApply(A); }
         else if (u.setChoice === 'set' || impliedSet) { ctx.setPick = { setChoice: 'set' }; await T.setApply(A); ctx.setMode = 'set'; }
-        else if (isSoftDecline(u)) { A.out.push({ text: await answerThenAsk(A, u, 'Добре, без поспіху 🙂 Напишіть, коли визначитесь — весь комплект чи окремі речі з нього.'), step: 'set_ask_soft' }); return; }
-        else { A.out.push({ text: await answerThenAsk(A, u, preNote + 'Підкажіть, будь ласка, вас цікавить весь комплект чи окремі речі з нього? 🙂\n\n' + humanSetList(p)), step: 'set_ask' }); ctx.agent.lastAsk = 'весь комплект чи окремі речі'; return; }
+        else if (isSoftDecline(u)) { A.out.push({ text: await answerThenAsk(A, u, messageText(A.assets, 'n_agent_soft_decline_set', ctx, A.session.id)), step: 'set_ask_soft' }); return; }
+        else { ctx.agent.preNote = preNote; ctx.agent.setAskList = humanSetList(p); A.out.push({ text: await answerThenAsk(A, u, messageTextMultiline(A.assets, 'n_agent_set_ask', ctx, A.session.id)), step: 'set_ask' }); ctx.agent.lastAsk = 'весь комплект чи окремі речі'; return; }
     }
     const pp = P(ctx);
 
@@ -463,7 +472,7 @@ async function runPolicy(A, u) {
             // бот тричі поспіль повторив те саме питання про зріст/вагу. Тут — рівно ОДНЕ мʼяке
             // речення без тиску, без повторення прохання; наступний реальний сигнал (параметри,
           // питання) обробиться як завжди.
-            A.out.push({ text: await answerThenAsk(A, u, 'Добре, без поспіху 🙂 Коли будете готові — напишіть зріст і вагу, і я одразу підберу розмір.'), step: 'size_postpone' });
+            A.out.push({ text: await answerThenAsk(A, u, messageText(A.assets, 'n_agent_soft_decline_size', ctx, A.session.id)), step: 'size_postpone' });
             return;
         } else {
             if (u.wantsSizeChart && pp.sizeChartUrl && ctx.agent.chartSentFor !== pp.sku) { A.out.push({ photoUrls: [pp.sizeChartUrl], caption: 'Ось розмірна сітка 📏', step: 'size_chart' }); ctx.agent.chartSentFor = pp.sku; }
@@ -475,11 +484,11 @@ async function runPolicy(A, u) {
             // чекаємо, не питаємо вдруге.
             if (A.justPresented && !u.questions.length && !colorNote) { ctx.agent.lastAsk = paramsPrompt || 'зріст і вага'; return; }
             const missing = isHW ? (si.height && !si.weight ? 'вагу' : (!si.height && si.weight ? 'зріст' : '')) : '';
-            const ask = A.justPresented ? '' : (
-                isHW
-                    ? (missing ? 'Дякую! Підкажіть ще ' + missing + ', будь ласка — і одразу підберу розмір 🙂' : 'Підкажіть, будь ласка, ваш зріст і вагу — підберу розмір 📏')
-                    : ('Підкажіть, будь ласка: ' + (paramsPrompt || 'ваш розмір') + ' 🙂')
-            );
+            let ask = '';
+            if (!A.justPresented) {
+                if (isHW) { ctx.agent.missingParam = missing; ask = missing ? messageText(A.assets, 'n_agent_ask_size_missing', ctx, A.session.id) : messageText(A.assets, 'n_agent_ask_size_both', ctx, A.session.id); }
+                else { ctx.agent.paramsPromptText = paramsPrompt || 'ваш розмір'; ask = messageText(A.assets, 'n_agent_ask_size_custom', ctx, A.session.id); }
+            }
             A.out.push({ text: await answerThenAsk(A, u, preNote + colorNote + ask), step: 'ask_params' }); ctx.agent.lastAsk = paramsPrompt || 'зріст і вага';
             return;
         }
@@ -489,9 +498,10 @@ async function runPolicy(A, u) {
     if (pp.colors && !(ctx.colorChoice && ctx.colorChoice.color)) {
         const c = u.colorMatched || matchColor(pp, u.color) || (ctx.sizeInput && ctx.sizeInput.color) || matchColor(pp, ctx.agent.pendingColor) || matchColor(pp, ctx.agent.pendingColorRaw) || null;
         if (c) { ctx.colorChoice = { color: c, qty: u.qty || undefined }; delete ctx.agent.pendingColor; delete ctx.agent.pendingColorRaw; }
-        else if (isSoftDecline(u)) { A.out.push({ text: await answerThenAsk(A, u, 'Добре, без поспіху 🙂 Напишіть, коли визначитесь із кольором.'), step: 'ask_color_soft' }); return; }
+        else if (isSoftDecline(u)) { A.out.push({ text: await answerThenAsk(A, u, messageText(A.assets, 'n_agent_soft_decline_color', ctx, A.session.id)), step: 'ask_color_soft' }); return; }
         else {
-            const ask = u.color ? 'Кольору «' + u.color + '» саме у цієї моделі нема 😔 Є: ' + pp.colors + ' — який обираєте?' : 'Який колір обираєте: ' + pp.colors + '? 🎨';
+            ctx.agent.wantColor = u.color || '';
+            const ask = u.color ? messageText(A.assets, 'n_agent_ask_color_specific', ctx, A.session.id) : messageText(A.assets, 'n_agent_ask_color_generic', ctx, A.session.id);
             A.out.push({ text: await answerThenAsk(A, u, preNote + ask), step: 'ask_color' }); ctx.agent.lastAsk = 'колір'; return;
         }
     }
@@ -513,11 +523,13 @@ async function runPolicy(A, u) {
                 const total = ctx.agent.setPricing.total;
                 const wasReady = ctx.orderIntent && ctx.orderIntent.ready === 'yes';
                 if (wasReady) ctx.orderIntent.ready = null; // змінений склад — підтверджуємо ще раз
-                A.out.push({ text: 'Оновила склад (' + ctx.agent.setEditNote + ') 🙌\n\n' + lines + '\n\nРазом: ' + total + ' грн\n\n' + (ctx.setSelection.length ? 'Оформляємо так? 🙂' : 'Комплект лишився без жодної позиції — що додати?'), step: 'set_edit' });
+                ctx.agent.setLines = lines; ctx.agent.setTotal = total;
+                ctx.agent.setEditQuestion = ctx.setSelection.length ? 'Оформляємо так? 🙂' : 'Комплект лишився без жодної позиції — що додати?';
+                A.out.push({ text: messageTextMultiline(A.assets, 'n_agent_set_edit_confirm', ctx, A.session.id), step: 'set_edit' });
                 ctx.agent.lastAsk = 'оформляємо?'; ctx.agent.setEditNote = '';
                 return;
             } else if (ctx.agent.setEditNote) {
-                A.out.push({ text: await answerThenAsk(A, u, 'Не зовсім зрозуміла, яку позицію ви маєте на увазі — уточните, будь ласка? 🙂'), step: 'set_edit_unclear' });
+                A.out.push({ text: await answerThenAsk(A, u, messageText(A.assets, 'n_agent_set_edit_unclear', ctx, A.session.id)), step: 'set_edit_unclear' });
                 return;
             }
         }
@@ -546,7 +558,8 @@ async function runPolicy(A, u) {
             if (pp.upsell && u.addUpsell == null && u.ready === 'yes' && ctx.agent.upsellOffered && !u.upsellNote && !gaveAddress && !u.payMethod) {
                 // згода без відповіді на допродаж — одне уточнення
                 ctx.orderIntent = null;
-                A.out.push({ text: 'Оформляю ' + (pp.customerName || pp.name) + ' 🙌 Додаємо ' + pp.upsell + ' до посилки (яку і скільки) чи без нього?', step: 'upsell_clarify' }); ctx.agent.lastAsk = 'з допродажем чи без'; return;
+                ctx.agent.productDisplayName = pp.customerName || pp.name;
+                A.out.push({ text: messageText(A.assets, 'n_agent_upsell_clarify', ctx, A.session.id), step: 'upsell_clarify' }); ctx.agent.lastAsk = 'з допродажем чи без'; return;
             }
         } else {
             // підсумок + «Оформляємо?»
@@ -556,8 +569,8 @@ async function runPolicy(A, u) {
             if (pp.upsellPhotoUrl && !isSetFull && !ctx.agent.upsellPhotoSent) { A.out.push({ photoUrls: [pp.upsellPhotoUrl], caption: '', step: 'upsell_photo' }); ctx.agent.upsellPhotoSent = true; }
             // Підсумок — ДЕТЕРМІНОВАНО (розмір/колір/сума з інструментів, LLM їх не перераховує); LLM лише
             // відповідає на питання клієнта перед підсумком або мʼяко працює з ваганням.
-            const summary = 'Ось ваше замовлення 🙌\n' + (pp.customerName || pp.name) + (units ? ' — ' + units : '') + ' — ' + total + ' грн' + (ctx.extraItemsText ? '\n' + ctx.extraItemsText : '') + (ctx.shop && ctx.shop.terms ? '\n' + ctx.shop.terms : '');
-            const askLine = (!isSetFull && pp.upsell) ? 'Оформляємо? І підкажіть: додати ще ' + pp.upsell + ' до цієї ж посилки, чи лише основний товар? 🙂' : 'Оформляємо замовлення? 🙂';
+            const summary = messageText(A.assets, 'n_agent_order_summary_header', ctx, A.session.id) + '\n' + (pp.customerName || pp.name) + (units ? ' — ' + units : '') + ' — ' + total + ' грн' + (ctx.extraItemsText ? '\n' + ctx.extraItemsText : '') + (ctx.shop && ctx.shop.terms ? '\n' + ctx.shop.terms : '');
+            const askLine = (!isSetFull && pp.upsell) ? messageText(A.assets, 'n_agent_order_ask_upsell', ctx, A.session.id) : messageText(A.assets, 'n_agent_order_ask_plain', ctx, A.session.id);
             if (!isSetFull && pp.upsell) ctx.agent.upsellOffered = true;
             const hesitating = (u.intent === 'hesitate' || u.intent === 'postpone');
             let txt = summary + '\n\n' + askLine;
@@ -580,24 +593,25 @@ async function runPolicy(A, u) {
     if (!(ctx.paymentInfo && ctx.paymentInfo.method) && givingAddressNow && !u.payMethod && !u.prepaymentObjection) {
         const od = ctx.orderData || {};
         const missing = [!od.fullName && 'ПІБ', !od.phone && 'телефон', !od.city && 'місто', !od.branch && '№ відділення або поштомата'].filter(Boolean);
-        A.out.push({ text: await answerThenAsk(A, u, 'Записала 📝 Ще підкажіть, будь ласка: ' + missing.join(', ')), step: 'ask_address_partial' }); ctx.agent.lastAsk = 'дані доставки: ' + missing.join(', '); return;
+        ctx.agent.missingFields = missing.join(', ');
+        A.out.push({ text: await answerThenAsk(A, u, messageText(A.assets, 'n_agent_ask_address_partial', ctx, A.session.id)), step: 'ask_address_partial' }); ctx.agent.lastAsk = 'дані доставки: ' + missing.join(', '); return;
     }
     if (!(ctx.paymentInfo && ctx.paymentInfo.method)) {
-        if (u.prepaymentObjection && !ctx.trustScriptStep) { A.out.push({ text: TRUST_STEP1, step: 'trust1' }); ctx.trustScriptStep = 1; ctx.agent.lastAsk = 'оформимо з передплатою 200?'; return; }
-        if (ctx.trustScriptStep === 1 && (u.prepaymentObjection || u.trustPromise === false || u.ready === 'no')) { A.out.push({ text: TRUST_STEP2, step: 'trust2' }); ctx.trustScriptStep = 2; ctx.agent.lastAsk = 'обіцяєте прийти на пошту?'; return; }
-        if (ctx.trustScriptStep === 2 && u.trustPromise === false) { A.out.push({ text: HANDOFF_TEXT, step: 'trust_handoff' }); await pause(A, 'handoff', { title: '🙋 Клієнт не погодився на умови передоплати', main: 'Скрипт довіри пройдено, клієнт відмовляється — потрібне рішення менеджера.', details: '💬 «' + hideLinks(text.slice(0, 200)) + '»' }); return; }
+        if (u.prepaymentObjection && !ctx.trustScriptStep) { A.out.push({ text: messageTextMultiline(A.assets, 'n_agent_trust1', ctx, A.session.id), step: 'trust1' }); ctx.trustScriptStep = 1; ctx.agent.lastAsk = 'оформимо з передплатою 200?'; return; }
+        if (ctx.trustScriptStep === 1 && (u.prepaymentObjection || u.trustPromise === false || u.ready === 'no')) { A.out.push({ text: messageText(A.assets, 'n_agent_trust2', ctx, A.session.id), step: 'trust2' }); ctx.trustScriptStep = 2; ctx.agent.lastAsk = 'обіцяєте прийти на пошту?'; return; }
+        if (ctx.trustScriptStep === 2 && u.trustPromise === false) { A.out.push({ text: messageText(A.assets, 'n_agent_handoff', ctx, A.session.id), step: 'trust_handoff' }); await pause(A, 'handoff', 'n_agent_trust_declined_admin', '💬 «' + hideLinks(text.slice(0, 200)) + '»'); return; }
         if (ctx.trustScriptStep === 2 && (u.trustPromise === true || u.ready === 'yes')) ctx.paymentInfo = { method: 'cod_trust' };
         else if (ctx.trustScriptStep === 1 && (u.ready === 'yes' || u.payMethod === 'cod')) ctx.paymentInfo = { method: 'cod' };
         else if (u.payMethod) ctx.paymentInfo = { method: u.payMethod, ...(u.country ? { country: u.country } : {}) };
         else {
             const payTpl = messageTextMultiline(A.assets, 'n_pay', ctx, A.session.id + ':pay');
             if (u.questions.length) A.out.push({ text: await compose(A, { questions: u.questions, nextStep: 'потім скажи, що лишилось обрати спосіб оплати (сам список дасть система)', maxSentences: 3, fallback: '' }), step: 'pay_q' });
-            const payAck = (u.claimsPaid || u.receiptLink || A.turnImage) ? 'Дякую, бачу квитанцію 🙏 Підкажіть лише, це часткова передплата (200 грн) чи повна оплата — щоб я правильно оформила:\n\n' : ((u.phone || u.fullName || u.city || u.branch) ? 'Дані для відправки записала 📝 Лишилось обрати оплату:\n\n' : (u.addUpsell === false && ctx.agent.upsellOffered ? 'Добре, лише основний товар 🙂\n\n' : ''));
+            const payAck = (u.claimsPaid || u.receiptLink || A.turnImage) ? messageTextMultiline(A.assets, 'n_agent_pay_ack_receipt', ctx, A.session.id) + '\n\n' : ((u.phone || u.fullName || u.city || u.branch) ? messageTextMultiline(A.assets, 'n_agent_pay_ack_address', ctx, A.session.id) + '\n\n' : (u.addUpsell === false && ctx.agent.upsellOffered ? messageTextMultiline(A.assets, 'n_agent_pay_ack_no_upsell', ctx, A.session.id) + '\n\n' : ''));
             A.out.push({ text: payAck + payTpl, step: 'pay_options' });
             ctx.agent.lastAsk = 'спосіб оплати 1 чи 2'; return;
         }
         await T.payAmount(A);
-        if (ctx.paymentInfo.country) { await T.intlRoute(A); if (ctx.intlStatus === 'unsupported') { A.out.push({ text: messageText(A.assets, 'n_intl_unsupported_msg', ctx, A.session.id), step: 'intl' }); await pause(A, 'intl_unsupported', { title: '🌍 Міжнародна доставка', main: 'Клієнт просить доставку в ' + ctx.intlCountry, details: '' }); return; } }
+        if (ctx.paymentInfo.country) { await T.intlRoute(A); if (ctx.intlStatus === 'unsupported') { A.out.push({ text: messageText(A.assets, 'n_intl_unsupported_msg', ctx, A.session.id), step: 'intl' }); await pause(A, 'intl_unsupported', 'n_agent_intl_admin'); return; } }
         await T.funnelStage(A, ...STAGES.awaiting);
         if (u.questions.length) A.out.push({ text: await answerThenAsk(A, u, ''), step: 'pay_q' });
         await sendRequisites(A, u);
@@ -612,16 +626,17 @@ async function runPolicy(A, u) {
         const mem = ctx.customer || {};
         if (!od.phone && !od.fullName && mem.phone && mem.fullName && mem.city && mem.branch) {
             if (ctx.agent.addressConfirmAsked && (u.ready === 'yes' || /^(так|да|ті ?самі|те ?саме|ок|окей|на ті|актуальн)/i.test(text.trim()))) { Object.assign(od, { fullName: mem.fullName, phone: mem.phone, city: mem.city, branch: mem.branch }); }
-            else if (!ctx.agent.addressConfirmAsked) { ctx.agent.addressConfirmAsked = true; ctx.orderData = od; A.out.push({ text: await answerThenAsk(A, u, 'Минулого разу відправляли на: ' + mem.fullName + ', ' + mem.phone + ', ' + mem.city + ', відділення ' + mem.branch + '. Відправляємо туди ж? Якщо так — напишіть «так», якщо ні — нові дані одним повідомленням 🙂'), step: 'address_confirm' }); ctx.agent.lastAsk = 'ті самі дані доставки?'; return; }
+            else if (!ctx.agent.addressConfirmAsked) { ctx.agent.addressConfirmAsked = true; ctx.orderData = od; A.out.push({ text: await answerThenAsk(A, u, messageText(A.assets, 'n_agent_address_confirm_reuse', ctx, A.session.id)), step: 'address_confirm' }); ctx.agent.lastAsk = 'ті самі дані доставки?'; return; }
         }
         ctx.orderData = od;
         if (u.wantsManualReq) { await sendManualRequisites(A, true); return; }
         if (u.claimsPaid || u.receiptLink || A.turnImage) await tryReconcile(A);
-        if (u.homeAddress) { A.out.push({ text: await answerThenAsk(A, u, 'Ми відправляємо лише Новою Поштою — на відділення або поштомат (доставки додому чи таксі, на жаль, нема) 🙏 Підкажіть, будь ласка, номер відділення або поштомата' + (od.city ? ' у м. ' + od.city : '') + ' 📦'), step: 'home_address' }); ctx.agent.lastAsk = 'номер відділення'; return; }
+        if (u.homeAddress) { ctx.agent.cityNote = od.city ? ' у м. ' + od.city : ''; A.out.push({ text: await answerThenAsk(A, u, messageText(A.assets, 'n_agent_home_address_reject', ctx, A.session.id)), step: 'home_address' }); ctx.agent.lastAsk = 'номер відділення'; return; }
         if (!addressComplete(od)) {
             const missing = [!od.fullName && 'ПІБ', !od.phone && 'телефон', !od.city && 'місто', !od.branch && '№ відділення або поштомата'].filter(Boolean);
-            const ackLine = ctx.payStatus === 'confirmed' ? 'Оплату отримали ✅ ' : (u.claimsPaid || u.receiptLink || A.turnImage ? 'Дякую! Оплату звіримо, щойно надійде 🙏 ' : '');
-            A.out.push({ text: await answerThenAsk(A, u, ackLine + 'Напишіть, будь ласка, для відправки Новою Поштою: ' + missing.join(', ') + ' 📦'), step: 'ask_address' }); ctx.agent.lastAsk = 'дані доставки: ' + missing.join(', '); return;
+            ctx.agent.ackLine = ctx.payStatus === 'confirmed' ? 'Оплату отримали ✅ ' : (u.claimsPaid || u.receiptLink || A.turnImage ? 'Дякую! Оплату звіримо, щойно надійде 🙏 ' : '');
+            ctx.agent.missingFields = missing.join(', ');
+            A.out.push({ text: await answerThenAsk(A, u, messageText(A.assets, 'n_agent_ask_address', ctx, A.session.id)), step: 'ask_address' }); ctx.agent.lastAsk = 'дані доставки: ' + missing.join(', '); return;
         }
         await T.npCheck(A);
         if (ctx.np && ctx.np.ask) { A.out.push({ text: messageText(A.assets, 'n_np_ask', ctx, A.session.id), step: 'np_ask' }); ctx.agent.lastAsk = 'уточнення адреси НП'; ctx.orderData = { ...od, branch: od.branch }; return; }
@@ -640,4 +655,4 @@ async function runPolicy(A, u) {
     }
 }
 
-module.exports = { runPolicy, addressComplete, matchColor, TRUST_STEP1, TRUST_STEP2, HANDOFF_TEXT };
+module.exports = { runPolicy, addressComplete, matchColor };

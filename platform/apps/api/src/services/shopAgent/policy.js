@@ -41,24 +41,24 @@ function initSetSelection(pp) {
 function stemsOf(name) {
     return String(name || '').toLowerCase().replace(/[«»().,]/g, ' ').split(/\s+/).filter((w) => w.length >= 4 && !/^(чоловіч|жіноч|дитяч|артикул|комплект)/.test(w)).map((w) => w.slice(0, 5));
 }
-// «взуття» — категорія, а не назва товару: лофери/кросівки/черевики тощо. Без цієї мапи «без
-// взуття» не знаходить жодної позиції за назвою (той самий клас проблеми, що й ITEM_RE у
-// n_extra_resolve-code.js, окрема копія — тут працюємо з уже завантаженими setItems, без CRM-виклику).
-const CATEGORY_SYNONYMS = [
-    { key: /взутт|лофер|кросів|черевик|туфл|чобот|сандал|капц/i, terms: ['лофер', 'кросів', 'черевик', 'туфл', 'чобот', 'сандал', 'капц', 'взутт'] },
-    { key: /джинс/i, terms: ['джинс'] },
-    { key: /футболк/i, terms: ['футболк'] },
-    { key: /кофт/i, terms: ['кофт'] },
-    { key: /куртк/i, terms: ['куртк'] },
-    { key: /костюм/i, terms: ['костюм'] },
-    { key: /бомбер/i, terms: ['бомбер'] },
-    { key: /штан/i, terms: ['штан', 'джинс'] },
-];
-function matchSetItem(text, items) {
+// 2026-09-14 (власник: "я взагалі проти будь-якого хардкоду... якщо ти щось захардкодив —
+// скоріш за все це баг"): ТУТ раніше був ручний список синонімів категорій (взуття→лофер/
+// кросівки/черевики/...) — рівно те, що власник уже ЗАБОРОНЯВ у goverla раніше (Edits
+// 4c55a087, "НЕ хардкодимо список матеріалів — переиспользуємо загальний текстовий пошук").
+// Замінено на дані з CRM: «взуття» матчиться, бо це буквально НАЗВА КАТЕГОРІЇ товару в CRM
+// (categoryNames, з resolveSetParams) — жодного власноруч написаного списку слів.
+/** Зіставляє вільний текст («без взуття», «додайте джинси») з позицією комплекту: спершу за
+ * артикулом, потім за назвою КАТЕГОРІЇ товару з CRM (дані, не хардкод), і насамкінець — за
+ * словами з власної назви товару (stemsOf, як і для звичайного пошуку по каталогу). */
+function matchSetItem(text, items, categoryNames) {
     const t = String(text || '').toLowerCase(); if (!t.trim()) return null;
     for (const it of items) if (it.article && t.includes(String(it.article).toLowerCase())) return it;
-    for (const cat of CATEGORY_SYNONYMS) {
-        if (cat.key.test(t)) { const hit = items.find((it) => cat.terms.some((term) => String(it.name || '').toLowerCase().includes(term))); if (hit) return hit; }
+    if (categoryNames) {
+        for (const it of items) {
+            const catName = String(categoryNames[it.article] || '').toLowerCase().trim();
+            const stem = catName.length > 5 ? catName.slice(0, catName.length - 2) : catName; // рід./множина: "взуття"→"взутт"
+            if (stem && stem.length >= 4 && t.includes(stem)) return it;
+        }
     }
     let best = null, bestScore = 0;
     for (const it of items) { const score = stemsOf(it.name).filter((s) => t.includes(s)).length; if (score > bestScore) { bestScore = score; best = it; } }
@@ -99,16 +99,17 @@ function applySetPricing(ctx, pp) {
 /** Застосувати правку складу з розуміння ходу. Повертає true, якщо щось реально змінилось. */
 async function applySetEdit(A, u, pp) {
     const { ctx } = A; const sel = ctx.setSelection; const original = ctx.agent.setOriginal;
+    const catNames = (ctx.agent.setParams && ctx.agent.setParams.categoryNames) || null;
     const notes = []; let changed = false;
     if (u.removeItem) {
-        const hit = matchSetItem(u.removeItem, sel);
+        const hit = matchSetItem(u.removeItem, sel, catNames);
         if (hit) { ctx.setSelection = sel.filter((x) => x !== hit); notes.push('прибрала: ' + hit.name); changed = true; }
         else notes.push('не знайшла в комплекті «' + u.removeItem + '» — менеджер уточнить, коли зверне увагу');
     }
     if (u.addItem) {
-        const already = matchSetItem(u.addItem, ctx.setSelection);
+        const already = matchSetItem(u.addItem, ctx.setSelection, catNames);
         if (!already) {
-            const hit = matchSetItem(u.addItem, original);
+            const hit = matchSetItem(u.addItem, original, catNames);
             if (hit) { ctx.setSelection = [...ctx.setSelection, { ...hit }]; notes.push('додала: ' + hit.name); changed = true; }
             else {
                 // не частина цього комплекту — окремий товар із каталогу (той самий резолвер, що для допродажів)
@@ -170,12 +171,13 @@ function humanSetList(pp) { return (pp.setItems || []).map((it) => '• ' + it.n
  * потрібні параметри — а не хардкодити «зріст і вагу» незалежно від складу (set1112 містить
  * лофери з категорії «Взуття», якій потрібен окремий параметр «Розмір взуття», не зріст/вага). */
 async function resolveSetParams(A, pp) {
-    if (!Array.isArray(pp.setItems) || !pp.setItems.length) return { params: [], prompt: '', isOnlyHW: false };
+    if (!Array.isArray(pp.setItems) || !pp.setItems.length) return { params: [], prompt: '', isOnlyHW: false, categoryNames: {} };
     let categories = []; try { categories = await loadCategories(A.botId, A.keys); } catch (e) { categories = []; }
     const byId = new Map(categories.map((c) => [c.id, c]));
-    const seen = new Map();
+    const seen = new Map(); const categoryNames = {};
     for (const it of pp.setItems) {
         const cat = it.categoryId && byId.get(it.categoryId);
+        if (cat && it.article) categoryNames[it.article] = cat.name || '';
         for (const p of ((cat && Array.isArray(cat.requiredParams)) ? cat.requiredParams : [])) {
             const key = String(p.name || '').toLowerCase().trim(); if (key && !seen.has(key)) seen.set(key, p);
         }
@@ -183,7 +185,7 @@ async function resolveSetParams(A, pp) {
     const params = [...seen.values()];
     const isOnlyHW = params.length > 0 && params.every((p) => /зріст|ріст|height|вага|weight/i.test(p.name || ''));
     const prompt = params.map((p) => p.name + (p.unit ? ' (' + p.unit + ')' : '')).join(', ');
-    return { params, prompt, isOnlyHW };
+    return { params, prompt, isOnlyHW, categoryNames };
 }
 
 async function pause(A, reason, alertNode, extraDetails) {

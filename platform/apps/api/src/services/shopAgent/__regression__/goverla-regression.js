@@ -14,8 +14,17 @@
  * безкоштовним і на 100% детермінованим — жодної залежності від того, що цього разу відповість
  * модель. Перед КОЖНИМ деплоєм змін у policy.js/tools.js/compose.js/lib.js цієї воронки — прогнати
  * цей файл; усі тести мають бути PASS.
+ *
+ * Файл запускається як самостійний скрипт (не через звичайний entrypoint платформи), тому сам
+ * налаштовує резолюцію workspace-пакетів (@platform/db тощо) — без цього монорепо-пакети не
+ * резолвляться і процес мовчки зависає на першому ж require.
  */
-const path = require('path');
+if (require.main === module && !process.env.NODE_PATH) {
+    // Той самий шлях, яким на сервері живе платформа (див. CLAUDE.md, §1) — скрипт запускається
+    // як самостійний процес, не через звичайний entrypoint, тож монорепо-пакети інакше не знайти.
+    process.env.NODE_PATH = '/var/www/flows.fineko.space/platform/node_modules';
+    require('module').Module._initPaths();
+}
 const { loadAssets } = require('../lib');
 const { runPolicy, matchColor } = require('../policy');
 

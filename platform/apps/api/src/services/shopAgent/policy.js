@@ -303,6 +303,13 @@ async function runPolicy(A, u) {
             await T.alert(A, 'n_receipt_alert', { photoUrl: A.turnImage || '' });
             return;
         }
+        if (u.wantsManualReq && ctx.payStatus !== 'confirmed' && Number(ctx.payAmount) > 0) {
+            // Живий кейс 2026-09-14 (Валерій): оплата за посиланням уже надіслана раніше, клієнт
+            // хоче реквізити вручну — бот відповідав шаблонним «замовлення в роботі», ігноруючи
+            // прохання. Секція «Після оформленого замовлення» не перевіряла wantsManualReq взагалі.
+            await sendManualRequisites(A, true);
+            return;
+        }
         if (u.extraProducts || u.alsoWants) {
             A.out.push({ text: 'Гарно, додамо до цієї ж посилки 🙌 Менеджер уточнить деталі й напише сюди 🙂', step: 'post_extra' });
             await T.alert(A, { title: '➕ Клієнт хоче додати товар до оформленого замовлення', main: 'Додайте позицію вручну і напишіть клієнту.', details: '🧾 ' + (ctx.orderRef || ctx.crmOrderId) + '\n💬 «' + text.slice(0, 200) + '»' });

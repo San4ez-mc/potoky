@@ -173,6 +173,10 @@ async function present(A) {
     A.out.push({ text: greet + card, step: 'present' });
     ctx.productJustPresented = true; ctx.presentedAt = Date.now(); ctx.lastPresentedSku = p.sku; ctx.agent.presentedSku = p.sku;
     ctx.agent.lastAsk = p.followUpQuestion || '';
+    A.justPresented = true; // картка (n_welcome) сама закінчується проханням дати параметри/колір —
+    // цього ж ходу питати вдруге не треба (живий кейс 2026-09-14, Устим/Юлія: два майже
+    // однакових повідомлення поспіль, «дайте зріст і вагу» одразу після картки, де це прохання
+    // вже є останнім рядком)
     await T.funnelStage(A, ...STAGES.presented);
 }
 
@@ -413,11 +417,17 @@ async function runPolicy(A, u) {
             return;
         } else {
             if (u.wantsSizeChart && pp.sizeChartUrl && ctx.agent.chartSentFor !== pp.sku) { A.out.push({ photoUrls: [pp.sizeChartUrl], caption: 'Ось розмірна сітка 📏', step: 'size_chart' }); ctx.agent.chartSentFor = pp.sku; }
-            const missing = si.height && !si.weight ? 'вагу' : (!si.height && si.weight ? 'зріст' : '');
             const colorNote = u.color && !u.colorMatched && colorsOf(pp) ? ('Щодо кольору «' + u.color + '»: у цієї моделі є ' + colorsOf(pp) + ' — який ближче? ') : (u.colorMatched ? 'Колір ' + u.colorMatched + ' — записала 🎨 ' : '');
-            const ask = pp.categoryParamsIsHeightWeight === 'false'
+            // Живий кейс 2026-09-14 (Устим, Юлія): картка товару (n_welcome) сама ЗАКІНЧУЄТЬСЯ проханням
+            // дати зріст/вагу — одразу після свіжої презентації друге, окреме повідомлення з тим самим
+            // проханням виглядало як збій («два рази ціну написав», «два рази питає»). Якщо картку щойно
+            // показано і клієнту більше нічого відповісти (нема питання, нема сигналу кольору) — просто
+            // чекаємо, не питаємо вдруге.
+            if (A.justPresented && !u.questions.length && !colorNote) { ctx.agent.lastAsk = 'зріст і вага'; return; }
+            const missing = si.height && !si.weight ? 'вагу' : (!si.height && si.weight ? 'зріст' : '');
+            const ask = A.justPresented ? '' : (pp.categoryParamsIsHeightWeight === 'false'
                 ? ('Підкажіть, будь ласка, ' + (pp.categoryParamsPrompt || 'ваш розмір') + ' 🙂')
-                : (missing ? 'Дякую! Підкажіть ще ' + missing + ', будь ласка — і одразу підберу розмір 🙂' : 'Підкажіть, будь ласка, ваш зріст і вагу — підберу розмір 📏');
+                : (missing ? 'Дякую! Підкажіть ще ' + missing + ', будь ласка — і одразу підберу розмір 🙂' : 'Підкажіть, будь ласка, ваш зріст і вагу — підберу розмір 📏'));
             A.out.push({ text: await answerThenAsk(A, u, preNote + colorNote + ask), step: 'ask_params' }); ctx.agent.lastAsk = 'зріст і вага';
             return;
         }

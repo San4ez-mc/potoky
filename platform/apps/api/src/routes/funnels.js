@@ -586,11 +586,13 @@ router.get('/:botId/analytics',
         for (const n of nodes) if (!seen.has(n.id)) { seen.add(n.id); order.push(n.id); }
 
         // ── Sessions in period ────────────────────────────────────────────────
-        const sessions = await db.session.findMany({
-            where: { botId, startedAt: { gte: timeFrom }, ...testFilter },
-            select: { id: true, context: true, state: true, isActive: true, startedAt: true, completedAt: true },
-        });
-
+        // 2026-09-15 (продакшн-інцидент): для воронки з великим живим трафіком (goverla_shop після
+        // переходу на shopAgent v2 — тисячі сесій за 30 днів) один findMany() з context:true на ВСІ
+        // сесії періоду одразу — це кілька тисяч повних JSON-обʼєктів в одному масиві в памʼяті
+        // Node-процесу. Впало ядро platform-api цілком (JS heap out of memory на JSON.parse),
+        // забравши з собою на кілька хвилин усіх живих ботів на сервері, не лише цю воронку.
+        // Пагінуємо курсором по id — тримаємо в памʼяті лише один батч за раз, решту одразу
+        // згортаємо у прості лічильники нижче й відкидаємо. Підсумкові дані ідентичні.
         const linkCounts = {};   // _linkSource -> session count
         const nodeReached = {};  // nodeId -> sessions that visited it
         const reachedAnyChild = {}; // nodeId -> сесій, що з нього пішли далі ХОЧ ЯКИМСЬ реальним ребром
@@ -598,36 +600,52 @@ router.get('/:botId/analytics',
         let totalSessions = 0, activeSessions = 0, completedSessions = 0, unsubscribedSessions = 0;
         let completionMsSum = 0, completionMsCount = 0;
 
-        for (const s of sessions) {
-            totalSessions++;
-            if (s.isActive) activeSessions++;
-            if (s.state === 'completed') completedSessions++;
-            else if (s.state === 'unsubscribed') unsubscribedSessions++;
+        const ANALYTICS_BATCH = 1000;
+        let analyticsCursor = null;
+        for (;;) {
+            const batch = await db.session.findMany({
+                where: { botId, startedAt: { gte: timeFrom }, ...testFilter },
+                select: { id: true, context: true, state: true, isActive: true, startedAt: true, completedAt: true },
+                orderBy: { id: 'asc' },
+                take: ANALYTICS_BATCH,
+                ...(analyticsCursor ? { cursor: { id: analyticsCursor }, skip: 1 } : {}),
+            });
+            if (!batch.length) break;
 
-            if (s.state === 'completed' && s.completedAt && s.startedAt) {
-                completionMsSum += (new Date(s.completedAt) - new Date(s.startedAt));
-                completionMsCount++;
-            }
+            for (const s of batch) {
+                totalSessions++;
+                if (s.isActive) activeSessions++;
+                if (s.state === 'completed') completedSessions++;
+                else if (s.state === 'unsubscribed') unsubscribedSessions++;
 
-            const ctx = (s.context && typeof s.context === 'object') ? s.context : {};
-            const linkSource = ctx._linkSource || 'direct';
-            linkCounts[linkSource] = (linkCounts[linkSource] || 0) + 1;
+                if (s.state === 'completed' && s.completedAt && s.startedAt) {
+                    completionMsSum += (new Date(s.completedAt) - new Date(s.startedAt));
+                    completionMsCount++;
+                }
 
-            const rt = ctx.flowRuntime || {};
-            const visited = Array.isArray(rt.nodesVisited) ? new Set(rt.nodesVisited) : new Set();
-            for (const nodeId of visited) {
-                nodeReached[nodeId] = (nodeReached[nodeId] || 0) + 1;
-                // Реальний вихід «пішов далі» — за фактичними ребрами графа, не за
-                // фейковим лінійним порядком (граф гілкується: наступна нода в
-                // BFS-списку часто НЕ є справжнім наступним кроком цієї сесії).
-                if ((adj[nodeId] || []).some(child => visited.has(child))) {
-                    reachedAnyChild[nodeId] = (reachedAnyChild[nodeId] || 0) + 1;
+                const ctx = (s.context && typeof s.context === 'object') ? s.context : {};
+                const linkSource = ctx._linkSource || 'direct';
+                linkCounts[linkSource] = (linkCounts[linkSource] || 0) + 1;
+
+                const rt = ctx.flowRuntime || {};
+                const visited = Array.isArray(rt.nodesVisited) ? new Set(rt.nodesVisited) : new Set();
+                for (const nodeId of visited) {
+                    nodeReached[nodeId] = (nodeReached[nodeId] || 0) + 1;
+                    // Реальний вихід «пішов далі» — за фактичними ребрами графа, не за
+                    // фейковим лінійним порядком (граф гілкується: наступна нода в
+                    // BFS-списку часто НЕ є справжнім наступним кроком цієї сесії).
+                    if ((adj[nodeId] || []).some(child => visited.has(child))) {
+                        reachedAnyChild[nodeId] = (reachedAnyChild[nodeId] || 0) + 1;
+                    }
+                }
+
+                if (s.state !== 'completed' && rt.currentNodeId) {
+                    stuckCounts[rt.currentNodeId] = (stuckCounts[rt.currentNodeId] || 0) + 1;
                 }
             }
 
-            if (s.state !== 'completed' && rt.currentNodeId) {
-                stuckCounts[rt.currentNodeId] = (stuckCounts[rt.currentNodeId] || 0) + 1;
-            }
+            analyticsCursor = batch[batch.length - 1].id;
+            if (batch.length < ANALYTICS_BATCH) break;
         }
         const avgCompletionMs = completionMsCount > 0 ? Math.round(completionMsSum / completionMsCount) : null;
 
@@ -922,19 +940,31 @@ router.get('/analytics/compare', asyncHandler(async (req, res) => {
             targetSet = new Set(notifyInOrder.slice(1));
         }
 
-        const sessions = await db.session.findMany({
-            where: { botId: bot.id, ...(timeFrom ? { startedAt: { gte: timeFrom } } : {}), ...testFilter },
-            select: { context: true, state: true, isActive: true },
-        });
+        // 2026-09-15: той самий OOM-ризик, що й у /:botId/analytics (див. коментар там) — тут ще
+        // гірше, бо це цикл по ВСІХ ботах разом. Пагінуємо курсором так само.
         let subscribers = 0, active = 0, completed = 0, unsubscribed = 0, reachedTarget = 0;
-        for (const s of sessions) {
-            subscribers++;
-            if (s.isActive) active++;
-            if (s.state === 'completed') completed++;
-            else if (s.state === 'unsubscribed') unsubscribed++;
-            const ctx = (s.context && typeof s.context === 'object') ? s.context : {};
-            const visited = Array.isArray(ctx.flowRuntime?.nodesVisited) ? ctx.flowRuntime.nodesVisited : [];
-            if (targetSet.size && visited.some(v => targetSet.has(v))) reachedTarget++;
+        const CMP_BATCH = 1000;
+        let cmpCursor = null;
+        for (;;) {
+            const batch = await db.session.findMany({
+                where: { botId: bot.id, ...(timeFrom ? { startedAt: { gte: timeFrom } } : {}), ...testFilter },
+                select: { id: true, context: true, state: true, isActive: true },
+                orderBy: { id: 'asc' },
+                take: CMP_BATCH,
+                ...(cmpCursor ? { cursor: { id: cmpCursor }, skip: 1 } : {}),
+            });
+            if (!batch.length) break;
+            for (const s of batch) {
+                subscribers++;
+                if (s.isActive) active++;
+                if (s.state === 'completed') completed++;
+                else if (s.state === 'unsubscribed') unsubscribed++;
+                const ctx = (s.context && typeof s.context === 'object') ? s.context : {};
+                const visited = Array.isArray(ctx.flowRuntime?.nodesVisited) ? ctx.flowRuntime.nodesVisited : [];
+                if (targetSet.size && visited.some(v => targetSet.has(v))) reachedTarget++;
+            }
+            cmpCursor = batch[batch.length - 1].id;
+            if (batch.length < CMP_BATCH) break;
         }
 
         const replied = repliedByBot[bot.id] || 0;

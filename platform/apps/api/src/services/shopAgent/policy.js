@@ -631,6 +631,16 @@ async function runPolicy(A, u) {
         if (ctx.trustScriptStep === 2 && (u.trustPromise === true || u.ready === 'yes')) ctx.paymentInfo = { method: 'cod_trust' };
         else if (ctx.trustScriptStep === 1 && (u.ready === 'yes' || u.payMethod === 'cod')) ctx.paymentInfo = { method: 'cod' };
         else if (u.payMethod) ctx.paymentInfo = { method: u.payMethod, ...(u.country ? { country: u.country } : {}) };
+        else if (ctx.agent.lastAsk === 'спосіб оплати 1 чи 2' && !u.questions.length) {
+            // 2026-09-15 (живий кейс, Владус): клієнт дозбирав адресу окремим повідомленням ПІСЛЯ
+            // того, як уже бачив повний список способів оплати (1/2) — цей блок раніше беззастережно
+            // ліпив payAck + ПОВНИЙ payTpl знову, тож два ходи поспіль показували клієнту однаковий
+            // список. Той самий принцип, що вже є для «оформляємо?» (lastAsk==='оформляємо?' вище):
+            // якщо список уже показували й нового питання нема — лише коротко нагадуємо, без повтору.
+            const ack = (u.claimsPaid || u.receiptLink || A.turnImage) ? 'Дякую, бачу квитанцію 🙏 ' : ((u.phone || u.fullName || u.city || u.branch) ? 'Дані записала 📝 ' : '');
+            A.out.push({ text: ack + messageText(A.assets, 'n_agent_pay_options_repeat', ctx, A.session.id), step: 'pay_options_repeat' });
+            return;
+        }
         else {
             const payTpl = messageTextMultiline(A.assets, 'n_pay', ctx, A.session.id + ':pay');
             if (u.questions.length) A.out.push({ text: await compose(A, { questions: u.questions, nextStep: 'потім скажи, що лишилось обрати спосіб оплати (сам список дасть система)', maxSentences: 3, fallback: '' }), step: 'pay_q' });

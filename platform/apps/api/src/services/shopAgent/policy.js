@@ -475,8 +475,10 @@ async function runPolicy(A, u) {
             A.out.push({ text: await answerThenAsk(A, u, messageText(A.assets, 'n_agent_soft_decline_size', ctx, A.session.id)), step: 'size_postpone' });
             return;
         } else {
-            if (u.wantsSizeChart && pp.sizeChartUrl && ctx.agent.chartSentFor !== pp.sku) { A.out.push({ photoUrls: [pp.sizeChartUrl], caption: 'Ось розмірна сітка 📏', step: 'size_chart' }); ctx.agent.chartSentFor = pp.sku; }
-            const colorNote = u.color && !u.colorMatched && colorsOf(pp) ? ('Щодо кольору «' + u.color + '»: у цієї моделі є ' + colorsOf(pp) + ' — який ближче? ') : (u.colorMatched ? 'Колір ' + u.colorMatched + ' — записала 🎨 ' : '');
+            if (u.wantsSizeChart && pp.sizeChartUrl && ctx.agent.chartSentFor !== pp.sku) { A.out.push({ photoUrls: [pp.sizeChartUrl], caption: messageText(A.assets, 'n_agent_size_chart_caption', ctx, A.session.id), step: 'size_chart' }); ctx.agent.chartSentFor = pp.sku; }
+            let colorNote = '';
+            if (u.color && !u.colorMatched && colorsOf(pp)) { ctx.agent.wantColorRaw = u.color; colorNote = messageText(A.assets, 'n_agent_color_note_mismatch', ctx, A.session.id) + ' '; }
+            else if (u.colorMatched) { ctx.agent.colorMatchedNote = u.colorMatched; colorNote = messageText(A.assets, 'n_agent_color_note_matched', ctx, A.session.id) + ' '; }
             // Живий кейс 2026-09-14 (Устим, Юлія): картка товару (n_welcome) сама ЗАКІНЧУЄТЬСЯ проханням
             // дати зріст/вагу — одразу після свіжої презентації друге, окреме повідомлення з тим самим
             // проханням виглядало як збій («два рази ціну написав», «два рази питає»). Якщо картку щойно

@@ -8,6 +8,7 @@
 const T = require('./tools');
 const { compose } = require('./compose');
 const { messageText, messageTextMultiline, nodeData, norm } = require('./lib');
+const { dispatchOrder } = require('./supplierDispatch');
 
 const TRUST_STEP1 = 'Накладний платіж у нас із частковою передплатою 200 грн.\n\nЯкщо прийдете на пошту і вам щось не підійде — ми повернемо ці 200 грн одразу.\n\nРаніше відправляли без передплати, і більшість людей просто не приходили на пошту.\n\nДля нас 200 грн — це гарантія, що:\n1) ви не чат-бот 🙂\n2) ви не передумаєте завтра\n3) ви прийдете на пошту\n\nОформимо замовлення із частковою передплатою 200 грн?';
 const TRUST_STEP2 = 'Якщо зробимо виняток і відправимо без передплати — обіцяєте, що завтра не передумаєте і що справді прийдете на пошту?';
@@ -27,6 +28,89 @@ function matchColor(p, want) {
     return cand.length === 1 ? cand[0] : null;
 }
 function ttnIn(text) { const m = String(text || '').match(/(?<!\d)\d{14}(?!\d)/); return m ? m[0] : ''; }
+
+// ── Склад комплекту: редагування з перерахунком ────────────────────────────────────────────────
+// Рішення власника 2026-09-14: бот сам реагує на «без взуття» / «додайте джинси» / «дві футболки»
+// перерахунком складу і суми, а не приміткою для менеджера. ctx.setSelection — робочий список
+// позицій комплекту (підмножина/надмножина pp.setItems); джерело істини для суми й для CRM/
+// постачальника (через ctx.orderExtras, який споживають уже наявні n_pay_amount/n_crm_order/
+// brewdrop/easydrop коди нод без жодних змін у них).
+function initSetSelection(pp) {
+    return (pp.setItems || []).map((it) => ({ article: it.article, id: it.id, name: it.name, price: Number(it.price) || 0, supplier: it.supplier || '', supplierArticle: it.supplierArticle || '', colors: it.colors || [], sizes: it.sizes || [], qty: 1, color: '', size: '' }));
+}
+function stemsOf(name) {
+    return String(name || '').toLowerCase().replace(/[«»().,]/g, ' ').split(/\s+/).filter((w) => w.length >= 4 && !/^(чоловіч|жіноч|дитяч|артикул|комплект)/.test(w)).map((w) => w.slice(0, 5));
+}
+function matchSetItem(text, items) {
+    const t = String(text || '').toLowerCase(); if (!t.trim()) return null;
+    for (const it of items) if (it.article && t.includes(String(it.article).toLowerCase())) return it;
+    let best = null, bestScore = 0;
+    for (const it of items) { const score = stemsOf(it.name).filter((s) => t.includes(s)).length; if (score > bestScore) { bestScore = score; best = it; } }
+    return best;
+}
+function setSelectionTotal(sel) { return sel.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 1), 0); }
+function setSelectionToExtras(sel) { return sel.map((it) => ({ id: it.id, sku: it.article, name: it.name, price: it.price, color: it.color, size: it.size, qty: it.qty, supplier: it.supplier, supplierArticle: it.supplierArticle, sum: it.price * it.qty, offers: [] })); }
+/** Склад точно збігається з офіційно визначеним комплектом (той самий набір артикулів, по 1 шт) — лише тоді працює знижка комплекту. */
+function setMatchesOriginal(sel, original) {
+    if (!original || sel.length !== original.length) return false;
+    if (sel.some((s) => (Number(s.qty) || 1) !== 1)) return false;
+    return sel.map((s) => s.article).sort().join('|') === original.map((o) => o.article).sort().join('|');
+}
+/** Рахує ціну і формує позиції для CRM/постачальника відповідно до поточного складу. Рішення
+ * власника 2026-09-14: знижка комплекту — ЛИШЕ коли склад точно той, що визначено в CRM; щойно
+ * клієнт щось прибрав/додав/змінив кількість — рахуємо чесно, сумою реальних цін позицій. */
+function applySetPricing(ctx, pp) {
+    const sel = ctx.setSelection;
+    if (setMatchesOriginal(sel, ctx.agent.setOriginal)) {
+        const total = Number(pp.price) > 0 ? Number(pp.price) : setSelectionTotal(sel);
+        ctx.orderExtras = []; ctx.orderUnitsTotal = total; ctx.orderUnits = [{ color: '', size: '' }]; ctx.orderUnitsText = ctx.setSizesText || 'весь комплект';
+        ctx.agent.setPricing = { total, edited: false };
+        return ctx.agent.setPricing;
+    }
+    ctx.orderExtras = setSelectionToExtras(sel);
+    ctx.orderUnitsTotal = 0; ctx.orderUnits = [{ color: '', size: '' }]; ctx.orderUnitsText = '';
+    const total = setSelectionTotal(sel);
+    ctx.agent.setPricing = { total, edited: true };
+    return ctx.agent.setPricing;
+}
+/** Застосувати правку складу з розуміння ходу. Повертає true, якщо щось реально змінилось. */
+async function applySetEdit(A, u, pp) {
+    const { ctx } = A; const sel = ctx.setSelection; const original = ctx.agent.setOriginal;
+    const notes = []; let changed = false;
+    if (u.removeItem) {
+        const hit = matchSetItem(u.removeItem, sel);
+        if (hit) { ctx.setSelection = sel.filter((x) => x !== hit); notes.push('прибрала: ' + hit.name); changed = true; }
+        else notes.push('не знайшла в комплекті «' + u.removeItem + '» — менеджер уточнить, коли зверне увагу');
+    }
+    if (u.addItem) {
+        const already = matchSetItem(u.addItem, ctx.setSelection);
+        if (!already) {
+            const hit = matchSetItem(u.addItem, original);
+            if (hit) { ctx.setSelection = [...ctx.setSelection, { ...hit }]; notes.push('додала: ' + hit.name); changed = true; }
+            else {
+                // не частина цього комплекту — окремий товар із каталогу (той самий резолвер, що для допродажів)
+                ctx.extraProductMention = u.addItem; await T.extraResolve(A);
+                const added = (ctx.extraItems || []).filter((e) => !ctx.setSelection.some((s) => s.article === e.sku));
+                for (const e of added) ctx.setSelection.push({ article: e.sku, id: e.id, name: e.name, price: e.price, supplier: e.supplier, supplierArticle: e.supplierArticle, colors: e.colorsList || [], sizes: e.sizes || [], qty: e.qty || 1, color: e.color || '', size: e.size || '' });
+                if (added.length) { notes.push('додала: ' + added.map((a) => a.name).join(', ')); changed = true; }
+                else if (ctx.extraUnresolved) notes.push(ctx.extraUnresolved);
+                ctx.extraItems = []; ctx.extraProductMention = ''; ctx.extraUnresolved = '';
+            }
+        }
+    }
+    if (u.changeRequest) {
+        const hit = matchSetItem(u.changeRequest, ctx.setSelection);
+        if (hit) {
+            const c = matchColor({ colors: hit.colors.join(',') }, u.colorMatched) || matchColor({ colors: hit.colors.join(',') }, u.color) || matchColor({ colors: hit.colors.join(',') }, u.changeRequest);
+            if (c && c !== hit.color) { hit.color = c; notes.push(hit.name + ' — колір ' + c); changed = true; }
+            const qtyM = String(u.changeRequest).match(/(\d+)\s*(шт|штук|пар)/i);
+            if (qtyM && Number(qtyM[1]) !== hit.qty) { hit.qty = Number(qtyM[1]) || 1; notes.push(hit.name + ' — ' + hit.qty + ' шт'); changed = true; }
+        } else notes.push(u.changeRequest);
+    }
+    ctx.agent.setEditNote = notes.join('; ');
+    if (changed) applySetPricing(ctx, pp);
+    return changed;
+}
 
 async function answerThenAsk(A, u, askText, o = {}) {
     // askText — ГОТОВИЙ текст для клієнта (не інструкція). Без питань клієнта він іде як є;
@@ -66,7 +150,8 @@ async function present(A) {
 function resetForNewProduct(A, sku) {
     const { ctx } = A;
     if (ctx.agent.presentedSku && ctx.agent.presentedSku !== sku) {
-        for (const k of ['sizeInput', 'recommendedSize', 'sizeSource', 'sizeReplyText', 'sizeColorFollowup', 'sizeOutOfRange', 'sizeOorReason', 'sizeOorAlternative', 'isSetSizeCalc', 'setSizesText', 'colorChoice', 'available', 'availReason', 'orderUnits', 'orderUnitsText', 'orderUnitsTotal', 'orderQty', 'orderIntent', 'setMode', 'setPick', 'availChecked', 'extraItems', 'extraItemsText', 'extraUnresolved']) delete ctx[k];
+        for (const k of ['sizeInput', 'recommendedSize', 'sizeSource', 'sizeReplyText', 'sizeColorFollowup', 'sizeOutOfRange', 'sizeOorReason', 'sizeOorAlternative', 'isSetSizeCalc', 'setSizesText', 'colorChoice', 'available', 'availReason', 'orderUnits', 'orderUnitsText', 'orderUnitsTotal', 'orderQty', 'orderIntent', 'setMode', 'setPick', 'setSelection', 'availChecked', 'extraItems', 'extraItemsText', 'extraUnresolved', 'orderExtras']) delete ctx[k];
+        for (const k of ['setOriginal', 'setPricing', 'setStageSent', 'setEditNote', 'upsellOffered', 'upsellPhotoSent', 'availKey']) delete ctx.agent[k];
         if (!ctx.crmOrderId) for (const k of ['paymentInfo', 'payAmount', 'payLabel', 'orderRef', 'orderRefAt', 'ibanPayUrl', 'ibanInvoiceUid', 'requisitesSentAt']) delete ctx[k];
     }
 }
@@ -103,10 +188,23 @@ async function afterOrderAccepted(A) {
         await T.crmOrder(A); // повторний прохід: оплата в журнал + стадія
         if (ctx.receiptNew) await T.alert(A, 'n_receipt_alert');
     }
-    if ((ctx.payStatus === 'confirmed' || Number(ctx.payAmount) === 0) && !ctx.supplierOrderStatus && !ctx.supplierHandled) {
-        await T.supplierRoute(A);
-        if (ctx.supplierMechanism && ctx.supplierMechanism !== 'manual') { await T.supplierOrder(A); await T.alert(A, 'n_supplier_notify'); }
-        else await T.alert(A, 'n_supplier_manual');
+    if ((ctx.payStatus === 'confirmed' || Number(ctx.payAmount) === 0) && !ctx.supplierHandled) {
+        // Цикл по постачальниках (рішення власника 2026-09-14): кожна позиція йде своєму
+        // постачальнику окремо (BrewDrop/EasyDrop — різні системи, реально різні посилки);
+        // вручну лишається лише те, для чого механізм справді не налаштований у CRM.
+        const dispatch = await dispatchOrder(A);
+        ctx.parcelCount = dispatch.groups.length; ctx.multiParcel = dispatch.multiParcel;
+        for (const g of dispatch.groups) {
+            const itemsLine = g.items.map((l) => l.name + (l.color ? ' ' + l.color : '') + (l.size ? ' ' + l.size : '') + (l.qty > 1 ? ' ×' + l.qty : '')).join(', ');
+            if (g.needsManual) {
+                await T.alert(A, { title: '📦 Оформіть постачальнику вручну' + (dispatch.multiParcel ? ' — ' + g.supplier : ''), main: 'Для цього постачальника/позицій авто-замовлення не пройшло — оформіть вручну.', details: '🏭 ' + g.supplier + ' (' + g.mechanism + ')\n🛍️ ' + itemsLine + (g.result ? '\n' + g.result : '') + '\n👤 ' + (ctx.senderName || '') + ' — https://instagram.com/' + (ctx.igUsername || '') });
+            } else {
+                await T.alert(A, { title: '🏭 Постачальнику' + (dispatch.multiParcel ? ' — ' + g.supplier : '') + ' · ' + (ctx.orderRef || ''), main: g.result || ('Оформлено (' + g.status + ').'), details: '👤 ' + (ctx.senderName || '') + ' — https://instagram.com/' + (ctx.igUsername || '') + (g.ttn ? '\n📦 ТТН: ' + g.ttn : '') });
+            }
+        }
+        ctx.supplierOrderStatus = dispatch.groups.map((g) => g.status).join(',') || 'manual';
+        ctx.supplierTtn = dispatch.groups.map((g) => g.ttn).filter(Boolean).join(', ');
+        ctx.supplierOrderResult = dispatch.groups.map((g) => g.supplier + ': ' + (g.result || g.status)).join('\n');
         ctx.supplierHandled = true;
         await T.ttnSync(A);
         await T.funnelStage(A, ...STAGES.supplier);
@@ -114,7 +212,8 @@ async function afterOrderAccepted(A) {
     await T.confirmPrep(A);
     const key = (ctx.payStatus || '') + ':' + (ctx.supplierTtn || '');
     if (ctx.agent.confirmKey !== key) {
-        A.out.push({ text: messageTextMultiline(A.assets, 'n_confirm', ctx, A.session.id), step: 'confirm' });
+        const parcelNote = ctx.multiParcel ? '\n\n📦 Ваше замовлення поїде ' + ctx.parcelCount + ' окремими посилками (позиції від різних постачальників) — накладну на кожну надішлемо сюди.' : '';
+        A.out.push({ text: messageTextMultiline(A.assets, 'n_confirm', ctx, A.session.id) + parcelNote, step: 'confirm' });
         ctx.agent.confirmKey = key; ctx.agent.lastAsk = '';
     }
     return 'done';
@@ -297,15 +396,31 @@ async function runPolicy(A, u) {
         }
     }
 
-    // 5b. Комплект цілком: побажання щодо складу/кольорів/розмірів позицій — у примітку для CRM/менеджера
+    // 5b. Комплект цілком: склад — редагований список (ctx.setSelection), не фіксований набір.
+    // «Без взуття» / «додайте джинси» / «дві футболки» перераховують склад і суму одразу, без
+    // приміток менеджеру (рішення власника 2026-09-14) — доки замовлення ще не в CRM.
     if (pp.isSet && ctx.setMode === 'set') {
-        const notes = [u.changeRequest, u.color ? 'колір: ' + u.color : '', u.clothingSize ? 'бажаний розмір: ' + u.clothingSize : ''].filter(Boolean);
-        if (notes.length) { const n = 'побажання по комплекту: ' + notes.join(', '); if (!String(ctx.extraProducts || '').includes(n)) ctx.extraProducts = (ctx.extraProducts ? ctx.extraProducts + '; ' : '') + n; ctx.agent.setNoteAck = notes.join(', '); }
-        // ціна комплекту: з картки, а якщо в CRM 0 — сума позицій (інакше n_pay_amount дасть «решта −200 грн»)
-        const setTotal = Number(pp.price) > 0 ? Number(pp.price) : (Array.isArray(pp.setItems) ? pp.setItems.reduce((s, it) => s + (Number(it.price) || 0), 0) : 0);
-        if (setTotal > 0 && !(Number(pp.price) > 0)) ctx.product.price = setTotal;
-        ctx.available = true; ctx.orderUnitsText = ctx.setSizesText || 'весь комплект'; ctx.orderUnitsTotal = setTotal || undefined; ctx.orderQty = 1; ctx.orderUnits = ctx.orderUnits || [{ color: '', size: '' }];
-        if (!ctx.agent.setStageSent) { await T.funnelStage(A, ...STAGES.color); ctx.agent.setStageSent = true; }
+        if (!Array.isArray(ctx.setSelection)) {
+            ctx.agent.setOriginal = initSetSelection(pp);
+            ctx.setSelection = initSetSelection(pp);
+            applySetPricing(ctx, pp);
+            if (!ctx.agent.setStageSent) { await T.funnelStage(A, ...STAGES.color); ctx.agent.setStageSent = true; }
+        }
+        if (!ctx.crmOrderId && (u.removeItem || u.addItem || u.changeRequest)) {
+            const edited = await applySetEdit(A, u, pp);
+            if (edited) {
+                const lines = ctx.setSelection.map((it) => it.name + (it.color ? ' (' + it.color + ')' : '') + (it.qty > 1 ? ' ×' + it.qty : '') + ' — ' + (it.price * it.qty) + ' грн').join('\n');
+                const total = ctx.agent.setPricing.total;
+                const wasReady = ctx.orderIntent && ctx.orderIntent.ready === 'yes';
+                if (wasReady) ctx.orderIntent.ready = null; // змінений склад — підтверджуємо ще раз
+                A.out.push({ text: 'Оновила склад (' + ctx.agent.setEditNote + ') 🙌\n\n' + lines + '\n\nРазом: ' + total + ' грн\n\n' + (ctx.setSelection.length ? 'Оформляємо так? 🙂' : 'Комплект лишився без жодної позиції — що додати?'), step: 'set_edit' });
+                ctx.agent.lastAsk = 'оформляємо?'; ctx.agent.setEditNote = '';
+                return;
+            } else if (ctx.agent.setEditNote) {
+                A.out.push({ text: await answerThenAsk(A, u, 'Не зовсім зрозуміла, яку позицію ви маєте на увазі — уточните, будь ласка? 🙂'), step: 'set_edit_unclear' });
+                return;
+            }
+        }
     }
 
     // 6. Наявність
@@ -335,21 +450,20 @@ async function runPolicy(A, u) {
             }
         } else {
             // підсумок + «Оформляємо?»
-            const units = (pp.isSet && ctx.setMode === 'set') ? String(ctx.setSizesText || 'весь комплект').replace(/\s*\n\s*/g, '; ') : (ctx.orderUnitsText || ((ctx.colorChoice && ctx.colorChoice.color ? ctx.colorChoice.color : '') + (ctx.recommendedSize ? ' ' + ctx.recommendedSize : '')));
-            const total = (pp.isSet && ctx.setMode === 'set') ? pp.price : (ctx.orderUnitsTotal || pp.price);
-            const setAck = ctx.agent.setNoteAck ? 'Записала побажання: ' + ctx.agent.setNoteAck + ' — менеджер врахує при оформленні 📝\n\n' : '';
-            ctx.agent.setNoteAck = '';
-            if (pp.upsellPhotoUrl && !ctx.agent.upsellPhotoSent) { A.out.push({ photoUrls: [pp.upsellPhotoUrl], caption: '', step: 'upsell_photo' }); ctx.agent.upsellPhotoSent = true; }
+            const isSetFull = pp.isSet && ctx.setMode === 'set';
+            const units = isSetFull ? ctx.setSelection.map((it) => it.name + (it.color ? ' (' + it.color + ')' : '') + (it.qty > 1 ? ' ×' + it.qty : '')).join(', ') : (ctx.orderUnitsText || ((ctx.colorChoice && ctx.colorChoice.color ? ctx.colorChoice.color : '') + (ctx.recommendedSize ? ' ' + ctx.recommendedSize : '')));
+            const total = isSetFull ? ctx.agent.setPricing.total : (ctx.orderUnitsTotal || pp.price);
+            if (pp.upsellPhotoUrl && !isSetFull && !ctx.agent.upsellPhotoSent) { A.out.push({ photoUrls: [pp.upsellPhotoUrl], caption: '', step: 'upsell_photo' }); ctx.agent.upsellPhotoSent = true; }
             // Підсумок — ДЕТЕРМІНОВАНО (розмір/колір/сума з інструментів, LLM їх не перераховує); LLM лише
             // відповідає на питання клієнта перед підсумком або мʼяко працює з ваганням.
             const summary = 'Ось ваше замовлення 🙌\n' + (pp.customerName || pp.name) + (units ? ' — ' + units : '') + ' — ' + total + ' грн' + (ctx.extraItemsText ? '\n' + ctx.extraItemsText : '') + (ctx.shop && ctx.shop.terms ? '\n' + ctx.shop.terms : '');
-            const askLine = pp.upsell ? 'Оформляємо? І підкажіть: додати ще ' + pp.upsell + ' до цієї ж посилки, чи лише основний товар? 🙂' : 'Оформляємо замовлення? 🙂';
-            if (pp.upsell) ctx.agent.upsellOffered = true;
+            const askLine = (!isSetFull && pp.upsell) ? 'Оформляємо? І підкажіть: додати ще ' + pp.upsell + ' до цієї ж посилки, чи лише основний товар? 🙂' : 'Оформляємо замовлення? 🙂';
+            if (!isSetFull && pp.upsell) ctx.agent.upsellOffered = true;
             const hesitating = (u.intent === 'hesitate' || u.intent === 'postpone');
-            let txt = setAck + summary + '\n\n' + askLine;
+            let txt = summary + '\n\n' + askLine;
             if (ctx.agent.lastAsk === 'оформляємо?' && !u.questions.length && !hesitating) {
                 // «Оформляємо?» уже питали, клієнт написав щось без рішення — коротка реакція + те саме питання, без повторного підсумку
-                txt = setAck ? (setAck + askLine) : await compose(A, { ack: 'відреагуй одним реченням на репліку клієнта (нічого не обіцяй і не змінюй склад замовлення сама)', nextStep: 'і спитай: «' + askLine + '»', maxSentences: 2, fallback: askLine });
+                txt = await compose(A, { ack: 'відреагуй одним реченням на репліку клієнта (нічого не обіцяй і не змінюй склад замовлення сама)', nextStep: 'і спитай: «' + askLine + '»', maxSentences: 2, fallback: askLine });
                 A.out.push({ text: txt, step: 'order_intent_repeat' }); return;
             }
             if (u.questions.length || hesitating) {
@@ -378,9 +492,8 @@ async function runPolicy(A, u) {
         else {
             const payTpl = messageTextMultiline(A.assets, 'n_pay', ctx, A.session.id + ':pay');
             if (u.questions.length) A.out.push({ text: await compose(A, { questions: u.questions, nextStep: 'потім скажи, що лишилось обрати спосіб оплати (сам список дасть система)', maxSentences: 3, fallback: '' }), step: 'pay_q' });
-            const setAckPay = ctx.agent.setNoteAck ? 'Записала побажання: ' + ctx.agent.setNoteAck + ' — менеджер врахує при оформленні 📝\n\n' : ''; ctx.agent.setNoteAck = '';
             const payAck = (u.claimsPaid || u.receiptLink || A.turnImage) ? 'Дякую, бачу квитанцію 🙏 Підкажіть лише, це часткова передплата (200 грн) чи повна оплата — щоб я правильно оформила:\n\n' : ((u.phone || u.fullName || u.city || u.branch) ? 'Дані для відправки записала 📝 Лишилось обрати оплату:\n\n' : (u.addUpsell === false && ctx.agent.upsellOffered ? 'Добре, лише основний товар 🙂\n\n' : ''));
-            A.out.push({ text: setAckPay + payAck + payTpl, step: 'pay_options' });
+            A.out.push({ text: payAck + payTpl, step: 'pay_options' });
             ctx.agent.lastAsk = 'спосіб оплати 1 чи 2'; return;
         }
         await T.payAmount(A);

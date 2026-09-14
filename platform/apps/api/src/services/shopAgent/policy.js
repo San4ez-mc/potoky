@@ -147,7 +147,13 @@ async function answerThenAsk(A, u, askText, o = {}) {
         A.ctx.agent.askManagerAt = Date.now(); await T.kbAsk(A, u.questions[0]);
         await T.alert(A, { title: '❓ Клієнт спитав те, чого бот не знає', main: 'Бот продовжує діалог; відповідь допишіть у чат — вона також потрапить у Базу знань CRM.', details: '💬 «' + u.questions[0].slice(0, 200) + '»' });
     }
-    const txt = await compose(A, { questions: u.questions, ack: o.ack, nextStep: askText ? 'скажи/спитай (можна своїми словами, зміст той самий): «' + askText + '»' : '', kb, availAnswer, fallback: askText });
+    // Живий кейс 2026-09-14 (Василенко): картка щойно сама попросила зріст/вагу; askText тут
+    // порожній навмисно (нічого повторно просити не треба), АЛЕ без явної заборони LLM (compose)
+    // сама, за власною ініціативою, дописувала «підкажіть зріст і вагу» вдруге в кінці відповіді
+    // на питання клієнта — типова для продажного тону звичка закінчувати заклик до дії. Заборона —
+    // явним nextStep, а не сподівання, що модель здогадається з відсутності інструкції.
+    const nextStep = askText ? 'скажи/спитай (можна своїми словами, зміст той самий): «' + askText + '»' : 'НІЧОГО більше не питай і не пропонуй наступний крок — просто дай коротку відповідь на питання клієнта, без заклику до дії в кінці.';
+    const txt = await compose(A, { questions: u.questions, ack: o.ack, nextStep, kb, availAnswer, fallback: askText });
     return txt || askText;
 }
 function colorsOf(p) { return String((p && p.colors) || '').trim(); }

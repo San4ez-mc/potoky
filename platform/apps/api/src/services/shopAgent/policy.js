@@ -25,9 +25,23 @@ function matchColor(p, want) {
     if (!p || !want) return null; const list = Array.isArray(p.colorsList) && p.colorsList.length ? p.colorsList : String(p.colors || '').split(',').map((s) => s.trim()).filter(Boolean);
     const w = norm(want).toLowerCase(); if (!w) return null;
     const exact = list.find((c) => c.toLowerCase() === w); if (exact) return exact;
-    const stem = w.replace(/(ий|а|е|у|ого|им|ому|ої|ою|их)$/u, '').slice(0, 5);
-    const cand = list.filter((c) => c.toLowerCase().includes(stem) || w.includes(c.toLowerCase().slice(0, 5)));
-    return cand.length === 1 ? cand[0] : null;
+    // 2026-09-15 (живий кейс, Вячеслав Радецький: «Чорний та коричневий» — ОБИДВА кольори реально
+    // в наявності): стара логіка рахувала стем усієї фрази цілком, знаходила 2 кандидати (обидва
+    // слова-кольори збігались десь у фразі) і тому здавалась (cand.length===1 інакше null) — бот
+    // казав клієнту «нема», хоча один із названих кольорів точно є. Якщо у фразі є сполучник
+    // (та/і/й/чи/або/,/) — пробуємо КОЖНЕ слово-колір окремо, а не всю фразу разом.
+    // JS \b не бачить межу слова навколо кирилиці (\w — лише латиниця/цифри), тож ділимо просто
+    // за пробілами/комами і відкидаємо самі сполучники як окремі токени.
+    const CONJ = { та: 1, і: 1, й: 1, чи: 1, або: 1 };
+    const parts = w.split(/[\s,/]+/u).filter((t) => t && !CONJ[t]);
+    const words = parts.length > 1 ? parts : [w];
+    for (const one of words) {
+        const stem = one.replace(/(ий|а|е|у|ого|им|ому|ої|ою|их)$/u, '').slice(0, 5);
+        if (!stem) continue;
+        const cand = list.filter((c) => c.toLowerCase().includes(stem) || one.includes(c.toLowerCase().slice(0, 5)));
+        if (cand.length === 1) return cand[0];
+    }
+    return null;
 }
 function ttnIn(text) { const m = String(text || '').match(/(?<!\d)\d{14}(?!\d)/); return m ? m[0] : ''; }
 // 2026-09-14 (власник): в ТГ-сповіщеннях менеджеру цитата клієнтського повідомлення інколи сама
@@ -412,7 +426,19 @@ async function runPolicy(A, u) {
             return;
         } else if (!P(ctx)) {
             if (ctx.hasProductSignal && !ctx.unknownNotifiedAt && !ctx.looksLikeReceipt) { ctx.lastCustomerMessage = text; await T.tool(A, 'n_unknown_debug'); await T.alert(A, 'n_unknown_admin', { photoUrl: A.turnImage || '' }); ctx.unknownNotifiedAt = Date.now(); }
-            if (ctx.looksLikeReceipt) { A.out.push({ text: messageText(A.assets, 'n_agent_receipt_no_order', ctx, A.session.id), step: 'receipt_no_order' }); await T.alert(A, 'n_agent_receipt_no_order_admin', { details: '💬 «' + hideLinks(text.slice(0, 200)) + '»', photoUrl: A.turnImage || '' }); return; }
+            if (ctx.looksLikeReceipt) {
+                // 2026-09-15 (живий баг, знайдено аудитом реплеїв — ustym_m4): n_lookup СВІДОМО
+                // переносить цей прапор із ходу в хід, поки товар не визначено (щоб не загубити
+                // сигнал «це квитанція» за кілька повідомлень), але ТУТ ми його ніколи не гасили —
+                // тому одна квитанція на початку розмови змушувала бота відповідати цим самим
+                // канонічним текстом на БУДЬ-яке наступне повідомлення без товару («Дякую», «А
+                // звідки відправка?»), ігноруючи реальний зміст. Гасимо одразу після одноразового
+                // сповіщення менеджеру — новий сигнал «це квитанція» n_lookup виставить заново сам.
+                ctx.looksLikeReceipt = false;
+                A.out.push({ text: messageText(A.assets, 'n_agent_receipt_no_order', ctx, A.session.id), step: 'receipt_no_order' });
+                await T.alert(A, 'n_agent_receipt_no_order_admin', { details: '💬 «' + hideLinks(text.slice(0, 200)) + '»', photoUrl: A.turnImage || '' });
+                return;
+            }
             // Категорії — з CRM (ctx.catalogCategories); рядок нижче — лише останній фолбек, якщо
             // CRM взагалі не повернула жодної категорії (порожній каталог), не хардкод-заміна CRM.
             ctx.agent.categoriesList = ctx.catalogCategories || 'костюми, куртки, бомбери, кофти, футболки, джинси, взуття';

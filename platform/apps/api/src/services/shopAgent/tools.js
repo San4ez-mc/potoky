@@ -43,7 +43,14 @@ async function resolveProduct(A, { forceSignal } = {}) {
         if (ctx.catalogHintNeedsFetch) {
             ctx.catalogHintProductsRaw = cat.products;
             ctx.catalogHintCategoriesRaw = await loadCategories(A.botId, keys);
-            await tool(A, 'n_catalog_hint_process');
+            // 2026-09-15 (живий аудит: клієнти, що описують товар/комплект словами замість
+            // пересилання поста, постійно отримували "перешліть пост" замість списку товарів):
+            // нода зветься 'n_catalog_hint' (сама себе в шапці коду досі називає старою назвою
+            // 'n_catalog_hint_process' з патчу 2026-09-04, звідки й узявся мисматч) — виклик тут
+            // ішов на НЕІСНУЮЧИЙ id, тому весь фільтр/матчинг (зокрема логіка "комплект" — показ
+          // усіх наборів каталогу за словесним описом складу) НІКОЛИ не виконувався: tool()
+            // мовчки повертав {ok:false, error:'no code'}, і catalogHint лишався порожнім.
+            await tool(A, 'n_catalog_hint');
         }
         if (ctx.catalogHintPick) {
             ctx.hasFreshSignalThisTurn = true; ctx.hasProductSignal = true;

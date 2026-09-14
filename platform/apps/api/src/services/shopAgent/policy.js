@@ -151,6 +151,12 @@ async function answerThenAsk(A, u, askText, o = {}) {
     return txt || askText;
 }
 function colorsOf(p) { return String((p && p.colors) || '').trim(); }
+/** Клієнт зволікає/відкладає («поки не треба», «просто дивлюсь», «подумаю») — не наполягати на
+ * тому самому питанні ще раз, дати мʼяко відступити (живий кейс 2026-09-14, Володимир: бот
+ * тричі поспіль повторив «дайте зріст і вагу» після явного «поки не потрібно»). */
+function isSoftDecline(u) { return u.intent === 'hesitate' || u.intent === 'postpone'; }
+/** Людський (не технічний) список позицій комплекту — без дублювання «Артикул: X» і без «;». */
+function humanSetList(pp) { return (pp.setItems || []).map((it) => '• ' + it.name + (it.price ? (' — ' + it.price + ' грн') : '')).join('\n'); }
 
 async function pause(A, reason, alertNode, extraDetails) {
     A.ctx.funnelPaused = true; A.ctx.pausedBy = reason; A.ctx.pausedAt = new Date().toISOString(); A.ctx.adminEngaged = true; A.ctx.handoffKind = reason;
@@ -163,7 +169,7 @@ async function present(A) {
     const urls = firstPhotoUrls(p);
     if (urls.length) A.out.push({ photoUrls: urls, caption: '', step: 'present_photo' });
     const greet = A.botSpokeBefore ? '' : ('Вітаю! 💛 Я ' + (A.keys.PERSONA_NAME || 'Оля') + ' з ' + (A.keys.SHOP_TAG || 'магазину') + '.\n');
-    const card = messageText(A.assets, 'n_welcome', ctx, A.session.id + ':present');
+    const card = messageTextMultiline(A.assets, 'n_welcome', ctx, A.session.id + ':present');
     A.out.push({ text: greet + card, step: 'present' });
     ctx.productJustPresented = true; ctx.presentedAt = Date.now(); ctx.lastPresentedSku = p.sku; ctx.agent.presentedSku = p.sku;
     ctx.agent.lastAsk = p.followUpQuestion || '';
@@ -368,7 +374,8 @@ async function runPolicy(A, u) {
         const impliedSet = !u.setChoice && !u.setArticle && (u.height || u.weight || u.clothingSize || u.ready === 'yes' || u.changeRequest || u.colorMatched || u.color);
         if (u.setChoice === 'item' && u.setArticle) { ctx.setPick = { setChoice: 'item', article: u.setArticle }; await T.setApply(A); }
         else if (u.setChoice === 'set' || impliedSet) { ctx.setPick = { setChoice: 'set' }; await T.setApply(A); ctx.setMode = 'set'; }
-        else { A.out.push({ text: await answerThenAsk(A, u, preNote + 'Підкажіть, будь ласка, вас цікавить весь комплект чи окремі речі з нього? 🙂\nСклад: ' + (p.setList || p.setComponents)), step: 'set_ask' }); ctx.agent.lastAsk = 'весь комплект чи окремі речі'; return; }
+        else if (isSoftDecline(u)) { A.out.push({ text: await answerThenAsk(A, u, 'Добре, без поспіху 🙂 Напишіть, коли визначитесь — весь комплект чи окремі речі з нього.'), step: 'set_ask_soft' }); return; }
+        else { A.out.push({ text: await answerThenAsk(A, u, preNote + 'Підкажіть, будь ласка, вас цікавить весь комплект чи окремі речі з нього? 🙂\n\n' + humanSetList(p)), step: 'set_ask' }); ctx.agent.lastAsk = 'весь комплект чи окремі речі'; return; }
     }
     const pp = P(ctx);
 
@@ -397,6 +404,13 @@ async function runPolicy(A, u) {
             const hasColorNow = ctx.colorChoice && ctx.colorChoice.color;
             if (!hasColorNow && pp.colors) { A.out.push({ text: u.questions.length ? await answerThenAsk(A, u, reply) : reply, step: 'size_reply' }); ctx.agent.lastAsk = 'колір'; return; }
             A.out.push({ text: u.questions.length ? await answerThenAsk(A, u, reply) : reply, step: 'size_reply' });
+        } else if (isSoftDecline(u)) {
+            // Живий кейс 2026-09-14 (Володимир): «Но я просто цікавлюсь цінами», «Поки не потрібно» —
+            // бот тричі поспіль повторив те саме питання про зріст/вагу. Тут — рівно ОДНЕ мʼяке
+            // речення без тиску, без повторення прохання; наступний реальний сигнал (параметри,
+          // питання) обробиться як завжди.
+            A.out.push({ text: await answerThenAsk(A, u, 'Добре, без поспіху 🙂 Коли будете готові — напишіть зріст і вагу, і я одразу підберу розмір.'), step: 'size_postpone' });
+            return;
         } else {
             if (u.wantsSizeChart && pp.sizeChartUrl && ctx.agent.chartSentFor !== pp.sku) { A.out.push({ photoUrls: [pp.sizeChartUrl], caption: 'Ось розмірна сітка 📏', step: 'size_chart' }); ctx.agent.chartSentFor = pp.sku; }
             const missing = si.height && !si.weight ? 'вагу' : (!si.height && si.weight ? 'зріст' : '');
@@ -413,6 +427,7 @@ async function runPolicy(A, u) {
     if (pp.colors && !(ctx.colorChoice && ctx.colorChoice.color)) {
         const c = u.colorMatched || matchColor(pp, u.color) || (ctx.sizeInput && ctx.sizeInput.color) || matchColor(pp, ctx.agent.pendingColor) || matchColor(pp, ctx.agent.pendingColorRaw) || null;
         if (c) { ctx.colorChoice = { color: c, qty: u.qty || undefined }; delete ctx.agent.pendingColor; delete ctx.agent.pendingColorRaw; }
+        else if (isSoftDecline(u)) { A.out.push({ text: await answerThenAsk(A, u, 'Добре, без поспіху 🙂 Напишіть, коли визначитесь із кольором.'), step: 'ask_color_soft' }); return; }
         else {
             const ask = u.color ? 'Кольору «' + u.color + '» саме у цієї моделі нема 😔 Є: ' + pp.colors + ' — який обираєте?' : 'Який колір обираєте: ' + pp.colors + '? 🎨';
             A.out.push({ text: await answerThenAsk(A, u, preNote + ask), step: 'ask_color' }); ctx.agent.lastAsk = 'колір'; return;

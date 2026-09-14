@@ -454,6 +454,13 @@ async function runPolicy(A, u) {
         if (u.setChoice === 'item' && u.setArticle) { ctx.setPick = { setChoice: 'item', article: u.setArticle }; await T.setApply(A); }
         else if (u.setChoice === 'set' || impliedSet) { ctx.setPick = { setChoice: 'set' }; await T.setApply(A); ctx.setMode = 'set'; }
         else if (isSoftDecline(u)) { A.out.push({ text: await answerThenAsk(A, u, messageText(A.assets, 'n_agent_soft_decline_set', ctx, A.session.id)), step: 'set_ask_soft' }); return; }
+        // 2026-09-15 (живий кейс, власник: «зразу наш любимий баг, 2 рази відправилось повідомлення»
+        // — set1113 через хвилини після деплою): картка товару (n_welcome) для set-товарів САМА вже
+        // закінчується цим самим питанням («...Підкажіть, вас цікавить весь комплект, чи окремі
+        // товари з нього?» — з CRM-опису товару), тому одразу друге, окреме повідомлення з тим самим
+        // питанням виглядало як збій. Той самий принцип, що вже застосований нижче для розміру
+        // (A.justPresented) — тут його раніше не було.
+        else if (A.justPresented && !u.questions.length) { ctx.agent.lastAsk = 'весь комплект чи окремі речі'; return; }
         else { ctx.agent.preNote = preNote; ctx.agent.setAskList = humanSetList(p); A.out.push({ text: await answerThenAsk(A, u, messageTextMultiline(A.assets, 'n_agent_set_ask', ctx, A.session.id)), step: 'set_ask' }); ctx.agent.lastAsk = 'весь комплект чи окремі речі'; return; }
     }
     const pp = P(ctx);

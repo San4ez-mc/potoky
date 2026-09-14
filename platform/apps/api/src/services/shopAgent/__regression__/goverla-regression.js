@@ -163,6 +163,19 @@ async function main() {
         check('«без взуття» видаляє позицію за категорією з CRM (не хардкод-словник)', removed, JSON.stringify((A.ctx.setSelection || []).map((x) => x.article)));
     }
 
+    // ── 8. Дубль питання «весь комплект чи окремі речі» одразу після картки товару — живий кейс
+    // 15.09, set1113: n_welcome для set-товару САМ уже закінчується цим питанням (з опису в CRM),
+    // а секція «3. Комплект» перепитувала його ще раз окремим повідомленням.
+    {
+        const A = freshA({ turnText: 'Кофта Мажор петля' });
+        A.justPresented = true;
+        A.ctx.product = { sku: 'set1113', isSet: true, price: 5290 };
+        const u = freshU({ intent: 'product_query' });
+        await runPolicy(A, u);
+        const askedAgain = A.out.some((o) => o.step === 'set_ask');
+        check('Після щойно показаної картки set-товару питання "весь комплект?" не дублюється', !askedAgain, 'steps: ' + A.out.map((o) => o.step).join(','));
+    }
+
     console.log('');
     const failed = results.filter((r) => !r.ok);
     console.log(results.length + ' тестів, ' + failed.length + ' провалено.');

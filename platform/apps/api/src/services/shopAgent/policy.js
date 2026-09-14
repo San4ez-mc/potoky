@@ -41,9 +41,25 @@ function initSetSelection(pp) {
 function stemsOf(name) {
     return String(name || '').toLowerCase().replace(/[«»().,]/g, ' ').split(/\s+/).filter((w) => w.length >= 4 && !/^(чоловіч|жіноч|дитяч|артикул|комплект)/.test(w)).map((w) => w.slice(0, 5));
 }
+// «взуття» — категорія, а не назва товару: лофери/кросівки/черевики тощо. Без цієї мапи «без
+// взуття» не знаходить жодної позиції за назвою (той самий клас проблеми, що й ITEM_RE у
+// n_extra_resolve-code.js, окрема копія — тут працюємо з уже завантаженими setItems, без CRM-виклику).
+const CATEGORY_SYNONYMS = [
+    { key: /взутт|лофер|кросів|черевик|туфл|чобот|сандал|капц/i, terms: ['лофер', 'кросів', 'черевик', 'туфл', 'чобот', 'сандал', 'капц', 'взутт'] },
+    { key: /джинс/i, terms: ['джинс'] },
+    { key: /футболк/i, terms: ['футболк'] },
+    { key: /кофт/i, terms: ['кофт'] },
+    { key: /куртк/i, terms: ['куртк'] },
+    { key: /костюм/i, terms: ['костюм'] },
+    { key: /бомбер/i, terms: ['бомбер'] },
+    { key: /штан/i, terms: ['штан', 'джинс'] },
+];
 function matchSetItem(text, items) {
     const t = String(text || '').toLowerCase(); if (!t.trim()) return null;
     for (const it of items) if (it.article && t.includes(String(it.article).toLowerCase())) return it;
+    for (const cat of CATEGORY_SYNONYMS) {
+        if (cat.key.test(t)) { const hit = items.find((it) => cat.terms.some((term) => String(it.name || '').toLowerCase().includes(term))); if (hit) return hit; }
+    }
     let best = null, bestScore = 0;
     for (const it of items) { const score = stemsOf(it.name).filter((s) => t.includes(s)).length; if (score > bestScore) { bestScore = score; best = it; } }
     return best;

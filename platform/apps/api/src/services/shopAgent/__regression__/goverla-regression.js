@@ -231,6 +231,24 @@ async function main() {
         check('mergeConsecutiveTextOutputs зливає текст-до-тексту, не чіпає фото', ok, JSON.stringify(merged.map((m) => m.text || 'photo')));
     }
 
+    // ── 9в. Живий кейс 15.09 (власник: "айбан треба скидати окремим повідомленням... воно точно
+    // було у воронці, а тепер пропало") — РЕГРЕСІЯ від самого мерджу (9): sendManualRequisites()
+    // навмисно шле кожне поле реквізитів (IBAN/ЄДРПОУ/назва/призначення) ОКРЕМИМ повідомленням для
+    // зручного копіювання — noMerge:true захищає їх від загального склеювання тексту-до-тексту.
+    {
+        const { mergeConsecutiveTextOutputs } = require('../lib');
+        const out = [
+            { text: 'Хочете оплатити вручну?', step: 'req_manual' },
+            { text: '🏦 Номер IBAN:', step: 'n_req_iban_l', noMerge: true },
+            { text: 'UA053220010000026003380060450', step: 'n_req_iban_v', noMerge: true },
+            { text: '📝 Код ЄДРПОУ:', step: 'n_req_code_l', noMerge: true },
+            { text: '3717807661', step: 'n_req_code_v', noMerge: true },
+        ];
+        const merged = mergeConsecutiveTextOutputs(out);
+        const ok = merged.length === 5 && merged[1].text === '🏦 Номер IBAN:' && merged[2].text === 'UA053220010000026003380060450';
+        check('mergeConsecutiveTextOutputs НЕ чіпає поля реквізитів (noMerge) — кожне лишається окремим повідомленням для копіювання', ok, JSON.stringify(merged.map((m) => m.text)));
+    }
+
     // ── 9б. Живий кейс 15.09 (власник: "2 рази дякую чомусь в одному повідомленні") — при злитті
     // двох текстів другий не повторює вступну подяку першого.
     {

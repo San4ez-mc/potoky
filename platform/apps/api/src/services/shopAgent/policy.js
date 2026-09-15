@@ -301,7 +301,10 @@ async function sendManualRequisites(A, withIntro = true) {
     const { ctx } = A;
     if (!ctx.fop) await T.payAmount(A);
     if (withIntro) A.out.push({ text: messageText(A.assets, 'n_req_manual', ctx, A.session.id), step: 'req_manual' });
-    for (const id of ['n_req_iban_l', 'n_req_iban_v', 'n_req_code_l', 'n_req_code_v', 'n_req_name_l', 'n_req_name_v', 'n_req_ref_l', 'n_req_ref_v', 'n_req_sum']) { const t = messageTextMultiline(A.assets, id, ctx, A.session.id); if (t) A.out.push({ text: t, step: id }); }
+    // noMerge:true — навмисно окремі повідомлення (кожне значення копіюється дотиком без зайвого
+    // тексту навколо); загальний mergeConsecutiveTextOutputs (index.js) інакше склеїв би їх усі в
+    // одну стіну тексту, роблячи копіювання незручним — саме це і сталось (живий кейс 15.09).
+    for (const id of ['n_req_iban_l', 'n_req_iban_v', 'n_req_code_l', 'n_req_code_v', 'n_req_name_l', 'n_req_name_v', 'n_req_ref_l', 'n_req_ref_v', 'n_req_sum']) { const t = messageTextMultiline(A.assets, id, ctx, A.session.id); if (t) A.out.push({ text: t, step: id, noMerge: true }); }
 }
 
 async function afterOrderAccepted(A) {

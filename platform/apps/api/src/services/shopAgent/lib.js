@@ -75,8 +75,14 @@ function mergeConsecutiveTextOutputs(out) {
     const merged = [];
     for (const item of out) {
         const last = merged[merged.length - 1];
-        const isPlainText = item && item.text && !item.photoUrls;
-        const lastIsPlainText = last && last.text && !last.photoUrls;
+        // 2026-09-15 (живий кейс, власник: "айбан треба скидати окремим повідомленням... щоб людина
+        // натиснула, скопіювала — воно точно було у воронці, а тепер десь пропало") — РЕГРЕСІЯ від
+        // цього самого механізму: sendManualRequisites() навмисно шле IBAN/ЄДРПОУ/назву/призначення
+        // ОКРЕМИМИ повідомленнями (щоб можна було копіювати одне значення без зайвого тексту
+        // навколо) — загальний мердж тексту-до-тексту склеював їх усі в одну "стіну" незалежно від
+        // цього наміру. noMerge:true — явний прапорець "це поле для копіювання, не приклеюй".
+        const isPlainText = item && item.text && !item.photoUrls && !item.noMerge;
+        const lastIsPlainText = last && last.text && !last.photoUrls && !last.noMerge;
         if (isPlainText && lastIsPlainText) {
             const tail = stripRedundantGreeting(item.text) || String(item.text).trim();
             last.text = String(last.text).trim() + '\n\n' + tail.trim();

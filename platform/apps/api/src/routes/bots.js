@@ -58,6 +58,7 @@ router.patch('/:id',
             if (!project) return res.status(404).json({ ok: false, error: { message: 'Project not found' } });
         }
 
+        const wasTestMode = !!(bot.settings || {}).testMode;
         const updated = await db.bot.update({
             where: { id: req.params.id },
             data: {
@@ -70,6 +71,18 @@ router.patch('/:id',
                 ...(req.body.settings !== undefined && { settings: { ...(bot.settings || {}), ...req.body.settings } }),
             },
         });
+        // 2026-09-15 (власник: "стоп — для всіх, коли тестовий режим включається і не скидається...
+        // а коли воронку перевести назад у бойовий — стоп зніметься"): "Стоп"-іконка (ctx.pausedBy
+        // === 'test_mode') на КОНКРЕТНІЙ сесії прив'язана до ЦЬОГО глобального перемикача — тільки
+        // тут, а не по таймеру, знімаємо її з УСІХ сесій бота одразу, як тільки testMode вимкнули.
+        const nowTestMode = !!(updated.settings || {}).testMode;
+        if (wasTestMode && !nowTestMode) {
+            const stopped = await db.session.findMany({ where: { botId: bot.id, context: { path: ['pausedBy'], equals: 'test_mode' } }, select: { id: true, context: true } });
+            for (const s of stopped) {
+                const ctx = s.context || {};
+                await db.session.update({ where: { id: s.id }, data: { context: { ...ctx, funnelPaused: false, pausedBy: null, pausedAt: null, resumedBy: 'test_mode_off', resumedAt: new Date().toISOString() } } }).catch(() => {});
+            }
+        }
         res.json({ ok: true, data: updated });
     })
 );

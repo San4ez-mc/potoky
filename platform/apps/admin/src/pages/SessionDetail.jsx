@@ -852,6 +852,13 @@ export function SessionDetail() {
     const [docFile, setDocFile] = useState(null);
     const [adminEngaged, setAdminEngaged] = useState(false);
     const [funnelPaused, setFunnelPaused] = useState(false);
+    // 2026-09-15 (власник: "розведемо іконки, бо це постійно плутанина") — pausedBy розрізняє
+    // ЧОТИРИ взаємовиключні стани одного funnelPaused, кожен зі своєю іконкою/дією: 'manager_message'
+    // (авто, менеджер написав) і 'manual' (адмін тиснув «Пауза») — обидва тимчасові, знімаються самі
+    // за 10 хв тиші чи 24 год стелею; 'test_mode' («Стоп») — знімається лише вимкненням testMode
+    // бота глобально; 'user_locked' («Заблокувати») — не знімається НІЧИМ, окрім явного розблокування.
+    const [pausedBy, setPausedBy] = useState(null);
+    const [flagBusy, setFlagBusy] = useState(false);
     // Права панель «слід воронки»: на мобільному ховаємо за замовчуванням (займала пів екрана).
     const [showTrace, setShowTrace] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 768);
 
@@ -885,23 +892,30 @@ export function SessionDetail() {
             const sess = s.data || s;
             setAdminEngaged(Boolean(sess?.context?.adminEngaged));
             setFunnelPaused(Boolean(sess?.context?.funnelPaused));
+            setPausedBy(sess?.context?.pausedBy || null);
         }).finally(() => setLoading(false));
     }, [id]);
 
-    const toggleFlag = async (flag, value) => {
-        if (flag === 'adminEngaged') setAdminEngaged(value);
-        else if (flag === 'funnelPaused') setFunnelPaused(value);
+    // Дії над станом бота в сесії: pause/resume/stop/unstop/lock/unlock — див. коментар над
+    // useState(pausedBy) і apps/api/src/routes/sessions.js PATCH /:id/flags.
+    const doFlagAction = async (action) => {
+        setFlagBusy(true);
         try {
-            const res = await api.updateSessionFlags(id, { [flag]: value });
+            const res = await api.updateSessionFlags(id, { action });
             const ctx = res?.context ?? res?.data?.context;
             if (ctx) {
                 setAdminEngaged(Boolean(ctx.adminEngaged));
                 setFunnelPaused(Boolean(ctx.funnelPaused));
+                setPausedBy(ctx.pausedBy || null);
+            }
+            if (['resume', 'unstop', 'unlock'].includes(action)) {
+                const s = await api.getSession(id);
+                setSession(s.data || s);
             }
         } catch (err) {
-            // revert on error
-            if (flag === 'adminEngaged') setAdminEngaged(!value);
-            else if (flag === 'funnelPaused') setFunnelPaused(!value);
+            setSendError(err?.message || 'Не вдалося змінити стан бота');
+        } finally {
+            setFlagBusy(false);
         }
     };
 
@@ -1038,19 +1052,67 @@ export function SessionDetail() {
                     <span className="text-[11px] text-gray-600 hidden lg:inline shrink-0">{id.slice(0, 8)}… · {messages.length} повідомлень</span>
                 </div>
 
-                {/* Action toggles — icon only */}
+                {/* Дії над станом бота — 2026-09-15: 4 окремі іконки замість однієї плутаної.
+                    Неактивна сесія → лише ▶ (запустити). Активна → ⏸ Пауза (тимчасово, знімається
+                    сама за 10 хв тиші менеджера чи 24 год) та ⏹ Стоп (тестовий режим, знімається
+                    лише вимкненням testMode бота). 🔒/🔓 Заблокувати/Розблокувати — окремо, завжди
+                    видима: постійна ручна блокування для клієнтів, які просили спілкуватись лише
+                    з людиною — не знімається НІЧИМ, окрім явного розблокування. */}
                 <div className="flex items-center gap-1 shrink-0">
-                    {/* ОДНА кнопка на обидва прапорці (funnelPaused/adminEngaged рушій трактує однаково,
-                        через OR) — раніше було 2 окремі іконки, що робили те саме, плутало.
-                        Іконка показує ДІЮ: бот працює → ⏸ (зупинити); бот зупинений → ▶ (запустити).
-                        «Запустити» знімає і паузу, і handoff (бекенд) — бот відповідає з наступного повідомлення. */}
-                    <button
-                        onClick={() => toggleFlag('funnelPaused', !(funnelPaused || adminEngaged))}
-                        title={(funnelPaused || adminEngaged)
-                            ? ((adminEngaged && !funnelPaused) ? 'Бот зупинений (діалог веде людина) — натисни, щоб знову увімкнути бота' : 'Бот зупинений — натисни, щоб запустити')
-                            : 'Бот працює — натисни, щоб зупинити (відповідатиме людина)'}
-                        className={`w-7 h-7 flex items-center justify-center rounded text-base transition-colors ${(funnelPaused || adminEngaged) ? 'bg-orange-900/40 text-orange-300' : 'text-emerald-400 hover:bg-gray-800'}`}
-                    >{(funnelPaused || adminEngaged) ? '▶' : '⏸'}</button>
+                    {pausedBy === 'user_locked' ? (
+                        <button
+                            onClick={() => doFlagAction('unlock')}
+                            disabled={flagBusy}
+                            title="Заблоковано вручну (клієнт хоче спілкуватись лише з людиною) — натисни, щоб розблокувати"
+                            className="w-7 h-7 flex items-center justify-center rounded text-base bg-red-900/40 text-red-300 disabled:opacity-40 transition-colors"
+                        >🔒</button>
+                    ) : (
+                        <>
+                            {!session.isActive ? (
+                                <button
+                                    onClick={() => doFlagAction('resume')}
+                                    disabled={flagBusy}
+                                    title="Сесія неактивна — натисни, щоб запустити бота"
+                                    className="w-7 h-7 flex items-center justify-center rounded text-base text-emerald-400 hover:bg-gray-800 disabled:opacity-40 transition-colors"
+                                >▶</button>
+                            ) : pausedBy === 'test_mode' ? (
+                                <button
+                                    onClick={() => doFlagAction('unstop')}
+                                    disabled={flagBusy}
+                                    title="Зупинено (тестовий режим воронки) — зніметься само, коли воронку повернуть у бойовий режим; можна зняти й вручну"
+                                    className="w-7 h-7 flex items-center justify-center rounded text-base bg-gray-700/60 text-gray-300 disabled:opacity-40 transition-colors"
+                                >⏹</button>
+                            ) : (funnelPaused || adminEngaged) ? (
+                                <button
+                                    onClick={() => doFlagAction('resume')}
+                                    disabled={flagBusy}
+                                    title={adminEngaged && !funnelPaused ? 'Бот зупинений (діалог веде людина) — натисни, щоб знову увімкнути бота' : (pausedBy === 'manager_message' ? 'На паузі — в розмову написав менеджер (зніметься само за 10 хв тиші або 24 год) — натисни, щоб запустити зараз' : 'На паузі вручну (зніметься само за 24 год) — натисни, щоб запустити зараз')}
+                                    className="w-7 h-7 flex items-center justify-center rounded text-base bg-orange-900/40 text-orange-300 disabled:opacity-40 transition-colors"
+                                >▶</button>
+                            ) : (
+                                <>
+                                    <button
+                                        onClick={() => doFlagAction('pause')}
+                                        disabled={flagBusy}
+                                        title="Бот працює — натисни, щоб поставити на паузу (тимчасово, зніметься само за 24 год)"
+                                        className="w-7 h-7 flex items-center justify-center rounded text-base text-emerald-400 hover:bg-gray-800 disabled:opacity-40 transition-colors"
+                                    >⏸</button>
+                                    <button
+                                        onClick={() => doFlagAction('stop')}
+                                        disabled={flagBusy}
+                                        title="Зупинити (тестовий режим) — не відповідатиме, доки воронку не повернуть у бойовий режим"
+                                        className="w-7 h-7 flex items-center justify-center rounded text-base text-gray-500 hover:text-gray-300 hover:bg-gray-800 disabled:opacity-40 transition-colors"
+                                    >⏹</button>
+                                </>
+                            )}
+                            <button
+                                onClick={() => doFlagAction('lock')}
+                                disabled={flagBusy}
+                                title="Заблокувати назавжди (клієнт хоче спілкуватись лише з людиною) — не зніметься автоматично"
+                                className="w-7 h-7 flex items-center justify-center rounded text-base text-gray-500 hover:text-red-400 hover:bg-gray-800 disabled:opacity-40 transition-colors"
+                            >🔓</button>
+                        </>
+                    )}
                     <button
                         onClick={restartChat}
                         disabled={restarting}

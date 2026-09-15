@@ -400,13 +400,37 @@ router.post('/:id/send',
     })
 );
 
-// PATCH /api/sessions/:id/flags — toggle adminEngaged / funnelPaused in session context
+// 2026-09-15 (власник: "давай розведемо іконки в адмінці, бо це постійно плутанина") — раніше
+// ОДНА пара funnelPaused/adminEngaged позначала і "менеджер написав", і "ручна пауза", і не було
+// НІЧОГО постійного для "клієнт хоче спілкуватись лише з людиною". Тепер ctx.pausedBy — один із
+// чотирьох ВЗАЄМОВИКЛЮЧНИХ станів, кожен зі своєю іконкою й правилами зняття:
+//   'manager_message' — авто, коли в розмову написав менеджер; знімається АВТОМАТИЧНО (розумна
+//                        10-хв евристика тиші, resumeAfterManagerSilence) АБО жорсткою стелею 24 год
+//                        (hardExpirePauses нижче), якщо розумна евристика не спрацювала.
+//   'manual'           — та сама "Пауза"-іконка, натиснута вручну адміном; та сама стеля 24 год.
+//   'test_mode'        — "Стоп"-іконка: бот мовчить для ЦІЄЇ сесії, доки бот.settings.testMode
+//                        не вимкнуть ГЛОБАЛЬНО (routes/bots.js знімає це з усіх сесій бота) —
+//                        НЕ чіпається 24-годинною стелею.
+//   'user_locked'      — "Заблокувати"-іконка: клієнт сам попросив спілкуватись лише з людиною.
+//                        Знімається ЛИШЕ явним "Розблокувати" — ніколи автоматично, ніколи при
+//                        зміні testMode, ніколи по 24 год.
+const PAUSE_ACTIONS = {
+    pause: { pausedBy: 'manual' },
+    stop: { pausedBy: 'test_mode' },
+    lock: { pausedBy: 'user_locked' },
+};
+const RESUME_ACTIONS = { resume: null, unstop: 'test_mode', unlock: 'user_locked' };
+
+// PATCH /api/sessions/:id/flags — керування станом бота в сесії (pause/resume/stop/unstop/lock/unlock)
 router.patch('/:id/flags',
     validateParams({
         params: z.object({ id: z.string().uuid() }),
         body: z.object({
             adminEngaged: z.boolean().optional(),
+            // Легасі-сумісність (старий фронт/скрипти): funnelPaused:true ≈ action:'pause',
+            // funnelPaused:false ≈ action:'resume'. Новий фронт має слати action напряму.
             funnelPaused: z.boolean().optional(),
+            action: z.enum(['pause', 'resume', 'stop', 'unstop', 'lock', 'unlock']).optional(),
         }),
     }),
     asyncHandler(async (req, res) => {
@@ -414,12 +438,23 @@ router.patch('/:id/flags',
         if (!session) throw new NotFoundError('Session', req.params.id);
         const ctx = { ...(session.context || {}) };
         if (req.body.adminEngaged !== undefined) ctx.adminEngaged = req.body.adminEngaged;
-        if (req.body.funnelPaused !== undefined) {
-            ctx.funnelPaused = req.body.funnelPaused;
-            // Ручне перемикання менеджером: pausedBy 'manual' — авто-відновлення (resumeAfterManagerSilence)
-            // чіпає лише паузи від повідомлення менеджера, ручну ніколи не знімає.
-            if (req.body.funnelPaused) { ctx.pausedBy = 'manual'; ctx.pausedAt = new Date().toISOString(); }
-            else { delete ctx.pausedBy; delete ctx.pausedAt; ctx.resumedBy = 'manual'; ctx.resumedAt = new Date().toISOString(); }
+
+        const action = req.body.action || (req.body.funnelPaused === true ? 'pause' : req.body.funnelPaused === false ? 'resume' : null);
+        let isResume = false;
+        if (action && PAUSE_ACTIONS[action]) {
+            ctx.funnelPaused = true;
+            ctx.pausedBy = PAUSE_ACTIONS[action].pausedBy;
+            ctx.pausedAt = new Date().toISOString();
+        } else if (action && Object.prototype.hasOwnProperty.call(RESUME_ACTIONS, action)) {
+            const requiredBucket = RESUME_ACTIONS[action];
+            // Розблокувати/зняти-стоп можна ЛИШЕ якщо сесія й справді в ЦЬОМУ стані — інакше "Play"
+            // з чужої іконки міг би випадково зняти замок/стоп, поставлений іншою кнопкою.
+            if (requiredBucket && ctx.pausedBy !== requiredBucket) {
+                return res.status(409).json({ ok: false, error: { code: 'WRONG_STATE', message: 'Сесія зараз не в стані «' + requiredBucket + '» — оновіть сторінку.' } });
+            }
+            isResume = true;
+            ctx.funnelPaused = false; delete ctx.pausedBy; delete ctx.pausedAt;
+            ctx.resumedBy = action; ctx.resumedAt = new Date().toISOString();
         }
 
         const data = { context: ctx };
@@ -427,7 +462,7 @@ router.patch('/:id/flags',
         // 1) знімаємо і handoff-прапорець (інакше бот лишається мовчазним),
         // 2) якщо флоу нікуди не вказує (сесія завершилась/була передана людині) —
         //    ставимо на стартову ноду, щоб бот відповів на НАСТУПНЕ повідомлення.
-        if (req.body.funnelPaused === false) {
+        if (isResume) {
             ctx.adminEngaged = false;
             delete ctx.handoffReason;
             const rt = { ...(ctx.flowRuntime || {}) };

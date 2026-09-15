@@ -1912,6 +1912,36 @@ async function resumeAfterManagerSilence() {
 }
 setTimeout(() => { resumeAfterManagerSilence(); setInterval(resumeAfterManagerSilence, 60 * 1000); }, 90 * 1000);
 
+// 2026-09-15 (власник: "давай розведемо іконки в адмінці... пауза — та, яка скидається сама
+// через 24 години"): resumeAfterManagerSilence вище — РОЗУМНА евристика (10 хв тиші, менеджер
+// не веде активний діалог тощо), яка спрацьовує лише для 'manager_message' і має купу умов —
+// не покриває "менеджер писав годинами" чи ручну паузу ('manual', адмін сам натиснув «Пауза»).
+// Це — тупа, надійна СТЕЛЯ: 24 год від pausedAt, БЕЗ жодних додаткових умов, і СВІДОМО не
+// чіпає 'test_mode' (знімається лише вимкненням testMode бота, routes/bots.js) і 'user_locked'
+// (знімається лише явним "Розблокувати" — назавжди, це і є весь сенс цієї кнопки).
+const PAUSE_24H_MS = 24 * 3600 * 1000;
+async function hardExpirePauses() {
+    try {
+        const cutoff = Date.now() - PAUSE_24H_MS;
+        const sessions = await db.session.findMany({
+            where: { isActive: true, context: { path: ['funnelPaused'], equals: true } },
+            select: { id: true, botId: true, context: true },
+            take: 500,
+        });
+        for (const s of sessions) {
+            try {
+                const ctx = s.context || {};
+                if (ctx.pausedBy !== 'manager_message' && ctx.pausedBy !== 'manual') continue; // test_mode/user_locked — ніколи автоматично
+                const pausedAt = ctx.pausedAt ? new Date(ctx.pausedAt).getTime() : 0;
+                if (!pausedAt || pausedAt > cutoff) continue;
+                await db.session.update({ where: { id: s.id }, data: { context: { ...ctx, funnelPaused: false, pausedBy: null, pausedAt: null, resumedBy: 'auto_24h', resumedAt: new Date().toISOString() } } });
+                logger.info('[zernioHandler] auto-resumed after 24h pause ceiling', { sessionId: s.id, wasPausedBy: ctx.pausedBy });
+            } catch (e) { logger.warn('[zernioHandler] hardExpirePauses session error', { sessionId: s.id, error: e.message }); }
+        }
+    } catch (e) { logger.warn('[zernioHandler] hardExpirePauses error: ' + e.message); }
+}
+setTimeout(() => { hardExpirePauses(); setInterval(hardExpirePauses, 30 * 60 * 1000); }, 120 * 1000);
+
 // 2026-09-09 (власник, п.7 аудиту після регресії v12.7, коли 2 год нові сесії лишались без картки): сторож мовчання бота.
 // Раз на 10 хв: нові живі сесії за 30 хв, у яких є повідомлення клієнта (старше 3 хв), нема жодної відповіді бота (message з
 // metadata.nodeId), нема паузи і блоку тестового режиму. ≥ BOT_SILENCE_MIN таких → Telegram (OWNER_TELEGRAM_ID, інакше

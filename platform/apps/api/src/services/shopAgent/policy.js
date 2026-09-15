@@ -55,7 +55,10 @@ function ttnIn(text) { const m = String(text || '').match(/(?<!\d)\d{14}(?!\d)/)
 // постачальника (через ctx.orderExtras, який споживають уже наявні n_pay_amount/n_crm_order/
 // brewdrop/easydrop коди нод без жодних змін у них).
 function initSetSelection(pp) {
-    return (pp.setItems || []).map((it) => ({ article: it.article, id: it.id, name: it.name, price: Number(it.price) || 0, supplier: it.supplier || '', supplierArticle: it.supplierArticle || '', colors: it.colors || [], sizes: it.sizes || [], qty: 1, color: '', size: '' }));
+    // fixedColor — нове поле CRM (ProductSetComponent.fixedColor, 2026-09-15): власник фіксує
+    // колір позиції САМЕ В МЕЖАХ цього комплекту (напр. джинси завжди сині для цього набору) —
+    // тоді бот ніколи не питає й не вгадує, бере готове значення з CRM.
+    return (pp.setItems || []).map((it) => ({ article: it.article, id: it.id, name: it.name, price: Number(it.price) || 0, supplier: it.supplier || '', supplierArticle: it.supplierArticle || '', colors: it.colors || [], sizes: it.sizes || [], qty: 1, color: it.fixedColor || '', size: '' }));
 }
 function stemsOf(name) {
     return String(name || '').toLowerCase().replace(/[«»().,]/g, ' ').split(/\s+/).filter((w) => w.length >= 4 && !/^(чоловіч|жіноч|дитяч|артикул|комплект)/.test(w)).map((w) => w.slice(0, 5));
@@ -493,7 +496,14 @@ async function runPolicy(A, u) {
                 await pause(A, 'size_oor', 'n_size_oor_admin');
                 return;
             }
-            const reply = (usedMemory ? 'Беру ваші параметри з минулого разу (' + si.height + ' см / ' + si.weight + ' кг) 🙂 ' : '') + norm(String(ctx.sizeReplyText || '') + ' ' + String(ctx.sizeColorFollowup || ''));
+            // 2026-09-15 (живий кейс, власник: sizeReplyText для комплекту має переноси рядків по
+            // кожній позиції, але norm() стирає ВСІ переноси в один суцільний рядок — та сама вада,
+            // що вже була виправлена для картки товару (messageText/messageTextMultiline). Для
+            // багаторядкового розбиття (набір рядків із \n) зберігаємо переноси; для звичайного
+            // однорядкового тексту (просто товар) norm() як і раніше прибирає зайві пробіли.
+            const sizeText = String(ctx.sizeReplyText || '');
+            const sizeTextClean = sizeText.includes('\n') ? sizeText.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim() : norm(sizeText);
+            const reply = (usedMemory ? 'Беру ваші параметри з минулого разу (' + si.height + ' см / ' + si.weight + ' кг) 🙂 ' : '') + sizeTextClean + (ctx.sizeColorFollowup ? ' ' + norm(String(ctx.sizeColorFollowup)) : '');
             const hasColorNow = ctx.colorChoice && ctx.colorChoice.color;
             if (!hasColorNow && pp.colors) { A.out.push({ text: u.questions.length ? await answerThenAsk(A, u, reply) : reply, step: 'size_reply' }); ctx.agent.lastAsk = 'колір'; return; }
             A.out.push({ text: u.questions.length ? await answerThenAsk(A, u, reply) : reply, step: 'size_reply' });
@@ -547,6 +557,32 @@ async function runPolicy(A, u) {
             ctx.setSelection = initSetSelection(pp);
             applySetPricing(ctx, pp);
             if (!ctx.agent.setStageSent) { await T.funnelStage(A, ...STAGES.color); ctx.agent.setStageSent = true; }
+        }
+        // 2026-09-15 (власник: "якого кольору джинси ми тепер оформимо?"): раніше колір позицій
+        // комплекту НІКОЛИ не резолвився й не питався — замовлення йшло з порожнім кольором для
+        // багатоколірних позицій. Однокольорові підтягуються автоматично (нема сенсу питати);
+        // клієнт МІГ уже назвати колір(и) прямо в цьому повідомленні ("джинси сині, кофта чорна")
+        // — розбираємо по позиціях тим самим matchSetItem/matchColor, що вже є для applySetEdit;
+        // лишається неоднозначність — питаємо ОДНИМ повідомленням саме ці позиції, не всі одразу.
+        if (!ctx.agent.setColorsResolved) {
+            const catNamesSet = ctx.agent.setParams && ctx.agent.setParams.categoryNames;
+            const segments = text.split(/[,;\n]|\bі\b|\bта\b/iu).map((s) => s.trim()).filter(Boolean);
+            for (const seg of segments) {
+                const item = matchSetItem(seg, ctx.setSelection, catNamesSet);
+                if (item && !item.color && Array.isArray(item.colors) && item.colors.length) {
+                    const c = matchColor({ colors: item.colors.join(',') }, seg);
+                    if (c) item.color = c;
+                }
+            }
+            for (const it of ctx.setSelection) { if (!it.color && Array.isArray(it.colors) && it.colors.length === 1) it.color = it.colors[0]; }
+            const ambiguous = ctx.setSelection.filter((it) => !it.color && Array.isArray(it.colors) && it.colors.length > 1);
+            if (ambiguous.length) {
+                ctx.agent.setColorAskList = ambiguous.map((it) => it.name + ' — ' + it.colors.join(', ')).join('\n');
+                A.out.push({ text: await answerThenAsk(A, u, messageTextMultiline(A.assets, 'n_agent_set_color_ask', ctx, A.session.id)), step: 'set_color_ask' });
+                ctx.agent.lastAsk = 'колір позицій комплекту';
+                return;
+            }
+            ctx.agent.setColorsResolved = true;
         }
         if (!ctx.crmOrderId && (u.removeItem || u.addItem || u.changeRequest)) {
             const edited = await applySetEdit(A, u, pp);

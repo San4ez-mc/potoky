@@ -9,7 +9,7 @@
  *      zernioHandler.runFlowAndDeliver так само, як для старого графа).
  * Увімкнення на боті: settings.engine === 'shop_agent_v2' або funnelKey SHOP_AGENT_V2=1.
  */
-const { db, logger, loadAssets, cleanJsonDeep } = require('./lib');
+const { db, logger, loadAssets, cleanJsonDeep, mergeConsecutiveTextOutputs } = require('./lib');
 const { understand } = require('./understand');
 const { runPolicy } = require('./policy');
 
@@ -74,6 +74,10 @@ async function handleTurn({ botId, sessionId, text, imageUrl, sharedPost, entryA
     // одноразові прапорці ходу
     delete ctx.productJustPresented; delete ctx.hasFreshSignalThisTurn; delete ctx.sharedPost;
     ctx.agent.lastTurnAt = new Date().toISOString(); ctx.agent.lastIntent = u.intent; ctx.agent.lastTrace = A.trace.slice(-12);
+    // 2026-09-15 (власник): архітектурне рішення для «2 повідомлення поспіль без відповіді клієнта
+    // між ними» — зливаємо ПОСПІЛЬ ідучі чисто текстові виходи одного ходу в одне повідомлення тут,
+    // в ОДНОМУ місці для всієї policy.js, а не точково в кожній секції окремо. Див. lib.js.
+    A.out = mergeConsecutiveTextOutputs(A.out);
     const replies = [];
     if (!dryRun) {
         for (const o of A.out) {

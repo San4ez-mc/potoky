@@ -53,6 +53,30 @@ const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
 // зламаний <a href="<a href=...">; URL зупиняється на " < > — реальні URL цих символів не містять.
 function hideLinks(s) { return String(s || '').replace(/(?<!href=")https?:\/\/[^\s"<>]+/g, (url) => '<a href="' + url.replace(/"/g, '&quot;') + '">🔗 посилання</a>'); }
 
+// 2026-09-15 (власник: "не тут конкретно захардкодити, зроби всюди... елегантне рішення"):
+// АРХІТЕКТУРНЕ рішення для класу «policy.js за один хід виштовхнув 2+ текстових повідомлення
+// поспіль без жодної відповіді клієнта між ними» (живий кейс — розмір комплекту, потім одразу
+// підсумок замовлення). Замість того щоб городити ручний «pendingLeadIn» у кожній секції
+// policy.js окремо (крихко, легко забути в наступному місці) — ОДНЕ місце виклику (одразу після
+// runPolicy, до доставки) зливає ПОСПІЛЬ ідучі чисто текстові виходи (без фото) в один текст,
+// розділений порожнім рядком. Фото завжди лишається окремим повідомленням — тексту й альбому
+// природно бути різними бульбашками в Instagram; текст-до-тексту без фото між ними — ні.
+function mergeConsecutiveTextOutputs(out) {
+    const merged = [];
+    for (const item of out) {
+        const last = merged[merged.length - 1];
+        const isPlainText = item && item.text && !item.photoUrls;
+        const lastIsPlainText = last && last.text && !last.photoUrls;
+        if (isPlainText && lastIsPlainText) {
+            last.text = String(last.text).trim() + '\n\n' + String(item.text).trim();
+            last.step = last.step + '+' + item.step;
+        } else {
+            merged.push({ ...item });
+        }
+    }
+    return merged;
+}
+
 /** Вибір варіанта тексту message-ноди (text + variants[]) — рівномірно, але стабільно в межах ходу. */
 function pickVariant(tpl, seed) {
     if (!tpl) return '';
@@ -148,4 +172,4 @@ async function loadCatalog(botId, keys, { force } = {}) {
 }
 async function loadCategories(botId, keys) { const r = await crmFetch(keys, '/categories'); return Array.isArray(r.data) ? r.data : []; }
 
-module.exports = { db, logger, getByPath, setByPath, renderTemplate, safeJsonStringify, stripLoneSurrogates, cleanJsonDeep, norm, hideLinks, pickVariant, loadAssets, nodeCode, nodeData, messageText, messageTextMultiline, alertFields, runNodeCode, crmBase, crmHeaders, crmFetch, loadCatalog, loadCategories };
+module.exports = { db, logger, getByPath, setByPath, renderTemplate, safeJsonStringify, stripLoneSurrogates, cleanJsonDeep, norm, hideLinks, mergeConsecutiveTextOutputs, pickVariant, loadAssets, nodeCode, nodeData, messageText, messageTextMultiline, alertFields, runNodeCode, crmBase, crmHeaders, crmFetch, loadCatalog, loadCategories };

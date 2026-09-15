@@ -176,6 +176,42 @@ async function main() {
         check('Після щойно показаної картки set-товару питання "весь комплект?" не дублюється', !askedAgain, 'steps: ' + A.out.map((o) => o.step).join(','));
     }
 
+    // ── 9. Універсальне злиття поспіль ідучих текстових повідомлень одного ходу (архітектурне
+    // рішення 15.09) — фото завжди лишається окремим, текст-до-тексту зливається в один.
+    {
+        const { mergeConsecutiveTextOutputs } = require('../lib');
+        const out = [
+            { text: 'Перше', step: 'a' },
+            { text: 'Друге', step: 'b' },
+            { photoUrls: ['http://x'], step: 'photo' },
+            { text: 'Третє', step: 'c' },
+        ];
+        const merged = mergeConsecutiveTextOutputs(out);
+        const ok = merged.length === 3 && merged[0].text === 'Перше\n\nДруге' && merged[1].photoUrls && merged[2].text === 'Третє';
+        check('mergeConsecutiveTextOutputs зливає текст-до-тексту, не чіпає фото', ok, JSON.stringify(merged.map((m) => m.text || 'photo')));
+    }
+
+    // ── 10. Колір позицій комплекту — живий кейс 15.09 (власник: "якого кольору джинси ми
+    // оформимо?"): однокольорові позиції підтягуються самі, багатоколірні — питаються окремо.
+    {
+        const A = freshA({ turnText: 'Синя' });
+        A.ctx.product = { sku: 'set1113', isSet: true, price: 5290 };
+        A.ctx.setMode = 'set';
+        A.ctx.agent.setOriginal = [
+            { article: 'D0050', name: 'Кофта', price: 1190, colors: ['Чорний'], sizes: [], qty: 1, color: '' },
+            { article: 'j0032', name: 'Джинси', price: 1590, colors: ['Синій', 'Чорний', 'Графітовий'], sizes: [], qty: 1, color: '' },
+        ];
+        A.ctx.setSelection = A.ctx.agent.setOriginal.map((x) => ({ ...x }));
+        const u = freshU({ intent: 'give_params' });
+        await runPolicy(A, u);
+        const kofta = A.ctx.setSelection.find((x) => x.article === 'D0050');
+        const jeans = A.ctx.setSelection.find((x) => x.article === 'j0032');
+        check('Однокольорова позиція комплекту (Кофта) підтягується автоматично', kofta && kofta.color === 'Чорний', 'колір: ' + (kofta && kofta.color));
+        // Джинси мають 3 кольори і клієнт не назвав жодного явно щодо них — має запитати.
+        const asked = A.out.some((o) => o.step && o.step.includes('set_color_ask'));
+        check('Багатоколірна позиція без явної вказівки — бот питає', asked, 'steps: ' + A.out.map((o) => o.step).join(','));
+    }
+
     console.log('');
     const failed = results.filter((r) => !r.ok);
     console.log(results.length + ' тестів, ' + failed.length + ' провалено.');

@@ -434,6 +434,32 @@ async function main() {
         check('15.6 orderExtras на кінець сценарію 1:1 збігається з setSelection (що бачить клієнт = що піде в замовлення)', finalMatch, JSON.stringify({ setSelection: A.ctx.setSelection, orderExtras: A.ctx.orderExtras }));
     }
 
+    // ── 15б. Живий кейс 15.09 (Edits, знову той самий set1112, вперше знайдено ще 08.09 і тоді
+    // "виправлено" занадто вузьким guard-ом): "Комплект 4 в 1 (кофта...)" і одразу "Комплект 4 в
+    // 1. Артикул: set1112" — назва двічі в першому ж повідомленні. Живий виклик n_lookup —
+    // перевіряємо РЕАЛЬНИЙ desc, що піде в n_welcome.
+    {
+        const { tool } = require('../tools');
+        const A = freshA({ turnText: 'артикул set1112' });
+        A.ctx.lastUserMessage = 'артикул set1112';
+        const r = await tool(A, 'n_lookup');
+        const desc = String((A.ctx.product && A.ctx.product.desc) || '');
+        const lines = desc.split('\n').map((s) => s.trim()).filter(Boolean);
+        const bothStartSame = lines.length > 1 && /^комплект/i.test(lines[0]) && /^комплект/i.test(lines[1]) && lines[0] !== lines[1];
+        check('n_lookup (set1112): назва комплекту не дублюється двічі на початку desc', r.ok && A.ctx.product && A.ctx.product.sku === 'set1112' && !bothStartSame, JSON.stringify({ ok: r.ok, sku: A.ctx.product && A.ctx.product.sku, desc }));
+    }
+
+    // ── 16. Живий кейс 15.09 (3 незалежні скарги в Edits: "не надіслало фото розмірної сітки",
+    // "На цей товар розмірної сітки нема. Бот обіцяє скинути") — LLM НЕ повинна обіцяти картинку,
+    // якої немає в CRM (та сама категорія, що "уточнимо окремо в чаті" для розмірів комплекту).
+    {
+        const { sizeChartRuleFor } = require('../compose');
+        const withChart = sizeChartRuleFor({ product: { sizeChartUrl: 'https://x/chart.jpg' } });
+        const withoutChart = sizeChartRuleFor({ product: { sku: 'A0182' } });
+        check('sizeChartRuleFor: є файл сітки — дозволяє обіцяти картинку', /йде клієнту лише окремою картинкою/.test(withChart), withChart);
+        check('sizeChartRuleFor: НЕМА файлу сітки — забороняє порожню обіцянку', /НІКОЛИ не обіцяй надіслати картинку/.test(withoutChart) && !/йде клієнту лише окремою картинкою/.test(withoutChart), withoutChart);
+    }
+
     console.log('');
     const failed = results.filter((r) => !r.ok);
     console.log(results.length + ' тестів, ' + failed.length + ' провалено.');

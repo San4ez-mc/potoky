@@ -758,10 +758,18 @@ try {
   var __descClean = String(found.presentationText || '').split('\n').filter(function (ln) { return !/^\s*ℹ️/.test(ln); }).join('\n').trim();
   // 2026-09-08 (set1112: «Комплект 4 в 1 (кофта…)» і одразу «Комплект 4 в 1. Артикул: set1112» — назва двічі): якщо перший
   // рядок презентації = назва товару, а далі йде рядок з артикулом — перший рядок прибираємо.
+  // 2026-09-15 (живий кейс, ТОЙ САМИЙ set1112, знову: "надсилає фото комплекту замість футболки,
+  // двічі пише назву товару") — старий guard вимагав ТОЧНИЙ збіг першого рядка з customerName
+  // цілком, а тут перший рядок — це found.name («Комплект 4 в 1 (кофта Сейн ангора...)»), другий —
+  // customerName («Комплект 4 в 1. Артикул: set1112») — РІЗНІ рядки, які лише ПОЧИНАЮТЬСЯ
+  // однаково, тому точний збіг не спрацював і дубль вижив. Перевіряємо натомість, чи перший
+  // рядок починається з "голої" назви customerName (без "Артикул: ..." хвоста) — це ловить і
+  // точний збіг (старий кейс), і частковий префіксний (цей кейс), без хардкоду під конкретний sku.
   try {
-    var __dl = __descClean.split('\n'); var __first = String(__dl[0] || '').trim().toLowerCase(); var __nm = String(found.customerName || found.name || '').trim().toLowerCase();
+    var __dl = __descClean.split('\n'); var __first = String(__dl[0] || '').trim().toLowerCase();
     var __second = (__dl.slice(1).find(function (l) { return l.trim(); }) || '').toLowerCase();
-    if (__dl.length > 2 && __nm && __first === __nm && /артикул/.test(__second)) __descClean = __dl.slice(1).join('\n').trim();
+    var __bareCustomerName = String(found.customerName || '').replace(/[.,]?\s*артикул\s*[:\s].*$/i, '').trim().toLowerCase();
+    if (__dl.length > 2 && __bareCustomerName && __bareCustomerName.length >= 4 && __first.indexOf(__bareCustomerName) === 0 && /артикул/i.test(__second)) __descClean = __dl.slice(1).join('\n').trim();
   } catch (e) { }
   var __rawFirstLine = (__descClean.split('\n')[0] || '').trim();
   var __looksLikeHeading = /:$/.test(__rawFirstLine) || /^[^:]{1,30}:\s/.test(__rawFirstLine) || /^(в\s*наявност|наявніст|кольор|розмір|матеріал|ціна\b|акці|сезон)/i.test(__rawFirstLine) || __rawFirstLine.length < 4;

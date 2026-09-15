@@ -1986,14 +1986,21 @@ async function retryMissedZernioTurns() {
                 // Уже на паузі (менеджер веде) — не наша турбота тут; звичайний потік і
                 // resumeAfterManagerSilence вище вже покривають цей випадок окремо.
                 if (ctx.funnelPaused || !ctx.conversationId) continue;
+                // 2026-09-15 (запит власника): адаптивний бек-офф ЗАМІСТЬ фіксованого тику для КОЖНОЇ
+                // сесії окремо — якщо минулого разу тут справді зловили пропущене (розмова, схоже,
+                // зараз має проблеми з доставкою вебхука), перевіряємо знову скоро; якщо було чисто —
+                // не варто бомбити Zernio REST так часто, відкладаємо надовго.
+                if (now < (ctx.zernioNextCheckAt || 0)) continue;
                 if (await isBlockedByTestMode(s.botId, [ctx.igUsername, ctx.senderName])) continue;
                 const sync = await syncConversationTruth(s.botId, s.id, ctx.conversationId);
-                if (!sync.ok || sync.empty || sync.managerLed) continue;
-                const unanswered = Array.isArray(sync.unanswered) ? sync.unanswered : [];
-                if (!unanswered.length) continue;
+                if (!sync.ok) continue; // напр. rest-failed — спробуємо знову наступний тик, без зміни бек-оффу
+                const unanswered = (!sync.empty && !sync.managerLed && Array.isArray(sync.unanswered)) ? sync.unanswered : [];
                 const text = unanswered.map((u) => String(u.text || '').trim()).filter(Boolean).join('\n');
                 const att = unanswered.map((u) => (u.attachments || []).find((a) => a.type === 'photo' && a.url)).find(Boolean);
-                if (!text && !att) continue; // нема що обробляти — лише службові події без вмісту
+                const found = !!(text || att); // якщо unanswered лише службові події без вмісту — це теж «нічого не зловили»
+                const RECHECK_SOON_MS = 2 * 60 * 1000, RECHECK_LATER_MS = 10 * 60 * 1000;
+                await db.session.update({ where: { id: s.id }, data: { context: { ...ctx, zernioNextCheckAt: now + (found ? RECHECK_SOON_MS : RECHECK_LATER_MS) } } }).catch(() => {});
+                if (!found) continue;
                 logger.info('[zernioHandler] retryMissedZernioTurns: підхопив пропущене без нового вебхука', { botId: s.botId, sessionId: s.id, n: unanswered.length, textPreview: text.slice(0, 60) });
                 scheduleFlowRun(s.id, { botId: s.botId, contactId: ctx.contactId || ctx.psid, conversationId: ctx.conversationId, contactName: ctx.senderName, text, imageUrl: att ? att.url : null });
             } catch (e) { logger.warn('[zernioHandler] retryMissedZernioTurns session error: ' + e.message, { sessionId: s.id }); }

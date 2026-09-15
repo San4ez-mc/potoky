@@ -675,8 +675,11 @@ try {
     if (compFull) { if (compFull.thumbnailUrl) cImgs.push(resolveUrl(compFull.thumbnailUrl)); var cRaw = compFull.images || []; for (var cx = 0; cx < cRaw.length; cx++) { var cuu = resolveUrl(cRaw[cx]); if (cuu && cImgs.indexOf(cuu) < 0) cImgs.push(cuu); } }
     // 2026-09-08 (t_ilich_k, _vlad_838: «які джинси в комплекті, 6 варіантів?», «кофта в графітовому є?» → бот не знав):
     // кольори й розміри компонента з його оферів — у setList, щоб n_set_choice відповідав сам.
-    var cColors = [], cSizes = [];
-    if (compFull) { var cOffs = compFull.offers || []; for (var co = 0; co < cOffs.length; co++) { var cps = cOffs[co].properties || []; for (var cq = 0; cq < cps.length; cq++) { var cnm = String(cps[cq].name || '').toLowerCase(); var cv = String(cps[cq].value || '').trim(); if (!cv) continue; if ((cnm.indexOf('колір') >= 0 || cnm.indexOf('цвет') >= 0) && cColors.indexOf(cv) < 0) cColors.push(cv); if ((cnm.indexOf('розмір') >= 0 || cnm.indexOf('размер') >= 0) && cSizes.indexOf(cv) < 0) cSizes.push(cv); } } }
+    var cColors = [], cSizes = [], cColorPhotos = {};
+    // 2026-09-15 (власник: "де 'виберіть колір' треба обов'язково скидати фото цих кольорів") —
+    // фото офера цього кольору (offer.images[0], resolveUrl), не загальне фото товару — щоб клієнт
+    // бачив САМЕ той колір, який обирає. Перший офер із фото на кожен унікальний колір.
+    if (compFull) { var cOffs = compFull.offers || []; for (var co = 0; co < cOffs.length; co++) { var cps = cOffs[co].properties || []; var cOffImgs = cOffs[co].images || []; for (var cq = 0; cq < cps.length; cq++) { var cnm = String(cps[cq].name || '').toLowerCase(); var cv = String(cps[cq].value || '').trim(); if (!cv) continue; if ((cnm.indexOf('колір') >= 0 || cnm.indexOf('цвет') >= 0)) { if (cColors.indexOf(cv) < 0) cColors.push(cv); if (!cColorPhotos[cv] && cOffImgs.length) cColorPhotos[cv] = resolveUrl(cOffImgs[0]); } if ((cnm.indexOf('розмір') >= 0 || cnm.indexOf('размер') >= 0) && cSizes.indexOf(cv) < 0) cSizes.push(cv); } } }
     // 2026-09-11 (власник: розмір для "весь комплект" має рахуватись ОКРЕМО для кожної позиції,
     // не одним спільним числом) — довантажуємо сюди ж (без додаткових запитів, compFull уже є)
     // structured sizes/sizeChartData/categoryId кожного компонента, щоб n_calc міг порахувати
@@ -687,7 +690,7 @@ try {
       price: compFull ? (Number(compFull.price) || 0) : null,
       supplier: (compFull && compFull.supplier && compFull.supplier.name) || '',
       supplierArticle: (compFull && compFull.supplierArticle) || '',
-      colors: cColors, sizes: cSizes,
+      colors: cColors, sizes: cSizes, colorPhotos: cColorPhotos,
       structuredSizes: cRawSizes, sizeChartData: (compFull && compFull.sizeChartData) || null,
       // 2026-09-13 (тікет ae8c2f85/1790c81b, власник: "фото розмірної сітки, текстом не треба —
       // дуже складно для клієнта"): той самий фікс, що вже є для ОДИНОЧНОГО товару (n_size_photo),

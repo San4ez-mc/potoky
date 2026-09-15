@@ -223,7 +223,7 @@ async function main() {
         A.ctx.recommendedSize = 'M'; // проходимо повз секцію «4. Розмір» — тут перевіряємо лише 5b.
         A.ctx.agent.setOriginal = [
             { article: 'D0050', name: 'Кофта', price: 1190, colors: ['Чорний'], sizes: [], qty: 1, color: '' },
-            { article: 'j0032', name: 'Джинси', price: 1590, colors: ['Синій', 'Чорний', 'Графітовий'], sizes: [], qty: 1, color: '' },
+            { article: 'j0032', name: 'Джинси', price: 1590, colors: ['Синій', 'Чорний', 'Графітовий'], colorPhotos: { 'Синій': 'https://x/sinii.jpg', 'Чорний': 'https://x/chornii.jpg', 'Графітовий': 'https://x/grafit.jpg' }, sizes: [], qty: 1, color: '' },
         ];
         A.ctx.setSelection = A.ctx.agent.setOriginal.map((x) => ({ ...x }));
         const u = freshU({ intent: 'give_params' });
@@ -234,6 +234,10 @@ async function main() {
         // Джинси мають 3 кольори і клієнт не назвав жодного явно щодо них — має запитати.
         const asked = A.out.some((o) => o.step && o.step.includes('set_color_ask'));
         check('Багатоколірна позиція без явної вказівки — бот питає', asked, 'steps: ' + A.out.map((o) => o.step).join(','));
+        // 2026-09-15 (власник: "де 'виберіть колір' треба обов'язково скидати фото цих кольорів")
+        const photoStep = A.out.find((o) => o.step === 'set_color_ask_photos');
+        const photosOk = photoStep && Array.isArray(photoStep.photoUrls) && photoStep.photoUrls.length === 3;
+        check('Питання про колір комплекту — з альбомом фото по кожному кольору', photosOk, JSON.stringify(photoStep));
     }
 
     // ── 11. Підсумок замовлення для комплекту — живий кейс 15.09 (власник: "форматування не

@@ -68,7 +68,7 @@ function initSetSelection(pp) {
     // fixedColor — нове поле CRM (ProductSetComponent.fixedColor, 2026-09-15): власник фіксує
     // колір позиції САМЕ В МЕЖАХ цього комплекту (напр. джинси завжди сині для цього набору) —
     // тоді бот ніколи не питає й не вгадує, бере готове значення з CRM.
-    return (pp.setItems || []).map((it) => ({ article: it.article, id: it.id, name: it.name, price: Number(it.price) || 0, supplier: it.supplier || '', supplierArticle: it.supplierArticle || '', colors: it.colors || [], sizes: it.sizes || [], qty: 1, color: it.fixedColor || '', size: '' }));
+    return (pp.setItems || []).map((it) => ({ article: it.article, id: it.id, name: it.name, price: Number(it.price) || 0, supplier: it.supplier || '', supplierArticle: it.supplierArticle || '', colors: it.colors || [], colorPhotos: it.colorPhotos || {}, sizes: it.sizes || [], qty: 1, color: it.fixedColor || '', size: '' }));
 }
 function stemsOf(name) {
     return String(name || '').toLowerCase().replace(/[«»().,]/g, ' ').split(/\s+/).filter((w) => w.length >= 4 && !/^(чоловіч|жіноч|дитяч|артикул|комплект)/.test(w)).map((w) => w.slice(0, 5));
@@ -591,6 +591,13 @@ async function runPolicy(A, u) {
                 // порожній рядок між позиціями (не просто \n) і емодзі-мітка, той самий стиль, що вже
                 // в humanSetList/картці товару.
                 ctx.agent.setColorAskList = ambiguous.map((it) => '🎨 ' + it.name + '\nДоступні кольори: ' + it.colors.join(', ')).join('\n\n');
+                // 2026-09-15 (власник: "де 'виберіть колір' треба обов'язково скидати фото цих
+                // кольорів") — фото офера кожного доступного кольору (n_lookup вже підвантажує
+                // colorPhotos для set-компонентів), альбомом ПЕРЕД текстом питання. Без фото для
+                // позиції — просто пропускаємо її (текстовий список кольорів лишається як є).
+                const colorPhotoUrls = [];
+                for (const it of ambiguous) { for (const c of it.colors) { const u2 = it.colorPhotos && it.colorPhotos[c]; if (u2 && colorPhotoUrls.indexOf(u2) < 0) colorPhotoUrls.push(u2); } }
+                if (colorPhotoUrls.length) A.out.push({ photoUrls: colorPhotoUrls.slice(0, 10), caption: '', step: 'set_color_ask_photos' });
                 A.out.push({ text: await answerThenAsk(A, u, messageTextMultiline(A.assets, 'n_agent_set_color_ask', ctx, A.session.id)), step: 'set_color_ask' });
                 ctx.agent.lastAsk = 'колір позицій комплекту';
                 return;

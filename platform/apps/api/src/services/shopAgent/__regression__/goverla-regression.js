@@ -223,6 +223,25 @@ async function main() {
         check('Багатоколірна позиція без явної вказівки — бот питає', asked, 'steps: ' + A.out.map((o) => o.step).join(','));
     }
 
+    // ── 11. Підсумок замовлення для комплекту — живий кейс 15.09 (власник: "форматування не
+    // застосувалось"): список позицій ішов через кому в один рядок замість буллетів з переносами.
+    {
+        const A = freshA({ turnText: 'Так' });
+        A.ctx.product = { sku: 'set1113', isSet: true, price: 5290, customerName: 'Комплект 4 в 1' };
+        A.ctx.setMode = 'set';
+        A.ctx.recommendedSize = 'M';
+        A.ctx.setSelection = [
+            { article: 'D0050', name: 'Кофта', price: 1190, qty: 1, color: 'Чорний' },
+            { article: 'j0032', name: 'Джинси', price: 1590, qty: 1, color: 'Синій' },
+        ];
+        A.ctx.agent.setPricing = { total: 2780, edited: true };
+        const u = freshU({ intent: 'order_yes' });
+        await runPolicy(A, u);
+        const txt = (A.out.find((o) => o.step === 'order_intent') || {}).text || '';
+        const hasBullets = txt.includes('• Кофта') && txt.includes('• Джинси') && !txt.includes('Кофта (Чорний), Джинси');
+        check('Підсумок замовлення для комплекту — позиції буллетами з переносами, не комою в рядок', hasBullets, JSON.stringify(txt));
+    }
+
     console.log('');
     const failed = results.filter((r) => !r.ok);
     console.log(results.length + ' тестів, ' + failed.length + ' провалено.');

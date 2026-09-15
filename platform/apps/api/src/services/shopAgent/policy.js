@@ -645,12 +645,16 @@ async function runPolicy(A, u) {
         } else {
             // підсумок + «Оформляємо?»
             const isSetFull = pp.isSet && ctx.setMode === 'set';
-            const units = isSetFull ? ctx.setSelection.map((it) => it.name + (it.color ? ' (' + it.color + ')' : '') + (it.qty > 1 ? ' ×' + it.qty : '')).join(', ') : (ctx.orderUnitsText || ((ctx.colorChoice && ctx.colorChoice.color ? ctx.colorChoice.color : '') + (ctx.recommendedSize ? ' ' + ctx.recommendedSize : '')));
             const total = isSetFull ? ctx.agent.setPricing.total : (ctx.orderUnitsTotal || pp.price);
             if (pp.upsellPhotoUrl && !isSetFull && !ctx.agent.upsellPhotoSent) { A.out.push({ photoUrls: [pp.upsellPhotoUrl], caption: '', step: 'upsell_photo' }); ctx.agent.upsellPhotoSent = true; }
             // Підсумок — ДЕТЕРМІНОВАНО (розмір/колір/сума з інструментів, LLM їх не перераховує); LLM лише
             // відповідає на питання клієнта перед підсумком або мʼяко працює з ваганням.
-            const summary = messageText(A.assets, 'n_agent_order_summary_header', ctx, A.session.id) + '\n' + (pp.customerName || pp.name) + (units ? ' — ' + units : '') + ' — ' + total + ' грн' + (ctx.extraItemsText ? '\n' + ctx.extraItemsText : '') + (ctx.shop && ctx.shop.terms ? '\n' + ctx.shop.terms : '');
+            // 2026-09-15 (живий кейс, власник: "форматування не застосувалось") — список позицій
+            // комплекту йшов одним суцільним рядком через кому; тепер, як і скрізь для комплекту
+            // (set_edit_confirm, humanSetList), кожна позиція на своєму рядку з буллетом.
+            const summary = isSetFull
+                ? messageText(A.assets, 'n_agent_order_summary_header', ctx, A.session.id) + '\n' + (pp.customerName || pp.name) + '\n\n' + ctx.setSelection.map((it) => '• ' + it.name + (it.color ? ' (' + it.color + ')' : '') + (it.qty > 1 ? ' ×' + it.qty : '') + ' — ' + (it.price * it.qty) + ' грн').join('\n') + '\n\nРазом: ' + total + ' грн' + (ctx.shop && ctx.shop.terms ? '\n' + ctx.shop.terms : '')
+                : (() => { const units = ctx.orderUnitsText || ((ctx.colorChoice && ctx.colorChoice.color ? ctx.colorChoice.color : '') + (ctx.recommendedSize ? ' ' + ctx.recommendedSize : '')); return messageText(A.assets, 'n_agent_order_summary_header', ctx, A.session.id) + '\n' + (pp.customerName || pp.name) + (units ? ' — ' + units : '') + ' — ' + total + ' грн' + (ctx.extraItemsText ? '\n' + ctx.extraItemsText : '') + (ctx.shop && ctx.shop.terms ? '\n' + ctx.shop.terms : ''); })();
             const askLine = (!isSetFull && pp.upsell) ? messageText(A.assets, 'n_agent_order_ask_upsell', ctx, A.session.id) : messageText(A.assets, 'n_agent_order_ask_plain', ctx, A.session.id);
             if (!isSetFull && pp.upsell) ctx.agent.upsellOffered = true;
             const hesitating = (u.intent === 'hesitate' || u.intent === 'postpone');

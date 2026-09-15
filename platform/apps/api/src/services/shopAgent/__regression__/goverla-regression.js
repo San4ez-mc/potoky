@@ -439,14 +439,14 @@ async function main() {
     // 1. Артикул: set1112" — назва двічі в першому ж повідомленні. Живий виклик n_lookup —
     // перевіряємо РЕАЛЬНИЙ desc, що піде в n_welcome.
     {
-        const { tool } = require('../tools');
-        const A = freshA({ turnText: 'артикул set1112' });
+        const { resolveProduct } = require('../tools');
+        const A = freshA({ turnText: 'set1112' });
         A.ctx.lastUserMessage = 'артикул set1112';
-        const r = await tool(A, 'n_lookup');
+        const r = await resolveProduct(A, { forceSignal: true });
         const desc = String((A.ctx.product && A.ctx.product.desc) || '');
         const lines = desc.split('\n').map((s) => s.trim()).filter(Boolean);
         const bothStartSame = lines.length > 1 && /^комплект/i.test(lines[0]) && /^комплект/i.test(lines[1]) && lines[0] !== lines[1];
-        check('n_lookup (set1112): назва комплекту не дублюється двічі на початку desc', r.ok && A.ctx.product && A.ctx.product.sku === 'set1112' && !bothStartSame, JSON.stringify({ ok: r.ok, sku: A.ctx.product && A.ctx.product.sku, desc }));
+        check('n_lookup (set1112): назва комплекту не дублюється двічі на початку desc', r.status === 'found' && A.ctx.product && A.ctx.product.sku === 'set1112' && !bothStartSame, JSON.stringify({ status: r.status, sku: A.ctx.product && A.ctx.product.sku, desc }));
     }
 
     // ── 16. Живий кейс 15.09 (3 незалежні скарги в Edits: "не надіслало фото розмірної сітки",

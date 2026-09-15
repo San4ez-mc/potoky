@@ -38,7 +38,17 @@ function matchColor(p, want) {
     for (const one of words) {
         const stem = one.replace(/(ий|а|е|у|ого|им|ому|ої|ою|их)$/u, '').slice(0, 5);
         if (!stem) continue;
-        const cand = list.filter((c) => c.toLowerCase().includes(stem) || one.includes(c.toLowerCase().slice(0, 5)));
+        let cand = list.filter((c) => c.toLowerCase().includes(stem) || one.includes(c.toLowerCase().slice(0, 5)));
+        // 2026-09-15 (живий кейс, власник: «джинси сині» не матчилось): «сині» — узгоджена форма
+        // прикметника з «джинси» (множина), не «синій» як у каталозі. Стем-пошук підрядком тому
+        // знаходить одразу «Синій», «Світло-синій» і «Темно-синій» (усі містять «сині» підрядком) —
+        // неоднозначність, де стара логіка здавалась. Коли серед кандидатів є РІВНО один без дефіса
+        // (сам базовий колір, не «Модифікатор-Колір») — це і є те, що клієнт мав на увазі; складені
+        // варіанти клієнт завжди називає явно («темно-синій», «світло-синій»).
+        if (cand.length > 1) {
+            const plain = cand.filter((c) => !c.includes('-'));
+            if (plain.length === 1) cand = plain;
+        }
         if (cand.length === 1) return cand[0];
     }
     return null;

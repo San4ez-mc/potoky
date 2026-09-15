@@ -812,7 +812,17 @@ async function runPolicy(A, u) {
     // 9. Адреса
     if (!addressComplete(ctx.orderData)) {
         const od = { ...(ctx.orderData || {}) };
-        if (u.fullName) od.fullName = u.fullName; if (u.phone) od.phone = u.phone; if (u.city) od.city = u.city; if (u.region) od.region = u.region; if (u.branch && !u.homeAddress) od.branch = u.branch;
+        // 2026-09-15 (живий кейс, Edits a651dde5: "Львівська обл. Рудне. Вул Яворницького 95
+        // відділення 1" — бот ПРОІГНОРУВАВ явно назване "відділення 1" і перепитав номер) —
+        // корінь: `u.branch && !u.homeAddress` викидав номер відділення, якщо ТОЙ САМИЙ ХІД
+        // ЩЕ й містив вулицю/будинок (LLM цілком законно ставить homeAddress:true поруч із
+        // валідним branch, коли повідомлення описує адресу відділення словами "вулиця X, буд Y,
+        // відділення N" — це не прохання доставки додому, а просто повний опис відділення).
+        // Перевірка живих даних (356 реальних повідомлень з адресами по всіх сесіях) показала:
+        // переважна більшість "адрес без відділення" насправді МАЮТЬ номер, просто в нестандартній
+        // формі (НП2, нп 1, Пункт №1, Перше відділення) — і ЦЕЙ бар'єр викидав його щоразу, коли
+        // LLM також бачила вулицю в тому ж повідомленні. Номер відділення бере пріоритет ЗАВЖДИ.
+        if (u.fullName) od.fullName = u.fullName; if (u.phone) od.phone = u.phone; if (u.city) od.city = u.city; if (u.region) od.region = u.region; if (u.branch) od.branch = u.branch;
         if (u.paymentMethodChange && u.paymentMethodChange !== ctx.paymentInfo.method) { ctx.paymentInfo = { ...ctx.paymentInfo, method: u.paymentMethodChange }; ctx.orderRef = ''; await T.payAmount(A); ctx.orderData = od; await sendRequisites(A, u); return; }
         const mem = ctx.customer || {};
         if (!od.phone && !od.fullName && mem.phone && mem.fullName && mem.city && mem.branch) {
@@ -822,7 +832,11 @@ async function runPolicy(A, u) {
         ctx.orderData = od;
         if (u.wantsManualReq) { await sendManualRequisites(A, true); return; }
         if (u.claimsPaid || u.receiptLink || A.turnImage) await tryReconcile(A);
-        if (u.homeAddress) { ctx.agent.cityNote = od.city ? ' у м. ' + od.city : ''; A.out.push({ text: await answerThenAsk(A, u, messageText(A.assets, 'n_agent_home_address_reject', ctx, A.session.id)), step: 'home_address' }); ctx.agent.lastAsk = 'номер відділення'; return; }
+        // Відмовляємо в доставці додому лише коли номера відділення/поштомата дійсно НЕМА (ні
+        // з цього ходу, ні з попереднього) — якщо він УЖЕ є в od.branch (щойно взятий вище або
+        // з минулого ходу), homeAddress:true просто означає "клієнт заодно описав адресу
+        // відділення словами", а не "хоче доставку додому".
+        if (u.homeAddress && !od.branch) { ctx.agent.cityNote = od.city ? ' у м. ' + od.city : ''; A.out.push({ text: await answerThenAsk(A, u, messageText(A.assets, 'n_agent_home_address_reject', ctx, A.session.id)), step: 'home_address' }); ctx.agent.lastAsk = 'номер відділення'; return; }
         if (!addressComplete(od)) {
             const missing = [!od.fullName && 'ПІБ', !od.phone && 'телефон', !od.city && 'місто', !od.branch && '№ відділення або поштомата'].filter(Boolean);
             ctx.agent.ackLine = ctx.payStatus === 'confirmed' ? 'Оплату отримали ✅ ' : (u.claimsPaid || u.receiptLink || A.turnImage ? 'Дякую! Оплату звіримо, щойно надійде 🙏 ' : '');

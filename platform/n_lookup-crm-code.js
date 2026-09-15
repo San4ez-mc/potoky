@@ -37,7 +37,19 @@
 if (context.product && context.product._source === 'crm' && (String(context.product._matchKey) === String(context.entryAd || context.__lk || '') || !context.hasFreshSignalThisTurn)) return { skipPresentation: !!(context.product.sku && context.presentedAt && (Date.now() - Number(context.presentedAt)) < 30 * 60 * 1000) };
 
 function fallback(reason) {
-  var o = { product: null, productUnknown: true, productUnknownReason: reason || '' };
+  // 2026-09-15 (живий кейс, cca4a961: клієнт дав адресу+спосіб оплати, серед цього прийшло
+  // ПОРОЖНЄ вкладення типу "template" (не фото товару, схоже на артефакт шаблону Нової Пошти
+  // з Instagram) — це поставило hasFreshSignalThisTurn, повний пошук (з Gemini-візією) не зміг
+  // підтвердити товар (бо дивитись немає на що), і ЦЯ функція БЕЗУМОВНО обнуляла context.product
+  // — жива, вже підтверджена позиція (кофта A0187, повний orderData, обраний розмір/колір)
+  // зникла ПОСЕРЕД оформлення замовлення. Бот забув усе, зациклився на старому hint-списку
+  // ("1. Кофта Ангора... 2. ...") і відмовився навіть дати реквізити на пряме прохання клієнта.
+  // Інконклюзивний ПОВТОРНИЙ сигнал (не знайшли товар ЦЬОГО ходу) НЕ має права стирати товар,
+  // який ВЖЕ був надійно підтверджений раніше в цьому ж діалозі — лишаємо як є, тільки фіксуємо
+  // productUnknown для діагностики/алертів нижче.
+  var o = (context.product && context.product.sku)
+    ? { productUnknown: true, productUnknownReason: reason || '' }
+    : { product: null, productUnknown: true, productUnknownReason: reason || '' };
   // конфлікт привʼязки реклами (список категорії замість хибної картки) теж має піти менеджеру — n_ad_conflict_cond
   if (context.adLinkMismatch && context.adLinkMismatch !== context.adLinkMismatchSeen) { o.adLinkMismatchAt = Date.now(); o.adLinkMismatchSeen = context.adLinkMismatch; }
   // 2026-09-13 (власник: зібрати всі варіанти квитанцій/посилань про оплату, що система не

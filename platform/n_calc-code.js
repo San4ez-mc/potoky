@@ -58,24 +58,31 @@ if (context.product && context.product.isSet && Array.isArray(context.product.se
     }
     return { size: size };
   }
+  // 2026-09-15 (живий кейс, власник: "все ще нема форматування, виводь кожен елемент з якимось
+  // смайликом з нового рядка, гарним списочком") — той самий стиль, що вже в setColorAskList:
+  // емодзі-мітка + назва на своєму рядку, підпис розміру нижче, позиції розділені порожнім
+  // рядком. Мітка ОДНА й та сама для всіх позицій (не мапа "категорія→емодзі" — власник уже
+  // забороняв такі саморобні словники, це знову був би точковий хардкод).
   var __setLines = [];
   for (var __si = 0; __si < context.product.setItems.length; __si++) {
     var __it = context.product.setItems[__si];
     var __itAvail = (Array.isArray(__it.structuredSizes) && __it.structuredSizes.length ? __it.structuredSizes : (__it.sizeChartData && Array.isArray(__it.sizeChartData.sizes) ? __it.sizeChartData.sizes : [])).map(__setNorm);
     var __itLetter = __itAvail.some(function (a) { return __setOrder.indexOf(a) >= 0; });
+    var __itSizeLine;
     if (__itLetter) {
       var __r = __setCalcOne(__itAvail);
-      __setLines.push(__it.name + ': ' + (__r.size ? ('розмір ' + __r.size) : ('уточнимо окремо — ' + __r.oor)));
+      __itSizeLine = __r.size ? ('Розмір: ' + __r.size) : ('Уточнимо окремо — ' + __r.oor);
     } else if (__itAvail.length) {
-      __setLines.push(__it.name + ': розмір оберіть самі (' + __itAvail.join(', ') + ')');
+      __itSizeLine = 'Розмір оберіть самі: ' + __itAvail.join(', ');
     } else {
-      __setLines.push(__it.name + ': розмір уточнимо окремо в чаті');
+      __itSizeLine = 'Розмір уточнимо окремо в чаті';
     }
+    __setLines.push('📏 ' + __it.name + '\n' + __itSizeLine);
   }
   return {
     isSetSizeCalc: true,
-    setSizesText: __setLines.join('\n'),
-    sizeReplyText: 'Дякую! 🙌 За зростом ' + __setH + ' см і вагою ' + __setW + ' кг підібрала розмір для кожної позиції:\n' + __setLines.join('\n'),
+    setSizesText: __setLines.join('\n\n'),
+    sizeReplyText: 'Дякую! 🙌 За зростом ' + __setH + ' см і вагою ' + __setW + ' кг підібрала розмір для кожної позиції:\n\n' + __setLines.join('\n\n'),
     sizeOutOfRange: false,
     knownMeasurementsToSave: null
   };

@@ -259,6 +259,65 @@ async function main() {
         check('Підсумок замовлення для комплекту — позиції буллетами з переносами, не комою в рядок', hasBullets, JSON.stringify(txt));
     }
 
+    // ── 12. Живий кейс 15.09 (власник: "бот про то забув і продав тільки джинси") — згадка
+    // товару-компонента комплекту ("чорні джинси") НЕ повинна перемикати ctx.product на окремий
+    // товар і стирати весь прогрес комплекту (setSelection/sizeInput). productHint.article
+    // імітує понял()-сигнал, який на проді й спричинив підміну.
+    {
+        const A = freshA({ turnText: 'Чорні джинси' });
+        A.ctx.product = { sku: 'set1113', isSet: true, price: 5290, customerName: 'Комплект 4 в 1' };
+        A.ctx.setMode = 'set';
+        A.ctx.recommendedSize = 'M';
+        A.ctx.sizeInput = { height: 171, weight: 92 };
+        A.ctx.agent.presentedSku = 'set1113';
+        A.ctx.agent.setOriginal = [
+            { article: 'D0050', name: 'Кофта', price: 1190, colors: ['Чорний'], sizes: [], qty: 1, color: '' },
+            { article: 'j0032', name: 'Джинси', price: 1590, colors: ['Синій', 'Чорний', 'Графітовий'], sizes: [], qty: 1, color: '' },
+        ];
+        A.ctx.setSelection = A.ctx.agent.setOriginal.map((x) => ({ ...x }));
+        const u = freshU({ intent: 'give_params', productHint: { article: 'j0032' } });
+        await runPolicy(A, u);
+        check('Згадка компонента комплекту не перемикає ctx.product на окремий товар', A.ctx.product && A.ctx.product.sku === 'set1113', 'product.sku: ' + (A.ctx.product && A.ctx.product.sku));
+        check('Згадка компонента комплекту не стирає sizeInput (не питає зріст/вагу вдруге)', A.ctx.sizeInput && A.ctx.sizeInput.height === 171, JSON.stringify(A.ctx.sizeInput));
+        check('Згадка компонента комплекту не стирає setSelection', Array.isArray(A.ctx.setSelection) && A.ctx.setSelection.length === 2, 'setSelection: ' + JSON.stringify(A.ctx.setSelection));
+    }
+
+    // ── 13. Живий кейс 15.09 (власник: "як я чорний написав... а воно не поняло, це баг") —
+    // ГОЛА відповідь кольором (без назви товару) на щойно задане питання про ЄДИНУ багатоколірну
+    // позицію має застосуватись саме до неї.
+    {
+        const A = freshA({ turnText: 'Чорні' });
+        A.ctx.product = { sku: 'set1113', isSet: true, price: 5290 };
+        A.ctx.setMode = 'set';
+        A.ctx.recommendedSize = 'M';
+        A.ctx.agent.setOriginal = [
+            { article: 'D0050', name: 'Кофта', price: 1190, colors: ['Чорний'], sizes: [], qty: 1, color: 'Чорний' },
+            { article: 'j0032', name: 'Джинси', price: 1590, colors: ['Світло-синій', 'Синій', 'Графітовий', 'Чорний', 'Блакитний', 'Темно-синій'], sizes: [], qty: 1, color: '' },
+        ];
+        A.ctx.setSelection = A.ctx.agent.setOriginal.map((x) => ({ ...x }));
+        const u = freshU({ intent: 'give_params' });
+        await runPolicy(A, u);
+        const jeans = A.ctx.setSelection.find((x) => x.article === 'j0032');
+        check('Гола відповідь кольором ("Чорні") без назви товару застосовується до єдиної позиції, що чекає', jeans && jeans.color === 'Чорний', 'колір: ' + (jeans && jeans.color));
+    }
+
+    // ── 14. Живий кейс 15.09 (власник: "додай нумерування... щоб людина могла цифру написати") —
+    // відповідь номером (цифрою чи словом) на нумерований список кольорів.
+    {
+        const A = freshA({ turnText: '2' });
+        A.ctx.product = { sku: 'set1113', isSet: true, price: 5290 };
+        A.ctx.setMode = 'set';
+        A.ctx.recommendedSize = 'M';
+        A.ctx.agent.setOriginal = [
+            { article: 'j0032', name: 'Джинси', price: 1590, colors: ['Світло-синій', 'Синій', 'Графітовий'], sizes: [], qty: 1, color: '' },
+        ];
+        A.ctx.setSelection = A.ctx.agent.setOriginal.map((x) => ({ ...x }));
+        const u = freshU({ intent: 'give_params' });
+        await runPolicy(A, u);
+        const jeans = A.ctx.setSelection.find((x) => x.article === 'j0032');
+        check('Відповідь номером ("2") обирає другий колір у нумерованому списку', jeans && jeans.color === 'Синій', 'колір: ' + (jeans && jeans.color));
+    }
+
     console.log('');
     const failed = results.filter((r) => !r.ok);
     console.log(results.length + ' тестів, ' + failed.length + ' провалено.');

@@ -36,7 +36,11 @@ function matchColor(p, want) {
     const parts = w.split(/[\s,/]+/u).filter((t) => t && !CONJ[t]);
     const words = parts.length > 1 ? parts : [w];
     for (const one of words) {
-        const stem = one.replace(/(ий|а|е|у|ого|им|ому|ої|ою|их)$/u, '').slice(0, 5);
+        // 2026-09-15 (живий кейс, власник: «чорні джинси» не матчилось, «Чорні» окремо теж) —
+        // «і» (закінчення множини прикметника: чорний→чорні, синій→сині) не відсікалось, тому
+        // стем лишався 5-символьним «чорні» й не збігався підрядком із каталожним «чорний»
+        // (5-та літера и/і різна). Додано «і» до відсічуваних закінчень.
+        const stem = one.replace(/(ий|а|е|у|ого|им|ому|ої|ою|их|і)$/u, '').slice(0, 5);
         if (!stem) continue;
         let cand = list.filter((c) => c.toLowerCase().includes(stem) || one.includes(c.toLowerCase().slice(0, 5)));
         // 2026-09-15 (живий кейс, власник: «джинси сині» не матчилось): «сині» — узгоджена форма
@@ -52,6 +56,19 @@ function matchColor(p, want) {
         if (cand.length === 1) return cand[0];
     }
     return null;
+}
+// 2026-09-15 (власник: "додай нумерування... щоб людина могла цифру написати") — відповідь
+// на "виберіть колір" номером (цифрою чи словом-числівником), а не лише назвою кольору.
+// Порядкова прив'язка до item.colors — того самого масиву, з якого рендериться нумерований
+// список у setColorAskList, тож "2" завжди означає другу позицію в ЦЬОМУ конкретному списку.
+const NUM_WORDS = { 'один': 1, 'одна': 1, 'одне': 1, 'перший': 1, 'перша': 1, 'два': 2, 'дві': 2, 'другий': 2, 'друга': 2, 'три': 3, 'третій': 3, 'третя': 3, 'чотири': 4, 'четвертий': 4, 'четверта': 4, "п'ять": 5, 'пять': 5, "п'ятий": 5, 'пятий': 5, 'шість': 6, 'шостий': 6, 'сім': 7, 'сьомий': 7, 'вісім': 8, 'восьмий': 8, "дев'ять": 9, 'девять': 9, "дев'ятий": 9, 'девятий': 9, 'десять': 10, 'десятий': 10 };
+function matchColorByPosition(item, text) {
+    if (!item || !Array.isArray(item.colors) || !item.colors.length) return null;
+    const t = norm(text || '').toLowerCase();
+    const numHit = t.match(/\d+/);
+    let n = numHit ? parseInt(numHit[0], 10) : 0;
+    if (!n) { for (const w in NUM_WORDS) { if (new RegExp('(^|\\s)' + w + '(\\s|$|[.,!?])', 'u').test(t)) { n = NUM_WORDS[w]; break; } } }
+    return (n >= 1 && n <= item.colors.length) ? item.colors[n - 1] : null;
 }
 function ttnIn(text) { const m = String(text || '').match(/(?<!\d)\d{14}(?!\d)/); return m ? m[0] : ''; }
 // 2026-09-15: hideLinks() переїхав у lib.js і застосовується ЦЕНТРАЛЬНО в tools.js:alert() для
@@ -411,6 +428,15 @@ async function runPolicy(A, u) {
     const preNote = (earlyReceipt ? 'Дякую, оплату бачу — звіримо 🙏 Щоб оформити відправку, лишилось кілька кроків. ' : '') + (u.intent === 'wants_requisites' && !(ctx.paymentInfo && ctx.paymentInfo.method) ? 'Реквізити надішлю одразу після підбору розміру і кольору 🙂 ' : '');
 
     // 2. Товар
+    // 2026-09-15 (живий кейс: у комплекті клієнт написав "чорні джинси"/"Чорний" — понял() LLM
+    // побачив productHint на артикул джинсів j0032, freshSignal=true, resolveProduct переключив
+    // ctx.product на ОКРЕМИЙ товар-компонент і resetForNewProduct стер ВЕСЬ прогрес комплекту
+    // (setSelection, sizeInput...) — клієнту вилізла картка джинсів і ПОВТОРНЕ "зріст і вага?",
+    // хоча все це вже дано для комплекту. Компонент комплекту, який клієнт і так купує, — не
+    // новий товар: якщо ми зараз усередині активного комплекту, запам'ятовуємо його "на всяк
+    // випадок" і після resolveProduct перевіряємо, чи не підмінили товар на власний компонент.
+    const __setBeforeProduct = ctx.product;
+    const __setBeforeSelection = ctx.setSelection;
     if (!P(ctx) || freshSignal) {
         if (u.productHint.fromList && ctx.catalogHintSkus) {
             const skus = String(ctx.catalogHintSkus).split(',').map((s) => s.trim()).filter(Boolean);
@@ -419,7 +445,14 @@ async function runPolicy(A, u) {
         }
         if (u.productHint.article && !/артикул|арт\.|\b[a-z]\d{3,6}\b/i.test(text)) ctx.lastUserMessage = text + ' артикул ' + u.productHint.article;
         const r = await T.resolveProduct(A, { forceSignal: !!(ctx.catalogHintPick || u.productHint.article) });
-        if (r.status === 'found') {
+        const swappedToOwnSetComponent = r.status === 'found' && __setBeforeProduct && __setBeforeProduct.isSet && Array.isArray(__setBeforeSelection)
+            && P(ctx).sku !== __setBeforeProduct.sku && __setBeforeSelection.some((it) => it.article === P(ctx).sku);
+        if (swappedToOwnSetComponent) {
+            // Повертаємо комплект як активний товар і НІЧОГО не скидаємо — далі хід обробить
+            // секція комплекту (5b) так само, якби productHint не спрацював.
+            ctx.product = __setBeforeProduct;
+            ctx.setSelection = __setBeforeSelection;
+        } else if (r.status === 'found') {
             resetForNewProduct(A, P(ctx).sku);
             const samePresented = ctx.agent.presentedSku === P(ctx).sku && ctx.presentedAt && (Date.now() - Number(ctx.presentedAt)) < 6 * 3600 * 1000;
             if (!samePresented) await present(A);
@@ -580,17 +613,29 @@ async function runPolicy(A, u) {
             for (const seg of segments) {
                 const item = matchSetItem(seg, ctx.setSelection, catNamesSet);
                 if (item && !item.color && Array.isArray(item.colors) && item.colors.length) {
-                    const c = matchColor({ colors: item.colors.join(',') }, seg);
+                    const c = matchColor({ colors: item.colors.join(',') }, seg) || matchColorByPosition(item, seg);
                     if (c) item.color = c;
                 }
             }
             for (const it of ctx.setSelection) { if (!it.color && Array.isArray(it.colors) && it.colors.length === 1) it.color = it.colors[0]; }
+            // 2026-09-15 (живий кейс, власник: "як я чорний написав... а воно не поняло, це баг") —
+            // коли лишилась РІВНО ОДНА багатоколірна позиція без кольору (типова ситуація: щойно
+            // самі спитали про НЕЇ), відповідь могла бути ГОЛИМ кольором чи номером БЕЗ назви
+            // товару ("Чорні", "2") — matchSetItem вище нічого не знайде (нема назви товару в
+            // тексті), тому пробуємо весь текст ходу напряму проти кольорів ЄДИНОЇ позиції, що
+            // очікує відповіді.
+            const stillAmbiguousBefore = ctx.setSelection.filter((it) => !it.color && Array.isArray(it.colors) && it.colors.length > 1);
+            if (stillAmbiguousBefore.length === 1) {
+                const only = stillAmbiguousBefore[0];
+                const c = matchColor({ colors: only.colors.join(',') }, text) || matchColorByPosition(only, text);
+                if (c) only.color = c;
+            }
             const ambiguous = ctx.setSelection.filter((it) => !it.color && Array.isArray(it.colors) && it.colors.length > 1);
             if (ambiguous.length) {
-                // 2026-09-15 (живий кейс, власник: "додай нормальне форматування, абзаци, смайлики") —
-                // порожній рядок між позиціями (не просто \n) і емодзі-мітка, той самий стиль, що вже
-                // в humanSetList/картці товару.
-                ctx.agent.setColorAskList = ambiguous.map((it) => '🎨 ' + it.name + '\nДоступні кольори: ' + it.colors.join(', ')).join('\n\n');
+                // 2026-09-15 (власник: "додай нормальне форматування, абзаци, смайлики", потім
+                // "додай нумерування... щоб людина могла цифру написати") — нумерований список
+                // кольорів (той самий порядок, що читає matchColorByPosition), не просто через кому.
+                ctx.agent.setColorAskList = ambiguous.map((it) => '🎨 ' + it.name + '\nДоступні кольори:\n' + it.colors.map((c, i) => (i + 1) + '. ' + c).join('\n')).join('\n\n');
                 // 2026-09-15 (власник: "де 'виберіть колір' треба обов'язково скидати фото цих
                 // кольорів") — фото офера кожного доступного кольору (n_lookup вже підвантажує
                 // colorPhotos для set-компонентів), альбомом ПЕРЕД текстом питання. Без фото для

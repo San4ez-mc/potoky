@@ -318,6 +318,64 @@ async function main() {
         check('Відповідь номером ("2") обирає другий колір у нумерованому списку', jeans && jeans.color === 'Синій', 'колір: ' + (jeans && jeans.color));
     }
 
+    // ── 15. Редагування складу комплекту (заміна/додавання/прибирання/зміна кольору) — власник:
+    // "поженяй тести по зміні товару... прослідкуй, що щоразу записується у товар, який
+    // оформиться в замовлення". ctx.orderExtras — те самe, що читають n_crm_order/supplierDispatch
+    // (див. коментар над setSelectionToExtraItems) — саме його й перевіряємо на кожному кроці.
+    {
+        const A = freshA({ turnText: '' });
+        A.ctx.product = { sku: 'set9999', isSet: true, price: 3000, customerName: 'Тестовий комплект' };
+        A.ctx.setMode = 'set';
+        A.ctx.recommendedSize = 'M';
+        A.ctx.agent.setColorsResolved = true; // не заважаємо color-ask блоку в цьому тесті
+        A.ctx.agent.setOriginal = [
+            { article: 'K001', name: 'Кофта', price: 1000, colors: ['Чорний', 'Сірий'], sizes: [], qty: 1, color: 'Чорний' },
+            { article: 'J001', name: 'Джинси', price: 1200, colors: ['Синій', 'Чорний'], sizes: [], qty: 1, color: 'Синій' },
+            { article: 'F001', name: 'Футболка', price: 500, colors: ['Білий'], sizes: [], qty: 1, color: 'Білий' },
+            { article: 'L001', name: 'Лофери', price: 800, colors: ['Коричневий'], sizes: [], qty: 1, color: 'Коричневий' },
+        ];
+        // Стартовий склад — без Лоферів (звичайна ситуація "3 з 4 позицій").
+        A.ctx.setSelection = A.ctx.agent.setOriginal.filter((x) => x.article !== 'L001').map((x) => ({ ...x }));
+
+        function extrasByArticle() { return Object.fromEntries((A.ctx.orderExtras || []).map((e) => [e.sku, e])); }
+
+        // 15.1 — прибрати позицію.
+        await runPolicy(A, freshU({ intent: 'set_edit', removeItem: 'Футболка' }));
+        check('15.1 Прибрати позицію — зникає з setSelection', !A.ctx.setSelection.some((x) => x.article === 'F001'), JSON.stringify(A.ctx.setSelection.map((x) => x.article)));
+        check('15.1 Прибрати позицію — зникає з orderExtras (те, що піде в замовлення)', !extrasByArticle()['F001'], JSON.stringify(Object.keys(extrasByArticle())));
+
+        // 15.2 — додати ту саму позицію назад (з каталогу самого комплекту, не окремий резолв).
+        await runPolicy(A, freshU({ intent: 'set_edit', addItem: 'Футболка' }));
+        check('15.2 Додати позицію назад — з’являється в setSelection', A.ctx.setSelection.some((x) => x.article === 'F001'), JSON.stringify(A.ctx.setSelection.map((x) => x.article)));
+        check('15.2 Додати позицію назад — з’являється в orderExtras з правильною ціною', extrasByArticle()['F001'] && extrasByArticle()['F001'].price === 500, JSON.stringify(extrasByArticle()['F001']));
+
+        // 15.3 — додати позицію, якої не було на СТАРТІ взагалі (Лофери, 4й компонент комплекту).
+        // Склад стає ІДЕНТИЧНИЙ original (4 з 4, по 1 шт) — це вмикає знижку пакета
+        // (setMatchesOriginal у applySetPricing), яка НАВМИСНО очищає orderExtras/extraItems
+        // (замовлення тоді йде як "весь комплект" за pp.price, а не позиційно) — тому тут
+        // перевіряємо саме ЦЕ, а не наявність L001 в orderExtras.
+        await runPolicy(A, freshU({ intent: 'set_edit', addItem: 'Лофери' }));
+        check('15.3 Додати нову позицію комплекту — 4 позиції в setSelection', A.ctx.setSelection.length === 4 && A.ctx.setSelection.some((x) => x.article === 'L001'), 'setSelection: ' + JSON.stringify(A.ctx.setSelection.map((x) => x.article)));
+        check('15.3б Склад знову = оригінальний комплект — знижка пакета повертається (orderExtras порожній, edited=false)', A.ctx.agent.setPricing && A.ctx.agent.setPricing.edited === false && Array.isArray(A.ctx.orderExtras) && A.ctx.orderExtras.length === 0, JSON.stringify({ setPricing: A.ctx.agent.setPricing, orderExtras: A.ctx.orderExtras }));
+
+        // 15.4 — прибрати щось знову, щоб перевірити зміну кольору на РЕАЛЬНО відредагованому складі.
+        await runPolicy(A, freshU({ intent: 'set_edit', removeItem: 'Лофери' }));
+        // 15.5 — зміна кольору позиції.
+        await runPolicy(A, freshU({ intent: 'set_edit', changeRequest: 'джинси чорні', colorMatched: 'Чорний' }));
+        const jeansSel = A.ctx.setSelection.find((x) => x.article === 'J001');
+        check('15.5 Зміна кольору позиції — оновлюється в setSelection', jeansSel && jeansSel.color === 'Чорний', 'колір: ' + (jeansSel && jeansSel.color));
+        check('15.5 Зміна кольору позиції — оновлюється в orderExtras (те, що йде в замовлення)', extrasByArticle()['J001'] && extrasByArticle()['J001'].color === 'Чорний', JSON.stringify(extrasByArticle()['J001']));
+
+        // Підсумкова перевірка: КОЖНА позиція в orderExtras станом на кінець сценарію збігається
+        // з setSelection 1:1 (sku/назва/ціна/колір/кількість) — саме цей перелік підуть у CRM/
+        // постачальнику, тож розбіжність тут і є "неправильне замовлення".
+        const finalMatch = A.ctx.setSelection.every((it) => {
+            const e = extrasByArticle()[it.article];
+            return e && e.name === it.name && e.price === it.price && e.color === it.color && e.qty === it.qty;
+        }) && A.ctx.setSelection.length === (A.ctx.orderExtras || []).length;
+        check('15.6 orderExtras на кінець сценарію 1:1 збігається з setSelection (що бачить клієнт = що піде в замовлення)', finalMatch, JSON.stringify({ setSelection: A.ctx.setSelection, orderExtras: A.ctx.orderExtras }));
+    }
+
     console.log('');
     const failed = results.filter((r) => !r.ok);
     console.log(results.length + ' тестів, ' + failed.length + ' провалено.');

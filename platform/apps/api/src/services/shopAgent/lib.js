@@ -61,6 +61,16 @@ function hideLinks(s) { return String(s || '').replace(/(?<!href=")https?:\/\/[^
 // runPolicy, до доставки) зливає ПОСПІЛЬ ідучі чисто текстові виходи (без фото) в один текст,
 // розділений порожнім рядком. Фото завжди лишається окремим повідомленням — тексту й альбому
 // природно бути різними бульбашками в Instagram; текст-до-тексту без фото між ними — ні.
+// 2026-09-15 (живий кейс, власник: "2 рази дякую чомусь в одному повідомленні") — коли зливаємо
+// два тексти, кожен з яких писався як САМОСТІЙНЕ повідомлення, другий часто починається зі своєї
+// власної подяки/привітання (message-нода не знає, що її приклеять до чогось іншого). У межах
+// ОДНОГО злитого повідомлення це читається як два "дякую" підряд. Загальне правило (не точковий
+// фікс під конкретну пару нод): для будь-якого не-першого шматка, що приєднується, зрізаємо
+// зайвий вступний вигук подяки — решта тексту вже стоїть в контексті першого блоку.
+const GREETING_OPENER_RE = /^\s*(?:Прийняла,\s*|Зрозуміла,\s*)?Дяку(?:ю|ємо)[^\p{L}\d]{0,4}(?:[\p{Emoji_Presentation}\p{Extended_Pictographic}️]\s*)*/imu;
+function stripRedundantGreeting(s) {
+    return String(s || '').replace(GREETING_OPENER_RE, '').replace(/^\s+/, '');
+}
 function mergeConsecutiveTextOutputs(out) {
     const merged = [];
     for (const item of out) {
@@ -68,7 +78,8 @@ function mergeConsecutiveTextOutputs(out) {
         const isPlainText = item && item.text && !item.photoUrls;
         const lastIsPlainText = last && last.text && !last.photoUrls;
         if (isPlainText && lastIsPlainText) {
-            last.text = String(last.text).trim() + '\n\n' + String(item.text).trim();
+            const tail = stripRedundantGreeting(item.text) || String(item.text).trim();
+            last.text = String(last.text).trim() + '\n\n' + tail.trim();
             last.step = last.step + '+' + item.step;
         } else {
             merged.push({ ...item });
@@ -172,4 +183,4 @@ async function loadCatalog(botId, keys, { force } = {}) {
 }
 async function loadCategories(botId, keys) { const r = await crmFetch(keys, '/categories'); return Array.isArray(r.data) ? r.data : []; }
 
-module.exports = { db, logger, getByPath, setByPath, renderTemplate, safeJsonStringify, stripLoneSurrogates, cleanJsonDeep, norm, hideLinks, mergeConsecutiveTextOutputs, pickVariant, loadAssets, nodeCode, nodeData, messageText, messageTextMultiline, alertFields, runNodeCode, crmBase, crmHeaders, crmFetch, loadCatalog, loadCategories };
+module.exports = { db, logger, getByPath, setByPath, renderTemplate, safeJsonStringify, stripLoneSurrogates, cleanJsonDeep, norm, hideLinks, mergeConsecutiveTextOutputs, stripRedundantGreeting, pickVariant, loadAssets, nodeCode, nodeData, messageText, messageTextMultiline, alertFields, runNodeCode, crmBase, crmHeaders, crmFetch, loadCatalog, loadCategories };

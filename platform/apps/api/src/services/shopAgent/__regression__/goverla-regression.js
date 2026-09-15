@@ -197,6 +197,7 @@ async function main() {
         const A = freshA({ turnText: 'Синя' });
         A.ctx.product = { sku: 'set1113', isSet: true, price: 5290 };
         A.ctx.setMode = 'set';
+        A.ctx.recommendedSize = 'M'; // проходимо повз секцію «4. Розмір» — тут перевіряємо лише 5b.
         A.ctx.agent.setOriginal = [
             { article: 'D0050', name: 'Кофта', price: 1190, colors: ['Чорний'], sizes: [], qty: 1, color: '' },
             { article: 'j0032', name: 'Джинси', price: 1590, colors: ['Синій', 'Чорний', 'Графітовий'], sizes: [], qty: 1, color: '' },

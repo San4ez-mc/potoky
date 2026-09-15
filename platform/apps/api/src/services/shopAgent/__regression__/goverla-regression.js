@@ -297,6 +297,7 @@ async function main() {
         ];
         A.ctx.setSelection = A.ctx.agent.setOriginal.map((x) => ({ ...x }));
         A.ctx.agent.setPricing = { total: 5290, edited: false };
+        A.ctx.agent.setColorAskingArticle = 'j0032'; // бот уже питав про джинси попереднім ходом
         const u = freshU({ intent: 'give_params' });
         await runPolicy(A, u);
         const jeans = A.ctx.setSelection.find((x) => x.article === 'j0032');
@@ -315,11 +316,65 @@ async function main() {
         ];
         A.ctx.setSelection = A.ctx.agent.setOriginal.map((x) => ({ ...x }));
         A.ctx.agent.setPricing = { total: 5290, edited: false };
+        A.ctx.agent.setColorAskingArticle = 'j0032';
         const u = freshU({ intent: 'give_params' });
         await runPolicy(A, u);
         const jeans = A.ctx.setSelection.find((x) => x.article === 'j0032');
         check('Відповідь номером ("2") обирає другий колір у нумерованому списку', jeans && jeans.color === 'Синій', 'колір: ' + (jeans && jeans.color));
     }
+
+    // ── 14б. Живий кейс 15.09 (власник: "1, 2" на ДВІ позиції одразу — не пропрацював варіант,
+    // що товарів 2; або парсити, або питати окремими повідомленнями") — коли одночасно чекають
+    // відповіді ДВІ багатоколірні позиції, питаємо про них ПО ОДНІЙ, не одним списком з номерами
+    // "хто є хто".
+    {
+        const A = freshA({ turnText: '' });
+        A.ctx.product = { sku: 'set1115', isSet: true, price: 5490 };
+        A.ctx.setMode = 'set';
+        A.ctx.recommendedSize = 'M';
+        A.ctx.agent.setOriginal = [
+            { article: 'j0032', name: 'Джинси', price: 1590, colors: ['Світло-синій', 'Синій', 'Графітовий'], sizes: [], qty: 1, color: '' },
+            { article: 'L0056', name: 'Футболка', price: 449, colors: ['Білий', 'Чорний'], sizes: [], qty: 1, color: '' },
+        ];
+        A.ctx.setSelection = A.ctx.agent.setOriginal.map((x) => ({ ...x }));
+        A.ctx.agent.setPricing = { total: 5490, edited: false };
+        await runPolicy(A, freshU({ intent: 'give_params' }));
+        const askedFirst = A.out.some((o) => o.step === 'set_color_ask');
+        const askListFirst = A.ctx.agent.setColorAskList || '';
+        check('14б.1 Дві неоднозначні позиції — питає лише про ПЕРШУ (Джинси), не про обидві разом', askedFirst && askListFirst.includes('Джинси') && !askListFirst.includes('Футболка'), askListFirst);
+        // Клієнт відповідає на ПЕРШЕ питання (тепер це справді ЄДИНА ціль — "2" не двозначний).
+        A.out.length = 0; A.turnText = '2';
+        await runPolicy(A, freshU({ intent: 'give_params' }));
+        const jeans = A.ctx.setSelection.find((x) => x.article === 'j0032');
+        check('14б.2 Відповідь "2" на перше питання застосовується саме до Джинсів', jeans && jeans.color === 'Синій', 'колір: ' + (jeans && jeans.color));
+        const askedSecond = A.out.some((o) => o.step === 'set_color_ask');
+        const askListSecond = A.ctx.agent.setColorAskList || '';
+        check('14б.3 Після Джинсів бот питає про ДРУГУ позицію (Футболка) окремим повідомленням', askedSecond && askListSecond.includes('Футболка'), askListSecond);
+        // Клієнт відповідає на ДРУГЕ питання.
+        A.out.length = 0; A.turnText = '2';
+        await runPolicy(A, freshU({ intent: 'give_params' }));
+        const shirt = A.ctx.setSelection.find((x) => x.article === 'L0056');
+        check('14б.4 Відповідь "2" на друге питання застосовується до Футболки (Чорний), обидві позиції готові', shirt && shirt.color === 'Чорний' && A.ctx.agent.setColorsResolved === true, 'футболка: ' + (shirt && shirt.color) + ', setColorsResolved: ' + A.ctx.agent.setColorsResolved);
+    }
+
+    // ── 14в. Живий кейс 15.09 (власник: "бот не поняв, які я хочу футболки, це баг") — відповідь
+    // на власне уточнення "з допродажем чи без" ГОЛИМ кольором+кількістю ("Чорні, 2"), без слова
+    // "так", має прийматись як згода з допродажем, а не губитись по колу того самого підсумку.
+    {
+        const A = freshA({ turnText: 'Чорні, 2' });
+        A.ctx.product = { sku: 'j0032', price: 1590, name: 'Джинси', customerName: 'Джинси', upsell: 'Футболка оверсайз база', upsellItems: [{ id: 'up1', name: 'Футболка оверсайз база', price: 449 }] };
+        A.ctx.recommendedSize = 'M';
+        A.ctx.colorChoice = { color: 'Чорний' };
+        A.ctx.agent.availKey = 'Чорний|M|'; // уникаємо живого T.checkAvail — наявність уже "перевірена" цього ходу
+        A.ctx.agent.upsellOffered = true;
+        A.ctx.agent.lastAsk = 'з допродажем чи без';
+        const u = freshU({ intent: 'other' }); // LLM НЕ впізнав addUpsell/upsellQty з голої відповіді — це і є баг
+        await runPolicy(A, u);
+        check('14в.1 Гола відповідь на "з допродажем чи без" — приймається як згода (addUpsell:true)', ctxOI(A) && ctxOI(A).addUpsell === true, JSON.stringify(ctxOI(A)));
+        check('14в.2 Кількість "2" з тексту підхоплюється детерміновано (upsellQty)', ctxOI(A) && ctxOI(A).upsellQty === 2, JSON.stringify(ctxOI(A)));
+        check('14в.3 Колір/примітка з відповіді лишається в upsellNote для менеджера', ctxOI(A) && ctxOI(A).upsellNote === 'Чорні, 2', JSON.stringify(ctxOI(A)));
+    }
+    function ctxOI(A) { return A.ctx.orderIntent; }
 
     // ── 15. Редагування складу комплекту (заміна/додавання/прибирання/зміна кольору) — власник:
     // "поженяй тести по зміні товару... прослідкуй, що щоразу записується у товар, який

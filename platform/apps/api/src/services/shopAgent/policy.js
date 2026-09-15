@@ -464,7 +464,7 @@ async function runPolicy(A, u) {
             if (photos.length && ctx.agent.hintPhotosFor !== ctx.catalogHintSkus) { A.out.push({ photoUrls: photos, caption: '', step: 'hint_photos' }); ctx.agent.hintPhotosFor = ctx.catalogHintSkus; }
             const list = String(ctx.catalogHint || '');
             ctx.agent.hintList = list;
-            const txt = await compose(A, { questions: u.questions, noGreeting: A.botSpokeBefore, extraFacts: 'СПИСОК ТОВАРІВ, ЯКІ ПІДХОДЯТЬ ПІД ЗАПИТ (покажи всі, з цінами, без артикулів у дужках можна):\n' + list, nextStep: 'коротко перелічи ці варіанти з цінами і спитай, який сподобався — по фото чи кольору (артикул просити не треба, фото вже надіслано)', fallback: messageTextMultiline(A.assets, 'n_agent_catalog_hint_fallback', ctx, A.session.id) });
+            const txt = await compose(A, { questions: u.questions, noGreeting: A.botSpokeBefore, extraFacts: 'СПИСОК ТОВАРІВ, ЯКІ ПІДХОДЯТЬ ПІД ЗАПИТ (вже пронумеровано, кожен товар — своя позиція):\n' + list, nextStep: 'наведи ЦЕЙ список рівно так, як він є — кожен номер на своєму рядку, з порожнім рядком між позиціями, без артикулів у дужках, ціни лишити — і спитай, який сподобався (можна відповісти номером, фото чи кольором; артикул просити не треба, фото вже надіслано)', fallback: messageTextMultiline(A.assets, 'n_agent_catalog_hint_fallback', ctx, A.session.id) });
             A.out.push({ text: txt, step: 'hint' }); ctx.agent.lastAsk = 'який із показаних товарів цікавить';
             return;
         } else if (!P(ctx)) {
@@ -624,24 +624,32 @@ async function runPolicy(A, u) {
             // товару ("Чорні", "2") — matchSetItem вище нічого не знайде (нема назви товару в
             // тексті), тому пробуємо весь текст ходу напряму проти кольорів ЄДИНОЇ позиції, що
             // очікує відповіді.
-            const stillAmbiguousBefore = ctx.setSelection.filter((it) => !it.color && Array.isArray(it.colors) && it.colors.length > 1);
-            if (stillAmbiguousBefore.length === 1) {
-                const only = stillAmbiguousBefore[0];
-                const c = matchColor({ colors: only.colors.join(',') }, text) || matchColorByPosition(only, text);
-                if (c) only.color = c;
+            // 2026-09-15 (живий кейс, власник: "1, 2" на ДВІ позиції одразу — джинси й футболка;
+            // "не пропрацював варіант, що товарів 2... відправляй окремими повідомленнями, чекаючи
+            // відповіді") — номер сам по собі неоднозначний, коли одночасно чекаємо відповідь про
+            // ДВІ+ позиції ("1" — це перший колір джинсів чи перший колір футболки?). Замість
+            // крихкого парсингу "хто є хто" в одній відповіді — питаємо РІВНО ПРО ОДНУ позицію за
+            // раз і запам'ятовуємо, про яку САМЕ (setColorAskingArticle) — голий колір/номер у
+            // відповіді застосовується до ЦІЄЇ позиції, а не до "єдиної, що лишилась" (їх могло
+            // лишитись і кілька — ми просто запитали про них по черзі).
+            const askingArticle = ctx.agent.setColorAskingArticle;
+            const askingItem = askingArticle ? ctx.setSelection.find((it) => it.article === askingArticle && !it.color && Array.isArray(it.colors) && it.colors.length > 1) : null;
+            if (askingItem) {
+                const c = matchColor({ colors: askingItem.colors.join(',') }, text) || matchColorByPosition(askingItem, text);
+                if (c) askingItem.color = c;
             }
             const ambiguous = ctx.setSelection.filter((it) => !it.color && Array.isArray(it.colors) && it.colors.length > 1);
             if (ambiguous.length) {
+                const askItem = ambiguous[0];
+                ctx.agent.setColorAskingArticle = askItem.article;
                 // 2026-09-15 (власник: "додай нормальне форматування, абзаци, смайлики", потім
                 // "додай нумерування... щоб людина могла цифру написати") — нумерований список
-                // кольорів (той самий порядок, що читає matchColorByPosition), не просто через кому.
-                ctx.agent.setColorAskList = ambiguous.map((it) => '🎨 ' + it.name + '\nДоступні кольори:\n' + it.colors.map((c, i) => (i + 1) + '. ' + c).join('\n')).join('\n\n');
+                // кольорів (той самий порядок, що читає matchColorByPosition) саме ЦІЄЇ позиції.
+                ctx.agent.setColorAskList = '🎨 ' + askItem.name + '\nДоступні кольори:\n' + askItem.colors.map((c, i) => (i + 1) + '. ' + c).join('\n');
                 // 2026-09-15 (власник: "де 'виберіть колір' треба обов'язково скидати фото цих
-                // кольорів") — фото офера кожного доступного кольору (n_lookup вже підвантажує
-                // colorPhotos для set-компонентів), альбомом ПЕРЕД текстом питання. Без фото для
-                // позиції — просто пропускаємо її (текстовий список кольорів лишається як є).
-                const colorPhotoUrls = [];
-                for (const it of ambiguous) { for (const c of it.colors) { const u2 = it.colorPhotos && it.colorPhotos[c]; if (u2 && colorPhotoUrls.indexOf(u2) < 0) colorPhotoUrls.push(u2); } }
+                // кольорів") — фото офера кожного доступного кольору ЦІЄЇ позиції (n_lookup вже
+                // підвантажує colorPhotos для set-компонентів), альбомом ПЕРЕД текстом питання.
+                const colorPhotoUrls = askItem.colors.map((c) => askItem.colorPhotos && askItem.colorPhotos[c]).filter(Boolean);
                 if (colorPhotoUrls.length) A.out.push({ photoUrls: colorPhotoUrls.slice(0, 10), caption: '', step: 'set_color_ask_photos' });
                 A.out.push({ text: await answerThenAsk(A, u, messageTextMultiline(A.assets, 'n_agent_set_color_ask', ctx, A.session.id)), step: 'set_color_ask' });
                 ctx.agent.lastAsk = 'колір позицій комплекту';
@@ -683,12 +691,25 @@ async function runPolicy(A, u) {
     // 7. Підсумок і згода
     if (!(ctx.orderIntent && ctx.orderIntent.ready === 'yes')) {
         if ((u.extraProducts || u.alsoWants) && !(pp.isSet && ctx.setMode === 'set')) { ctx.extraProductMention = u.extraProducts || u.alsoWants; await T.extraResolve(A); }
-        if (u.ready === 'no') { A.out.push({ text: messageText(A.assets, 'n_declined_msg', ctx, A.session.id), step: 'declined' }); ctx.declinedAt = Date.now(); ctx.agent.lastAsk = ''; return; }
+        // 2026-09-15 (живий кейс, власник: "бот не поняв, які я хочу футболки, це баг") — відповідь
+        // САМЕ на наше запитання n_agent_upsell_clarify ("з допродажем чи без") могла бути ГОЛИМ
+        // кольором+кількістю ("Чорні, 2") без слова "так" — u.ready лишався не 'yes', тому вся
+        // гілка нижче ігнорувалась і бот по колу показував той самий підсумок+запит. Раз ми САМІ
+        // щойно поставили це запитання (lastAsk) — будь-яка змістовна відповідь тут і є згода з
+        // допродажем; явну відмову розпізнаємо окремо, щоб "ні" саме на ЦЕ питання не читалось як
+        // відмова від усього замовлення (яким воно було раніше).
+        const answeringUpsellClarify = ctx.agent.lastAsk === 'з допродажем чи без';
+        const upsellExplicitNo = answeringUpsellClarify && (u.addUpsell === false || u.ready === 'no' || /^(ні|нєт|без нього|без допродаж|не треба|не потрібно)\b/iu.test(text.trim()));
+        // 2026-09-15: LLM теж міг не витягнути кількість із голої відповіді ("Чорні, 2") — рахунок
+        // штук тут детермінований (n_crm_order і так вважає upsellQty фолбеком до 1, якщо порожньо).
+        const upsellQtyFallback = (() => { if (!answeringUpsellClarify || upsellExplicitNo) return undefined; const m = text.match(/(\d+)\s*(шт|штук|пар)?/iu); return m ? Number(m[1]) : undefined; })();
+        if (u.ready === 'no' && !answeringUpsellClarify) { A.out.push({ text: messageText(A.assets, 'n_declined_msg', ctx, A.session.id), step: 'declined' }); ctx.declinedAt = Date.now(); ctx.agent.lastAsk = ''; return; }
         const gaveAddress = !!(u.phone || u.city || u.branch || u.fullName);
-        if (u.ready === 'yes' || gaveAddress || u.payMethod) {
-            ctx.orderIntent = { ready: 'yes', addUpsell: !!u.addUpsell, upsellQty: u.upsellQty || undefined, upsellNote: u.upsellNote || undefined, units: u.units || undefined, qty: u.qty || undefined, extras: undefined, extraProducts: undefined };
+        if (u.ready === 'yes' || gaveAddress || u.payMethod || answeringUpsellClarify) {
+            const addUpsellFinal = answeringUpsellClarify ? !upsellExplicitNo : !!u.addUpsell;
+            ctx.orderIntent = { ready: 'yes', addUpsell: addUpsellFinal, upsellQty: u.upsellQty || upsellQtyFallback || undefined, upsellNote: u.upsellNote || (answeringUpsellClarify && addUpsellFinal ? text : undefined), units: u.units || undefined, qty: u.qty || undefined, extras: undefined, extraProducts: undefined };
             if (gaveAddress) { ctx.orderIntent.prefill = { fullName: u.fullName || undefined, phone: u.phone || undefined, city: u.city || undefined, branch: u.branch || undefined, region: u.region || undefined }; await T.orderPrefill(A); }
-            if (pp.upsell && u.addUpsell == null && u.ready === 'yes' && ctx.agent.upsellOffered && !u.upsellNote && !gaveAddress && !u.payMethod) {
+            if (pp.upsell && u.addUpsell == null && u.ready === 'yes' && ctx.agent.upsellOffered && !u.upsellNote && !gaveAddress && !u.payMethod && !answeringUpsellClarify) {
                 // згода без відповіді на допродаж — одне уточнення
                 ctx.orderIntent = null;
                 ctx.agent.productDisplayName = pp.customerName || pp.name;

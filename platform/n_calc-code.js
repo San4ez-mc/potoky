@@ -69,13 +69,19 @@ if (context.product && context.product.isSet && Array.isArray(context.product.se
     var __itAvail = (Array.isArray(__it.structuredSizes) && __it.structuredSizes.length ? __it.structuredSizes : (__it.sizeChartData && Array.isArray(__it.sizeChartData.sizes) ? __it.sizeChartData.sizes : [])).map(__setNorm);
     var __itLetter = __itAvail.some(function (a) { return __setOrder.indexOf(a) >= 0; });
     var __itSizeLine;
+    // 2026-09-15 (живий кейс, власник: "не розумію для чого пише 'уточнимо окремо в чаті' — бот
+    // вже ж має параметри, може пропонувати"; "якщо повідомлення ще не дійшло, то фраза зайва") —
+    // "уточнимо окремо" було ПОРОЖНЬОЮ обіцянкою: жодного реального механізму, який щось уточнював
+    // би пізніше, не існує. Замість обіцянки — ЧЕСНЕ і ДІЄВЕ прохання просто в цьому ж рядку: коли
+    // даних для підбору немає (товар без офферів/розмірів у CRM) або зріст/вага не влучили в
+    // жодну сітку — питаємо розмір прямо тут, а не відкладаємо на неіснуючий "чат".
     if (__itLetter) {
       var __r = __setCalcOne(__itAvail);
-      __itSizeLine = __r.size ? ('Розмір: ' + __r.size) : ('Уточнимо окремо — ' + __r.oor);
+      __itSizeLine = __r.size ? ('Розмір: ' + __r.size) : ('Розмір: ' + __r.oor + ' — напишіть, будь ласка, який розмір вам потрібен');
     } else if (__itAvail.length) {
       __itSizeLine = 'Розмір оберіть самі: ' + __itAvail.join(', ');
     } else {
-      __itSizeLine = 'Розмір уточнимо окремо в чаті';
+      __itSizeLine = 'Напишіть, будь ласка, який розмір вам потрібен';
     }
     __setLines.push('📏 ' + __it.name + '\n' + __itSizeLine);
   }

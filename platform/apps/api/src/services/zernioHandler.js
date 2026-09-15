@@ -1968,9 +1968,17 @@ setTimeout(() => { checkBotSilence(); setInterval(checkBotSilence, 10 * 60 * 100
 // свіже, щоб не ганяти це вічно для розмов, які просто затихли (там уже працює checkZernioReminders
 // з іншого боку — для клієнта, не для нас). Батч ≤100 за тик, тик раз на 60с — для типового обсягу
 // цієї воронки це щонайбільше одиниці-десятки REST-викликів на тик, не сотні.
+// 2026-09-15 (живий кейс: рестарт platform-api за 13с ДО повного опрацювання вебхука —
+// повідомлення потрапило в чорну діру, а adaptive-бекофф щойно поставив цій сесії 10-хвилинну
+// паузу (нічого не знайшли МИНУЛОГО тику, ДО того як прийшло нове повідомлення) — самолікування
+// чекало майже 10 хв замість швидкого підхоплення). Рестарт процесу — САМ ПО СОБІ сигнал, що
+// щось у польоті могло загубитись: ПЕРШИЙ прохід після (ре)старту ігнорує збережений бек-офф
+// кожної сесії (решта фільтрів — isActive/lastActive-вікно/funnelPaused — лишаються як є).
+let __retryIgnoreBackoffOnce = true;
 async function retryMissedZernioTurns() {
     try {
         const now = Date.now();
+        const ignoreBackoff = __retryIgnoreBackoffOnce; __retryIgnoreBackoffOnce = false;
         const sessions = await db.session.findMany({
             where: {
                 isActive: true, isTest: false,
@@ -1990,7 +1998,7 @@ async function retryMissedZernioTurns() {
                 // сесії окремо — якщо минулого разу тут справді зловили пропущене (розмова, схоже,
                 // зараз має проблеми з доставкою вебхука), перевіряємо знову скоро; якщо було чисто —
                 // не варто бомбити Zernio REST так часто, відкладаємо надовго.
-                if (now < (ctx.zernioNextCheckAt || 0)) continue;
+                if (!ignoreBackoff && now < (ctx.zernioNextCheckAt || 0)) continue;
                 if (await isBlockedByTestMode(s.botId, [ctx.igUsername, ctx.senderName])) continue;
                 const sync = await syncConversationTruth(s.botId, s.id, ctx.conversationId);
                 if (!sync.ok) continue; // напр. rest-failed — спробуємо знову наступний тик, без зміни бек-оффу

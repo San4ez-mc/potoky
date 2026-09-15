@@ -115,7 +115,10 @@ var __mw = msg.replace(/[^a-zа-яіїєґ0-9\s]/gi, ' ').split(/\s+/).filter(fu
 function __ov(p) { var h = hay(p); var n = 0; __mw.forEach(function (w) { if (h.indexOf(w) >= 0 && !wants.some(function (s) { return w.indexOf(s.slice(0, 4)) === 0; })) n++; }); return n; }
 hits.sort(function (a, b) { return (__ov(b) - __ov(a)) || ((Number(a.price) || 0) - (Number(b.price) || 0)); });
 var top = hits.slice(0, 4);
-var lines = top.map(function (p) { return (p.sku ? ('Артикул ' + p.sku + ' — ') : '') + String(p.name || '').trim() + (Number(p.price) ? (' — ' + Number(p.price) + ' грн') : ''); });
+// 2026-09-15 (власник: "тут теж можна додати нумерацію і гарний списочок") — нумерація тут же,
+// детерміновано (не лишаємо це на розсуд LLM-переказу нижче) — той самий принцип, що вже є для
+// setColorAskList: номер, який реально можна назвати у відповіді, а не просто оздоблення.
+var lines = top.map(function (p, i) { return (i + 1) + '. ' + (p.sku ? ('Артикул ' + p.sku + ' — ') : '') + String(p.name || '').trim() + (Number(p.price) ? (' — ' + Number(p.price) + ' грн') : ''); });
 // 2026-09-11 (Олексій: "люди не розуміють що то за кофти по артикулах — зразу скидати фото і
 // ловити відповідь типу 'хочу сіру чи чорну'"): клієнт бачить фото одразу, не питає артикул.
 // thumbnailUrl у CRM — відносний шлях (/uploads/...), той самий resolveUrl, що й у n_lookup.

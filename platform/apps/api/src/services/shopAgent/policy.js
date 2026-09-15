@@ -243,7 +243,7 @@ function resetForNewProduct(A, sku) {
 
 async function sendRequisites(A, u) {
     const { ctx } = A;
-    if (Number(ctx.payAmount) === 0) { A.out.push({ text: messageText(A.assets, 'n_trust_confirm_msg', ctx, A.session.id), step: 'trust_confirm' }); ctx.requisitesSentAt = Date.now(); return; }
+    if (Number(ctx.payAmount) === 0) { A.out.push({ text: messageTextMultiline(A.assets, 'n_trust_confirm_msg', ctx, A.session.id), step: 'trust_confirm' }); ctx.requisitesSentAt = Date.now(); return; }
     await T.createInvoice(A);
     if (ctx.ibanPayUrl) A.out.push({ text: messageTextMultiline(A.assets, 'n_requisites', ctx, A.session.id + ':req'), step: 'requisites' });
     else { A.out.push({ text: messageTextMultiline(A.assets, 'n_req_fallback_msg', ctx, A.session.id), step: 'requisites_fallback' }); await sendManualRequisites(A, false); }
@@ -374,7 +374,7 @@ async function runPolicy(A, u) {
         if (u.questions.length && !u.statusQuestion) {
             A.out.push({ text: await answerThenAsk(A, u, 'Ваше замовлення в роботі 💛'), step: 'post_q' });
         } else if (since > 30 * 60 * 1000) {
-            A.out.push({ text: messageText(A.assets, 'n_post_order_msg', ctx, A.session.id), step: 'post_order' }); ctx.postOrderMsgAt = Date.now();
+            A.out.push({ text: messageTextMultiline(A.assets, 'n_post_order_msg', ctx, A.session.id), step: 'post_order' }); ctx.postOrderMsgAt = Date.now();
         }
         if (since > 30 * 60 * 1000 || u.statusQuestion) await T.alert(A, 'n_post_order_admin');
         return;
@@ -577,7 +577,10 @@ async function runPolicy(A, u) {
             for (const it of ctx.setSelection) { if (!it.color && Array.isArray(it.colors) && it.colors.length === 1) it.color = it.colors[0]; }
             const ambiguous = ctx.setSelection.filter((it) => !it.color && Array.isArray(it.colors) && it.colors.length > 1);
             if (ambiguous.length) {
-                ctx.agent.setColorAskList = ambiguous.map((it) => it.name + ' — ' + it.colors.join(', ')).join('\n');
+                // 2026-09-15 (живий кейс, власник: "додай нормальне форматування, абзаци, смайлики") —
+                // порожній рядок між позиціями (не просто \n) і емодзі-мітка, той самий стиль, що вже
+                // в humanSetList/картці товару.
+                ctx.agent.setColorAskList = ambiguous.map((it) => '🎨 ' + it.name + '\nДоступні кольори: ' + it.colors.join(', ')).join('\n\n');
                 A.out.push({ text: await answerThenAsk(A, u, messageTextMultiline(A.assets, 'n_agent_set_color_ask', ctx, A.session.id)), step: 'set_color_ask' });
                 ctx.agent.lastAsk = 'колір позицій комплекту';
                 return;

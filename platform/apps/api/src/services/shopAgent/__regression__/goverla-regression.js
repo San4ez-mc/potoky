@@ -275,6 +275,7 @@ async function main() {
             { article: 'j0032', name: 'Джинси', price: 1590, colors: ['Синій', 'Чорний', 'Графітовий'], sizes: [], qty: 1, color: '' },
         ];
         A.ctx.setSelection = A.ctx.agent.setOriginal.map((x) => ({ ...x }));
+        A.ctx.agent.setPricing = { total: 5290, edited: false }; // норм. заповнюється при першій презентації комплекту — тут ставимо вручну, як і було б насправді
         const u = freshU({ intent: 'give_params', productHint: { article: 'j0032' } });
         await runPolicy(A, u);
         check('Згадка компонента комплекту не перемикає ctx.product на окремий товар', A.ctx.product && A.ctx.product.sku === 'set1113', 'product.sku: ' + (A.ctx.product && A.ctx.product.sku));
@@ -295,6 +296,7 @@ async function main() {
             { article: 'j0032', name: 'Джинси', price: 1590, colors: ['Світло-синій', 'Синій', 'Графітовий', 'Чорний', 'Блакитний', 'Темно-синій'], sizes: [], qty: 1, color: '' },
         ];
         A.ctx.setSelection = A.ctx.agent.setOriginal.map((x) => ({ ...x }));
+        A.ctx.agent.setPricing = { total: 5290, edited: false };
         const u = freshU({ intent: 'give_params' });
         await runPolicy(A, u);
         const jeans = A.ctx.setSelection.find((x) => x.article === 'j0032');
@@ -312,6 +314,7 @@ async function main() {
             { article: 'j0032', name: 'Джинси', price: 1590, colors: ['Світло-синій', 'Синій', 'Графітовий'], sizes: [], qty: 1, color: '' },
         ];
         A.ctx.setSelection = A.ctx.agent.setOriginal.map((x) => ({ ...x }));
+        A.ctx.agent.setPricing = { total: 5290, edited: false };
         const u = freshU({ intent: 'give_params' });
         await runPolicy(A, u);
         const jeans = A.ctx.setSelection.find((x) => x.article === 'j0032');

@@ -102,6 +102,20 @@ async function main() {
         check('matchColor: "розовый" (рос.) знаходить "Рожевий"', r5 === 'Рожевий', 'отримано: ' + r5);
     }
 
+    // ── 1б. Живий кейс 15.09 (cca4a961) — КРИТИЧНИЙ: інконклюзивний повторний сигнал (порожнє
+    // вкладення "template", не фото товару) НЕ має права стирати ВЖЕ підтверджений товар.
+    // n_lookup.fallback() безумовно обнуляв ctx.product — жива позиція (кофта, адреса, розмір,
+    // колір) зникала посеред оформлення замовлення, бот забував усе й відмовлявся дати IBAN.
+    {
+        const { tool } = require('../tools');
+        const A = freshA({ turnText: 'zzzzzzz нісенітниця без сигналу товару' });
+        A.ctx.product = { sku: 'A0187', name: 'Кофта тест', customerName: 'Кофта тест. Артикул: A0187', price: 1279 };
+        A.ctx.lastUserMessage = 'zzzzzzz нісенітниця без сигналу товару';
+        const r = await tool(A, 'n_lookup');
+        check('n_lookup: інконклюзивний сигнал НЕ стирає вже підтверджений товар', r.ok && A.ctx.product && A.ctx.product.sku === 'A0187', JSON.stringify({ ok: r.ok, product: A.ctx.product }));
+        check('n_lookup: productUnknown все одно фіксується для діагностики', A.ctx.productUnknown === true, 'productUnknown: ' + A.ctx.productUnknown);
+    }
+
     // ── 2. Каталог-підказка за словами (n_catalog_hint) — живий кейс df4ca683/e8be59a9/1b1edc15,
     // 14.09: виклик на неіснуючий id n_catalog_hint_process мовчки не працював УЗАГАЛІ (tool()
     // повертав {ok:false, error:'no code'}). Живий реплей цих сесій уже підтвердив поведінкову

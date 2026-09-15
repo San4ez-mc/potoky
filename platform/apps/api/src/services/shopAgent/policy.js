@@ -21,6 +21,21 @@ const RE_UNKNOWN_Q = /гарант|знижк|пошит|оптом|розстр
 function P(ctx) { return ctx.product && ctx.product.sku ? ctx.product : null; }
 function addressComplete(od) { return !!(od && od.phone && od.fullName && od.city && od.branch); }
 function firstPhotoUrls(p) { const u = Array.isArray(p.imageUrls) ? p.imageUrls.filter((x) => /^https?:/.test(String(x))) : []; if (!u.length && /^https?:/.test(String(p.photoUrl || ''))) u.push(p.photoUrl); return u.slice(0, 10); }
+// 2026-09-15 (живий кейс, власник підтвердив загальне питання: "траплятимуться клієнти, які
+// писатимуть російською не тільки кольори"): цей словник закриває ДЕТЕРМІНОВАНИЙ шлях
+// (matchColor на сирому тексті сегментів комплекту, БЕЗ виклику LLM) — паралельно з правкою
+// в understand.js (для шляху через LLM-розуміння). Тут лише корені, де слово РІЗНЕ між мовами
+// (черный/чорний), а не просто відмінкове закінчення — де корінь однаковий (синий/синій,
+// зеленый/зелений), існуюче стемінг-зіставлення нижче й так спрацьовує без словника.
+const RU_UA_COLOR_ROOTS = [
+    ['черн', 'чорний'], ['бел', 'білий'], ['сер', 'сірий'], ['красн', 'червоний'],
+    ['жёлт', 'жовтий'], ['желт', 'жовтий'], ['розов', 'рожевий'], ['голуб', 'блакитний'],
+    ['фиолет', 'фіолетовий'], ['бирюз', 'бірюзовий'], ['хаки', 'хакі'], ['графит', 'графітовий'],
+];
+function ruToUaColorWord(w) {
+    for (const [root, ua] of RU_UA_COLOR_ROOTS) if (w.indexOf(root) === 0) return ua;
+    return w;
+}
 function matchColor(p, want) {
     if (!p || !want) return null; const list = Array.isArray(p.colorsList) && p.colorsList.length ? p.colorsList : String(p.colors || '').split(',').map((s) => s.trim()).filter(Boolean);
     const w = norm(want).toLowerCase(); if (!w) return null;
@@ -32,10 +47,15 @@ function matchColor(p, want) {
     // (та/і/й/чи/або/,/) — пробуємо КОЖНЕ слово-колір окремо, а не всю фразу разом.
     // JS \b не бачить межу слова навколо кирилиці (\w — лише латиниця/цифри), тож ділимо просто
     // за пробілами/комами і відкидаємо самі сполучники як окремі токени.
-    const CONJ = { та: 1, і: 1, й: 1, чи: 1, або: 1 };
+    const CONJ = { та: 1, і: 1, й: 1, чи: 1, або: 1, и: 1 };
     const parts = w.split(/[\s,/]+/u).filter((t) => t && !CONJ[t]);
     const words = parts.length > 1 ? parts : [w];
-    for (const one of words) {
+    for (const rawOne of words) {
+        // 2026-09-15: клієнт міг написати колір російською («черный», «серый») — корінь відрізняється
+        // від українського каталогу (чорний, сірий), тож звичайний стемінг нижче (розрахований на
+        // українські відмінки) сам по собі це не зловить. ruToUaColorWord підміняє РОСІЙСЬКЕ слово
+        // на УКРАЇНСЬКЕ ще ДО стемінгу — далі вся логіка нижче працює як завжди, без дублювання.
+        const one = ruToUaColorWord(rawOne);
         // 2026-09-15 (живий кейс, власник: «чорні джинси» не матчилось, «Чорні» окремо теж) —
         // «і» (закінчення множини прикметника: чорний→чорні, синій→сині) не відсікалось, тому
         // стем лишався 5-символьним «чорні» й не збігався підрядком із каталожним «чорний»

@@ -452,9 +452,30 @@ router.patch('/:id/flags',
             // заблокованим "manager-led conversation — flow skipped" НАЗАВЖДИ (сам собі розблокувати
             // не міг — щоб надіслати щось, спершу треба пройти managerLed). isBotMsg у sync визнає
             // будь-яке assistant-повідомлення не з zernio_inbox — тому lastBotAt = зараз.
+            //
+            // Побічний ефект, якщо не подбати: щойно доданий маркер сам стає "останнім вихідним",
+            // тож РЕАЛЬНЕ невідповіджене повідомлення клієнта (яке й ЧЕКАЛО на це розблокування)
+            // раптом виглядає "уже опрацьованим" для наступної звірки — і трейт-поллер більше
+            // його не підхопить. Тому: якщо це Zernio-сесія, спершу дивимось, чи є що невідповіджене
+            // (ДО вставки маркера), і якщо є — одразу після розблокування самі проганяємо хід.
+            if (ctx.channel === 'zernio' && ctx.conversationId) {
+                try {
+                    const { syncConversationTruth } = require('../services/zernioConversationSync');
+                    const preSync = await syncConversationTruth(session.botId, session.id, ctx.conversationId);
+                    var __pendingUnanswered = (preSync.ok && !preSync.empty && Array.isArray(preSync.unanswered)) ? preSync.unanswered : [];
+                } catch (e) { var __pendingUnanswered = []; }
+            }
             await db.message.create({
                 data: { sessionId: session.id, role: 'assistant', content: '🔄 Бота запущено вручну (адмін-панель).', metadata: { source: 'manual_resume', hidden: true } },
             }).catch(() => {});
+            if (Array.isArray(__pendingUnanswered) && __pendingUnanswered.length) {
+                try {
+                    const { scheduleFlowRun } = require('../services/zernioHandler');
+                    const text = __pendingUnanswered.map((u) => String(u.text || '').trim()).filter(Boolean).join('\n');
+                    const att = __pendingUnanswered.map((u) => (u.attachments || []).find((a) => a.type === 'photo' && a.url)).find(Boolean);
+                    if (text || att) scheduleFlowRun(session.id, { botId: session.botId, contactId: ctx.contactId || ctx.psid, conversationId: ctx.conversationId, contactName: ctx.senderName, text, imageUrl: att ? att.url : null });
+                } catch (e) { /* best-effort — не блокуємо саму розпаузу */ }
+            }
         }
 
         const updated = await db.session.update({ where: { id: session.id }, data });

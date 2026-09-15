@@ -445,6 +445,16 @@ router.patch('/:id/flags',
             ctx.flowRuntime = rt;
             data.isActive = true;
             data.completedAt = null;
+            // 2026-09-15 (живий кейс: "Запустити бота" в адмінці не повертало бота в Zernio-
+            // розмову, де останнім вихідним було повідомлення менеджера) — zernioConversationSync.
+            // managerLed рахується ЧИСТО за часом (lastManagerAt > lastBotAt) з РЕАЛЬНОЇ історії
+            // Zernio й геть не знає про funnelPaused/adminEngaged: без цього маркера бот лишався
+            // заблокованим "manager-led conversation — flow skipped" НАЗАВЖДИ (сам собі розблокувати
+            // не міг — щоб надіслати щось, спершу треба пройти managerLed). isBotMsg у sync визнає
+            // будь-яке assistant-повідомлення не з zernio_inbox — тому lastBotAt = зараз.
+            await db.message.create({
+                data: { sessionId: session.id, role: 'assistant', content: '🔄 Бота запущено вручну (адмін-панель).', metadata: { source: 'manual_resume', hidden: true } },
+            }).catch(() => {});
         }
 
         const updated = await db.session.update({ where: { id: session.id }, data });
@@ -518,6 +528,23 @@ router.post('/:id/restart',
                 metadata: { source: 'admin_restart' },
             },
         });
+        // 2026-09-15 (живий кейс: рестарт/розпауза в адмінці НЕ повертали бота в Zernio-розмову,
+        // де останнім вихідним було повідомлення менеджера) — zernioConversationSync.managerLed
+        // рахується ЧИСТО за часом (lastManagerAt > lastBotAt) з РЕАЛЬНОЇ історії Zernio, і геть
+        // не знає про це скидання: жодна дія в адмінці не оновлювала lastBotAt, тому наступний-таки
+        // прихід клієнта знову впирався в "manager-led conversation — flow skipped" — глухий кут,
+        // бот не міг сам себе розблокувати (щоб надіслати щось, треба спершу пройти managerLed).
+        // opts.bypassManagerGate у docstring syncConversationTruth — задокументований, але НІКОЛИ
+        // не реалізований параметр; замість того чинимо як бот сам: додаємо assistant-повідомлення
+        // (isBotMsg у sync це визнає), тож lastBotAt = зараз > будь-який попередній lastManagerAt.
+        await db.message.create({
+            data: {
+                sessionId: session.id,
+                role: 'assistant',
+                content: '🔄 Сесію перезапущено вручну (адмін-панель).',
+                metadata: { source: 'admin_restart', hidden: true },
+            },
+        }).catch(() => {});
         await db.session.update({
             where: { id: session.id },
             data: {

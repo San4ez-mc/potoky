@@ -165,7 +165,20 @@ async function syncConversationTruth(botId, sessionId, conversationId, opts = {}
             }
         }
         // Локальні повідомлення бота, яких ще нема у Zernio (щойно надіслані) — теж «наші останні».
-        for (const em of existing) if (isBotMsg(em) && !(em.metadata || {}).hidden && (!asOf || new Date(em.createdAt).getTime() <= asOf)) lastBotAt = Math.max(lastBotAt, new Date(em.createdAt).getTime());
+        // 2026-09-15 (живий кейс: "Запустити бота"/"Перезапустити сесію" в адмінці НЕ повертали
+        // бота в розмову, де останнім вихідним було повідомлення менеджера) — managerLed рахується
+        // ЧИСТО за часом і геть не знав про ці дії адміна: без явного маркера бот лишався
+        // заблокованим НАЗАВЖДИ (сам собі розблокувати не міг — щоб надіслати щось, спершу треба
+        // пройти managerLed). RESUME_MARKERS — той самий принцип, що вже є в testSession.js
+        // (RESET_MARKERS для вікна історії LLM), тут — для розблокування managerLed: рахуємо їх у
+        // lastBotAt НАВІТЬ якщо позначені hidden (приховані від LLM, але не від цього гейту).
+        const RESUME_MARKERS = new Set(['admin_restart', 'manual_resume', 'test_mode_auto_restart']);
+        for (const em of existing) {
+            if (!isBotMsg(em) || (asOf && new Date(em.createdAt).getTime() > asOf)) continue;
+            const emSrc = (em.metadata || {}).source;
+            if ((em.metadata || {}).hidden && !RESUME_MARKERS.has(emSrc)) continue;
+            lastBotAt = Math.max(lastBotAt, new Date(em.createdAt).getTime());
+        }
 
         let insUser = 0, insManager = 0;
         if (!dryRun) {

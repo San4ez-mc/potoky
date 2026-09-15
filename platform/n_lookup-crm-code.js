@@ -772,11 +772,23 @@ try {
     if (__dl.length > 2 && __bareCustomerName && __bareCustomerName.length >= 4 && __first.indexOf(__bareCustomerName) === 0 && /артикул/i.test(__second)) __descClean = __dl.slice(1).join('\n').trim();
   } catch (e) { }
   var __rawFirstLine = (__descClean.split('\n')[0] || '').trim();
-  var __looksLikeHeading = /:$/.test(__rawFirstLine) || /^[^:]{1,30}:\s/.test(__rawFirstLine) || /^(в\s*наявност|наявніст|кольор|розмір|матеріал|ціна\b|акці|сезон)/i.test(__rawFirstLine) || __rawFirstLine.length < 4;
+  // 2026-09-15 (живий кейс, set1112, справжній корінь "назва двічі" — знайдено при повторному
+  // розслідуванні того самого репорту): узагальнений патерн "^[^:]{1,30}:\s" (детектор рядків-
+  // специфікацій на кшталт "Матеріал: бавовна") ХИБНО спрацьовував і на ЛЕГІТИМНОМУ форматі
+  // "{Назва}. Артикул: {sku}" (той самий, що й "Чоловічі джинси. Артикул: j0032" — стандарт
+  // customerName по всьому каталогу), бо "Артикул:" — це теж "мітка: значення". Через це
+  // __looksLikeHeading/__cnIsSpec відкидали СПРАВЖНЮ customerName, __customerName відкочувалась
+  // на found.name (внутрішня назва постачальника — для set1112 це "Комплект 4 в 1 (кофта Сейн
+  // ангора...)"), і нижче (рядок ~789) вона ЗАНОВО приліплювалась першим рядком ПЕРЕД
+  // presentationText, що вже сам починався з правильної customerName — звідси дубль. Виняток:
+  // рядок з "артикул" — це НІКОЛИ не специфікація-заголовок, завжди легітимна назва+SKU.
+  var __hasArtikulFL = /артикул/i.test(__rawFirstLine);
+  var __looksLikeHeading = /:$/.test(__rawFirstLine) || (!__hasArtikulFL && /^[^:]{1,30}:\s/.test(__rawFirstLine)) || /^(в\s*наявност|наявніст|кольор|розмір|матеріал|ціна\b|акці|сезон)/i.test(__rawFirstLine) || __rawFirstLine.length < 4;
   // customerName у CRM covercar = речення-специфікація ("Матеріал накидок - алькантара. Він дуже…") —
   // модель губилась, який це товар. Довге речення без слова "артикул" — не назва; беремо name.
   var __cnRaw = String(found.customerName || '').trim();
-  var __cnIsSpec = !__cnRaw || (__cnRaw.length > 55 && !/артикул/i.test(__cnRaw)) || /^[^:]{1,30}:\s/.test(__cnRaw);
+  var __cnHasArtikul = /артикул/i.test(__cnRaw);
+  var __cnIsSpec = !__cnRaw || (__cnRaw.length > 55 && !__cnHasArtikul) || (!__cnHasArtikul && /^[^:]{1,30}:\s/.test(__cnRaw));
   var __customerName = (!__cnIsSpec && __cnRaw) || (!__looksLikeHeading && __rawFirstLine.length <= 55 && __rawFirstLine) || found.name || 'Товар';
   // Аудит 2026-09-04: presentationText у новій CRM може бути порожнім — тоді n_welcome слав
   // лише "👉 Зараз підберемо..." без назви й ціни. Мінімальний чесний фолбек з даних картки.

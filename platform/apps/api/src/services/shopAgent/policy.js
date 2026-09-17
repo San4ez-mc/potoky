@@ -16,7 +16,6 @@ const { dispatchOrder } = require('./supplierDispatch');
 // UI так само, як n_welcome/n_pay/n_confirm. РІШЕННЯ який вузол показати й коли — лишається тут
 // (детерміновану політику ходу свідомо НЕ повертаємо в граф-маршрутизацію — джерело R1-R7).
 const STAGES = { presented: ['Презентація товару', 1], params: ['Написав параметри', 2], color: ['Написав параметри та колір', 3], awaiting: ['Очікуємо дані та оплату', 4], accepted: ['Замовлення прийняте', 5], supplier: ['Замовлення оформлене в постачальника', 6] };
-const RE_UNKNOWN_Q = /гарант|знижк|пошит|оптом|розстроч|кредит|сертифік|повернен|обмін/i;
 
 function P(ctx) { return ctx.product && ctx.product.sku ? ctx.product : null; }
 function addressComplete(od) { return !!(od && od.phone && od.fullName && od.city && od.branch); }
@@ -205,26 +204,39 @@ async function applySetEdit(A, u, pp) {
     return changed;
 }
 
+/** Нормалізує питання для дедупу ескалацій (щоб той самий буквальний повтор не спамив Telegram). */
+function normQ(q) { return String(q || '').trim().toLowerCase().replace(/\s+/g, ' '); }
+/** 2026-09-17 (власник: універсальний фолбек для питань "не по скрипту" — "кожне" питання без
+ * чесної відповіді з ФАКТІВ/KB веде на ескалацію, без жодного regex/списку тем — те, чи бот
+ * реально відповів, каже сама compose() через resolved:false, а не вгадування за текстом).
+ * Дедуп лише за буквальним повтором питання в межах сесії — щоб не спамити тим самим двічі. */
+async function escalateUnresolved(A, question) {
+    const nq = normQ(question); if (!nq) return;
+    const seen = A.ctx.agent.escalatedQuestions || [];
+    if (seen.includes(nq)) return;
+    A.ctx.agent.escalatedQuestions = seen.concat(nq).slice(-20);
+    await T.kbAsk(A, question);
+    await T.alert(A, 'n_agent_unknown_question_admin', { details: '💬 «' + String(question).slice(0, 200) + '»' });
+}
+
 async function answerThenAsk(A, u, askText, o = {}) {
     // askText — ГОТОВИЙ текст для клієнта (не інструкція). Без питань клієнта він іде як є;
     // з питаннями → факти (KB, наявність) → одна відповідь + той самий крок своїми словами.
     if (u.intent === 'greeting' && !o.ack) o = { ...o, ack: 'коротко привітайся у відповідь (тим самим часом доби, якщо клієнт його назвав)' };
     if (!u.questions.length && !o.ack) return askText;
+    A._questionEngaged = true;
     let kb = []; let availAnswer = '';
-    try { kb = await T.kbSearch(A, u.questions[0]); } catch (e) { /* best-effort */ }
+    try { kb = await T.kbContext(A); } catch (e) { /* best-effort */ }
     if (/наявн|є в наявн|залишил|є ще|маєте ще|чи є/i.test(String(A.turnText || ''))) { A.ctx.lastCustomerMessage = A.turnText; await T.availSearch(A); availAnswer = A.ctx.availAnswer || ''; }
-    if (!kb.length && u.questions.some((q) => RE_UNKNOWN_Q.test(q)) && !A.ctx.agent.askManagerAt) {
-        A.ctx.agent.askManagerAt = Date.now(); await T.kbAsk(A, u.questions[0]);
-        await T.alert(A, 'n_agent_unknown_question_admin', { details: '💬 «' + u.questions[0].slice(0, 200) + '»' });
-    }
     // Живий кейс 2026-09-14 (Василенко): картка щойно сама попросила зріст/вагу; askText тут
     // порожній навмисно (нічого повторно просити не треба), АЛЕ без явної заборони LLM (compose)
     // сама, за власною ініціативою, дописувала «підкажіть зріст і вагу» вдруге в кінці відповіді
     // на питання клієнта — типова для продажного тону звичка закінчувати заклик до дії. Заборона —
     // явним nextStep, а не сподівання, що модель здогадається з відсутності інструкції.
     const nextStep = askText ? 'скажи/спитай (можна своїми словами, зміст той самий): «' + askText + '»' : 'НІЧОГО більше не питай і не пропонуй наступний крок — просто дай коротку відповідь на питання клієнта, без заклику до дії в кінці.';
-    const txt = await compose(A, { questions: u.questions, ack: o.ack, nextStep, kb, availAnswer, fallback: askText });
-    return txt || askText;
+    const { text, resolved } = await compose(A, { questions: u.questions, ack: o.ack, nextStep, kb, availAnswer, fallback: askText });
+    if (!resolved && u.questions.length) await escalateUnresolved(A, u.questions[0]);
+    return text || askText;
 }
 function colorsOf(p) { return String((p && p.colors) || '').trim(); }
 /** Клієнт зволікає/відкладає («поки не треба», «просто дивлюсь», «подумаю») — не наполягати на
@@ -368,7 +380,49 @@ async function tryReconcile(A) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
+// 2026-09-17 (власник: "людина веде себе хаотично... а коли питає щось не по скрипту бот зразу
+// губиться" — універсальний фолбек ПІСЛЯ будь-якої секції каскаду): 58 місць у каскаді щось
+// кажуть клієнту, але лише частина з них проводить u.questions через KB (answerThenAsk чи прямий
+// compose з questions) — решта секцій просто штовхають шаблонний текст, ІГНОРУЮЧИ питання клієнта,
+// а якщо взагалі ЖОДНА секція не спрацювала — клієнт отримував повну тишу. runPolicy обгортає
+// внутрішній каскад у try/finally: незалежно від того, яка секція відпрацювала (чи не відпрацювала
+// жодна) і з якого return вона вийшла, finally завжди перевіряє — чи лишилось невідповіджене
+// питання — і, якщо так, дає відповідь БЕЗ втрати запланованого продовження скрипту.
 async function runPolicy(A, u) {
+    // finally, не catch: якщо каскад кинув виняток — стан A.out частковий/непередбачуваний, тому
+    // фолбек НЕ втручається, і виняток пробрасуємо як є (index.js сам покаже стандартне вибачення).
+    let threw = false;
+    try { await runPolicyInner(A, u); }
+    catch (e) { threw = true; throw e; }
+    finally { if (!threw) await universalQuestionFallback(A, u); }
+}
+
+/** Останній рубіж: якщо клієнт про щось запитав, а ЖОДНА секція каскаду не провела це питання
+ * через KB цього ходу (A._questionEngaged лишився falsy) — відповідаємо тут, все одно повертаючи
+ * в скрипт те, що каскад уже вирішив сказати (A.out), а якщо каскад взагалі нічого не сказав
+ * (порожній A.out) — реконструюємо продовження з ctx.agent.lastAsk, щоб клієнт ніколи не отримав
+ * повну тишу. Під час handoff/паузи (менеджера вже покликано) фолбек НЕ втручається. */
+async function universalQuestionFallback(A, u) {
+    if (!u || !u.questions || !u.questions.length || A._questionEngaged || A.ctx.funnelPaused) return;
+    const { ctx } = A;
+    let kb = []; try { kb = await T.kbContext(A); } catch (e) { /* best-effort */ }
+    const textItems = A.out.filter((o) => o.text);
+    const existingText = textItems.map((o) => o.text).join(' ').trim();
+    const askText = existingText || String(ctx.agent.lastAsk || '');
+    const nextStep = askText ? 'скажи/спитай (можна своїми словами, зміст той самий): «' + askText + '»' : 'НІЧОГО більше не питай — просто дай коротку відповідь на питання клієнта.';
+    const { text, resolved } = await compose(A, { questions: u.questions, nextStep, kb, fallback: askText });
+    if (!resolved) await escalateUnresolved(A, u.questions[0]);
+    if (!text) return;
+    if (textItems.length) {
+        A.out = A.out.filter((o) => !o.text || o === textItems[0]);
+        const idx = A.out.indexOf(textItems[0]);
+        A.out[idx] = { ...textItems[0], text };
+    } else {
+        A.out.push({ text, step: 'question_fallback' });
+    }
+}
+
+async function runPolicyInner(A, u) {
     const { ctx } = A; ctx.agent = ctx.agent || {};
     const text = String(A.turnText || '');
     const freshSignal = !!(A.turnSharedPost || A.newEntryAd || u.productHint.article || u.productHint.fromList || (A.turnImage && !u.claimsPaid && !u.receiptLink && !(ctx.paymentInfo && ctx.paymentInfo.method) ));
@@ -487,7 +541,9 @@ async function runPolicy(A, u) {
             if (photos.length && ctx.agent.hintPhotosFor !== ctx.catalogHintSkus) { A.out.push({ photoUrls: photos, caption: '', step: 'hint_photos' }); ctx.agent.hintPhotosFor = ctx.catalogHintSkus; }
             const list = String(ctx.catalogHint || '');
             ctx.agent.hintList = list;
-            const txt = await compose(A, { questions: u.questions, noGreeting: A.botSpokeBefore, extraFacts: 'СПИСОК ТОВАРІВ, ЯКІ ПІДХОДЯТЬ ПІД ЗАПИТ (вже пронумеровано, кожен товар — своя позиція):\n' + list, nextStep: 'наведи ЦЕЙ список рівно так, як він є — кожен номер на своєму рядку, з порожнім рядком між позиціями, без артикулів у дужках, ціни лишити — і спитай, який сподобався (можна відповісти номером, фото чи кольором; артикул просити не треба, фото вже надіслано)', fallback: messageTextMultiline(A.assets, 'n_agent_catalog_hint_fallback', ctx, A.session.id) });
+            A._questionEngaged = true;
+            const { text: txt, resolved: hintResolved } = await compose(A, { questions: u.questions, noGreeting: A.botSpokeBefore, extraFacts: 'СПИСОК ТОВАРІВ, ЯКІ ПІДХОДЯТЬ ПІД ЗАПИТ (вже пронумеровано, кожен товар — своя позиція):\n' + list, nextStep: 'наведи ЦЕЙ список рівно так, як він є — кожен номер на своєму рядку, з порожнім рядком між позиціями, без артикулів у дужках, ціни лишити — і спитай, який сподобався (можна відповісти номером, фото чи кольором; артикул просити не треба, фото вже надіслано)', fallback: messageTextMultiline(A.assets, 'n_agent_catalog_hint_fallback', ctx, A.session.id) });
+            if (!hintResolved && u.questions.length) await escalateUnresolved(A, u.questions[0]);
             A.out.push({ text: txt, step: 'hint' }); ctx.agent.lastAsk = 'який із показаних товарів цікавить';
             return;
         } else if (!P(ctx)) {
@@ -509,7 +565,9 @@ async function runPolicy(A, u) {
             // CRM взагалі не повернула жодної категорії (порожній каталог), не хардкод-заміна CRM.
             ctx.agent.categoriesList = ctx.catalogCategories || 'костюми, куртки, бомбери, кофти, футболки, джинси, взуття';
             const cats = ctx.catalogCategories ? ('Категорії в наявності: ' + ctx.catalogCategories) : 'Категорії: ' + ctx.agent.categoriesList;
-            const txt = await compose(A, { questions: u.questions, noGreeting: A.botSpokeBefore, extraFacts: cats, nextStep: A.turnImage ? 'скажи, що по фото не змогла впізнати модель, і спитай, що саме цікавить: назви категорії; або попроси переслати пост/рілс' : 'спитай, що саме цікавить (назви категорії) або попроси переслати пост/рілс з Instagram', fallback: (A.botSpokeBefore ? '' : 'Вітаю! 💛 ') + messageText(A.assets, 'n_agent_unknown_fallback', ctx, A.session.id) });
+            A._questionEngaged = true;
+            const { text: txt, resolved: unkResolved } = await compose(A, { questions: u.questions, noGreeting: A.botSpokeBefore, extraFacts: cats, nextStep: A.turnImage ? 'скажи, що по фото не змогла впізнати модель, і спитай, що саме цікавить: назви категорії; або попроси переслати пост/рілс' : 'спитай, що саме цікавить (назви категорії) або попроси переслати пост/рілс з Instagram', fallback: (A.botSpokeBefore ? '' : 'Вітаю! 💛 ') + messageText(A.assets, 'n_agent_unknown_fallback', ctx, A.session.id) });
+            if (!unkResolved && u.questions.length) await escalateUnresolved(A, u.questions[0]);
             A.out.push({ text: txt, step: 'unknown' }); ctx.agent.lastAsk = 'що цікавить';
             return;
         }
@@ -757,11 +815,13 @@ async function runPolicy(A, u) {
             let txt = summary + '\n\n' + askLine;
             if (ctx.agent.lastAsk === 'оформляємо?' && !u.questions.length && !hesitating) {
                 // «Оформляємо?» уже питали, клієнт написав щось без рішення — коротка реакція + те саме питання, без повторного підсумку
-                txt = await compose(A, { ack: 'відреагуй одним реченням на репліку клієнта (нічого не обіцяй і не змінюй склад замовлення сама)', nextStep: 'і спитай: «' + askLine + '»', maxSentences: 2, fallback: askLine });
+                txt = (await compose(A, { ack: 'відреагуй одним реченням на репліку клієнта (нічого не обіцяй і не змінюй склад замовлення сама)', nextStep: 'і спитай: «' + askLine + '»', maxSentences: 2, fallback: askLine })).text;
                 A.out.push({ text: txt, step: 'order_intent_repeat' }); return;
             }
             if (u.questions.length || hesitating) {
-                const pre = await compose(A, { questions: u.questions, nextStep: hesitating ? 'клієнт вагається — без тиску наведи ОДИН реальний аргумент оформити сьогодні (раніше отримає, черга на відправку) і заверши питанням «Оформляємо сьогодні?»' : 'заверши коротким переходом до підсумку (без самого підсумку — його додасть система)', maxSentences: 3, fallback: '' });
+                A._questionEngaged = true;
+                const { text: pre, resolved: preResolved } = await compose(A, { questions: u.questions, nextStep: hesitating ? 'клієнт вагається — без тиску наведи ОДИН реальний аргумент оформити сьогодні (раніше отримає, черга на відправку) і заверши питанням «Оформляємо сьогодні?»' : 'заверши коротким переходом до підсумку (без самого підсумку — його додасть система)', maxSentences: 3, fallback: '' });
+                if (!preResolved && u.questions.length) await escalateUnresolved(A, u.questions[0]);
                 txt = (pre ? pre + '\n\n' : '') + (hesitating ? summary : txt);
             }
             A.out.push({ text: txt, step: 'order_intent' });
@@ -796,7 +856,12 @@ async function runPolicy(A, u) {
         }
         else {
             const payTpl = messageTextMultiline(A.assets, 'n_pay', ctx, A.session.id + ':pay');
-            if (u.questions.length) A.out.push({ text: await compose(A, { questions: u.questions, nextStep: 'потім скажи, що лишилось обрати спосіб оплати (сам список дасть система)', maxSentences: 3, fallback: '' }), step: 'pay_q' });
+            if (u.questions.length) {
+                A._questionEngaged = true;
+                const { text: payQTxt, resolved: payQResolved } = await compose(A, { questions: u.questions, nextStep: 'потім скажи, що лишилось обрати спосіб оплати (сам список дасть система)', maxSentences: 3, fallback: '' });
+                if (!payQResolved) await escalateUnresolved(A, u.questions[0]);
+                A.out.push({ text: payQTxt, step: 'pay_q' });
+            }
             const payAck = (u.claimsPaid || u.receiptLink || A.turnImage) ? messageTextMultiline(A.assets, 'n_agent_pay_ack_receipt', ctx, A.session.id) + '\n\n' : ((u.phone || u.fullName || u.city || u.branch) ? messageTextMultiline(A.assets, 'n_agent_pay_ack_address', ctx, A.session.id) + '\n\n' : (u.addUpsell === false && ctx.agent.upsellOffered ? messageTextMultiline(A.assets, 'n_agent_pay_ack_no_upsell', ctx, A.session.id) + '\n\n' : ''));
             A.out.push({ text: payAck + payTpl, step: 'pay_options' });
             ctx.agent.lastAsk = 'спосіб оплати 1 чи 2'; return;

@@ -62,30 +62,51 @@ function sizeChartRuleFor(ctx) {
         : 'Точної розмірної сітки/картинки з замірами для ЦЬОГО товару в системі НЕМА — НІКОЛИ не обіцяй надіслати картинку чи "розмірну сітку окремим фото" (це порожня обіцянка, якої нічим виконати). Якщо просять сітку/заміри — чесно скажи, що точної сітки саме для цього товару нема, і попроси зріст/вагу (чи інший наявний параметр) для підбору системою.';
 }
 
+// 2026-09-17 (власник: універсальний фолбек для питань "не по скрипту" — щоб надійно відрізняти
+// "відповів з фактів" від "чесно не знає", а не гадати за текстом відповіді, compose() тепер
+// повертає структурований {text, resolved}. resolved:false — хоч ОДНЕ з o.questions залишилось
+// без чесної відповіді з ФАКТІВ/KB (LLM сама про це каже: не вигадала, а зізналась) — цей сигнал
+// веде до ескалації в Telegram і чернетки в KB (policy.js), без жодного regex/ключових слів.
+function extractJsonLoose(raw) {
+    const s = String(raw || '').replace(/```[a-z]*\n?|```/gi, '').trim();
+    try { return JSON.parse(s); } catch (e) { /* спробуємо витягти перший {...} блок нижче */ }
+    const m = s.match(/\{[\s\S]*\}/);
+    if (m) { try { return JSON.parse(m[0]); } catch (e2) { /* здаємось */ } }
+    return null;
+}
+
 async function compose(A, o = {}) {
     const { ctx, keys } = A;
     const model = keys.AGENT_COMPOSE_MODEL || 'claude-sonnet-4-6';
     const persona = keys.PERSONA_NAME || 'Оля'; const shop = keys.SHOP_TAG || 'магазин';
     const facts = [productFacts(ctx), shopFacts(ctx), o.extraFacts || '', (o.kb || []).length ? 'БАЗА ЗНАНЬ (факти саме про цей магазин, точніші за будь-які припущення):\n' + o.kb.map((h) => '• ' + (h.q ? 'Питання: ' + h.q + ' → ' : '') + 'Відповідь: ' + h.a).join('\n') : '', o.availAnswer ? 'НАЯВНІСТЬ (система щойно перевірила каталог):\n' + o.availAnswer : ''].filter(Boolean).join('\n\n');
     const sizeChartRule = sizeChartRuleFor(ctx);
-    const systemPrompt = 'Ти — ' + persona + ', жива тепла консультантка ' + shop + ' в Instagram. Українською, на «ви», коротко (до ' + (o.maxSentences || 4) + ' речень), доречні емодзі без перебору. ' + (o.noGreeting === false ? '' : 'НЕ вітайся — клієнта вже привітали. ') + 'НЕ вигадуй фактів: відповідай ЛИШЕ з блоку ФАКТИ; якщо відповіді там нема — скажи «уточню в менеджера і напишу сюди». Ніколи не називай реквізити, номери карток, посилання, суми, розміри чи кольори, яких нема у ФАКТАХ. Не називай конкретний день відправки. Не повторюй картку товару: якщо назва товару й ціна вже прозвучали в цьому діалозі (є в ФАКТАХ як вже показані) — НЕ називай їх знову окремим реченням-нагадуванням («Х зараз за акційною ціною Y грн» тощо), навіть коротко чи іншими словами — клієнт це щойно бачив. БЕЗ markdown: жодних зірочок, «---», заголовків, нумерованих списків — звичайний текст як у месенджері. Розмір НІКОЛИ не підбирай сам (це робить система за сіткою). ' + sizeChartRule + '\n\nФАКТИ:\n' + facts;
+    const hasQuestions = !!(o.questions && o.questions.length);
+    const systemPrompt = 'Ти — ' + persona + ', жива тепла консультантка ' + shop + ' в Instagram. Українською, на «ви», коротко (до ' + (o.maxSentences || 4) + ' речень), доречні емодзі без перебору. ' + (o.noGreeting === false ? '' : 'НЕ вітайся — клієнта вже привітали. ') + 'НЕ вигадуй фактів: відповідай ЛИШЕ з блоку ФАКТИ; якщо відповіді там нема — чесно скажи «уточню і повернусь із відповіддю» (саме цими чи подібними словами, без вигадування). Ніколи не називай реквізити, номери карток, посилання, суми, розміри чи кольори, яких нема у ФАКТАХ. Не називай конкретний день відправки. Не повторюй картку товару: якщо назва товару й ціна вже прозвучали в цьому діалозі (є в ФАКТАХ як вже показані) — НЕ називай їх знову окремим реченням-нагадуванням («Х зараз за акційною ціною Y грн» тощо), навіть коротко чи іншими словами — клієнт це щойно бачив. БЕЗ markdown: жодних зірочок, «---», заголовків, нумерованих списків — звичайний текст як у месенджері. Розмір НІКОЛИ не підбирай сам (це робить система за сіткою). ' + sizeChartRule + '\n\nФАКТИ:\n' + facts
+        + (hasQuestions ? '\n\nФОРМАТ ВІДПОВІДІ — ЛИШЕ JSON, без markdown-обгортки: {"text": "<повідомлення клієнту>", "resolved": true|false}. resolved:false — якщо хоча б на ОДНЕ з питань клієнта в блоці ФАКТИ/БАЗА ЗНАНЬ немає чесної відповіді (тоді text каже "уточню і повернусь", БЕЗ вигадки). resolved:true — якщо на всі питання відповів з ФАКТІВ, або питань не було.' : '');
     const task = [
-        o.questions && o.questions.length ? 'Спершу коротко відповідай на питання клієнта: ' + o.questions.map((q) => '«' + q + '»').join(', ') + '.' : '',
+        hasQuestions ? 'Спершу коротко відповідай на питання клієнта: ' + o.questions.map((q) => '«' + q + '»').join(', ') + '.' : '',
         o.ack ? 'Підтверди коротко: ' + o.ack : '',
         o.nextStep ? 'Потім ' + o.nextStep : '',
         o.tone ? 'Тон: ' + o.tone : '',
-        'Одне цілісне повідомлення. Без JSON.',
+        hasQuestions ? 'Одне цілісне повідомлення, як описано в ФОРМАТІ ВІДПОВІДІ.' : 'Одне цілісне повідомлення. Без JSON.',
     ].filter(Boolean).join(' ');
     const lastClient = stripLoneSurrogates(String(A.turnText || '[фото]')).slice(0, 800);
     const t0 = Date.now();
     try {
-        const txt = await callClaude({ sessionId: A.session.id, systemPrompt, messages: [{ role: 'user', content: 'Останнє повідомлення клієнта: «' + lastClient + '»\n\nЗАВДАННЯ: ' + task }], options: { model, maxTokens: 500, extra: { temperature: 0.3 } } });
+        const raw = await callClaude({ sessionId: A.session.id, systemPrompt, messages: [{ role: 'user', content: 'Останнє повідомлення клієнта: «' + lastClient + '»\n\nЗАВДАННЯ: ' + task }], options: { model, maxTokens: 500, extra: { temperature: 0.3 } } });
         A.trace.push({ llm: 'compose', model, ms: Date.now() - t0 });
-        return String(txt || '').replace(/```[a-z]*\n?|```/g, '').trim();
+        if (!hasQuestions) return { text: String(raw || '').replace(/```[a-z]*\n?|```/g, '').trim(), resolved: true };
+        const parsed = extractJsonLoose(raw);
+        if (parsed && typeof parsed.text === 'string' && parsed.text.trim()) return { text: parsed.text.trim(), resolved: parsed.resolved !== false };
+        // LLM не повернула валідний JSON (рідкісний збій формату) — не рвемо хід, беремо сирий текст
+        // як відповідь, але resolved:false, щоб питання клієнта все одно пішло на ескалацію, а не загубилось.
+        logger.warn('[shopAgent] compose: невалідний JSON, fallback на сирий текст', { sessionId: A.session.id });
+        return { text: String(raw || '').replace(/```[a-z]*\n?|```/g, '').trim() || (o.fallback || ''), resolved: false };
     } catch (e) {
         logger.warn('[shopAgent] compose failed: ' + e.message, { sessionId: A.session.id });
-        return o.fallback || '';
+        return { text: o.fallback || '', resolved: !hasQuestions };
     }
 }
 
-module.exports = { compose, productFacts, shopFacts, sizeChartRuleFor };
+module.exports = { compose, productFacts, shopFacts, sizeChartRuleFor, extractJsonLoose };

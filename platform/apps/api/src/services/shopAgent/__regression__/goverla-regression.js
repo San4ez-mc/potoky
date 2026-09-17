@@ -508,6 +508,21 @@ async function main() {
         check('sizeChartRuleFor: НЕМА файлу сітки — забороняє порожню обіцянку', /НІКОЛИ не обіцяй надіслати картинку/.test(withoutChart) && !/йде клієнту лише окремою картинкою/.test(withoutChart), withoutChart);
     }
 
+    // ── 17. Живий запит власника (2026-09-17, "фолбек для питань не по скрипту"): compose() тепер
+    // повертає {text, resolved} через JSON — extractJsonLoose має надійно парсити реальну поведінку
+    // LLM (чистий JSON, у markdown-огорожі, з "зайвим" текстом навколо) і НЕ падати на сміттєвому вводі.
+    {
+        const { extractJsonLoose } = require('../compose');
+        const clean = extractJsonLoose('{"text":"Так, є кишені.","resolved":true}');
+        check('extractJsonLoose: чистий JSON', clean && clean.text === 'Так, є кишені.' && clean.resolved === true, JSON.stringify(clean));
+        const fenced = extractJsonLoose('```json\n{"text":"Уточню і повернусь.","resolved":false}\n```');
+        check('extractJsonLoose: JSON у markdown-огорожі', fenced && fenced.resolved === false, JSON.stringify(fenced));
+        const withProse = extractJsonLoose('Ось відповідь:\n{"text":"Добре","resolved":true}\nдякую');
+        check('extractJsonLoose: JSON із зайвим текстом навколо', withProse && withProse.text === 'Добре', JSON.stringify(withProse));
+        const garbage = extractJsonLoose('Вибачте, я не можу відповісти зараз.');
+        check('extractJsonLoose: сміттєвий ввід повертає null, не падає', garbage === null, String(garbage));
+    }
+
     console.log('');
     const failed = results.filter((r) => !r.ok);
     console.log(results.length + ' тестів, ' + failed.length + ' провалено.');

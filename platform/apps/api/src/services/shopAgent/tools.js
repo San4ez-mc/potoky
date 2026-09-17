@@ -91,13 +91,22 @@ async function supplierOrder(A) {
 }
 
 // ── База знань CRM ────────────────────────────────────────────────────────────────────────────
-async function kbSearch(A, question) {
-    const q = String(question || '').trim(); if (q.length < 4) return [];
+const _kbCache = new Map(); // `${botId}:${scope}` -> {at, items}
+// 2026-09-17 (власник, фолбек для питань не по скрипту): /knowledge/search (Postgres
+// to_tsvector('simple')) не має української морфології — "кишені" в питанні клієнта і "кишеня"
+// в записі KB не збігаються навіть коли відповідь точно є. При розмірі бази в кілька десятків
+// записів надійніше не шукати за словом узагалі, а віддати ВСІ активні записи скоупу (магазин +
+// категорія + товар) прямо в compose() — нехай LLM сама читає й вирішує релевантність.
+async function kbContext(A) {
     const scope = A.ctx.product && A.ctx.product.id ? 'product:' + A.ctx.product.id : 'shop';
-    const r = await crmFetch(A.keys, '/knowledge/search?q=' + encodeURIComponent(q.slice(0, 200)) + '&scope=' + encodeURIComponent(scope) + '&limit=3', {}, 4000);
+    const key = A.botId + ':' + scope;
+    const c = _kbCache.get(key);
+    if (c && Date.now() - c.at < 60 * 1000) return c.items;
+    const r = await crmFetch(A.keys, '/knowledge/context?scope=' + encodeURIComponent(scope), {}, 4000);
     const hits = Array.isArray(r.data) ? r.data : [];
-    db.apiCall.create({ data: { sessionId: A.session.id, service: 'crm_kb', method: 'search', requestData: { query: q.slice(0, 120), scope }, responseData: { count: hits.length }, statusCode: r.status || 0, durationMs: 0 } }).catch(() => {});
-    return hits.map((h) => ({ q: String(h.question || '').slice(0, 200), a: String(h.answer || '').slice(0, 600) })).filter((h) => h.a);
+    const items = hits.map((h) => ({ q: String(h.question || '').slice(0, 200), a: String(h.answer || '').slice(0, 600) })).filter((h) => h.a);
+    if (r.ok) _kbCache.set(key, { at: Date.now(), items });
+    return items;
 }
 /** Питання, на яке бот не знає відповіді → чернетка в KB (from_dialog) + (алерт робить політика). */
 async function kbAsk(A, question) {
@@ -223,4 +232,4 @@ async function alert(A, nodeIdOrFields, extra = {}) {
     return !!j.ok;
 }
 
-module.exports = { tool, resolveProduct, setApply, calcSize, checkAvail, availSearch, extraResolve, orderPrefill, intlRoute, payAmount, npCheck, reconcile, crmOrder, supplierRoute, supplierOrder, confirmPrep, ttnSync, returnCrmUpdate, kbSearch, kbAsk, createInvoice, deleteInvoice, monoStatement, markConsumed, funnelStage, alert, activeFop };
+module.exports = { tool, resolveProduct, setApply, calcSize, checkAvail, availSearch, extraResolve, orderPrefill, intlRoute, payAmount, npCheck, reconcile, crmOrder, supplierRoute, supplierOrder, confirmPrep, ttnSync, returnCrmUpdate, kbContext, kbAsk, createInvoice, deleteInvoice, monoStatement, markConsumed, funnelStage, alert, activeFop };

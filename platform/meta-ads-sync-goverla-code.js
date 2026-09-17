@@ -75,8 +75,14 @@ async function syncAccount(acctInfo) {
     // застряг би на старому значенні назавжди). Тягнемо ВСІ статуси й чесно пишемо
     // effective_status у CRM — фільтр "показати лише активні" робить сторінка (GET /ads,
     // дефолт), не сам синк. Так effectiveStatus завжди відображає ПОТОЧНИЙ реальний стан.
+    // 2026-09-17 (власник: "все ще нема всіх фото — можеш хоча б повністю тексти отримати чи
+    // відео?"): thumbnail_url — ТИМЧАСОВЕ підписане посилання Meta, яке з часом протухає (звідси
+    // "зламане фото" навіть на вже засинхронених оголошеннях), і не для кожного оголошення воно
+    // взагалі є на момент синку. body/object_story_spec/effective_object_story_id — той самий
+    // набір полів, що вже перевірено ЖИВИМ викликом у n_lookup-crm-code.js (Пріоритет 1.7,
+    // рядок ~259) для одиничного оголошення — тут той самий контракт, просто в пакетному запиті.
     var url = 'https://graph.facebook.com/v21.0/' + acct + '/ads'
-      + '?fields=id,name,effective_status,created_time,campaign{id,name},adset{id,name},creative{thumbnail_url}'
+      + '?fields=id,name,effective_status,created_time,campaign{id,name},adset{id,name},creative{thumbnail_url,body,object_story_spec,effective_object_story_id}'
       + '&limit=50' + (after ? '&after=' + encodeURIComponent(after) : '')
       + '&access_token=' + encodeURIComponent(token);
     var metaRes;
@@ -92,6 +98,28 @@ async function syncAccount(acctInfo) {
     // одразу пачкою, а не по одному послідовно; це й було причиною таймауту 60с раніше).
     await Promise.all(ads.map(async function (a) {
       try {
+        var creative = a.creative || {};
+        var objSpec = creative.object_story_spec || {};
+        var linkData = objSpec.link_data || {};
+        var videoData = objSpec.video_data || {};
+        var captionText = String(creative.body || videoData.message || linkData.message || linkData.caption || '').trim();
+        var isVideo = !!videoData.video_id;
+        var videoUrl = null;
+        if (isVideo) {
+          try {
+            var vidRes = await fetch('https://graph.facebook.com/v21.0/' + videoData.video_id + '?fields=source,permalink_url&access_token=' + encodeURIComponent(token));
+            var vidJson = await vidRes.json().catch(function () { return {}; });
+            if (!vidJson.error) videoUrl = vidJson.source || vidJson.permalink_url || null;
+          } catch (e) { /* best-effort — фото/капшн і без відео мають цінність */ }
+        }
+        // "Boosted" допис (оголошення з наявного посту, без object_story_spec) — текст і фото тягнемо з самого посту.
+        if (!captionText && creative.effective_object_story_id) {
+          try {
+            var storyRes = await fetch('https://graph.facebook.com/v21.0/' + creative.effective_object_story_id + '?fields=message,full_picture&access_token=' + encodeURIComponent(token));
+            var storyJson = await storyRes.json().catch(function () { return {}; });
+            if (!storyJson.error && storyJson.message) captionText = String(storyJson.message).trim();
+          } catch (e) { /* best-effort */ }
+        }
         var body = {
           externalId: String(a.id),
           name: String(a.name || '').slice(0, 200),
@@ -103,7 +131,10 @@ async function syncAccount(acctInfo) {
           adAccountName: acctName,
           effectiveStatus: a.effective_status || null,
           adCreatedAt: a.created_time || null,
-          thumbnailUrl: (a.creative && a.creative.thumbnail_url) ? String(a.creative.thumbnail_url) : null,
+          thumbnailUrl: creative.thumbnail_url ? String(creative.thumbnail_url) : null,
+          captionText: captionText ? captionText.slice(0, 2000) : null,
+          videoUrl: videoUrl,
+          mediaType: isVideo ? 'video' : (creative.thumbnail_url ? 'image' : null),
         };
         var crmRes = await fetch(crmBase + '/ads', { method: 'POST', headers: crmHdr, body: JSON.stringify(body) });
         var crmJson = await crmRes.json().catch(function () { return {}; });

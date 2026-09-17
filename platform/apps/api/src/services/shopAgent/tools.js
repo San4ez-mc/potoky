@@ -29,7 +29,7 @@ async function resolveProduct(A, { forceSignal } = {}) {
     await tool(A, 'n_signal_check');
     const hadProduct = !!(ctx.product && ctx.product.sku);
     const cat = await loadCatalog(A.botId, keys);
-    ctx.lookupProductsRaw = cat.products; ctx.lookupAdsRaw = cat.ads;
+    ctx.lookupProductsRaw = cat.products; ctx.lookupAdsRaw = cat.ads; ctx.lookupCategoriesRaw = cat.categories || [];
     let status = 'none';
     if (ctx.hasProductSignal || ctx.catalogHintPick || forceSignal || hadProduct) {
         delete ctx.productUnknown; delete ctx.productUnknownReason;
@@ -63,7 +63,7 @@ async function resolveProduct(A, { forceSignal } = {}) {
     } else if (status !== 'found' && hadProduct) {
         status = ctx.product && ctx.product.sku ? 'kept' : 'unknown';
     }
-    delete ctx.lookupProductsRaw; delete ctx.lookupAdsRaw; delete ctx.catalogHintProductsRaw; delete ctx.catalogHintCategoriesRaw;
+    delete ctx.lookupProductsRaw; delete ctx.lookupAdsRaw; delete ctx.lookupCategoriesRaw; delete ctx.catalogHintProductsRaw; delete ctx.catalogHintCategoriesRaw;
     return { status, skipPresentation: !!ctx.skipPresentation };
 }
 

@@ -505,11 +505,32 @@ try {
   // Слово-категорія з повідомлення клієнта звіряється з назвою знайденого товару.
   context.setComponentHint = '';
   try {
-    var __stemRe2 = /(кофт|футболк|джинс|бомбер|куртк|вітровк|костюм|штан|лофер|кросівк|худі|светр|шапк|туфл|черевик|кед|накидк|підголівник)/i;
+    // 2026-09-17 (питання власника: "надіюсь ці слова не захардкоджені, а беруться з категорій?"):
+    // раніше __stemRe2 був ЦІЛКОМ статичним списком слів, знятим одноразово з каталогу на момент
+    // написання коду — нова категорія в CRM (напр. "Взуття") НІКОЛИ не почала б розпізнаватись без
+    // ручної правки коду. Тепер джерело істини — Category.synonyms з CRM (власник заповнює сам в
+    // адмінці): слово → categoryId, а стем самої назви категорії рахуємо динамічно з реальних
+    // категорій каталогу. Старий хардкод-список лишається ЛИШЕ як підстраховка на неконфігуровані
+    // слова (якщо категорія ще не отримала своїх synonyms), не як джерело істини.
+    var __catWordToId = {};
+    var __categories = Array.isArray(context.lookupCategoriesRaw) ? context.lookupCategoriesRaw : [];
+    __categories.forEach(function (c) {
+      var stem = String(c.name || '').toLowerCase().trim().replace(/[иіїєюя]$/, '');
+      if (stem.length >= 3) __catWordToId[stem] = c.id;
+      (Array.isArray(c.synonyms) ? c.synonyms : []).forEach(function (w) { var sw = String(w || '').toLowerCase().trim(); if (sw) __catWordToId[sw] = c.id; });
+    });
+    ['кофт', 'футболк', 'джинс', 'бомбер', 'куртк', 'вітровк', 'костюм', 'штан', 'лофер', 'кросівк', 'худі', 'светр', 'шапк', 'туфл', 'черевик', 'кед', 'накидк', 'підголівник'].forEach(function (s) { if (!(s in __catWordToId)) __catWordToId[s] = null; });
+    var __stemRe2 = new RegExp('(' + Object.keys(__catWordToId).join('|') + ')', 'i');
     var __uTxt = String(context.lastUserMessage || input || '').replace(/\[переслав[^\]]*\][^\n]*/gi, ' ');
     var __uStemM = __uTxt.match(__stemRe2); var __uStem = __uStemM ? __uStemM[1].toLowerCase() : '';
+    // Легасі-фолбек лише для слів, які CRM ще не привʼязала до жодної категорії (__catWordToId[s]===null).
     var __SYN2 = { 'куртк': ['куртк', 'вітровк'], 'вітровк': ['вітровк', 'куртк'], 'светр': ['светр', 'кофт'], 'штан': ['штан', 'джинс'], 'кед': ['кед', 'кросівк'] };
-    function __hasStem(p, s) { var h = (String(p.customerName || '') + ' ' + String(p.name || '')).toLowerCase(); return (__SYN2[s] || [s]).some(function (x) { return h.indexOf(x) >= 0; }); }
+    function __hasStem(p, s) {
+      var cid = __catWordToId[s];
+      if (cid) return p.categoryId === cid;
+      var h = (String(p.customerName || '') + ' ' + String(p.name || '')).toLowerCase();
+      return (__SYN2[s] || [s]).some(function (x) { return h.indexOf(x) >= 0; });
+    }
     function __compId(c) { return String(c.productId || c.componentProductId || c.componentId || ''); }
     // 2026-09-17 (живий кейс, di.ma_4_8_7_3: переслав пост комплекту + написав «цікавить комплект»,
     // реклама в CRM привʼязана лише до ОДНОГО компонента (кофта) — бот показав саму кофту, повністю
@@ -517,7 +538,19 @@ try {
     // джинси…), НЕ саме слово «комплект/набір» — тому цей явний сигнал ніколи не перевірявся.
     // Якщо клієнт прямо просить комплект, а привʼязка реклами веде на ОДИН з його компонентів —
     // піднімаємо found до батьківського набору (тільки коли він рівно один — без вгадування).
-    var __wantsSetWord = /(комплект|набір|набор)/i.test(__uTxt);
+    // Слово для "весь набір" НЕ можна взяти з category.name — набори в CRM мають categoryId=null
+    // (перевірено на живих даних: усі set11xx мають category:null). Тому основне джерело — власна
+    // назва товару-набору (найчастіше містить слово, яким МАГАЗИН сам називає набір, напр.
+    // "Комплект 4 в 1...") + невеликий фіксований список мовних синонімів клієнта (комплект/набір/
+    // набор), бо це реальне слововживання клієнта, а не щось, що можна дістати з каталогу.
+    var __setWords = {};
+    all.forEach(function (p) {
+      if (!p.isSet) return;
+      var m = String(p.customerName || p.name || '').toLowerCase().match(/^([а-яіїєґ']{4,})/);
+      if (m) __setWords[m[1]] = 1;
+    });
+    ['комплект', 'набір', 'набор'].forEach(function (w) { __setWords[w] = 1; });
+    var __wantsSetWord = new RegExp('(' + Object.keys(__setWords).join('|') + ')', 'i').test(__uTxt);
     if (__wantsSetWord && found && !found.isSet && /^ad_/.test(via)) {
       var __parentSets = all.filter(function (s) {
         if (!s.isSet) return false;

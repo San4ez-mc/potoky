@@ -178,12 +178,15 @@ async function crmFetch(keys, path, opts = {}, timeoutMs = 8000) {
     } catch (e) { return { ok: false, status: 0, error: e.message, json: {}, data: null }; }
     finally { clearTimeout(to); }
 }
-const _catalog = new Map(); // botId -> {at, products, ads}
+const _catalog = new Map(); // botId -> {at, products, ads, categories}
 async function loadCatalog(botId, keys, { force } = {}) {
     const c = _catalog.get(botId);
     if (!force && c && Date.now() - c.at < 60 * 1000) return c;
-    const [p, a] = await Promise.all([crmFetch(keys, '/products?take=300'), crmFetch(keys, '/ads?take=300')]);
-    const v = { at: Date.now(), products: Array.isArray(p.data) ? p.data : [], ads: Array.isArray(a.data) ? a.data : [], ok: p.ok };
+    // 2026-09-17 (власник: "надіюсь ці слова не захардкоджені, а беруться з категорій?") — категорії
+    // тепер завантажуються ТУТ, разом з products/ads, а не лише в n_catalog_hint_prep fallback-гілці,
+    // щоб Category.synonyms (слова-категорії клієнта) були доступні n_lookup ЩОРАЗУ, без винятків.
+    const [p, a, cats] = await Promise.all([crmFetch(keys, '/products?take=300'), crmFetch(keys, '/ads?take=300'), crmFetch(keys, '/categories')]);
+    const v = { at: Date.now(), products: Array.isArray(p.data) ? p.data : [], ads: Array.isArray(a.data) ? a.data : [], categories: Array.isArray(cats.data) ? cats.data : [], ok: p.ok };
     if (p.ok) _catalog.set(botId, v);
     return v;
 }

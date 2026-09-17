@@ -1530,21 +1530,46 @@ async function runFlowAndDeliver(sessionId, entry) {
                 const _maxRow = await db.funnelKey.findFirst({ where: { botId, key: 'PRODUCT_PHOTOS_MAX' }, select: { value: true } }).catch(() => null);
                 const _max = Math.min(10, Math.max(1, parseInt((_maxRow && _maxRow.value) || '10', 10) || 10));
                 const _list = (_gal.length ? _gal : [imgUrl]).slice(0, _max);
+                // 2026-09-17 (живий кейс: розмірна сітка «надіслана» ctx.agent.chartSentFor
+                // оптимістично в policy.js, але фактична доставка фото могла провалитись і
+                // альбомом, і по одному — клієнт отримував лише підпис-обіцянку без картинки,
+                // а бот більше НІКОЛИ не намагався надіслати той самий SKU знову). Тепер рахуємо
+                // РЕАЛЬНИЙ успіх доставки: якщо жодне фото не пройшло — це не тихий збій одного
+                // з кількох, а ПОВНА відмова доставки, і тоді: (1) шлемо текстовий фолбек з
+                // посиланнями замість голого підпису, (2) сповіщаємо адміна в Telegram, (3) якщо
+                // це була розмірна сітка — скидаємо chartSentFor, щоб бот міг спробувати ще раз.
+                let _anyPhotoOk = false;
                 try {
                     const _albumId = await sendMetaPhotoAlbum(botId, contactId, _list);
                     await logDelivery(sessionId, botId, 'ig_photo_album', true, null, { nodeId: m.nodeId || null, count: _list.length, messageId: _albumId });
+                    _anyPhotoOk = true;
                 } catch (e) {
                     logger.warn('[zernioHandler] альбом не пройшов, шлемо по одному: ' + e.message);
                     await logDelivery(sessionId, botId, 'ig_photo_album', false, e.message, { nodeId: m.nodeId || null, count: _list.length });
                     for (const _g of _list) {
-                        try { await sendMetaPhoto(botId, contactId, _g); await logDelivery(sessionId, botId, 'ig_photo', true, null, { nodeId: m.nodeId || null, url: _g }); }
+                        try { await sendMetaPhoto(botId, contactId, _g); await logDelivery(sessionId, botId, 'ig_photo', true, null, { nodeId: m.nodeId || null, url: _g }); _anyPhotoOk = true; }
                         catch (e2) { logger.warn('[zernioHandler] фото: ' + e2.message); await logDelivery(sessionId, botId, 'ig_photo', false, e2.message, { nodeId: m.nodeId || null, url: _g }); }
                     }
                 }
                 const cap = att.caption || om.content;
-                if (cap) {
-                    const zcid = await sendZernioMessage(botId, conversationId, cap, sendOpts);
-                    await logDelivery(sessionId, botId, 'zernio', !!zcid, zcid ? null : 'sendZernioMessage не повернув id', { nodeId: m.nodeId || null, text: String(cap).slice(0, 160) });
+                if (_anyPhotoOk) {
+                    if (cap) {
+                        const zcid = await sendZernioMessage(botId, conversationId, cap, sendOpts);
+                        await logDelivery(sessionId, botId, 'zernio', !!zcid, zcid ? null : 'sendZernioMessage не повернув id', { nodeId: m.nodeId || null, text: String(cap).slice(0, 160) });
+                    }
+                } else {
+                    const _fallbackText = (cap || '') + '\n' + _list.join('\n');
+                    await sendZernioMessage(botId, conversationId, _fallbackText.trim(), sendOpts).catch(() => {});
+                    await sendTelegramAlert(botId, '⚠️ Не вдалось надіслати фото клієнту (усі спроби провалились, і альбом, і поштучно) — надіслано текстовий фолбек з посиланням.\nnodeId: ' + (m.nodeId || '?') + '\nСесія: https://flows.fineko.space/sessions/' + sessionId, sessionId).catch(() => {});
+                    if (m.nodeId === 'agent:size_chart') {
+                        try {
+                            const _sc = await db.session.findUnique({ where: { id: sessionId }, select: { context: true } });
+                            const _scCtx = (_sc && _sc.context) || {};
+                            if (_scCtx.agent && _scCtx.agent.chartSentFor) {
+                                await db.session.update({ where: { id: sessionId }, data: { context: { ..._scCtx, agent: { ..._scCtx.agent, chartSentFor: null } } } });
+                            }
+                        } catch (e3) { logger.warn('[zernioHandler] chartSentFor reset: ' + e3.message); }
+                    }
                 }
             } else if (om.content) {
                 const zid = await sendZernioMessage(botId, conversationId, om.content, sendOpts);

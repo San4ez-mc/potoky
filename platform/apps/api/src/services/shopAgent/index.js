@@ -55,6 +55,15 @@ async function handleTurn({ botId, sessionId, text, imageUrl, sharedPost, entryA
     if (!ctx.customer) ctx.customer = await loadCustomerMemory(session);
     ctx.lastUserMessage = String(text || ''); ctx.lastCustomerMessage = String(text || '');
     if (imageUrl) { ctx.lastUserImageUrl = imageUrl; ctx.recentUserImageUrl = imageUrl; ctx.recentUserImageAt = Date.now(); }
+    // 2026-09-17 (регресія проти вже виправленого 2026-09-04 бага в testSession.js — той самий
+    // фікс сюди не переніс при побудові shopAgent v2): фото з попереднього ходу лишалось у
+    // lastUserImageUrl НАЗАВЖДИ (нічого його не чистило), тож n_prev_match_snapshot/n_signal_check
+    // рахували БУДЬ-ЯКИЙ наступний чисто текстовий хід у ВЖЕ активному діалозі як "свіжий сигнал
+    // товару" — n_lookup щоразу заново ганяв повний матчинг (включно з keyword/vision) замість
+    // early-return "товар не змінився", і міг підмінити вже коректний товар випадковим схожим SKU
+    // (живі кейси: Kolya Kolya/set1111→C0043, anastasia.ze7/A0187→C0043). Фото належить лише
+    // своєму ходу — якщо ЦЕЙ хід текстовий і без нового фото, чистимо стару позначку.
+    else if (text) delete ctx.lastUserImageUrl;
     if (sharedPost) ctx.sharedPost = sharedPost;
     const newEntryAd = !!(entryAdId && entryAdId !== ctx.agent.seenEntryAd);
     if (entryAdId) { ctx.entryAdId = entryAdId; ctx.agent.seenEntryAd = entryAdId; }

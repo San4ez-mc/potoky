@@ -511,6 +511,24 @@ try {
     var __SYN2 = { 'куртк': ['куртк', 'вітровк'], 'вітровк': ['вітровк', 'куртк'], 'светр': ['светр', 'кофт'], 'штан': ['штан', 'джинс'], 'кед': ['кед', 'кросівк'] };
     function __hasStem(p, s) { var h = (String(p.customerName || '') + ' ' + String(p.name || '')).toLowerCase(); return (__SYN2[s] || [s]).some(function (x) { return h.indexOf(x) >= 0; }); }
     function __compId(c) { return String(c.productId || c.componentProductId || c.componentId || ''); }
+    // 2026-09-17 (живий кейс, di.ma_4_8_7_3: переслав пост комплекту + написав «цікавить комплект»,
+    // реклама в CRM привʼязана лише до ОДНОГО компонента (кофта) — бот показав саму кофту, повністю
+    // ігноруючи слово «комплект»): __stemRe2 вище розпізнає лише категорії ОКРЕМИХ речей (кофта,
+    // джинси…), НЕ саме слово «комплект/набір» — тому цей явний сигнал ніколи не перевірявся.
+    // Якщо клієнт прямо просить комплект, а привʼязка реклами веде на ОДИН з його компонентів —
+    // піднімаємо found до батьківського набору (тільки коли він рівно один — без вгадування).
+    var __wantsSetWord = /(комплект|набір|набор)/i.test(__uTxt);
+    if (__wantsSetWord && found && !found.isSet && /^ad_/.test(via)) {
+      var __parentSets = all.filter(function (s) {
+        if (!s.isSet) return false;
+        var cs = s.setComponents || s.setOf || [];
+        return cs.some(function (c) { return __compId(c) === String(found.id) || (c.sku && found.sku && String(c.sku).toUpperCase() === String(found.sku).toUpperCase()); });
+      });
+      if (__parentSets.length === 1) {
+        context.adSetNote = 'клієнт явно просить комплект — реклама привʼязана до компонента ' + (found.sku || '') + ', піднято до набору ' + __parentSets[0].sku;
+        found = __parentSets[0]; via = 'ad_set_parent'; mk = 'setparent_' + String(found.sku || found.id);
+      }
+    }
     if (__uStem && found && /^ad_/.test(via) && !__hasStem(found, __uStem)) {
       // реклама комплекту/колажу: компоненти наборів, що містять знайдений товар, з категорії, яку назвав клієнт
       var __comp = [];

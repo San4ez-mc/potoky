@@ -229,6 +229,15 @@ async function alert(A, nodeIdOrFields, extra = {}) {
         j = r ? await r.json().catch(() => ({})) : {};
     }
     A.trace.push({ alert: f.title, ok: !!j.ok, error: j.ok ? null : (j.description || 'fetch failed') });
+    // 2026-09-17 (власник: "візьми всі сповіщення в телеграм за тиждень і зроби аналіз") — раніше
+    // єдиним слідом сповіщення був A.trace/ctx.agent.lastTrace, який ПЕРЕЗАПИСУЄТЬСЯ щоходу: історія
+    // існувала лише для ОСТАННЬОГО ходу сесії, тож повний тижневий аудит фізично неможливо було
+    // зібрати з БД. ctx.agent.alertLog — стійкий (30 днів, до 50 записів) слід КОЖНОГО сповіщення,
+    // зберігається разом з рештою ctx у кінці ходу (index.js) — без окремого запису в БД тут.
+    const cutoff = Date.now() - 30 * 86400000;
+    const prevAlertLog = (Array.isArray(ctx.agent.alertLog) ? ctx.agent.alertLog : []).filter((e) => !e.ts || new Date(e.ts).getTime() > cutoff);
+    prevAlertLog.push({ ts: new Date().toISOString(), title: f.title, ok: !!j.ok, error: j.ok ? null : (j.description || 'fetch failed') });
+    ctx.agent.alertLog = prevAlertLog.slice(-50);
     return !!j.ok;
 }
 

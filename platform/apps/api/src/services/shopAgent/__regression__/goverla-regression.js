@@ -146,6 +146,22 @@ async function main() {
         check('ctx.looksLikeReceipt гаситься одразу після використання', A.ctx.looksLikeReceipt === false, 'lишилось: ' + A.ctx.looksLikeReceipt);
     }
 
+    // ── 3б. Живий кейс 17.09 (Юрій Карталєв, GOV3ES6KVVR): "Дякую." ПІСЛЯ оформлення замовлення —
+    // Zernio позначив розмову "бот не веде далі, відповідайте в чаті". understand() вже класифікує
+    // це як intent:'thanks', але policy.js ніде це не перевіряв — хід або мовчав (< 30 хв від
+    // n_post_order_msg), або за 30+ хв повторно вивалював важкий "Ваше замовлення в роботі" ще раз.
+    // Тепер: коротка тепла відповідь, і ГОЛОВНЕ — без сповіщення менеджеру (нема чого ескалювати).
+    {
+        const A = freshA({ turnText: 'Дякую' });
+        A.ctx.crmOrderId = 'CRM-TEST-1'; A.ctx.postOrderMsgAt = Date.now() - 5 * 60 * 1000; // 5 хв тому — в межах 30-хв вікна
+        const u = freshU({ intent: 'thanks' });
+        await runPolicy(A, u);
+        const step = A.out.map((o) => o.step).join(',');
+        check('"Дякую" після оформлення отримує теплу відповідь, не мовчання', A.out.some((o) => o.step === 'post_order_thanks' && o.text), 'steps: ' + step);
+        const alerted = A.trace.some((t) => t.alert === 'n_post_order_admin');
+        check('"Дякую" після оформлення НЕ шле сповіщення менеджеру (нема чого ескалювати)', !alerted, JSON.stringify(A.trace.filter((t) => t.alert)));
+    }
+
     // ── 4. Повторний показ способів оплати — живий кейс Владус, 14.09: другий хід без нового
     // способу оплати показував ПОВНИЙ список 1/2 ще раз, а не коротке нагадування.
     {

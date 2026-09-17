@@ -474,6 +474,17 @@ async function runPolicyInner(A, u) {
             await T.alert(A, 'n_agent_post_extra_admin', { details: '💬 «' + text.slice(0, 200) + '»' });
             return;
         }
+        // 2026-09-17 (живий кейс, Юрій Карталєв: "Дякую." після оформлення — Zernio позначив
+        // розмову як "бот не веде далі, відповідайте в чаті"): "дякую"/"буду чекати"/"ок" — це
+        // ПРИРОДНИЙ кінець розмови, не збій. understand() вже класифікує це як intent:'thanks' —
+        // просто ніде не перевірялось, тож хід або мовчав (в межах 30 хв від n_post_order_msg),
+        // або за 30+ хв повторно вивалював важкий "Ваше замовлення в роботі". Коротка тепла
+        // відповідь, БЕЗ повтору статусу і БЕЗ сповіщення менеджеру — ескалювати нічого.
+        if (u.intent === 'thanks' && !u.questions.length) {
+            A.out.push({ text: messageText(A.assets, 'n_agent_post_order_thanks', ctx, A.session.id), step: 'post_order_thanks' });
+            ctx.postOrderMsgAt = Date.now();
+            return;
+        }
         const since = Date.now() - Number(ctx.postOrderMsgAt || 0);
         if (u.questions.length && !u.statusQuestion) {
             A.out.push({ text: await answerThenAsk(A, u, 'Ваше замовлення в роботі 💛'), step: 'post_q' });

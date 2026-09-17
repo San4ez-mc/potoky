@@ -102,6 +102,21 @@ async function main() {
         check('matchColor: "розовый" (рос.) знаходить "Рожевий"', r5 === 'Рожевий', 'отримано: ' + r5);
     }
 
+    // ── 1в. Живий кейс 17.09 (Oleksii Oleksii, 28000137) — КРИТИЧНИЙ: "2 кофти по акції" + клієнт
+    // ЧІТКО назвав ОБИДВА кольори ("Графітовий і світло сірий" тощо) — бот перепитував колір
+    // 7 РАЗІВ поспіль. Корінь: understand() правильно кладе це в u.units (не colorMatched/color за
+    // власним правилом), але секція "5. Колір" перевіряла ЛИШЕ colorMatched/color — u.units там
+    // ніколи не читався, тож гейт "колір не обрано" не знімався попри чіткий units-сигнал.
+    {
+        const A = freshA({ turnText: 'Графітовий і світло сірий' });
+        A.ctx.product = { sku: 'A0187', customerName: 'Кофта', name: 'Кофта', price: 1279, colors: 'Чорний, Графітовий, Світло-сірий', isClothing: false };
+        A.ctx.recommendedSize = 'L';
+        const u = freshU({ intent: 'give_color', units: [{ color: 'Графітовий' }, { color: 'Світло-сірий' }], qty: 2 });
+        await runPolicy(A, u);
+        check('u.units з 2 кольорами вирішує ctx.colorChoice.colors одразу (не перепитує)', Array.isArray(A.ctx.colorChoice && A.ctx.colorChoice.colors) && A.ctx.colorChoice.colors.length === 2, JSON.stringify(A.ctx.colorChoice));
+        check('НЕ повторює generic "ask_color" питання, коли u.units уже дав 2 кольори', !A.out.some((o) => o.step === 'ask_color'), 'steps: ' + A.out.map((o) => o.step).join(','));
+    }
+
     // ── 1б. Живий кейс 15.09 (cca4a961) — КРИТИЧНИЙ: інконклюзивний повторний сигнал (порожнє
     // вкладення "template", не фото товару) НЕ має права стирати ВЖЕ підтверджений товар.
     // n_lookup.fallback() безумовно обнуляв ctx.product — жива позиція (кофта, адреса, розмір,
@@ -178,6 +193,34 @@ async function main() {
         const fullListShown = A.out.some((o) => /Часткова передплата 200 грн/.test(o.text || ''));
         const step = A.out.map((o) => o.step).join(',');
         check('Повторний хід без способу оплати НЕ повторює повний список 1/2', !fullListShown, 'steps: ' + step);
+    }
+
+    // ── 4б. Живий кейс 17.09 (Oleksii, bf149a35 + повторні скарги в Edits): картка йшла КОЖНОМУ
+    // клієнту разом з посиланням на оплату — {{context.cardLine}} сидів прямо в дефолтному
+    // n_requisites. Власник: "спочатку посилання IBAN, потім реквізити ФОП, і тільки якщо людина
+    // і тут відмовляється — тоді карта" (3 рівні, не 2). Перевіряємо і новий шлях (wantsCard →
+    // n_req_card), і що дефолтний n_requisites більше НЕ містить картку автоматично.
+    {
+        const { messageTextMultiline } = require('../lib');
+        const fakeCtx = { payAmount: 200, payLabel: 'передоплата 200 грн', ibanPayUrl: 'https://ibanoplata.com/x', addressAskLine: '', cardLine: '💳 Або карткою: 1111222233334444 (ФОП Тест)' };
+        const rendered = messageTextMultiline(assets, 'n_requisites', fakeCtx, 'regress-req-test');
+        check('Дефолтний n_requisites БІЛЬШЕ НЕ показує картку автоматично', !/1111222233334444/.test(rendered) && !/Або карткою/.test(rendered), rendered);
+    }
+    {
+        const A = freshA({
+            turnText: 'Дайте картку',
+            ctx: {
+                testMode: true, agent: {},
+                product: { sku: 'A0187', customerName: 'Кофта', price: 1279 },
+                orderData: { fullName: 'Тест Тестович', phone: '0671234567', city: 'Київ', branch: '5' },
+                paymentInfo: { method: 'cod' },
+                fop: { name: 'ФОП Тест', cardNumber: '1111222233334444' },
+            },
+        });
+        const u = freshU({ intent: 'wants_requisites', wantsCard: true });
+        await runPolicy(A, u);
+        const step = A.out.map((o) => o.step).join(',');
+        check('wantsCard шле номер картки окремим повідомленням (крок req_card)', A.out.some((o) => o.step === 'req_card' && /1111222233334444/.test(o.text || '')), 'steps: ' + step);
     }
 
     // ── 5. hideLinks — сире посилання клієнта (напр. чек банку) ніколи не йде як видимий текст у

@@ -318,6 +318,17 @@ async function sendManualRequisites(A, withIntro = true) {
     // одну стіну тексту, роблячи копіювання незручним — саме це і сталось (живий кейс 15.09).
     for (const id of ['n_req_iban_l', 'n_req_iban_v', 'n_req_code_l', 'n_req_code_v', 'n_req_name_l', 'n_req_name_v', 'n_req_ref_l', 'n_req_ref_v', 'n_req_sum']) { const t = messageTextMultiline(A.assets, id, ctx, A.session.id); if (t) A.out.push({ text: t, step: id, noMerge: true }); }
 }
+// 2026-09-17 (власник: "спочатку посилання IBAN, потім реквізити ФОП, і тільки якщо людина і тут
+// відмовляється — тоді карта. Тобто 3 варіант, а не 2"): картка — ОСТАННІЙ, третій рівень ескалації
+// оплати, не альтернатива, яку показуємо одразу з посиланням. Раніше {{context.cardLine}} сидів
+// прямо в дефолтному n_requisites (перший-таки крок) і йшов КОЖНОМУ клієнту з заповненою карткою
+// ФОП у CRM — звідси повторювані скарги (Oleksii, живий кейс bf149a35: "картку не треба писати").
+async function sendCard(A) {
+    const { ctx } = A;
+    if (!ctx.fop) await T.payAmount(A);
+    if (ctx.fop && ctx.fop.cardNumber) A.out.push({ text: messageText(A.assets, 'n_req_card', ctx, A.session.id), step: 'req_card' });
+    else await sendManualRequisites(A, true); // немає картки в CRM — чесний фолбек на реквізити, а не вигадана картка
+}
 
 async function afterOrderAccepted(A) {
     // Створення замовлення в CRM → постачальник (якщо оплата є) → підтвердження клієнту.
@@ -461,6 +472,7 @@ async function runPolicyInner(A, u) {
             await T.alert(A, 'n_receipt_alert', { photoUrl: A.turnImage || '' });
             return;
         }
+        if (u.wantsCard && ctx.payStatus !== 'confirmed' && Number(ctx.payAmount) > 0) { await sendCard(A); return; }
         if (u.wantsManualReq && ctx.payStatus !== 'confirmed' && Number(ctx.payAmount) > 0) {
             // Живий кейс 2026-09-14 (Валерій): оплата за посиланням уже надіслана раніше, клієнт
             // хоче реквізити вручну — бот відповідав шаблонним «замовлення в роботі», ігноруючи
@@ -672,7 +684,19 @@ async function runPolicyInner(A, u) {
     }
 
     // 5. Колір
-    if (pp.colors && !(ctx.colorChoice && ctx.colorChoice.color)) {
+    // 2026-09-18 (живий кейс, Oleksii Oleksii: "2 кофти по акції" + "Графітовий і світло сірий" /
+    // "Давайте графітовий та світло-сірий" / "Графітовий та світло сіру" — бот перепитував колір
+    // 7 РАЗІВ поспіль, ігноруючи, що клієнт щоразу чітко називав ОБИДВА кольори): understand()
+    // вже виконує власне правило "хоче ОБИДВА кольори одразу — це units, не colorMatched", але ЦЯ
+    // секція перевіряла ЛИШЕ colorMatched/color (одиничний вибір) — u.units для кількох різних
+    // кольорів на кілька штук того самого товару НІКОЛИ тут не перевірявся, тож гейт "колір ще не
+    // обрано" не знімався, і секція щоразу питала generic-питання про ОДИН колір заново.
+    const colorResolved = !!(ctx.colorChoice && (ctx.colorChoice.color || (Array.isArray(ctx.colorChoice.colors) && ctx.colorChoice.colors.length)));
+    if (pp.colors && !colorResolved && u.units && u.units.length > 1) {
+        const matchedColors = u.units.map((x) => matchColor(pp, x.color) || matchColor(pp, x.colorMatched)).filter(Boolean);
+        if (matchedColors.length === u.units.length) ctx.colorChoice = { colors: matchedColors, qty: u.qty || u.units.length };
+    }
+    if (pp.colors && !(ctx.colorChoice && (ctx.colorChoice.color || (Array.isArray(ctx.colorChoice.colors) && ctx.colorChoice.colors.length)))) {
         const c = u.colorMatched || matchColor(pp, u.color) || (ctx.sizeInput && ctx.sizeInput.color) || matchColor(pp, ctx.agent.pendingColor) || matchColor(pp, ctx.agent.pendingColorRaw) || null;
         if (c) { ctx.colorChoice = { color: c, qty: u.qty || undefined }; delete ctx.agent.pendingColor; delete ctx.agent.pendingColorRaw; }
         else if (isSoftDecline(u)) { A.out.push({ text: await answerThenAsk(A, u, messageText(A.assets, 'n_agent_soft_decline_color', ctx, A.session.id)), step: 'ask_color_soft' }); return; }
@@ -906,6 +930,7 @@ async function runPolicyInner(A, u) {
             else if (!ctx.agent.addressConfirmAsked) { ctx.agent.addressConfirmAsked = true; ctx.orderData = od; A.out.push({ text: await answerThenAsk(A, u, messageText(A.assets, 'n_agent_address_confirm_reuse', ctx, A.session.id)), step: 'address_confirm' }); ctx.agent.lastAsk = 'ті самі дані доставки?'; return; }
         }
         ctx.orderData = od;
+        if (u.wantsCard) { await sendCard(A); return; }
         if (u.wantsManualReq) { await sendManualRequisites(A, true); return; }
         if (u.claimsPaid || u.receiptLink || A.turnImage) await tryReconcile(A);
         // Відмовляємо в доставці додому лише коли номера відділення/поштомата дійсно НЕМА (ні
@@ -923,7 +948,8 @@ async function runPolicyInner(A, u) {
         if (ctx.np && ctx.np.ask) { A.out.push({ text: messageText(A.assets, 'n_np_ask', ctx, A.session.id), step: 'np_ask' }); ctx.agent.lastAsk = 'уточнення адреси НП'; ctx.orderData = { ...od, branch: od.branch }; return; }
     } else if (u.paymentMethodChange && u.paymentMethodChange !== ctx.paymentInfo.method && !ctx.crmOrderId) {
         ctx.paymentInfo = { ...ctx.paymentInfo, method: u.paymentMethodChange }; ctx.orderRef = ''; await T.payAmount(A); await sendRequisites(A, u); return;
-    } else if (u.wantsManualReq && !ctx.crmOrderId) { await sendManualRequisites(A, true); return; }
+    } else if (u.wantsCard && !ctx.crmOrderId) { await sendCard(A); return; }
+    else if (u.wantsManualReq && !ctx.crmOrderId) { await sendManualRequisites(A, true); return; }
 
     // 10. Звірка оплати (перед створенням замовлення — щоб стадія була правильна)
     if (Number(ctx.payAmount) > 0 && ctx.payStatus !== 'confirmed' && (u.claimsPaid || u.receiptLink || A.turnImage || !ctx.payCheckedAt)) await tryReconcile(A);

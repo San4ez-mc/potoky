@@ -21,7 +21,7 @@ const SCHEMA = `{
  "changeRequest": "<хоче ЗМІНИТИ колір/розмір/кількість УЖЕ обраної позиції комплекту чи товару (не додати, не прибрати) — що саме і якої позиції, словами клієнта>"|null,
  "payMethod": "cod|full"|null, "country": "<країна доставки за кордон>"|null, "prepaymentObjection": true|false, "trustPromise": true|false|null,
  "fullName": "<ПІБ>"|null, "phone": "<10 цифр з 0>"|null, "city": "<місто>"|null, "region": "<область>"|null, "branch": "<№ відділення або 'поштомат N'>"|null, "homeAddress": true|false,
- "wantsManualReq": true|false, "paymentMethodChange": "cod|full"|null, "claimsPaid": true|false, "receiptLink": "<url>"|null,
+ "wantsManualReq": true|false, "wantsCard": true|false, "paymentMethodChange": "cod|full"|null, "claimsPaid": true|false, "receiptLink": "<url>"|null,
  "wantsSizeChart": true|false, "wantsPhoto": true|false, "wantsUpsellPhoto": true|false, "wantsHuman": true|false, "isComplaint": true|false, "returnRequest": true|false, "statusQuestion": true|false,
  "productHint": {"article": "<A0187 тощо>"|null, "category": "<кофта|костюм|куртка|бомбер|футболка|джинси|лофери|...>"|null, "fromList": "<назва/артикул зі списку, який бот щойно показав>"|null},
  "questions": ["<питання клієнта, на які треба відповісти фактами>"],
@@ -113,7 +113,7 @@ async function understand(A) {
     }
     const u = extractJson(raw) || { intent: 'other' };
     for (const k of ['height', 'weight', 'clothingSize', 'chest', 'footLength', 'waist', 'color', 'colorMatched', 'qty', 'units', 'setChoice', 'setArticle', 'ready', 'addUpsell', 'upsellQty', 'upsellNote', 'extraProducts', 'alsoWants', 'removeItem', 'addItem', 'changeRequest', 'payMethod', 'country', 'trustPromise', 'fullName', 'phone', 'city', 'region', 'branch', 'paymentMethodChange', 'receiptLink']) if (u[k] === undefined) u[k] = null;
-    for (const k of ['belly', 'prepaymentObjection', 'homeAddress', 'wantsManualReq', 'claimsPaid', 'wantsSizeChart', 'wantsPhoto', 'wantsUpsellPhoto', 'wantsHuman', 'isComplaint', 'returnRequest', 'statusQuestion']) u[k] = !!u[k];
+    for (const k of ['belly', 'prepaymentObjection', 'homeAddress', 'wantsManualReq', 'wantsCard', 'claimsPaid', 'wantsSizeChart', 'wantsPhoto', 'wantsUpsellPhoto', 'wantsHuman', 'isComplaint', 'returnRequest', 'statusQuestion']) u[k] = !!u[k];
     u.intent = u.intent || 'other';
     u.questions = Array.isArray(u.questions) ? u.questions.filter((q) => q && String(q).trim()).map(String) : [];
     u.productHint = u.productHint && typeof u.productHint === 'object' ? u.productHint : { article: null, category: null, fromList: null };

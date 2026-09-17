@@ -213,6 +213,7 @@ async function main() {
                 testMode: true, agent: {},
                 product: { sku: 'A0187', customerName: 'Кофта', price: 1279 },
                 orderData: { fullName: 'Тест Тестович', phone: '0671234567', city: 'Київ', branch: '5' },
+                orderIntent: { ready: 'yes' },
                 paymentInfo: { method: 'cod' },
                 fop: { name: 'ФОП Тест', cardNumber: '1111222233334444' },
             },

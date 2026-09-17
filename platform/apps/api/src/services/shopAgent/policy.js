@@ -639,7 +639,20 @@ async function runPolicyInner(A, u) {
         // питанням виглядало як збій. Той самий принцип, що вже застосований нижче для розміру
         // (A.justPresented) — тут його раніше не було.
         else if (A.justPresented && !u.questions.length) { ctx.agent.lastAsk = 'весь комплект чи окремі речі'; return; }
-        else { ctx.agent.preNote = preNote; ctx.agent.setAskList = humanSetList(p); A.out.push({ text: await answerThenAsk(A, u, messageTextMultiline(A.assets, 'n_agent_set_ask', ctx, A.session.id)), step: 'set_ask' }); ctx.agent.lastAsk = 'весь комплект чи окремі речі'; return; }
+        else {
+            ctx.agent.preNote = preNote; ctx.agent.setAskList = humanSetList(p);
+            // 2026-09-17 (живий кейс, Степанович/_ilya.tishkun_: "Яка ціна товарів?" одразу ПІСЛЯ
+            // того, як present() ЦИМ ЖЕ ХОДОМ показав картку set1112 — вона вже закінчується "чи
+            // весь комплект, чи окремі товари?" (той самий n_welcome CRM-опис, що й вище), а сюди
+            // ДОДАВАВСЯ ще один, окремий n_agent_set_ask-текст, і compose() (не знаючи, що ціни вже
+            // щойно прозвучали в ЦЬОМУ Ж повідомленні — це не "історія діалогу", historia будується
+            // ДО цього ходу) чесно переказав ті самі ціни СВОЇМИ словами вдруге). Коли картку щойно
+            // показано — не тулимо typed n_agent_set_ask поверх (вона вже питає те саме); просто
+            // даємо compose() відповісти на питання БЕЗ додаткового заклику в кінці.
+            const setAsk = A.justPresented ? '' : messageTextMultiline(A.assets, 'n_agent_set_ask', ctx, A.session.id);
+            A.out.push({ text: await answerThenAsk(A, u, preNote + setAsk), step: 'set_ask' });
+            ctx.agent.lastAsk = 'весь комплект чи окремі речі'; return;
+        }
     }
     const pp = P(ctx);
 

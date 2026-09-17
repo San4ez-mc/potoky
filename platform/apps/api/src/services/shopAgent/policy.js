@@ -209,8 +209,13 @@ function normQ(q) { return String(q || '').trim().toLowerCase().replace(/\s+/g, 
 /** 2026-09-17 (власник: універсальний фолбек для питань "не по скрипту" — "кожне" питання без
  * чесної відповіді з ФАКТІВ/KB веде на ескалацію, без жодного regex/списку тем — те, чи бот
  * реально відповів, каже сама compose() через resolved:false, а не вгадування за текстом).
- * Дедуп лише за буквальним повтором питання в межах сесії — щоб не спамити тим самим двічі. */
+ * Дедуп лише за буквальним повтором питання в межах сесії — щоб не спамити тим самим двічі.
+ * Позначає A._unresolvedThisTurn=true (для лічильника "наполягає" в runPolicy) — НЕЗАЛЕЖНО від
+ * дедупу за буквальним текстом: клієнт формулює те саме питання РІЗНИМИ словами щоразу (живий
+ * кейс e77af3b9: "Штани звужені?" → "Уточніть покрій" → "Мені треба знати покрій" — 7 разів,
+ * жодного буквального повтору), тож лічильник наполегливості не може залежати від дедуп-списку. */
 async function escalateUnresolved(A, question) {
+    A._unresolvedThisTurn = true;
     const nq = normQ(question); if (!nq) return;
     const seen = A.ctx.agent.escalatedQuestions || [];
     if (seen.includes(nq)) return;
@@ -405,7 +410,30 @@ async function runPolicy(A, u) {
     let threw = false;
     try { await runPolicyInner(A, u); }
     catch (e) { threw = true; throw e; }
-    finally { if (!threw) await universalQuestionFallback(A, u); }
+    finally { if (!threw) { await universalQuestionFallback(A, u); await enforceInsistLimit(A); } }
+}
+
+/** 2026-09-17 (власник: "те, що ми сьогодні робили вже гарно спрацювало... але давай перевірку
+ * додамо: якщо людина 2 рази наполягає що спершу хоче відповідь — тоді бота зупиняємо. Бо люди
+ * дратуються. Якщо людина продовжує діалог і відповідає на питання — то продовжуй"). Живий кейс
+ * e77af3b9: клієнт 7 разів різними словами наполягав "уточніть покрій штанів" ("Штани звужені?" →
+ * "Уточніть покрій" → "Мені треба знати покрій" → "Так мені нізащо давати дані" — жодного
+ * буквального повтору, тож дедуп в escalateUnresolved тут не рятує), а бот щоразу відповідав
+ * "уточню і повернусь" + повторював заклик дати адресу — до відкритого роздратування клієнта
+ * ("щоб я його вам назад не відправляв") і втручання менеджера вручну.
+ * Лічильник: якщо ЦЕЙ хід знову не дав чесної відповіді (A._unresolvedThisTurn, viставляє
+ * escalateUnresolved) І ПОПЕРЕДНІЙ хід теж — досить редиректити в скрипт, кличемо людину.
+ * Скидається БУДЬ-яким ходом без нової ескалації (клієнт відповів на питання скрипту чи зрештою
+ * отримав відповідь) — саме "продовжує діалог" з прохання власника. */
+async function enforceInsistLimit(A) {
+    const { ctx } = A;
+    if (ctx.funnelPaused) { ctx.agent.unresolvedStreak = 0; return; }
+    if (!A._unresolvedThisTurn) { ctx.agent.unresolvedStreak = 0; return; }
+    ctx.agent.unresolvedStreak = (ctx.agent.unresolvedStreak || 0) + 1;
+    if (ctx.agent.unresolvedStreak < 2) return;
+    ctx.agent.unresolvedStreak = 0;
+    A.out = [{ text: messageText(A.assets, 'n_agent_insist_handoff', ctx, A.session.id), step: 'insist_handoff' }];
+    await pause(A, 'unresolved_insist', 'n_agent_insist_handoff_admin', '💬 клієнт наполягає на відповіді, яку бот не може дати — передано менеджеру');
 }
 
 /** Останній рубіж: якщо клієнт про щось запитав, а ЖОДНА секція каскаду не провела це питання
@@ -962,4 +990,4 @@ async function runPolicyInner(A, u) {
     }
 }
 
-module.exports = { runPolicy, addressComplete, matchColor };
+module.exports = { runPolicy, addressComplete, matchColor, enforceInsistLimit };

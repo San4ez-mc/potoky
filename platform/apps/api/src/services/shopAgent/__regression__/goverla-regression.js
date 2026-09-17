@@ -26,7 +26,7 @@ if (require.main === module && !process.env.NODE_PATH) {
     require('module').Module._initPaths();
 }
 const { loadAssets } = require('../lib');
-const { runPolicy, matchColor } = require('../policy');
+const { runPolicy, matchColor, enforceInsistLimit } = require('../policy');
 
 const BOT = 'fcdee415-bef2-4a74-a650-e6e4b5a12322';
 let assets;
@@ -581,6 +581,29 @@ async function main() {
         check('extractJsonLoose: JSON із зайвим текстом навколо', withProse && withProse.text === 'Добре', JSON.stringify(withProse));
         const garbage = extractJsonLoose('Вибачте, я не можу відповісти зараз.');
         check('extractJsonLoose: сміттєвий ввід повертає null, не падає', garbage === null, String(garbage));
+    }
+
+    // ── 18. Живий кейс 17.09 (e77af3b9, власник: "2 рази наполягає — тоді бота зупиняємо, бо люди
+    // дратуються"): клієнт 7 разів різними словами наполягав "уточніть покрій штанів", бот щоразу
+    // відповідав "уточню і повернусь" + повторював заклик дати адресу — до відкритого роздратування
+    // клієнта. enforceInsistLimit рахує ПОСЛІДОВНІ ходи без чесної відповіді (A._unresolvedThisTurn)
+    // незалежно від точного тексту питання (дедуп у escalateUnresolved тут не рятує).
+    {
+        const A1 = freshA({ ctx: { testMode: true, agent: {} } });
+        A1._unresolvedThisTurn = true;
+        await enforceInsistLimit(A1);
+        check('1-ша ескалація поспіль НЕ зупиняє бота', !A1.ctx.funnelPaused && A1.ctx.agent.unresolvedStreak === 1, JSON.stringify({ paused: A1.ctx.funnelPaused, streak: A1.ctx.agent.unresolvedStreak }));
+
+        const A2 = freshA({ ctx: { testMode: true, agent: { unresolvedStreak: 1 } } });
+        A2._unresolvedThisTurn = true;
+        await enforceInsistLimit(A2);
+        check('2-га ескалація поспіль зупиняє бота (кличе менеджера)', A2.ctx.funnelPaused === true && A2.ctx.pausedBy === 'unresolved_insist', JSON.stringify({ paused: A2.ctx.funnelPaused, pausedBy: A2.ctx.pausedBy }));
+        check('Текст заміняється на передачу менеджеру, а не черговий редирект', A2.out.length === 1 && A2.out[0].step === 'insist_handoff', JSON.stringify(A2.out));
+
+        const A3 = freshA({ ctx: { testMode: true, agent: { unresolvedStreak: 1 } } });
+        // A3._unresolvedThisTurn НЕ виставлено — клієнт цього ходу відповів на прохання скрипту, не наполягав.
+        await enforceInsistLimit(A3);
+        check('Хід без нової ескалації скидає лічильник ("продовжує діалог — то продовжуй")', A3.ctx.agent.unresolvedStreak === 0 && !A3.ctx.funnelPaused, JSON.stringify({ streak: A3.ctx.agent.unresolvedStreak, paused: A3.ctx.funnelPaused }));
     }
 
     console.log('');

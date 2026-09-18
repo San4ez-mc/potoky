@@ -606,6 +606,46 @@ async function main() {
         check('Хід без нової ескалації скидає лічильник ("продовжує діалог — то продовжуй")', A3.ctx.agent.unresolvedStreak === 0 && !A3.ctx.funnelPaused, JSON.stringify({ streak: A3.ctx.agent.unresolvedStreak, paused: A3.ctx.funnelPaused }));
     }
 
+    // ── 19. Живий кейс 18.09 (Roman/tovstanovskiy_, 20af04a6, "Вы на приколе?"): клієнт одним
+    // повідомленням назвав ОДРАЗУ ДВІ окремі позиції комплекту ("Кофта и лоферы") замість "весь
+    // комплект" чи однієї речі — setChoice/setArticle розуміють лише ОДНУ позицію за раз, тож бот
+    // тричі перепитував те саме "весь комплект чи окремі речі?", поки клієнт не пішов ("Самі з
+    // ним спілкуйтеся" — та сама категорія бага в іншій сесії, f9effe55). Секція "3. Комплект"
+    // тепер сама (незалежно від того, що зрозумів understand()) шукає в тексті 2+ різні позиції
+    // комплекту і заводить часткову вибірку через той самий механізм, що й повний комплект.
+    {
+        const A = freshA({ turnText: 'Кофта и лоферы' });
+        A.ctx.product = {
+            sku: 'set9998', isSet: true, price: 4000, customerName: 'Тестовий комплект 2',
+            setItems: [
+                { article: 'K002', name: 'Кофта ангора', price: 1279, colors: ['Чорний'], sizes: [] },
+                { article: 'J002', name: 'Джинси', price: 1590, colors: ['Синій'], sizes: [] },
+                { article: 'F002', name: 'Футболка', price: 449, colors: ['Білий'], sizes: [] },
+                { article: 'L002', name: 'Лофери', price: 1990, colors: ['Коричневий'], sizes: [] },
+            ],
+        };
+        await runPolicy(A, freshU({ intent: 'other' })); // understand() НЕ впізнав setChoice/setArticle з голої назви двох речей — це і є баг
+        const sel = (A.ctx.setSelection || []).map((x) => x.article).sort();
+        check('19.1 Дві названі позиції розпізнаються без допомоги understand() (setChoice/setArticle)', A.ctx.setMode === 'set' && sel.length === 2, 'setMode: ' + A.ctx.setMode + ', setSelection: ' + JSON.stringify(sel));
+        check('19.2 Саме ПОТРІБНІ позиції (Кофта + Лофери), решта не потрапила', JSON.stringify(sel) === JSON.stringify(['K002', 'L002']), JSON.stringify(sel));
+        check('19.3 ctx.product.setItems звужено до вибраних — секція розміру не питатиме про Джинси/Футболку', Array.isArray(A.ctx.product.setItems) && A.ctx.product.setItems.length === 2, JSON.stringify((A.ctx.product.setItems || []).map((x) => x.article)));
+        check('19.4 Повний оригінальний склад лишається збереженим (можна додати позицію назад)', Array.isArray(A.ctx.agent.setOriginal) && A.ctx.agent.setOriginal.length === 4, JSON.stringify((A.ctx.agent.setOriginal || []).map((x) => x.article)));
+    }
+    {
+        // Одна названа позиція (не дві) — старий однопозиційний шлях МАЄ лишитись незайманим:
+        // "item"/setArticle далі йде через T.setApply, а не через нову гілку.
+        const A = freshA({ turnText: 'Кофта' });
+        A.ctx.product = {
+            sku: 'set9998', isSet: true, price: 4000, customerName: 'Тестовий комплект 2',
+            setItems: [
+                { article: 'K002', name: 'Кофта ангора', price: 1279, colors: ['Чорний'], sizes: [] },
+                { article: 'J002', name: 'Джинси', price: 1590, colors: ['Синій'], sizes: [] },
+            ],
+        };
+        await runPolicy(A, freshU({ intent: 'other' }));
+        check('19.5 Одна названа позиція НЕ потрапляє в нову гілку мультивибору (нема хибних 2-позиційних вибірок)', !(A.ctx.setMode === 'set' && Array.isArray(A.ctx.setSelection) && A.ctx.setSelection.length > 1), 'setMode: ' + A.ctx.setMode + ', setSelection: ' + JSON.stringify(A.ctx.setSelection));
+    }
+
     console.log('');
     const failed = results.filter((r) => !r.ok);
     console.log(results.length + ' тестів, ' + failed.length + ' провалено.');

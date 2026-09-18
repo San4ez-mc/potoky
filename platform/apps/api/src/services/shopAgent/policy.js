@@ -627,6 +627,36 @@ async function runPolicyInner(A, u) {
 
     // 3. Комплект
     if (p.isSet && !ctx.setMode) {
+        // 2026-09-18 (живий кейс, Roman/tovstanovskiy_, сесія 20af04a6: "Кофта и лоферы" / "5934
+        // А0187" / "Отдельно" — клієнт тричі поспіль називав ОДРАЗУ КІЛЬКА окремих позицій
+        // комплекту, а setChoice/setArticle (нижче) вміють розпізнати лише ОДНУ позицію за раз —
+        // бот тричі перепитав те саме "весь комплект чи окремі речі?", клієнт розлютився й пішов
+        // ("Вы на приколе?"). Той самий baг у 4d43e173 (S., "Це не моє замовлення"). Перевіряємо
+        // НЕЗАЛЕЖНО від того, що зрозумів understand() — чи повідомлення прямим текстом називає
+        // 2+ РІЗНІ позиції з setItems (тим самим сегментатором/matchSetItem, що вже працює нижче
+        // для кольорів по позиціях, 5b). Якщо так — заводимо часткову вибірку через ТОЙ САМИЙ
+        // механізм, що й повний комплект (5b: ctx.setSelection з ціною/кольором/розміром по
+        // кожній позиції), просто звузивши pp.setItems до вибраних — так Section 4 (розмір) і
+        // resolveSetParams питають параметри ЛИШЕ для вибраних позицій, а не для всіх чотирьох.
+        let multiHandled = false;
+        if (Array.isArray(p.setItems) && p.setItems.length > 1) {
+            const allItems = initSetSelection(p);
+            const segs = text.split(/[,;\n]|\bі\b|\bта\b|\+/iu).map((s) => s.trim()).filter(Boolean);
+            const matched = [];
+            for (const seg of segs) {
+                const hit = matchSetItem(seg, allItems, null);
+                if (hit && !matched.some((m) => m.article === hit.article)) matched.push(hit);
+            }
+            if (matched.length > 1 && matched.length < allItems.length) {
+                const matchedArticles = new Set(matched.map((m) => m.article));
+                ctx.agent.setOriginal = allItems;
+                ctx.product = { ...p, setItems: p.setItems.filter((it) => matchedArticles.has(it.article)) };
+                ctx.setSelection = initSetSelection(ctx.product);
+                ctx.setMode = 'set';
+                multiHandled = true;
+            }
+        }
+        if (!multiHandled) {
         // Клієнт дав параметри/колір/згоду або просить змінити склад, не обравши окрему річ → хоче весь комплект
         const impliedSet = !u.setChoice && !u.setArticle && (u.height || u.weight || u.clothingSize || u.ready === 'yes' || u.changeRequest || u.colorMatched || u.color);
         if (u.setChoice === 'item' && u.setArticle) { ctx.setPick = { setChoice: 'item', article: u.setArticle }; await T.setApply(A); }
@@ -652,6 +682,7 @@ async function runPolicyInner(A, u) {
             const setAsk = A.justPresented ? '' : messageTextMultiline(A.assets, 'n_agent_set_ask', ctx, A.session.id);
             A.out.push({ text: await answerThenAsk(A, u, preNote + setAsk), step: 'set_ask' });
             ctx.agent.lastAsk = 'весь комплект чи окремі речі'; return;
+        }
         }
     }
     const pp = P(ctx);

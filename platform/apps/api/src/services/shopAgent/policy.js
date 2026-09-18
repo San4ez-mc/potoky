@@ -656,6 +656,32 @@ async function runPolicyInner(A, u) {
     }
     const pp = P(ctx);
 
+    // 2026-09-18 (живий кейс, LaT1K/C0043: "можна розмірну сітку?" / "не бачу фото" / "чекаю
+    // фото" — 3 РАЗИ поспіль, і жодного разу фото не пішло, хоча sizeChartRuleFor() чесно каже
+    // LLM, що сітка для цього товару Є і можна сказати "надсилаю окремим фото". Причина: реальна
+    // відправка (нижче, крок "4. Розмір") гейтиться ВСЕРЕДИНІ needSize-блоку — а розмір тут уже
+    // порахований з першого повідомлення (зріст/вага), тож needSize=false і той код більше НІКОЛИ
+    // не виконується для цього товару. LLM продовжує чесно обіцяти фото (бо URL є), а код його
+    // просто не надсилає. Обробляємо повторний запит сітки ОКРЕМО від секції розміру — щоб він
+    // спрацьовував і після того, як розмір уже відомий.
+    if (u.wantsSizeChart && ctx.recommendedSize && pp.sizeChartUrl && ctx.agent.chartSentFor !== pp.sku) {
+        A.out.push({ photoUrls: [pp.sizeChartUrl], caption: messageText(A.assets, 'n_agent_size_chart_caption', ctx, A.session.id), step: 'size_chart' });
+        ctx.agent.chartSentFor = pp.sku;
+    }
+
+    // 2026-09-18 (живий кейс, LaT1K/C0043: клієнт явно написав "мені потрібен M розмір
+    // графітовий" ПІСЛЯ того, як система вже порахувала розмір L за зростом/вагою — але
+    // ctx.recommendedSize вже стоїть, needSize=false, тож замовлення оформилось з L, яке
+    // порахувала система, а НЕ з розміром, який клієнт явно назвав. compose.js навіть прямо
+    // забороняє LLM озвучувати інший розмір, поки ctx.recommendedSize є — тож явний запит
+    // клієнта на конкретний розмір має ПЕРЕЗАПИСУВАТИ вже порахований розмір, а не тихо
+    // ігноруватись. Скидаємо порахований розмір і даємо секції "4. Розмір" порахувати заново
+    // вже з явним clothingSize клієнта (він має пріоритет над зростом/вагою в T.calcSize).
+    if (u.clothingSize && ctx.recommendedSize && String(u.clothingSize).toUpperCase() !== String(ctx.recommendedSize).toUpperCase()) {
+        ctx.recommendedSize = null; ctx.isSetSizeCalc = false; ctx.setSizesText = ''; ctx.sizeOutOfRange = false;
+        ctx.sizeInput = { ...(ctx.sizeInput || {}), clothingSize: u.clothingSize };
+    }
+
     // 4. Розмір
     const needSize = (pp.isClothing || pp.isSet) && !ctx.recommendedSize && !ctx.isSetSizeCalc && !ctx.sizeOutOfRange;
     if (needSize) {
@@ -680,8 +706,18 @@ async function runPolicyInner(A, u) {
             await T.calcSize(A);
             await T.funnelStage(A, ...STAGES.params);
             if (ctx.sizeOutOfRange) {
-                A.out.push({ text: messageText(A.assets, 'n_size_oor_msg', ctx, A.session.id), step: 'size_oor' });
-                await pause(A, 'size_oor', 'n_size_oor_admin');
+                // 2026-09-18 (власник): якщо n_calc не знайшов жодної альтернативи (sizeOorAlternative
+                // порожній — тобто товару в такому розмірі справді немає, а не просто "потрібно
+                // уточнити"), чесна відповідь — прямо сказати, що такого розміру немає, а не
+                // натякати розпливчасто "покличу менеджера, він щось підбере", коли підбирати
+                // нічого. Раніше сюди йшов ЛИШЕ n_size_oor_msg (з розрахунком на sizeOorAlternative
+                // в шаблоні) для обох випадків. Заразом: pause() раніше викликався БЕЗ extraDetails —
+                // адмінське сповіщення показувало порожнє "💬 Клієнту вже сказано:" (менеджер не
+                // бачив, що саме бот уже написав клієнту).
+                const oorNode = ctx.sizeOorAlternative ? 'n_size_oor_msg' : 'n_size_oor_no_alt_msg';
+                const oorText = messageText(A.assets, oorNode, ctx, A.session.id);
+                A.out.push({ text: oorText, step: 'size_oor' });
+                await pause(A, 'size_oor', 'n_size_oor_admin', '💬 Клієнту вже сказано: «' + oorText + '»');
                 return;
             }
             // 2026-09-15 (живий кейс, власник: sizeReplyText для комплекту має переноси рядків по

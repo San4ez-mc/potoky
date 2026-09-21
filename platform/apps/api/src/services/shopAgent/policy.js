@@ -380,6 +380,13 @@ async function afterOrderAccepted(A) {
         const parcelNote = ctx.multiParcel ? '\n\n📦 Ваше замовлення поїде ' + ctx.parcelCount + ' окремими посилками (позиції від різних постачальників) — накладну на кожну надішлемо сюди.' : '';
         A.out.push({ text: messageTextMultiline(A.assets, 'n_confirm', ctx, A.session.id) + parcelNote, step: 'confirm' });
         ctx.agent.confirmKey = key; ctx.agent.lastAsk = '';
+        // 2026-09-22 (живі кейси Edits 777d0482/e209cf3a/9a00f981/7dfecd94: "двічі написав той
+        // самий текст" — n_confirm тут і "Ваше замовлення в роботі" нижче, з тим самим ТТН, за
+        // секунди одне за одним): ctx.postOrderMsgAt раніше ставився лише в самій "post order"
+        // гілці, тож перший-же наступний хід після confirm (як от повторна доставка того самого
+        // вебхука від Zernio) бачив since=Infinity і одразу дублював підтвердження. Стартуємо
+        // 30-хвилинний кулдаун тут, у момент реального підтвердження.
+        ctx.postOrderMsgAt = Date.now();
     }
     return 'done';
 }

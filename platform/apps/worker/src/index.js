@@ -92,6 +92,14 @@ async function checkInactiveSessions() {
         // Broad cutoff — per-session timing is checked individually below
         const broadCutoff = new Date(Date.now() - 20 * 60 * 60 * 1000); // min 20h
 
+        // 2026-09-21 (живий інцидент: platform-worker валився з "JavaScript heap out of memory"
+        // безперервно кожні ~2 хв, 1867 перезапусків за 3 доби) — цей запит НІКОЛИ не мав ліміту
+        // take, а сесій, що підпадають під "неактивна 20+ год і не completed/unsubscribed",
+        // накопичилось 12 028 (майже жоден funnel не переводить сесію в completed явно, тож пул
+        // росте вічно). orderBy lastActive:'desc' і так вже пріоритезує НАЙСВІЖІШІ "застряглі"
+        // сесії — take просто ріже хвіст із місяців-давніх сесій, яким follow-up вже не потрібен.
+        // Той самий патерн take, що вже є в resetStaleOrCompletedSessions/checkZernioReminders/
+        // cleanupOldLogs у цьому ж файлі — тут його просто забули додати.
         const staleSessions = await db.session.findMany({
             where: {
                 isActive: true,
@@ -104,6 +112,7 @@ async function checkInactiveSessions() {
                 bot: { select: { id: true, name: true } },
             },
             orderBy: { lastActive: 'desc' },
+            take: 500,
         });
 
         // Dedup: only 1 follow-up per (userId, botId) pair per run

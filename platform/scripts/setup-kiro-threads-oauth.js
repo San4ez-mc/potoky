@@ -4,8 +4,9 @@
 // Run ONCE on the server via: node setup-kiro-threads-oauth.js
 // Deletes itself afterwards is NOT done automatically — remove manually after verifying.
 
-require('dotenv').config({ path: __dirname + '/.env' });
-const { callTool } = require('./apps/mcp/src/tools-flows.js');
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+const { callTool } = require('../apps/mcp/src/tools-flows.js');
 
 const PUBLISH_THREADS_BOT_ID = 'cacaf5fb-6ac4-4c34-9a3f-a5a31bbea55c';
 const TELEGRAM_CONNECTOR_ID = 'eb411228-6318-4e15-8ddb-286d3776fe8b'; // "Контент бот"

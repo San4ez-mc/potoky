@@ -447,9 +447,22 @@ async function enforceInsistLimit(A) {
  * через KB цього ходу (A._questionEngaged лишився falsy) — відповідаємо тут, все одно повертаючи
  * в скрипт те, що каскад уже вирішив сказати (A.out), а якщо каскад взагалі нічого не сказав
  * (порожній A.out) — реконструюємо продовження з ctx.agent.lastAsk, щоб клієнт ніколи не отримав
- * повну тишу. Під час handoff/паузи (менеджера вже покликано) фолбек НЕ втручається. */
+ * повну тишу. Під час handoff/паузи (менеджера вже покликано) фолбек НЕ втручається.
+ *
+ * 2026-09-22 (живі скріни власника — Maxim Hodak/Vlad Kravchuk/Artem Demianenko/sanya_okstenti
+ * та ін.: картка товару (present()) уже містить ціну, кольори, розміри і закінчується проханням
+ * зросту/ваги — а якщо повідомлення клієнта, що показало картку, САМЕ ПО СОБІ містило питання
+ * (напр. "яка ціна?", прийшло разом із фото/постом), universalQuestionFallback бачив
+ * u.questions.length і A._questionEngaged=falsy (present() його не ставить) і ДОДАВАВ ще одне
+ * повідомлення — переказ тієї самої ціни СВОЇМИ словами і ПОВТОРНЕ "підкажіть зріст і вагу" з
+ * ctx.agent.lastAsk, який present() щойно виставив тим самим текстом. Той самий принцип, що вже
+ * застосований для розділу "4. Розмір" і секції "3. Комплект" (A.justPresented — картка вже все
+ * сказала, вдруге не питаємо) — тут його не було. Картка не завжди покриває геть усе, що міг
+ * запитати клієнт, але власник послідовно (в кожному з цих кейсів) просив саме "нічого не
+ * дописувати поверх щойно показаної картки", а не намагатись вгадати, чи компенсувати рідкісний
+ * пропуск. */
 async function universalQuestionFallback(A, u) {
-    if (!u || !u.questions || !u.questions.length || A._questionEngaged || A.ctx.funnelPaused) return;
+    if (!u || !u.questions || !u.questions.length || A._questionEngaged || A.ctx.funnelPaused || A.justPresented) return;
     const { ctx } = A;
     let kb = []; try { kb = await T.kbContext(A); } catch (e) { /* best-effort */ }
     const textItems = A.out.filter((o) => o.text);

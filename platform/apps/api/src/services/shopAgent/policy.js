@@ -934,7 +934,7 @@ async function runPolicyInner(A, u) {
         const gaveAddress = !!(u.phone || u.city || u.branch || u.fullName);
         if (u.ready === 'yes' || gaveAddress || u.payMethod || answeringUpsellClarify) {
             const addUpsellFinal = answeringUpsellClarify ? !upsellExplicitNo : !!u.addUpsell;
-            ctx.orderIntent = { ready: 'yes', addUpsell: addUpsellFinal, upsellQty: u.upsellQty || upsellQtyFallback || undefined, upsellNote: u.upsellNote || (answeringUpsellClarify && addUpsellFinal ? text : undefined), units: u.units || undefined, qty: u.qty || undefined, extras: undefined, extraProducts: undefined };
+            ctx.orderIntent = { ready: 'yes', addUpsell: addUpsellFinal, upsellQty: u.upsellQty || upsellQtyFallback || undefined, upsellNote: u.upsellNote || (answeringUpsellClarify && addUpsellFinal ? text : undefined), upsellUnits: u.upsellUnits || undefined, units: u.units || undefined, qty: u.qty || undefined, extras: undefined, extraProducts: undefined };
             if (gaveAddress) { ctx.orderIntent.prefill = { fullName: u.fullName || undefined, phone: u.phone || undefined, city: u.city || undefined, branch: u.branch || undefined, region: u.region || undefined }; await T.orderPrefill(A); }
             if (pp.upsell && u.addUpsell == null && u.ready === 'yes' && ctx.agent.upsellOffered && !u.upsellNote && !gaveAddress && !u.payMethod && !answeringUpsellClarify) {
                 // згода без відповіді на допродаж — одне уточнення

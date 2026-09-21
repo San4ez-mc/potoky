@@ -14,7 +14,8 @@ const SCHEMA = `{
  "color": "<колір словами клієнта>"|null, "colorMatched": "<точна назва зі СПИСКУ КОЛЬОРІВ товару або null>", "qty": number|null,
  "units": [{"color":"...","size":"..."}]|null,
  "setChoice": "set|item"|null, "setArticle": "<артикул компонента зі списку>"|null,
- "ready": "yes|no"|null, "addUpsell": true|false|null, "upsellQty": number|null, "upsellNote": "<колір/розмір допродажу>"|null,
+ "ready": "yes|no"|null, "addUpsell": true|false|null, "upsellQty": number|null, "upsellNote": "<колір/розмір допродажу — вільним текстом, для менеджера>"|null,
+ "upsellUnits": [{"color":"...","size":"..."}]|null,
  "extraProducts": "<інші товари, які хоче додати: назва/артикул, колір, розмір, кількість>"|null, "alsoWants": "<те саме, якщо згадано мимохідь>"|null,
  "removeItem": "<хоче ПРИБРАТИ конкретну позицію з комплекту/замовлення — назви її словами клієнта: категорія/назва/артикул, напр. 'взуття', 'лофери', 'джинси'>"|null,
  "addItem": "<хоче ДОДАТИ позицію (повернути прибрану зі складу комплекту, або зовсім новий товар) — назва/артикул, колір, розмір, кількість>"|null,
@@ -38,6 +39,7 @@ const RULES = `ПРАВИЛА РОЗБОРУ:
 - payMethod: «1», «часткова», «наложка/накладений/при отриманні», «200» → cod; «2», «повна», «повністю», «передоплата», «по передоплаті», «зараз всю суму» → full. Питання «а можна накладеним?» без вибору → payMethod null + questions.
 - prepaymentObjection: клієнт відмовляється платити 200 грн наперед / не довіряє / «тільки при отриманні, без передоплати» / «звідки я знаю, що не обманете». trustPromise: після питання «обіцяєте прийти на пошту?» — так/обіцяю → true, ні → false.
 - Відмова лише від ДОПРОДАЖУ («футболка не потрібна», «без футболки», «тільки бомбер») → addUpsell=false, ready НЕ "no" (це не відмова від замовлення; якщо при цьому є згода — ready "yes").
+- 2026-09-21 (живий баг: "Футболки він вміє оформляти тільки чорні і тільки С розміру" — колір/розмір допродажу йшли ЛИШЕ вільним текстом у upsellNote, система постачальника не мала структурованих даних і мовчки бралась перший варіант з каталогу): коли клієнт називає конкретний колір/розмір допродажу («чорну», «білу M», «одна біла і одна чорна») — ОБОВ'ЯЗКОВО заповнюй ще й upsellUnits, той самий формат, що й units для основного товару: одна одиниця допродажу → [{"color":"Чорний"}], дві РІЗНІ → [{"color":"Білий"},{"color":"Чорний"}]. upsellNote лишається як є (текст для менеджера), upsellUnits — для автоматичного оформлення постачальнику. Колір/розмір допродажу НЕ названо (просто «додайте», «так») → upsellUnits не заповнюй.
 - Склад КОМПЛЕКТУ, коли товар у розмові — комплект: «без взуття/лоферів», «джинси не треба», «приберіть Х» → removeItem="X". «Додайте ще джинси», «а поверніть взуття», «і лофери теж» → addItem="X". «Джинси хочу чорні замість синіх», «дві футболки» → changeRequest з назвою позиції. Це НЕ те саме, що addUpsell/alsoWants (ті — для допродажу/товарів ПОЗА комплектом, коли товар НЕ комплект).
 - ready "yes": явна згода оформити («так», «давайте», «оформляйте», «беру», «+», «ок» у відповідь на «Оформляємо?»); також якщо клієнт одразу шле дані доставки. "no" — явна відмова. Вагання («подумаю», «пізніше») → intent hesitate/postpone, ready null.
 - Дані доставки: phone — 10 цифр з 0 (прибери +38, пробіли, дефіси); fullName — 2–3 слова прізвище/імʼя; branch — число (1–3 цифри = відділення, 4+ = поштомат: пиши «поштомат 12345»).
@@ -113,7 +115,7 @@ async function understand(A) {
         return { intent: 'other', questions: [], _error: e.message };
     }
     const u = extractJson(raw) || { intent: 'other' };
-    for (const k of ['height', 'weight', 'clothingSize', 'chest', 'footLength', 'waist', 'color', 'colorMatched', 'qty', 'units', 'setChoice', 'setArticle', 'ready', 'addUpsell', 'upsellQty', 'upsellNote', 'extraProducts', 'alsoWants', 'removeItem', 'addItem', 'changeRequest', 'payMethod', 'country', 'trustPromise', 'fullName', 'phone', 'city', 'region', 'branch', 'paymentMethodChange', 'receiptLink']) if (u[k] === undefined) u[k] = null;
+    for (const k of ['height', 'weight', 'clothingSize', 'chest', 'footLength', 'waist', 'color', 'colorMatched', 'qty', 'units', 'setChoice', 'setArticle', 'ready', 'addUpsell', 'upsellQty', 'upsellNote', 'upsellUnits', 'extraProducts', 'alsoWants', 'removeItem', 'addItem', 'changeRequest', 'payMethod', 'country', 'trustPromise', 'fullName', 'phone', 'city', 'region', 'branch', 'paymentMethodChange', 'receiptLink']) if (u[k] === undefined) u[k] = null;
     for (const k of ['belly', 'prepaymentObjection', 'homeAddress', 'wantsManualReq', 'wantsCard', 'claimsPaid', 'wantsSizeChart', 'wantsPhoto', 'wantsUpsellPhoto', 'wantsHuman', 'isComplaint', 'returnRequest', 'statusQuestion']) u[k] = !!u[k];
     u.intent = u.intent || 'other';
     u.questions = Array.isArray(u.questions) ? u.questions.filter((q) => q && String(q).trim()).map(String) : [];

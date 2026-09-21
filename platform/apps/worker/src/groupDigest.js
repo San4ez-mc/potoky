@@ -102,7 +102,7 @@ function buildPrompt(kind, team, talk) {
     ].join('\n');
 }
 
-async function runForBot(bot, kind) {
+async function runForBot(bot, kind, forced = false) {
     const keys = await loadKeys(bot.id);
     if (!/^(1|true|on|yes)$/i.test(keys.DIGEST_ENABLED || '')) return;
 
@@ -114,7 +114,9 @@ async function runForBot(bot, kind) {
     const today = kyivDateStr();
     if (state[kind] === today) return;
 
-    if (kind === 'weekly') {
+    // Примусовий запуск (перевірка вручну) не чекає пʼятниці: інакше тижневе
+    // зведення можна було б перевірити лише раз на тиждень.
+    if (kind === 'weekly' && !forced) {
         const wanted = Number(keys.DIGEST_WEEKDAY) >= 0 ? Number(keys.DIGEST_WEEKDAY) : DEFAULT_WEEKLY_DAY;
         if (kyivNow().getUTCDay() !== wanted) return;
     }
@@ -172,7 +174,7 @@ async function runDigests({ force = null } = {}) {
         });
         for (const bot of bots.filter((b) => b.settings?.groupMode?.enabled === true)) {
             for (const kind of (force ? [force] : ['daily', 'weekly'])) {
-                await runForBot(bot, kind).catch((err) =>
+                await runForBot(bot, kind, Boolean(force)).catch((err) =>
                     logger.warn('[groupDigest] бот пропущено', { botId: bot.id, kind, error: err.message }));
             }
         }

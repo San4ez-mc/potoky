@@ -59,8 +59,28 @@ function buildLines(ctx) {
     if (ctx.orderIntent && ctx.orderIntent.addUpsell) {
         const up = ((ctx.product && ctx.product.upsellItems) || [])[0];
         if (up) {
+            // 2026-09-21 (живий баг власника: "Футболки він вміє оформляти тільки чорні і тільки
+            // С розміру" — color/size тут завжди були порожніми рядками, незалежно від того, що
+            // клієнт назвав; постачальник мовчки брав перший варіант з каталогу). upsellUnits (той
+            // самий формат units, з understand.js) групуються по color+size так само, як основний
+            // товар вище, і кожна група стає ОКРЕМИМ рядком — інакше "1 біла + 1 чорна" не можна
+            // було б передати постачальнику взагалі (одна позиція, один колір на всю кількість).
             const qty = Number(ctx.upsellQty || ctx.orderIntent.upsellQty) || 1;
-            lines.push({ sku: up.sku, id: up.id, name: up.name, price: Number(ctx.upsellSum) ? Number(ctx.upsellSum) / qty : (Number(up.price) || 0), qty, color: '', size: '', supplierName: '', supplierArticle: up.supplierArticle || '', isUpsell: true });
+            const total = Number(ctx.upsellSum) || (Number(up.price) || 0) * qty;
+            const rawUnits = (Array.isArray(ctx.orderIntent.upsellUnits) && ctx.orderIntent.upsellUnits.length)
+                ? ctx.orderIntent.upsellUnits
+                : Array.from({ length: qty }, () => ({ color: '', size: '' }));
+            const groups = [];
+            for (const u of rawUnits) {
+                const c = String((u && u.color) || '').trim(); const s = String((u && u.size) || '').trim();
+                const g = groups.find((x) => x.color === c && x.size === s);
+                if (g) g.qty += 1; else groups.push({ color: c, size: s, qty: 1 });
+            }
+            const totalUnits = groups.reduce((s, g) => s + g.qty, 0) || 1;
+            const perUnitPrice = total / totalUnits;
+            for (const g of groups) {
+                lines.push({ sku: up.sku, id: up.id, name: up.name, price: perUnitPrice, qty: g.qty, color: g.color, size: g.size, supplierName: '', supplierArticle: up.supplierArticle || '', isUpsell: true });
+            }
         }
     }
     for (const x of (Array.isArray(ctx.orderExtras) ? ctx.orderExtras : [])) {

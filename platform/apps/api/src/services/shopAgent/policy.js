@@ -793,7 +793,16 @@ async function runPolicyInner(A, u) {
             A.out.push({ text: await answerThenAsk(A, u, messageText(A.assets, 'n_agent_soft_decline_size', ctx, A.session.id)), step: 'size_postpone' });
             return;
         } else {
-            if (u.wantsSizeChart && pp.sizeChartUrl && ctx.agent.chartSentFor !== pp.sku) { A.out.push({ photoUrls: [pp.sizeChartUrl], caption: messageText(A.assets, 'n_agent_size_chart_caption', ctx, A.session.id), step: 'size_chart' }); ctx.agent.chartSentFor = pp.sku; }
+            // 2026-09-22 (живий кейс bf149a35: "два рази написало" — фото сітки з підписом "Ось
+            // розмірна сітка" ПЛЮС окремий текст "Звісно, надсилаю розмірну сітку окремим фото"
+            // ПЛЮС ще прохання зросту/ваги — три висловлювання про те саме поспіль). Корінь:
+            // питання клієнта "можна сітку?" все одно йшло в answerThenAsk → compose(), а
+            // compose() чесно "відповідає" на нього своїми словами, не знаючи, що відповідь
+            // (фото з підписом) вже щойно пішла окремим виходом цього ж ходу. Той самий принцип,
+            // що вже застосований для A.justPresented: якщо відповідь ВЖЕ дана (тут — фото),
+            // не даємо compose() дублювати її текстом.
+            const chartJustSent = !!(u.wantsSizeChart && pp.sizeChartUrl && ctx.agent.chartSentFor !== pp.sku);
+            if (chartJustSent) { A.out.push({ photoUrls: [pp.sizeChartUrl], caption: messageText(A.assets, 'n_agent_size_chart_caption', ctx, A.session.id), step: 'size_chart' }); ctx.agent.chartSentFor = pp.sku; }
             let colorNote = '';
             if (u.color && !u.colorMatched && colorsOf(pp)) { ctx.agent.wantColorRaw = u.color; colorNote = messageText(A.assets, 'n_agent_color_note_mismatch', ctx, A.session.id) + ' '; }
             else if (u.colorMatched) { ctx.agent.colorMatchedNote = u.colorMatched; colorNote = messageText(A.assets, 'n_agent_color_note_matched', ctx, A.session.id) + ' '; }
@@ -809,7 +818,7 @@ async function runPolicyInner(A, u) {
                 if (isHW) { ctx.agent.missingParam = missing; ask = missing ? messageText(A.assets, 'n_agent_ask_size_missing', ctx, A.session.id) : messageText(A.assets, 'n_agent_ask_size_both', ctx, A.session.id); }
                 else { ctx.agent.paramsPromptText = paramsPrompt || 'ваш розмір'; ask = messageText(A.assets, 'n_agent_ask_size_custom', ctx, A.session.id); }
             }
-            A.out.push({ text: await answerThenAsk(A, u, preNote + colorNote + ask), step: 'ask_params' }); ctx.agent.lastAsk = paramsPrompt || 'зріст і вага';
+            A.out.push({ text: chartJustSent ? (preNote + colorNote + ask) : await answerThenAsk(A, u, preNote + colorNote + ask), step: 'ask_params' }); ctx.agent.lastAsk = paramsPrompt || 'зріст і вага';
             return;
         }
     }

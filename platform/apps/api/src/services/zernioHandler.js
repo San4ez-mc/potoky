@@ -1223,20 +1223,31 @@ async function handleIncomingMessage(botId, body) {
     // відправки клієнтом, не час доставки нам) у межах цієї сесії. Наслідок бага без цього
     // фіксу: та сама claude-нода (n_size) виконувалась ДВІЧІ на дублюючому вхідному — клієнт
     // бачив два майже ідентичних повідомлення поспіль ("Є три кольори"/"Доступні три кольори").
-    if (text && msgCreatedAt) {
+    if (text) {
         try {
             const recentSame = await db.message.findMany({
                 where: { sessionId: session.id, role: 'user', content: text, createdAt: { gte: new Date(Date.now() - 4 * 3600 * 1000) } },
-                orderBy: { createdAt: 'desc' }, take: 5, select: { metadata: true },
+                orderBy: { createdAt: 'desc' }, take: 5, select: { metadata: true, createdAt: true },
             });
             const dup = recentSame.find((m) => {
                 const md = m.metadata || {};
                 if (String(md.zernioMessageId || '') === String(zMsgId || '')) return false; // те саме повідомлення (dedup() нижче це й так ловить)
-                const prevCreated = md.channelCreatedAt ? Date.parse(md.channelCreatedAt) : NaN;
-                return Number.isFinite(prevCreated) && Math.abs(prevCreated - msgCreatedAt.getTime()) <= 30 * 1000;
+                if (msgCreatedAt) {
+                    const prevCreated = md.channelCreatedAt ? Date.parse(md.channelCreatedAt) : NaN;
+                    return Number.isFinite(prevCreated) && Math.abs(prevCreated - msgCreatedAt.getTime()) <= 30 * 1000;
+                }
+                // 2026-09-22 (живий кейс 935c5bc0, pavlenko__yana: реферал реклами без валідного
+                // timestamp/msg.id-формату у retry-подіях Zernio — msgCreatedAt лишався null, тож
+                // цей дедуп повністю пропускався, і КОЖЕН retry заново проганявся через
+                // present()+ask-розмір, даючи 2-3 однакових "підкажіть зріст і вагу" поспіль без
+                // жодного нового повідомлення клієнта). Коли канальний час невідомий — фолбек на
+                // НАШ власний час отримання: той самий текст від того самого клієнта за <60с —
+                // майже напевно retry, а не збіг (вузьке вікно, щоб не зловити реальне повторення
+                // фрази клієнтом години потому).
+                return (Date.now() - m.createdAt.getTime()) <= 60 * 1000;
             });
             if (dup) {
-                logger.info('[zernioHandler] retry-duplicate inbound (same text, close channelCreatedAt, different messageId) — ignored', { botId, sessionId: session.id, zernioMessageId: zMsgId, text: text.slice(0, 60) });
+                logger.info('[zernioHandler] retry-duplicate inbound (same text, close arrival) — ignored', { botId, sessionId: session.id, zernioMessageId: zMsgId, text: text.slice(0, 60), viaChannelTime: !!msgCreatedAt });
                 return { ok: true, processed: 0, duplicate: 'zernio_retry' };
             }
         } catch (e) { logger.warn('[zernioHandler] retry-dup check failed: ' + e.message, { botId, sessionId: session.id }); }

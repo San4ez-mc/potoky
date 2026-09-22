@@ -80,6 +80,38 @@ async function searchSerper(query, limit, apiKey) {
     }));
 }
 
+/**
+ * Tavily — пошук для агентів. Резерв на випадок, коли Serper недоступний
+ * (у Digital Hiring реєстрація в Serper не пройшла з українських адрес).
+ *
+ * Оператор site: Tavily в тексті запиту розуміє погано, зате має окремий
+ * фільтр доменів — тому переносимо site: туди, а решту запиту лишаємо як є.
+ * Інакше X-ray «site:linkedin.com/in CMO gambling» повертав би що завгодно.
+ */
+async function searchTavily(query, limit, apiKey) {
+    const domains = [];
+    const q = query.replace(/(^|\s)site:(\S+)/gi, (_, sp, d) => {
+        domains.push(d.replace(/^https?:\/\//, '').split('/')[0]);
+        return sp;
+    }).replace(/\s+/g, ' ').trim();
+    const res = await fetch('https://api.tavily.com/search', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            query: q || query,
+            max_results: Math.min(limit, 20),
+            search_depth: 'basic',
+            ...(domains.length ? { include_domains: [...new Set(domains)] } : {}),
+        }),
+        signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
+    });
+    if (!res.ok) throw new Error(`Tavily ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    const j = await res.json();
+    return (j.results || []).slice(0, limit).map((r) => ({
+        title: r.title || '', url: r.url || '', snippet: String(r.content || '').slice(0, 400),
+    }));
+}
+
 async function searchDuckDuckGo(query, limit) {
     // Саме GET: на POST DDG віддає 202 і сторінку-заглушку (перевірено).
     const res = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
@@ -116,26 +148,35 @@ router.post('/', requireSearchSecret, async (req, res) => {
     const limit = Math.min(Math.max(Number(req.body?.limit) || 10, 1), 20);
     if (!query) return res.status(400).json({ error: 'Поле "query" обовʼязкове' });
 
-    const apiKey = req.get('x-serper-key') || '';
-    let engine = apiKey ? 'serper' : 'duckduckgo';
+    // Порожній шаблон {{env.X}} для відсутнього ключа може прийти як порожній рядок
+    // або як сам шаблон — і те, і те означає «ключа немає».
+    const keyOf = (h) => { const v = (req.get(h) || '').trim(); return v && !v.includes('{{') ? v : ''; };
+    // Порядок: платні рушії за наявності ключа, DuckDuckGo — останній резерв.
+    const engines = [
+        ['serper', keyOf('x-serper-key'), searchSerper],
+        ['tavily', keyOf('x-tavily-key'), searchTavily],
+    ].filter(([, key]) => key);
+    engines.push(['duckduckgo', '', (q, l) => searchDuckDuckGo(q, l)]);
+
+    let engine = '';
     let results = [];
-    try {
-        results = apiKey ? await searchSerper(query, limit, apiKey) : await searchDuckDuckGo(query, limit);
-    } catch (e) {
-        // Serper впав (ліміт/ключ) — не лишаємо агента без результату.
-        if (apiKey) {
-            logger.warn('[websearch] serper failed, fallback to ddg', { error: e.message });
-            try { results = await searchDuckDuckGo(query, limit); engine = 'duckduckgo (fallback)'; }
-            catch (e2) { return res.status(502).json({ error: `Пошук недоступний: ${e2.message}` }); }
-        } else {
-            return res.status(502).json({ error: `Пошук недоступний: ${e.message}` });
+    let lastErr = null;
+    for (const [name, key, fn] of engines) {
+        try {
+            results = await fn(query, limit, key);
+            engine = name === engines[0][0] ? name : `${name} (fallback)`;
+            break;
+        } catch (e) {
+            logger.warn('[websearch] engine failed', { engine: name, error: e.message });
+            lastErr = e;
         }
     }
+    if (!engine) return res.status(502).json({ error: `Пошук недоступний: ${lastErr?.message}` });
 
     logger.info('[websearch] done', { engine, query: query.slice(0, 80), found: results.length, ms: Date.now() - started });
     const body = { query, engine, count: results.length, results };
     if (engine.startsWith('duckduckgo')) {
-        body.note = 'Працює безкоштовний резерв (DuckDuckGo): він витримує лише кілька запитів поспіль. Для стабільного пошуку потрібен ключ Serper у ключах воронки.';
+        body.note = 'Працює безкоштовний резерв (DuckDuckGo): він витримує лише кілька запитів поспіль. Для стабільного пошуку потрібен ключ SERPER_API_KEY або TAVILY_API_KEY у ключах воронки.';
     }
     res.json(body);
 });

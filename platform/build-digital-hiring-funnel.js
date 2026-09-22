@@ -86,7 +86,7 @@ const TOOLS = [
     },
     url: '{{env.WEB_SEARCH_URL}}',
     method: 'POST',
-    headers: { 'X-Serper-Key': '{{env.SERPER_API_KEY}}', 'X-Search-Secret': '{{env.SEARCH_SECRET}}' },
+    headers: { 'X-Serper-Key': '{{env.SERPER_API_KEY}}', 'X-Tavily-Key': '{{env.TAVILY_API_KEY}}', 'X-Search-Secret': '{{env.SEARCH_SECRET}}' },
   },
   {
     name: 'fetch_page',

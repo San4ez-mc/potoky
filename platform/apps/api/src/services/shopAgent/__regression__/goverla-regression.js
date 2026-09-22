@@ -550,7 +550,7 @@ async function main() {
         const { resolveProduct } = require('../tools');
         const A = freshA({ turnText: 'set1112' });
         A.ctx.lastUserMessage = 'артикул set1112';
-        const r = await resolveProduct(A, { forceSignal: true });
+        const r = await resolveProduct(A, { productHint: { article: 'set1112' } });
         const desc = String((A.ctx.product && A.ctx.product.desc) || '');
         const lines = desc.split('\n').map((s) => s.trim()).filter(Boolean);
         const bothStartSame = lines.length > 1 && /^комплект/i.test(lines[0]) && /^комплект/i.test(lines[1]) && lines[0] !== lines[1];

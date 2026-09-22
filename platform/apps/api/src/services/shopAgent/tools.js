@@ -9,6 +9,7 @@ const { db, logger, runNodeCode, nodeCode, nodeData, crmFetch, crmBase, crmHeade
 const { buildAdminAlert } = require('../testSession');
 const { redisClient } = require('../../lib/sessionStore');
 const { getMonoStatement, markConsumed: markMonoConsumed, getConsumedSet: getMonoConsumedSet } = require('@platform/mono-statement');
+const { resolveShoppingIntent } = require('./resolveShoppingIntent');
 
 async function tool(A, nodeId, label) {
     const code = nodeCode(A.assets, nodeId);
@@ -19,52 +20,21 @@ async function tool(A, nodeId, label) {
 }
 
 // ── Товар ─────────────────────────────────────────────────────────────────────────────────────
-/** Повний конвеєр визначення товару: n_route → n_shop_profile → n_prev_match_snapshot → n_signal_check → n_lookup → (підказка каталогу). */
-async function resolveProduct(A, { forceSignal } = {}) {
-    const { ctx, keys } = A;
-    await tool(A, 'n_route');
-    await tool(A, 'n_shop_profile');
-    await tool(A, 'n_prev_match_snapshot');
-    if (forceSignal) ctx.hasFreshSignalThisTurn = true;
-    await tool(A, 'n_signal_check');
-    const hadProduct = !!(ctx.product && ctx.product.sku);
-    const cat = await loadCatalog(A.botId, keys);
-    ctx.lookupProductsRaw = cat.products; ctx.lookupAdsRaw = cat.ads; ctx.lookupCategoriesRaw = cat.categories || [];
-    let status = 'none';
-    if (ctx.hasProductSignal || ctx.catalogHintPick || forceSignal || hadProduct) {
-        delete ctx.productUnknown; delete ctx.productUnknownReason;
-        await tool(A, 'n_lookup');
-        if (ctx.product && ctx.product.sku && !ctx.productUnknown) status = 'found';
-    }
-    if (status !== 'found' && !hadProduct) {
-        // підказка каталогу за категорією/словом (кофта, костюм, ангора, «сірий»…)
-        delete ctx.catalogHintPick;
-        await tool(A, 'n_catalog_hint_prep');
-        if (ctx.catalogHintNeedsFetch) {
-            ctx.catalogHintProductsRaw = cat.products;
-            ctx.catalogHintCategoriesRaw = await loadCategories(A.botId, keys);
-            // 2026-09-15 (живий аудит: клієнти, що описують товар/комплект словами замість
-            // пересилання поста, постійно отримували "перешліть пост" замість списку товарів):
-            // нода зветься 'n_catalog_hint' (сама себе в шапці коду досі називає старою назвою
-            // 'n_catalog_hint_process' з патчу 2026-09-04, звідки й узявся мисматч) — виклик тут
-            // ішов на НЕІСНУЮЧИЙ id, тому весь фільтр/матчинг (зокрема логіка "комплект" — показ
-          // усіх наборів каталогу за словесним описом складу) НІКОЛИ не виконувався: tool()
-            // мовчки повертав {ok:false, error:'no code'}, і catalogHint лишався порожнім.
-            await tool(A, 'n_catalog_hint');
-        }
-        if (ctx.catalogHintPick) {
-            ctx.hasFreshSignalThisTurn = true; ctx.hasProductSignal = true;
-            delete ctx.productUnknown;
-            await tool(A, 'n_lookup');
-            if (ctx.product && ctx.product.sku && !ctx.productUnknown) status = 'found';
-        }
-        if (status !== 'found' && ctx.catalogHint) status = 'hint';
-        if (status !== 'found' && status !== 'hint' && ctx.hasProductSignal) status = 'unknown';
-    } else if (status !== 'found' && hadProduct) {
-        status = ctx.product && ctx.product.sku ? 'kept' : 'unknown';
-    }
-    delete ctx.lookupProductsRaw; delete ctx.lookupAdsRaw; delete ctx.lookupCategoriesRaw; delete ctx.catalogHintProductsRaw; delete ctx.catalogHintCategoriesRaw;
-    return { status, skipPresentation: !!ctx.skipPresentation };
+/**
+ * Повний конвеєр визначення товару: n_route → n_shop_profile → n_prev_match_snapshot →
+ * класифікація сигналу → матчинг (productMatch.js, ex-n_lookup) → reconciliation (cart.js) →
+ * підказка каталогу (catalogHint.js, ex-n_catalog_hint) якщо нічого не знайдено.
+ *
+ * 2026-09-22 перебудова (архітектурний аудит product-recognition, goverla_shop): n_lookup +
+ * n_catalog_hint + n_catalog_hint_prep (DB-string flow-ноди, ~1250 рядків одноразових патчів
+ * за 3 тижні) перенесено в git-tracked productMatch.js/catalogHint.js без зміни алгоритму
+ * матчингу (усі датовані фікси збережено), плюс новий шар — resolveShoppingIntent.js — який
+ * явно вирішує REPLACE_MAIN/ADD_EXTRA/CONFIRM/ASK_REPLACE_OR_ADD замість мовчазного
+ * перезапису `ctx.product`. `u` (розібраний намір з understand.js) тепер обовʼязковий
+ * параметр — ним керується класифікатор сигналу (signal.js).
+ */
+async function resolveProduct(A, u) {
+    return resolveShoppingIntent(A, u || {}, tool);
 }
 
 async function setApply(A) { return tool(A, 'n_set_apply'); }

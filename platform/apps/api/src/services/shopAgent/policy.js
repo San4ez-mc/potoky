@@ -9,6 +9,8 @@ const T = require('./tools');
 const { compose } = require('./compose');
 const { messageText, messageTextMultiline, nodeData, norm, loadCategories } = require('./lib');
 const { dispatchOrder } = require('./supplierDispatch');
+const { hasCategoryWord } = require('./signal');
+const { resolveColorMention } = require('./cart');
 
 // 2026-09-14 (власник: "я взагалі проти будь-якого хардкоду... все в ноди перенеси"): TRUST_STEP1/2,
 // HANDOFF_TEXT та решта клієнтських/менеджерських текстів цього файлу БУЛИ тут як JS-константи —
@@ -585,14 +587,21 @@ async function runPolicyInner(A, u) {
     // випадок" і після resolveProduct перевіряємо, чи не підмінили товар на власний компонент.
     const __setBeforeProduct = ctx.product;
     const __setBeforeSelection = ctx.setSelection;
-    if (!P(ctx) || freshSignal) {
+    // 2026-09-22 (архітектурний аудит product-recognition, критична знахідка): freshSignal вище
+    // визнавав лише пост/рекламу/артикул/фото — гола категорія словами ("а є джинси?", "хочу
+    // кофту чорну") НІКОЛИ не відкривала цю секцію повторно, поки товар уже підтверджено, тож
+    // n_lookup навіть не викликався для таких повідомлень. Дозволяємо категорійне слово теж
+    // відкрити повторний матчинг — АЛЕ тільки до оформлення замовлення (crmOrderId), щоб не
+    // зачепити вже перевірену поведінку "після оформлення — лише хендофф менеджеру" (розділ 1).
+    const categorySignal = !ctx.crmOrderId && hasCategoryWord(text);
+    if (!P(ctx) || freshSignal || categorySignal) {
         if (u.productHint.fromList && ctx.catalogHintSkus) {
             const skus = String(ctx.catalogHintSkus).split(',').map((s) => s.trim()).filter(Boolean);
             const hit = skus.find((s) => s.toLowerCase() === String(u.productHint.fromList).toLowerCase()) || skus.find((s) => String(u.productHint.fromList).toLowerCase().includes(s.toLowerCase()));
             if (hit) ctx.catalogHintPick = hit;
         }
         if (u.productHint.article && !/артикул|арт\.|\b[a-z]\d{3,6}\b/i.test(text)) ctx.lastUserMessage = text + ' артикул ' + u.productHint.article;
-        const r = await T.resolveProduct(A, { forceSignal: !!(ctx.catalogHintPick || u.productHint.article) });
+        const r = await T.resolveProduct(A, u);
         const swappedToOwnSetComponent = r.status === 'found' && __setBeforeProduct && __setBeforeProduct.isSet && Array.isArray(__setBeforeSelection)
             && P(ctx).sku !== __setBeforeProduct.sku && __setBeforeSelection.some((it) => it.article === P(ctx).sku);
         if (swappedToOwnSetComponent) {
@@ -847,6 +856,30 @@ async function runPolicyInner(A, u) {
         }
     }
 
+    // 5c. Корекція кольору ПІСЛЯ того, як він уже обраний (Б2/Б4, архітектурний аудит
+    // product-recognition 2026-09-22): секція 5 вище свідомо НЕ займає colorChoice, якщо він
+    // вже є — пізніша згадка кольору раніше просто ІГНОРУВАЛАСЬ (клієнт передумав, "не чорний,
+    // а графітовий") або десь нижче (перевірка доступності, гілка u.units) перезаписувалась
+    // БЕЗУМОВНО незалежно від релевантності. Тут — звіряємо слово-колір проти РЕАЛЬНОЇ палітри
+    // активного товару тим самим matchColor(), що й секція 5, перш ніж або застосувати як
+    // корекцію, або (не збіглось НІ З ЧИМ відомим — може, це вже про інший товар) чесно
+    // перепитати, а не мовчки ігнорувати чи вгадувати. Multi-unit (кілька кольорів одразу) —
+    // окремий, складніший випадок, свідомо поза межами цього фіксу.
+    if (pp.colors && ctx.colorChoice && ctx.colorChoice.color && !Array.isArray(ctx.colorChoice.colors) && (u.color || u.colorMatched)) {
+        const corrected = matchColor(pp, u.colorMatched || u.color);
+        if (corrected && corrected !== ctx.colorChoice.color) {
+            ctx.colorChoice = { color: corrected, qty: ctx.colorChoice.qty };
+        } else if (!corrected) {
+            const elsewhere = resolveColorMention(ctx, u.colorMatched || u.color);
+            if (!elsewhere) {
+                A.out.push({ text: await answerThenAsk(A, u, 'Уточніть, будь ласка — це колір для «' + (pp.customerName || pp.name || 'товару') + '», чи ви питаєте про щось інше? 😊'), step: 'ask_color_clarify' });
+                return;
+            }
+            // elsewhere.target !== 'main' (допродаж/компонент сету) — свідомо не займаємо тут,
+            // відповідні секції нижче обробляють свій колір самостійно (повне зведення в TODO).
+        }
+    }
+
     // 5b. Комплект цілком: склад — редагований список (ctx.setSelection), не фіксований набір.
     // «Без взуття» / «додайте джинси» / «дві футболки» перераховують склад і суму одразу, без
     // приміток менеджеру (рішення власника 2026-09-14) — доки замовлення ще не в CRM.
@@ -946,7 +979,16 @@ async function runPolicyInner(A, u) {
 
     // 7. Підсумок і згода
     if (!(ctx.orderIntent && ctx.orderIntent.ready === 'yes')) {
-        if ((u.extraProducts || u.alsoWants) && !(pp.isSet && ctx.setMode === 'set')) { ctx.extraProductMention = u.extraProducts || u.alsoWants; await T.extraResolve(A); }
+        // 2026-09-22 (архітектурний аудит product-recognition, Д1-Д4): раніше "інший товар
+        // мимохідь" розпізнавався ЛИШЕ через u.extraProducts/u.alsoWants (окреме LLM-поле
+        // understand.js). resolveShoppingIntent.js тепер додає ще один, детермінований шлях —
+        // фото/артикул ІНШОГО товару зі словом-зв'язкою "і ще"/"також" (ADD_EXTRA-рішення
+        // reconcile()) — ставить ctx.extraProductMention НАПРЯМУ. Той самий T.extraResolve()
+        // (уже перевірений, реально резолвить у офер/ціну), просто ще одне джерело сигналу.
+        if ((u.extraProducts || u.alsoWants || ctx.extraProductMention) && !(pp.isSet && ctx.setMode === 'set')) {
+            if (!ctx.extraProductMention) ctx.extraProductMention = u.extraProducts || u.alsoWants;
+            await T.extraResolve(A);
+        }
         // 2026-09-15 (живий кейс, власник: "бот не поняв, які я хочу футболки, це баг") — відповідь
         // САМЕ на наше запитання n_agent_upsell_clarify ("з допродажем чи без") могла бути ГОЛИМ
         // кольором+кількістю ("Чорні, 2") без слова "так" — u.ready лишався не 'yes', тому вся

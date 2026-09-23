@@ -82,6 +82,9 @@ async function resolveShoppingIntent(A, u, tool) {
         // REPLACE_MAIN / SET_MAIN: matchProduct() уже виставив ctx.product — нічого додатково не треба.
     }
 
+    // Головний товар визначено не зі списку — старий список підказок більше не актуальний (інакше
+    // «першу» пізніше мапиться на застарілий перелік).
+    if (status === 'found' && !signal.catalogListPick) ctx.catalogHintSkus = '';
     const keptOnPurpose = decision.action === 'ADD_EXTRA' || decision.action === 'ASK_REPLACE_OR_ADD';
     // ADD_EXTRA/ASK_REPLACE_OR_ADD: кандидата вже знайдено й свідомо не зроблено головним — повторно
     // шукати підказку за тим самим текстом не можна (FunnelTest 2: «так, першу» → куртка D0005).

@@ -207,7 +207,7 @@ async function createTestFromSession(sessionId, { name, expectedOutcome, connect
 
 // ── Runner ───────────────────────────────────────────────────────────────────
 
-function buildJudgePrompt({ test, transcript, nodeQaEntries }) {
+function buildJudgePrompt({ test, transcript, nodeQaEntries, stateText }) {
     const transcriptText = transcript
         .map((m) => `${m.role === 'user' ? 'КЛІЄНТ' : 'БОТ'}: ${m.content}`)
         .join('\n');
@@ -232,6 +232,9 @@ function buildJudgePrompt({ test, transcript, nodeQaEntries }) {
         '',
         '=== ТРАНСКРИПЦІЯ ДІАЛОГУ ===',
         transcriptText || '(порожньо — бот жодного разу не відповів)',
+        '',
+        '=== ФІНАЛЬНИЙ СТАН ЗАМОВЛЕННЯ У СИСТЕМІ (структуровані дані, клієнт їх не бачить; джерело правди про те, що реально зафіксовано) ===',
+        stateText || '(немає)',
         '',
         '=== НОДИ З ВЛАСНИМИ QA-ОЧІКУВАННЯМИ, ВІДВІДАНІ ПІД ЧАС ЦЬОГО ПРОГОНУ ===',
         nodeQaText,
@@ -293,7 +296,27 @@ async function runTest(testId) {
 
         const transcript = finalSession.messages
             .filter((m) => (m.role === 'user' || m.role === 'assistant') && !(m.metadata && m.metadata.hidden))
-            .map((m) => ({ role: m.role, content: m.content }));
+            .map((m) => {
+                // Фото бота (метадані attachment) без тексту раніше виглядали для судді як порожній рядок —
+                // і він вирішував, що бот «обіцяв сітку, але не надіслав».
+                const att = m.metadata && m.metadata.attachment;
+                if (m.role === 'assistant' && att) {
+                    const n = Array.isArray(att.urls) ? att.urls.length : (Array.isArray(att.photoUrls) ? att.photoUrls.length : 1);
+                    return { role: m.role, content: '[бот надіслав фото ×' + n + (m.content ? ' з підписом: ' + m.content : '') + ']' };
+                }
+                return { role: m.role, content: m.content };
+            });
+        // Знімок стану замовлення (структура, якої клієнт не бачить у тексті): судді треба знати, що РЕАЛЬНО
+        // зафіксовано — позиції, кольори допродажу, суми, адреса — а не лише що бот сказав.
+        const c = finalSession.context || {};
+        const stateText = JSON.stringify({
+            crmOrderId: c.crmOrderId, payment: c.paymentInfo, payAmount: c.payAmount, payStatus: c.payStatus,
+            mainProduct: c.product && { sku: c.product.sku, name: c.product.customerName || c.product.name, isSet: c.product.isSet, setItems: Array.isArray(c.product.setItems) ? c.product.setItems.map((i) => i.article) : undefined },
+            colorChoice: c.colorChoice, recommendedSize: c.recommendedSize,
+            setSelection: Array.isArray(c.setSelection) ? c.setSelection.map((i) => ({ article: i.article, color: i.color, size: i.size, qty: i.qty, price: i.price })) : undefined,
+            orderIntent: c.orderIntent && { addUpsell: c.orderIntent.addUpsell, upsellQty: c.orderIntent.upsellQty, upsellUnits: c.orderIntent.upsellUnits },
+            orderUnits: c.orderUnits, orderTotal: c.orderTotal, orderData: c.orderData,
+        });
 
         const allTraces = finalSession.context?.flowRuntime?.nodeTraces || [];
         const nodeQaEntries = [];
@@ -316,7 +339,7 @@ async function runTest(testId) {
         if (!apiKey) {
             verdict = { passed: false, reasoning: 'Немає доступного Claude API ключа для судді тесту (ні обраний конектор, ні системний ключ).', failingNodeId: null, nodeVerdicts: [] };
         } else {
-            const { system, user } = buildJudgePrompt({ test, transcript, nodeQaEntries });
+            const { system, user } = buildJudgePrompt({ test, transcript, nodeQaEntries, stateText });
             const raw = await callClaude({
                 sessionId: null,
                 systemPrompt: system,

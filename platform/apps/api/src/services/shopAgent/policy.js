@@ -632,7 +632,14 @@ async function runPolicyInner(A, u) {
         const r = await T.resolveProduct(A, u);
         const swappedToOwnSetComponent = r.status === 'found' && __setBeforeProduct && __setBeforeProduct.isSet && Array.isArray(__setBeforeSelection)
             && P(ctx).sku !== __setBeforeProduct.sku && __setBeforeSelection.some((it) => it.article === P(ctx).sku);
-        if (swappedToOwnSetComponent) {
+        // 2026-09-23 (FunnelTest 4, вхід з реклами): реклама щоразу повертає ПОВНИЙ комплект, і він
+        // перезаписував уже звужену вибірку («лише кофта і джинси») — розмір питали по всіх 4 позиціях.
+        const setNarrowedLost = r.status === 'found' && __setBeforeProduct && __setBeforeProduct.isSet && ctx.product && ctx.product.isSet
+            && ctx.product.sku === __setBeforeProduct.sku && Array.isArray(ctx.setSelection) && Array.isArray(__setBeforeProduct.setItems)
+            && Array.isArray(ctx.product.setItems) && __setBeforeProduct.setItems.length < ctx.product.setItems.length;
+        if (setNarrowedLost) {
+            ctx.product = __setBeforeProduct;
+        } else if (swappedToOwnSetComponent) {
             // Повертаємо комплект як активний товар і НІЧОГО не скидаємо — далі хід обробить
             // секція комплекту (5b) так само, якби productHint не спрацював.
             ctx.product = __setBeforeProduct;

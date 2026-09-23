@@ -1099,6 +1099,27 @@ async function runPolicyInner(A, u) {
         if (ctx.paymentInfo && ctx.paymentInfo.method) { ctx.orderRef = ''; await T.payAmount(A); await sendRequisites(A, u); return; }
     }
 
+    // 7c. Адресна доставка Новою Поштою (рішення власника 2026-09-23: вона існує, але дуже рідкісна —
+    //     система не ігнорує «привезіть додому» і не трактує як відділення мовчки, а перепитує, чи
+    //     правильно зрозуміла; після підтвердження передає менеджеру, який уточнює умови й оформлює).
+    if (!ctx.crmOrderId) {
+        const odH = ctx.orderData || {};
+        if (ctx.agent.lastAsk === 'адресна доставка Новою Поштою?') {
+            const yes = u.ready === 'yes' || /^\s*(так|да|ага|угу|вірно|правильно|саме\s+так|підтверджую)/i.test(text);
+            if (yes && !u.branch && !u.homeAddress) {
+                await pause(A, 'home_delivery', 'n_agent_post_extra_admin', '🏠 Клієнт підтвердив АДРЕСНУ доставку Новою Поштою: «' + String(ctx.agent.homeAddressRaw || '').slice(0, 300) + '». Потрібно уточнити умови й оформити вручну.');
+                A.out.push({ text: 'Дякую, підтвердили 🙏 Адресну доставку Новою Поштою уточнить і оформить менеджер — напише вам тут найближчим часом 💛', step: 'home_delivery_handoff' });
+                ctx.agent.lastAsk = '';
+                return;
+            }
+        } else if (u.homeAddress && !u.branch && !odH.branch) {
+            ctx.agent.homeAddressRaw = text;
+            A.out.push({ text: await answerThenAsk(A, u, 'Правильно розумію, що вам потрібна адресна доставка Новою Поштою за вказаною адресою (не у відділення)? Якщо так — напишіть «так», а якщо зручніше у відділення чи поштомат — надішліть його номер 🙂'), step: 'home_delivery_confirm' });
+            ctx.agent.lastAsk = 'адресна доставка Новою Поштою?';
+            return;
+        }
+    }
+
     // 8. Спосіб оплати (якщо клієнт саме зараз надсилає дані доставки частинами — спершу дозбираємо адресу)
     const givingAddressNow = !!(u.phone || u.fullName || u.city || u.branch || u.region) && !addressComplete(ctx.orderData);
     if (!(ctx.paymentInfo && ctx.paymentInfo.method) && givingAddressNow && !u.payMethod && !u.prepaymentObjection) {

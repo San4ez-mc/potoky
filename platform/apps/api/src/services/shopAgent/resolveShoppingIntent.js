@@ -62,6 +62,8 @@ async function resolveShoppingIntent(A, u, tool) {
         const candidate = ctx.product;
         if (hadProduct) {
             decision = reconcile(beforeProduct, candidate, signal, ctx);
+            if (ctx.hintAddsExtra && signal.catalogListPick && decision.action === 'REPLACE_MAIN') decision = { action: 'ADD_EXTRA' };
+            if (signal.catalogListPick) delete ctx.hintAddsExtra;
         }
         if (decision.action === 'ADD_EXTRA' || decision.action === 'ASK_REPLACE_OR_ADD') {
             // Кандидат НЕ стає активним товаром — відкочуємо ВЕСЬ ctx до стану перед матчингом,
@@ -98,7 +100,12 @@ async function resolveShoppingIntent(A, u, tool) {
             if (ctx.product && ctx.product.sku && !ctx.productUnknown) status = 'found';
         }
         if (status !== 'found' && ctx.catalogHint) {
-            status = 'hint'; // список показано — клієнт сам обере, ctx.product свідомо лишається порожнім на цей хід
+            // 2026-09-23 (FunnelTest 2: «і ще футболку» показувало список і СТИРАЛО головний товар —
+            // далі бот питав «що вас цікавить» на дані доставки). Список показано, але вже
+            // підтверджений товар лишається активним; вибір зі списку далі піде через reconcile
+            // (а якщо клієнт просив «і ще…» — як додатковий, а не заміна).
+            status = 'hint';
+            if (productBeforeHint) { ctx.product = productBeforeHint; ctx.hintAddsExtra = signal.connective === 'add'; }
         } else if (status !== 'found') {
             // Підказка теж нічого не дала — повертаємо раніше підтверджений товар, не втрачаємо його.
             if (productBeforeHint) ctx.product = productBeforeHint;

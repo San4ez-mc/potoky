@@ -530,6 +530,20 @@ async function runPolicyInner(A, u) {
             await sendManualRequisites(A, true);
             return;
         }
+        // 2026-09-23 (FunnelTest 11, відтворено): замовлення в CRM створюється ще ДО оплати, тож
+        // «а можна краще повну передплату?» після видачі посилання потрапляло сюди й бот мовчав.
+        // Оплата ще не підтверджена і постачальнику не пішло — спокійно перемикаємо спосіб і
+        // перевидаємо реквізити; інакше (уже сплачено/відправлено) — передаємо менеджеру.
+        if (u.paymentMethodChange && ctx.paymentInfo && u.paymentMethodChange !== ctx.paymentInfo.method) {
+            const canSwitch = ctx.payStatus !== 'confirmed' && !ctx.supplierHandled;
+            await T.alert(A, 'n_agent_post_extra_admin', { details: '💳 Клієнт просить змінити спосіб оплати на «' + (u.paymentMethodChange === 'full' ? 'повна передплата' : 'передплата 200 + накладений') + '»' + (canSwitch ? ' (бот перевидав реквізити, замовлення ' + (ctx.crmOrderId || '') + ' — перевірте суму в CRM)' : ' — оплата вже підтверджена/замовлення передано, потрібна ваша участь') + '. 💬 «' + text.slice(0, 200) + '»' });
+            if (canSwitch) {
+                ctx.paymentInfo = { ...ctx.paymentInfo, method: u.paymentMethodChange }; ctx.orderRef = ''; await T.payAmount(A); await sendRequisites(A, u);
+            } else {
+                A.out.push({ text: messageText(A.assets, 'n_agent_post_extra_ack', ctx, A.session.id), step: 'post_extra' });
+            }
+            return;
+        }
         if (u.extraProducts || u.alsoWants) {
             A.out.push({ text: messageText(A.assets, 'n_agent_post_extra_ack', ctx, A.session.id), step: 'post_extra' });
             ctx.agent.orderRefDisplay = ctx.orderRef || ctx.crmOrderId;
@@ -1052,6 +1066,17 @@ async function runPolicyInner(A, u) {
             A.out.push({ text: txt, step: 'order_intent' });
             ctx.agent.lastAsk = 'оформляємо?'; return;
         }
+    }
+
+    // 7b. Колір/кількість допродажу, названі ПІЗНІШЕ за підсумок (FunnelTest 9: бот спитав спосіб
+    //     оплати, клієнт відповів «одна біла і одна чорна футболка» — orderIntent уже був
+    //     зафіксований без цих даних, вони губились, і в замовленні лишалась 1 футболка без кольору).
+    if (ctx.orderIntent && ctx.orderIntent.addUpsell && !ctx.crmOrderId && (u.upsellUnits || u.upsellQty || u.upsellNote)) {
+        const oi = ctx.orderIntent;
+        if (u.upsellUnits) oi.upsellUnits = u.upsellUnits;
+        if (u.upsellQty) oi.upsellQty = u.upsellQty;
+        if (u.upsellNote) oi.upsellNote = u.upsellNote;
+        if (ctx.paymentInfo && ctx.paymentInfo.method) { ctx.orderRef = ''; await T.payAmount(A); await sendRequisites(A, u); return; }
     }
 
     // 8. Спосіб оплати (якщо клієнт саме зараз надсилає дані доставки частинами — спершу дозбираємо адресу)

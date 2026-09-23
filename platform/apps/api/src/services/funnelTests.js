@@ -20,6 +20,39 @@
 const { db } = require('@platform/db');
 const { callClaude } = require('@platform/claude');
 const { startTestSession, sendTestTurn, endTestSession } = require('./testSession');
+const shopAgent = require('./shopAgent');
+
+/**
+ * Один хід клієнта для бота на shopAgent: пишемо повідомлення клієнта в сесію так, як це
+ * робить zernioHandler (пост → "[переслав post] підпис", фото → "[фото]"), кладемо в
+ * контекст реферал реклами, і викликаємо shopAgent.handleTurn (він сам пише відповіді бота
+ * в БД і поважає testMode для сесій із isTest).
+ */
+async function runAgentTurn({ botId, sessionId, step }) {
+    let text = step.text || '';
+    if (step.sharedPost) {
+        const sp = step.sharedPost;
+        const shared = '[переслав ' + (sp.kind || 'post') + '] ' + String(sp.caption || '').slice(0, 4000);
+        text = text ? shared + '\n' + text : shared;
+    } else if (step.imageUrl && !text) text = '[фото]';
+
+    const adId = step.entryAdId || (step.referral && step.referral.adId) || null;
+    if (step.referral) {
+        const s = await db.session.findUnique({ where: { id: sessionId }, select: { context: true } });
+        const ctx = { ...(s && s.context ? s.context : {}), lastReferral: { ads_context_data: { ad_title: step.referral.adTitle || '' }, ...step.referral }, adTitle: step.referral.adTitle || '' };
+        await db.session.update({ where: { id: sessionId }, data: { context: ctx } });
+    }
+
+    await db.message.create({
+        data: {
+            sessionId,
+            role: 'user',
+            content: text || '',
+            metadata: { source: 'test', ...(step.imageUrl ? { imageUrl: step.imageUrl } : {}), ...(step.sharedPost ? { sharedPost: step.sharedPost } : {}), ...(step.referral ? { referral: step.referral } : {}) },
+        },
+    });
+    await shopAgent.handleTurn({ botId, sessionId, text, imageUrl: step.imageUrl || undefined, sharedPost: step.sharedPost || undefined, entryAdId: adId || undefined });
+}
 
 function normalizeStep(step) {
     return {
@@ -221,9 +254,15 @@ async function runTest(testId) {
 
         const steps = Array.isArray(test.steps) ? test.steps : [];
         const firstStepIsRaw = steps[0] && steps[0].type === 'text';
+        // 2026-09-23: боти на shopAgent v2 (SHOP_AGENT_V2=1) у проді відповідають через
+        // shopAgent.handleTurn (zernioHandler), а НЕ через граф flow-двигуна — раніше тест
+        // ганяв стару графову гілку, яку клієнти вже не бачать. Для таких ботів тест іде
+        // ТИМ САМИМ шляхом, що й живий клієнт (без привітання-preran: у живому каналі бот
+        // мовчить, доки клієнт не напише першим).
+        const agentMode = await shopAgent.isAgentBot(test.botId).catch(() => false);
         const started = await startTestSession({
             botId: test.botId,
-            contextOverride: firstStepIsRaw ? {} : { noPrerun: true },
+            contextOverride: (agentMode || !firstStepIsRaw) ? { noPrerun: true } : {},
         });
 
         const sessionId = started.sessionId;
@@ -231,6 +270,10 @@ async function runTest(testId) {
 
         for (const rawStep of steps) {
             const step = normalizeStep(rawStep);
+            if (agentMode) {
+                await runAgentTurn({ botId: test.botId, sessionId, step });
+                continue;
+            }
             const turn = await sendTestTurn({
                 sessionId,
                 text: step.text,

@@ -82,7 +82,10 @@ async function resolveShoppingIntent(A, u, tool) {
         // REPLACE_MAIN / SET_MAIN: matchProduct() уже виставив ctx.product — нічого додатково не треба.
     }
 
-    if (status !== 'found') {
+    const keptOnPurpose = decision.action === 'ADD_EXTRA' || decision.action === 'ASK_REPLACE_OR_ADD';
+    // ADD_EXTRA/ASK_REPLACE_OR_ADD: кандидата вже знайдено й свідомо не зроблено головним — повторно
+    // шукати підказку за тим самим текстом не можна (FunnelTest 2: «так, першу» → куртка D0005).
+    if (status !== 'found' && !keptOnPurpose) {
         // 2026-09-23 (жива знахідка через FunnelTest, тест "критичний фікс категорії"): раніше
         // цей блок узагалі не виконувався, коли товар вже підтверджено (hadProduct) — категорійне
         // слово про ГЕНУЇННО іншу, неоднозначну категорію (напр. "костюми?", а в каталозі їх 8)

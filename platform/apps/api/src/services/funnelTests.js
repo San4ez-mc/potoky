@@ -314,6 +314,7 @@ async function runTest(testId) {
             mainProduct: c.product && { sku: c.product.sku, name: c.product.customerName || c.product.name, isSet: c.product.isSet, setItems: Array.isArray(c.product.setItems) ? c.product.setItems.map((i) => i.article) : undefined },
             colorChoice: c.colorChoice, recommendedSize: c.recommendedSize,
             setSelection: Array.isArray(c.setSelection) ? c.setSelection.map((i) => ({ article: i.article, color: i.color, size: i.size, qty: i.qty, price: i.price })) : undefined,
+            upsellItem: c.product && Array.isArray(c.product.upsellItems) && c.product.upsellItems[0] ? { sku: c.product.upsellItems[0].sku, name: c.product.upsellItems[0].name, price: c.product.upsellItems[0].price } : undefined,
             orderIntent: c.orderIntent && { addUpsell: c.orderIntent.addUpsell, upsellQty: c.orderIntent.upsellQty, upsellUnits: c.orderIntent.upsellUnits },
             orderUnits: c.orderUnits, orderTotal: c.orderTotal, orderData: c.orderData,
         });

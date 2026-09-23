@@ -592,6 +592,12 @@ async function runPolicyInner(A, u) {
         ctx.sizeInput = si;
     }
     if (u.colorMatched) ctx.agent.pendingColor = u.colorMatched; else if (u.color) ctx.agent.pendingColorRaw = u.color;
+    // 2026-09-23 (FunnelTest 4: «джинси хочу чорні» до підбору розміру губилось — секція кольорів
+    // комплекту виконується лише ПІСЛЯ розміру і бачила тільки текст свого ходу): запамʼятовуємо
+    // сирі повідомлення з кольором, поки комплект активний, і розбираємо їх по позиціях пізніше.
+    if (ctx.product && ctx.product.isSet && ctx.setMode === 'set' && (u.color || u.colorMatched) && !ctx.agent.setColorsResolved) {
+        ctx.agent.setColorHints = (ctx.agent.setColorHints || []).concat(text).slice(-5);
+    }
     const earlyReceipt = (u.receiptLink || u.claimsPaid || (A.turnImage && addressComplete(ctx.orderData))) && !ctx.crmOrderId && !(ctx.paymentInfo && ctx.paymentInfo.method);
     if (earlyReceipt && !ctx.agent.receiptEarlyAlertAt) {
         ctx.agent.receiptEarlyAlertAt = Date.now();
@@ -928,7 +934,7 @@ async function runPolicyInner(A, u) {
         // лишається неоднозначність — питаємо ОДНИМ повідомленням саме ці позиції, не всі одразу.
         if (!ctx.agent.setColorsResolved) {
             const catNamesSet = ctx.agent.setParams && ctx.agent.setParams.categoryNames;
-            const segments = text.split(/[,;\n]|\bі\b|\bта\b/iu).map((s) => s.trim()).filter(Boolean);
+            const segments = [...(ctx.agent.setColorHints || []), text].flatMap((tx) => String(tx).split(/[,;\n]|\s+(?:і|та|и|й)\s+/iu)).map((s) => s.trim()).filter(Boolean);
             for (const seg of segments) {
                 const item = matchSetItem(seg, ctx.setSelection, catNamesSet);
                 if (item && !item.color && Array.isArray(item.colors) && item.colors.length) {

@@ -45,7 +45,9 @@ async function resolveShoppingIntent(A, u, tool) {
 
     const cat = await loadCatalog(A.botId, keys);
     ctx.lookupProductsRaw = cat.products; ctx.lookupAdsRaw = cat.ads; ctx.lookupCategoriesRaw = cat.categories || [];
-    if (signal.catalogListPick) ctx.catalogHintPick = signal.catalogListPick;
+    // policy.js уже звів вибір зі списку до реального SKU (ctx.catalogHintPick) — сирий рядок LLM
+    // («Футболка оверсайз база (L0056)») його не перезаписує (FunnelTest 2: «так, першу» → куртка D0005).
+    if (signal.catalogListPick && !ctx.catalogHintPick) ctx.catalogHintPick = signal.catalogListPick;
 
     delete ctx.productUnknown; delete ctx.productUnknownReason;
     // Знімок УСЬОГО ctx перед матчингом — matchProduct() мутує не лише ctx.product (dialogState,

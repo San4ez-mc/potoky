@@ -70,4 +70,24 @@ function hasCategoryWord(text) {
     return CATEGORY_STEM_RE.test(String(text || '').replace(/\[переслав[^\]]*\][^\n]*/gi, ' '));
 }
 
-module.exports = { classifySignal, hasAnySignal, hasCategoryWord };
+/**
+ * 2026-09-23 (FunnelTest на справжньому shopAgent-шляху): після пропозиції допродажу («додати ще
+ * Футболка…») відповідь клієнта «так, 2 футболки, одна біла одна чорна» чи «а для футболки є
+ * сітка?» містить слово-категорію, і categorySignal відкривав повторний матчинг → категорія
+ * футболок ПІДМІНЯЛА головний товар (кофту) замість того, щоб піти в допродаж. Слово-категорія,
+ * що називає саме запропонований допродаж (а не головний товар), — це відповідь про допродаж,
+ * не новий товар.
+ */
+function categoryWordIsUpsell(text, ctx) {
+    const p = ctx && ctx.product;
+    const up = p && Array.isArray(p.upsellItems) && p.upsellItems[0];
+    if (!up || !(ctx.agent && ctx.agent.upsellOffered)) return false;
+    const clean = String(text || '').replace(/\[переслав[^\]]*\][^\n]*/gi, ' ');
+    const stems = clean.toLowerCase().match(new RegExp(CATEGORY_STEM_RE.source, 'gi')) || [];
+    if (!stems.length) return false;
+    const upName = String(up.name || '').toLowerCase();
+    const mainName = String(p.customerName || p.name || '').toLowerCase();
+    return stems.every((st) => upName.includes(st) && !mainName.includes(st));
+}
+
+module.exports = { classifySignal, hasAnySignal, hasCategoryWord, categoryWordIsUpsell };

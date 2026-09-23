@@ -9,7 +9,7 @@ const T = require('./tools');
 const { compose } = require('./compose');
 const { messageText, messageTextMultiline, nodeData, norm, loadCategories } = require('./lib');
 const { dispatchOrder } = require('./supplierDispatch');
-const { hasCategoryWord } = require('./signal');
+const { hasCategoryWord, categoryWordIsUpsell } = require('./signal');
 const { resolveColorMention } = require('./cart');
 
 // 2026-09-14 (власник: "я взагалі проти будь-якого хардкоду... все в ноди перенеси"): TRUST_STEP1/2,
@@ -559,7 +559,15 @@ async function runPolicyInner(A, u) {
 
     // 1b. Раннє захоплення даних доставки і чеків — незалежно від стадії (клієнт може написати
     //     адресу чи скинути чек ще до підбору розміру; нічого не губимо і не перепитуємо потім).
-    if ((u.phone || u.fullName || u.city || u.branch) && !u.homeAddress) {
+    // 2026-09-23 (FunnelTest, «перше відділення»): слово-числівник LLM не завжди повертає числом —
+    // страхуємо детермінованим розбором, щоб номер не губився.
+    if (!u.branch && !u.homeAddress) {
+        const ORD = { 'перш': 1, 'друг': 2, 'трет': 3, 'четверт': 4, 'п’ят': 5, "п'ят": 5, 'шост': 6, 'сьом': 7, 'восьм': 8, 'дев’ят': 9, "дев'ят": 9, 'десят': 10 };
+        const om = text.toLowerCase().match(/(перш|друг|трет|четверт|п[’']ят|шост|сьом|восьм|дев[’']ят|десят)\S*\s+(?:відділенн|віділен|нп|нової\s+пошти)/);
+        if (om) u.branch = String(ORD[om[1].replace('’', "'")] || ORD[om[1]] || '');
+    }
+    const __dataThisTurn = !!((u.phone || u.fullName || u.city || u.branch) && !u.homeAddress);
+    if (__dataThisTurn) {
         ctx.orderData = { ...(ctx.orderData || {}), ...(u.fullName ? { fullName: u.fullName } : {}), ...(u.phone ? { phone: u.phone } : {}), ...(u.city ? { city: u.city } : {}), ...(u.region ? { region: u.region } : {}), ...(u.branch ? { branch: u.branch } : {}) };
     }
     // 1c. Раннє захоплення параметрів розміру і кольору — теж незалежно від стадії (клієнт міг назвати
@@ -575,7 +583,7 @@ async function runPolicyInner(A, u) {
         ctx.agent.receiptEarlyAlertAt = Date.now();
         await T.alert(A, 'n_agent_early_payment_admin', { details: '💬 «' + text.slice(0, 200) + '»', photoUrl: A.turnImage || '' });
     }
-    const preNote = (earlyReceipt ? 'Дякую, оплату бачу — звіримо 🙏 Щоб оформити відправку, лишилось кілька кроків. ' : '') + (u.intent === 'wants_requisites' && !(ctx.paymentInfo && ctx.paymentInfo.method) ? 'Реквізити надішлю одразу після підбору розміру і кольору 🙂 ' : '');
+    const preNote = (__dataThisTurn && !addressComplete(ctx.orderData) ? 'Дані доставки записала 📝 ' : '') + (earlyReceipt ? 'Дякую, оплату бачу — звіримо 🙏 Щоб оформити відправку, лишилось кілька кроків. ' : '') + (u.intent === 'wants_requisites' && !(ctx.paymentInfo && ctx.paymentInfo.method) ? 'Реквізити надішлю одразу після підбору розміру і кольору 🙂 ' : '');
 
     // 2. Товар
     // 2026-09-15 (живий кейс: у комплекті клієнт написав "чорні джинси"/"Чорний" — понял() LLM
@@ -593,7 +601,7 @@ async function runPolicyInner(A, u) {
     // n_lookup навіть не викликався для таких повідомлень. Дозволяємо категорійне слово теж
     // відкрити повторний матчинг — АЛЕ тільки до оформлення замовлення (crmOrderId), щоб не
     // зачепити вже перевірену поведінку "після оформлення — лише хендофф менеджеру" (розділ 1).
-    const categorySignal = !ctx.crmOrderId && hasCategoryWord(text);
+    const categorySignal = !ctx.crmOrderId && hasCategoryWord(text) && !categoryWordIsUpsell(text, ctx);
     if (!P(ctx) || freshSignal || categorySignal) {
         if (u.productHint.fromList && ctx.catalogHintSkus) {
             const skus = String(ctx.catalogHintSkus).split(',').map((s) => s.trim()).filter(Boolean);
@@ -1104,7 +1112,7 @@ async function runPolicyInner(A, u) {
         // переважна більшість "адрес без відділення" насправді МАЮТЬ номер, просто в нестандартній
         // формі (НП2, нп 1, Пункт №1, Перше відділення) — і ЦЕЙ бар'єр викидав його щоразу, коли
         // LLM також бачила вулицю в тому ж повідомленні. Номер відділення бере пріоритет ЗАВЖДИ.
-        if (u.fullName) od.fullName = u.fullName; if (u.phone) od.phone = u.phone; if (u.city) od.city = u.city; if (u.region) od.region = u.region; if (u.branch) od.branch = u.branch;
+        if (u.fullName) od.fullName = u.fullName; if (u.phone) od.phone = u.phone; if (u.city) od.city = u.city; if (u.region) od.region = u.region; if (u.branch) { if (od.branch && String(od.branch) !== String(u.branch)) delete ctx.np; od.branch = u.branch; }
         if (u.paymentMethodChange && u.paymentMethodChange !== ctx.paymentInfo.method) { ctx.paymentInfo = { ...ctx.paymentInfo, method: u.paymentMethodChange }; ctx.orderRef = ''; await T.payAmount(A); ctx.orderData = od; await sendRequisites(A, u); return; }
         const mem = ctx.customer || {};
         if (!od.phone && !od.fullName && mem.phone && mem.fullName && mem.city && mem.branch) {

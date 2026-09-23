@@ -9,7 +9,7 @@ const T = require('./tools');
 const { compose } = require('./compose');
 const { messageText, messageTextMultiline, nodeData, norm, loadCategories } = require('./lib');
 const { dispatchOrder } = require('./supplierDispatch');
-const { hasCategoryWord, categoryWordIsUpsell } = require('./signal');
+const { hasCategoryWord, categoryWordIsUpsell, categoryWordIsSetComponent } = require('./signal');
 const { resolveColorMention } = require('./cart');
 
 // 2026-09-14 (власник: "я взагалі проти будь-якого хардкоду... все в ноди перенеси"): TRUST_STEP1/2,
@@ -615,7 +615,7 @@ async function runPolicyInner(A, u) {
     // n_lookup навіть не викликався для таких повідомлень. Дозволяємо категорійне слово теж
     // відкрити повторний матчинг — АЛЕ тільки до оформлення замовлення (crmOrderId), щоб не
     // зачепити вже перевірену поведінку "після оформлення — лише хендофф менеджеру" (розділ 1).
-    const categorySignal = !ctx.crmOrderId && hasCategoryWord(text) && !categoryWordIsUpsell(text, ctx);
+    const categorySignal = !ctx.crmOrderId && hasCategoryWord(text) && !categoryWordIsUpsell(text, ctx) && !categoryWordIsSetComponent(text, ctx);
     if (!P(ctx) || freshSignal || categorySignal) {
         if (u.productHint.fromList && ctx.catalogHintSkus) {
             const skus = String(ctx.catalogHintSkus).split(',').map((s) => s.trim()).filter(Boolean);

@@ -90,4 +90,19 @@ function categoryWordIsUpsell(text, ctx) {
     return stems.every((st) => upName.includes(st) && !mainName.includes(st));
 }
 
-module.exports = { classifySignal, hasAnySignal, hasCategoryWord, categoryWordIsUpsell };
+/**
+ * 2026-09-23 (FunnelTest 4): «цікавить лише кофта і джинси» у відповідь на картку КОМПЛЕКТУ —
+ * слова-категорії — це назви ПОЗИЦІЙ активного комплекту, а не новий товар; categorySignal
+ * підміняв комплект на окрему позицію (джинси) і губив вибір.
+ */
+function categoryWordIsSetComponent(text, ctx) {
+    const p = ctx && ctx.product;
+    if (!p || !p.isSet || !Array.isArray(p.setItems) || !p.setItems.length) return false;
+    const clean = String(text || '').replace(/\[переслав[^\]]*\][^\n]*/gi, ' ');
+    const stems = clean.toLowerCase().match(new RegExp(CATEGORY_STEM_RE.source, 'gi')) || [];
+    if (!stems.length) return false;
+    const names = p.setItems.map((it) => String(it.name || '').toLowerCase());
+    return stems.every((st) => st === 'комплект' || names.some((n) => n.includes(st)));
+}
+
+module.exports = { classifySignal, hasAnySignal, hasCategoryWord, categoryWordIsUpsell, categoryWordIsSetComponent };

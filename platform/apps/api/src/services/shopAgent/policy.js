@@ -486,6 +486,14 @@ async function universalQuestionFallback(A, u) {
 async function runPolicyInner(A, u) {
     const { ctx } = A; ctx.agent = ctx.agent || {};
     const text = String(A.turnText || '');
+    // 2026-09-23 (FunnelTest 1): у відповіді на допродаж («так, 2 футболки…») understand() ставить
+    // productHint.article на артикул ДОПРОДАЖУ — freshSignal підміняв ним головний товар (кофту).
+    // Артикул саме запропонованого допродажу — це не новий головний товар.
+    {
+        const upS = ctx.product && Array.isArray(ctx.product.upsellItems) && ctx.product.upsellItems[0];
+        const pa = u.productHint && (u.productHint.article || u.productHint.fromList);
+        if (upS && ctx.agent.upsellOffered && pa && String(pa).toLowerCase() === String(upS.sku || '').toLowerCase()) u.productHint = { ...u.productHint, article: null, fromList: null };
+    }
     const freshSignal = !!(A.turnSharedPost || A.newEntryAd || u.productHint.article || u.productHint.fromList || (A.turnImage && !u.claimsPaid && !u.receiptLink && !(ctx.paymentInfo && ctx.paymentInfo.method) ));
 
     // 0. Людина / претензія / повернення

@@ -49,12 +49,20 @@ function buildLines(ctx) {
     const lines = [];
     const mainQty = Array.isArray(ctx.orderUnits) ? ctx.orderUnits.length : (Number(ctx.orderQty) || 1);
     if (Number(ctx.orderUnitsTotal) > 0 && ctx.product && ctx.product.sku) {
-        lines.push({
-            sku: ctx.product.sku, id: ctx.product.id, name: ctx.product.customerName || ctx.product.name,
-            price: Number(ctx.orderUnitsTotal) / mainQty, qty: mainQty,
-            color: (ctx.colorChoice && ctx.colorChoice.color) || '', size: ctx.recommendedSize || '',
-            supplierName: ctx.product.supplier || '', supplierArticle: ctx.product.supplierArticle || '', isMain: true,
-        });
+        // 2026-09-23 (Edits 7f98dc20/b2e868c2/dd2f0f7e/aaddc01f/c7df5958: «одна чорна + одна графітова» →
+        // оформило два чорних): колір/розмір брались лише з colorChoice.color (один на всю кількість), тоді
+        // як CRM групує по orderUnits. Групуємо одиниці за колір+розмір — кожна група окремий рядок.
+        const base = { sku: ctx.product.sku, id: ctx.product.id, name: ctx.product.customerName || ctx.product.name, supplierName: ctx.product.supplier || '', supplierArticle: ctx.product.supplierArticle || '', isMain: true };
+        const fallbackColor = (ctx.colorChoice && ctx.colorChoice.color) || '';
+        const units = Array.isArray(ctx.orderUnits) && ctx.orderUnits.length ? ctx.orderUnits : [{ color: fallbackColor, size: ctx.recommendedSize || '' }];
+        const groups = [];
+        for (const un of units) {
+            const c = String((un && un.color) || fallbackColor || '').trim(); const sz = String((un && un.size) || ctx.recommendedSize || '').trim();
+            const g = groups.find((x) => x.color === c && x.size === sz);
+            if (g) g.qty += 1; else groups.push({ color: c, size: sz, qty: 1 });
+        }
+        const perUnit = Number(ctx.orderUnitsTotal) / mainQty;
+        for (const g of groups) lines.push({ ...base, price: perUnit, qty: g.qty, color: g.color, size: g.size });
     }
     if (ctx.orderIntent && ctx.orderIntent.addUpsell) {
         const up = ((ctx.product && ctx.product.upsellItems) || [])[0];

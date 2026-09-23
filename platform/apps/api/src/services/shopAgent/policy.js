@@ -1114,6 +1114,19 @@ async function runPolicyInner(A, u) {
         }
     }
 
+    // 7a. Колір ДОДАТКОВОГО товару («і ще футболку» → extraItems), названий пізніше: «футболка біла».
+    if (!ctx.crmOrderId && Array.isArray(ctx.extraItems) && ctx.extraItems.length) {
+        const segsX = text.split(/[,;\n]|\s+(?:і|та|и|й)\s+/iu).map((x) => x.trim()).filter(Boolean);
+        for (const it of ctx.extraItems) {
+            if (it.color || !Array.isArray(it.colorsList) || !it.colorsList.length) continue;
+            for (const seg of segsX) {
+                if (!stemsOf(it.name).some((st) => seg.toLowerCase().includes(st))) continue;
+                const c = matchColor({ colors: it.colorsList.join(',') }, seg);
+                if (c) { it.color = c; break; }
+            }
+        }
+    }
+
     // 7b. Колір/кількість допродажу, названі ПІЗНІШЕ за підсумок (FunnelTest 9: бот спитав спосіб
     //     оплати, клієнт відповів «одна біла і одна чорна футболка» — orderIntent уже був
     //     зафіксований без цих даних, вони губились, і в замовленні лишалась 1 футболка без кольору).

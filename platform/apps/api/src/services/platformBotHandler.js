@@ -602,6 +602,11 @@ async function resolveTargetBot(botId, startPayload, userId) {
     }
 
     // ── Rule 1: slug routing ───────────────────────────────────────────────
+    // Payload can carry a trailing free-text arg after the slug, space-separated
+    // (e.g. "/start onboard KIRO" → slug "onboard" + startArg "KIRO"). Exact match
+    // on the whole payload is tried first (unchanged, backward-compatible); only if
+    // that fails AND the payload contains whitespace do we retry on just the first
+    // token, threading the remainder through as `startArg`.
     if (startPayload && !/^lesson_\d+_\d+$/.test(startPayload)) {
         if (projectId) {
             const slugBot = await db.bot.findFirst({
@@ -611,6 +616,19 @@ async function resolveTargetBot(botId, startPayload, userId) {
             if (slugBot) {
                 logger.info('[platformBotHandler] Routed by slug', { slug: startPayload, targetBotId: slugBot.id });
                 return { targetBotId: slugBot.id, lessonSlug: null };
+            }
+            const spaceIdx = startPayload.indexOf(' ');
+            if (spaceIdx > 0) {
+                const slugOnly = startPayload.slice(0, spaceIdx);
+                const startArg = startPayload.slice(spaceIdx + 1).trim();
+                const argSlugBot = await db.bot.findFirst({
+                    where: { slug: slugOnly, projectId, isActive: true },
+                    select: { id: true },
+                });
+                if (argSlugBot && startArg) {
+                    logger.info('[platformBotHandler] Routed by slug + arg', { slug: slugOnly, startArg, targetBotId: argSlugBot.id });
+                    return { targetBotId: argSlugBot.id, lessonSlug: null, startArg };
+                }
             }
             logger.warn('[platformBotHandler] Slug not found in project, using webhook bot', { slug: startPayload, botId });
         }
@@ -1115,12 +1133,14 @@ async function _handlePlatformBotUpdateInner(botId, update) {
     let targetBotId = botId;
     let lessonSlug = null;
     let entryLinkSource = null;
+    let entryStartArg = null;
 
     if (isStart) {
         const resolved = await resolveTargetBot(botId, startPayload, user.id);
         targetBotId = resolved.targetBotId;
         lessonSlug = resolved.lessonSlug;
         entryLinkSource = resolved.linkSource || null;
+        entryStartArg = resolved.startArg || null;
     }
 
     // ── Phase 3.5: archived bot guard ─────────────────────────────────────────
@@ -1189,6 +1209,9 @@ async function _handlePlatformBotUpdateInner(botId, update) {
         if (linkSuffix) extraCtx._linkSource = `l${linkSuffix[1]}`;
         // Lead-magnet tracked deep link (lm<code>) wins — attributes this session to the exact post.
         if (entryLinkSource) extraCtx._linkSource = entryLinkSource;
+        // Free-text arg after the slug (e.g. "/start onboard KIRO" → "KIRO") — read by
+        // the target funnel's own nodes (e.g. onboard's n_resolve_project) for company switching.
+        if (entryStartArg) extraCtx.startArg = entryStartArg;
         if (Object.keys(extraCtx).length > 0) {
             const updatedCtx = { ...(session.context || {}), ...extraCtx };
             session = await db.session.update({

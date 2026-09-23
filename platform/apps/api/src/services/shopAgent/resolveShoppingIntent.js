@@ -78,7 +78,17 @@ async function resolveShoppingIntent(A, u, tool) {
         // REPLACE_MAIN / SET_MAIN: matchProduct() уже виставив ctx.product — нічого додатково не треба.
     }
 
-    if (status !== 'found' && !hadProduct) {
+    if (status !== 'found') {
+        // 2026-09-23 (жива знахідка через FunnelTest, тест "критичний фікс категорії"): раніше
+        // цей блок узагалі не виконувався, коли товар вже підтверджено (hadProduct) — категорійне
+        // слово про ГЕНУЇННО іншу, неоднозначну категорію (напр. "костюми?", а в каталозі їх 8)
+        // просто тихо лишало старий товар, замість показати клієнту короткий список варіантів.
+        // computeCatalogHint() має власний ранній guard "є ctx.product → нічого не робити"
+        // (успадкований з n_catalog_hint, де це мало сенс лише для "товар ще не визначено") —
+        // тимчасово ховаємо ctx.product на час цього виклику й відновлюємо, якщо підказка
+        // нічого корисного не знайшла (щоб не втратити вже підтверджений товар).
+        const productBeforeHint = ctx.product;
+        if (hadProduct) delete ctx.product;
         delete ctx.catalogHintPick;
         ctx.catalogHintCategoriesRaw = await loadCategories(A.botId, keys);
         Object.assign(ctx, await computeCatalogHint(ctx, keys, text));
@@ -87,10 +97,13 @@ async function resolveShoppingIntent(A, u, tool) {
             Object.assign(ctx, await matchProduct(ctx, keys, text));
             if (ctx.product && ctx.product.sku && !ctx.productUnknown) status = 'found';
         }
-        if (status !== 'found' && ctx.catalogHint) status = 'hint';
-        if (status !== 'found' && status !== 'hint') status = 'unknown';
-    } else if (status !== 'found' && hadProduct) {
-        status = ctx.product && ctx.product.sku ? 'kept' : 'unknown';
+        if (status !== 'found' && ctx.catalogHint) {
+            status = 'hint'; // список показано — клієнт сам обере, ctx.product свідомо лишається порожнім на цей хід
+        } else if (status !== 'found') {
+            // Підказка теж нічого не дала — повертаємо раніше підтверджений товар, не втрачаємо його.
+            if (productBeforeHint) ctx.product = productBeforeHint;
+            status = productBeforeHint && productBeforeHint.sku ? 'kept' : 'unknown';
+        }
     }
 
     delete ctx.lookupProductsRaw; delete ctx.lookupAdsRaw; delete ctx.lookupCategoriesRaw; delete ctx.catalogHintProductsRaw; delete ctx.catalogHintCategoriesRaw;

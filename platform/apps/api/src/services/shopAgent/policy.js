@@ -635,6 +635,17 @@ async function runPolicyInner(A, u) {
             const skus = String(ctx.catalogHintSkus).split(',').map((s) => s.trim()).filter(Boolean);
             const hit = skus.find((s) => s.toLowerCase() === String(u.productHint.fromList).toLowerCase()) || skus.find((s) => String(u.productHint.fromList).toLowerCase().includes(s.toLowerCase()));
             if (hit) ctx.catalogHintPick = hit;
+            else if (skus.length) {
+                // 2026-09-23 (FunnelTest 2: «так, першу» після списку футболок — LLM віддала fromList зі
+                // СТАРОГО списку костюмів → куртка D0005). Вибір не з поточного списку: порядковий
+                // числівник/«так» звужуємо до поточного списку, а сміттєвий fromList відкидаємо.
+                const ORD = [/перш|^\s*1/i, /друг|^\s*2/i, /трет|^\s*3/i, /четверт|^\s*4/i, /п[’']ят|^\s*5/i];
+                const oi = ORD.findIndex((re) => re.test(text));
+                if (oi >= 0 && skus[oi]) ctx.catalogHintPick = skus[oi];
+                else if (skus.length === 1 && /^\s*(так|да|ага|ок|давайте|це|її|його)/i.test(text)) ctx.catalogHintPick = skus[0];
+                if (!ctx.catalogHintPick) u.productHint = { ...u.productHint, fromList: null };
+                else u.productHint = { ...u.productHint, fromList: ctx.catalogHintPick };
+            }
         }
         if (u.productHint.article && !/артикул|арт\.|\b[a-z]\d{3,6}\b/i.test(text)) ctx.lastUserMessage = text + ' артикул ' + u.productHint.article;
         const r = await T.resolveProduct(A, u);

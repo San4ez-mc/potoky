@@ -90,8 +90,11 @@ async function searchSerper(query, limit, apiKey) {
  */
 async function searchTavily(query, limit, apiKey) {
     const domains = [];
+    const paths = []; // «/in» з site:linkedin.com/in — фільтр доменів Tavily шлях губить
     const q = query.replace(/(^|\s)site:(\S+)/gi, (_, sp, d) => {
-        domains.push(d.replace(/^https?:\/\//, '').split('/')[0]);
+        const [host, ...rest] = d.replace(/^https?:\/\//, '').split('/');
+        domains.push(host);
+        if (rest.join('/')) paths.push('/' + rest.join('/').replace(/\/+$/, ''));
         return sp;
     }).replace(/\s+/g, ' ').trim();
     const res = await fetch('https://api.tavily.com/search', {
@@ -99,7 +102,8 @@ async function searchTavily(query, limit, apiKey) {
         headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
             query: q || query,
-            max_results: Math.min(limit, 20),
+            // Із запасом: частину відсіє фільтр шляху нижче.
+            max_results: Math.min(paths.length ? limit * 2 : limit, 20),
             search_depth: 'basic',
             ...(domains.length ? { include_domains: [...new Set(domains)] } : {}),
         }),
@@ -107,7 +111,15 @@ async function searchTavily(query, limit, apiKey) {
     });
     if (!res.ok) throw new Error(`Tavily ${res.status}: ${(await res.text()).slice(0, 200)}`);
     const j = await res.json();
-    return (j.results || []).slice(0, limit).map((r) => ({
+    let rows = j.results || [];
+    if (paths.length) {
+        // X-ray по профілях не має повертати пости й головні сторінки.
+        rows = rows.filter((r) => {
+            try { const p = new URL(r.url).pathname; return paths.some((x) => p.startsWith(x + '/') || p === x); }
+            catch { return false; }
+        });
+    }
+    return rows.slice(0, limit).map((r) => ({
         title: r.title || '', url: r.url || '', snippet: String(r.content || '').slice(0, 400),
     }));
 }

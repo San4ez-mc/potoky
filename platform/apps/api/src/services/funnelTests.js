@@ -1,0 +1,374 @@
+'use strict';
+
+// Повноцінна система тестування воронок. На відміну від regressionRunner.js
+// (старий "smoke"-прогін 3 випадкових повідомлень, який завжди звітував "успіх"),
+// тут:
+//  - тест — збережена сутність (FunnelTest) з явним "steps" (кроки клієнта, що
+//    відтворюють РЕАЛЬНИЙ вхідний: текст/фото/пересланий пост/перехід з реклами —
+//    той самий "конверт", що приймає testSession.sendTestTurn, зібраний так само,
+//    як production-хендлери (instagramHandler.extractReferral, zernioHandler
+//    sharedPost) будують його з живого вебхука);
+//  - і явним "expectedOutcome" — вільний текст, яким автор тесту фіксує ЩО САМЕ
+//    перевіряється. Pass/fail визначає НЕ факт відсутності exception (як було), а
+//    LLM-суддя (обраний connectorId), що читає повну транскрипцію діалогу;
+//  - додатково суддя звіряє КОЖНУ ноду, відвідану під час прогону, з її власним
+//    data.qaExpectation (якщо автор воронки його заповнив у редакторі ноди) — це
+//    ловить регресії в нодах, які тест не мав на меті перевірити;
+//  - при провалі — пишеться AppError з context.nodeId на кожну "винну" ноду, тож
+//    вона підсвічується у вкладці «Ноди» сесії так само, як звичайна помилка виконання.
+
+const { db } = require('@platform/db');
+const { callClaude } = require('@platform/claude');
+const { startTestSession, sendTestTurn, endTestSession } = require('./testSession');
+
+function normalizeStep(step) {
+    return {
+        type: step.type || 'text',
+        text: typeof step.text === 'string' ? step.text : '',
+        imageUrl: step.imageUrl || null,
+        sharedPost: step.sharedPost || null,
+        referral: step.referral || null,
+        entryAdId: step.entryAdId || null,
+        delayMs: Number.isFinite(step.delayMs) ? step.delayMs : null,
+    };
+}
+
+async function resolveJudgeApiKey(connectorId) {
+    if (connectorId) {
+        const c = await db.savedConnector.findUnique({ where: { id: connectorId }, select: { config: true } }).catch(() => null);
+        const k = c?.config?.apiKey || c?.config?.api_key || c?.config?.key;
+        if (k) return k;
+    }
+    const sys = await db.savedConnector.findFirst({
+        where: { type: 'system_claude_api', isActive: true },
+        orderBy: { updatedAt: 'desc' },
+    }).catch(() => null);
+    const sysKey = sys?.config?.apiKey || '';
+    if (sysKey) return sysKey;
+    const envKey = process.env.ANTHROPIC_API_KEY || '';
+    return envKey && envKey !== 'placeholder_update_me' ? envKey : '';
+}
+
+// ── CRUD ─────────────────────────────────────────────────────────────────────
+
+async function listTests(botId) {
+    return db.funnelTest.findMany({
+        where: { botId },
+        orderBy: { createdAt: 'desc' },
+        include: { runs: { orderBy: { startedAt: 'desc' }, take: 1 } },
+    });
+}
+
+async function getTest(testId) {
+    const test = await db.funnelTest.findUnique({
+        where: { id: testId },
+        include: { runs: { orderBy: { startedAt: 'desc' }, take: 20 } },
+    });
+    if (!test) throw new Error('Test not found');
+    return test;
+}
+
+async function createTest({ botId, name, description, steps, expectedOutcome, connectorId, sourceSessionId, createdBy }) {
+    if (!botId) throw new Error('botId is required');
+    if (!name || !name.trim()) throw new Error('name is required');
+    if (!expectedOutcome || !expectedOutcome.trim()) throw new Error('expectedOutcome is required — саме по ньому визначається пройдений тест чи ні');
+    const normSteps = Array.isArray(steps) ? steps.map(normalizeStep) : [];
+    if (normSteps.length === 0) throw new Error('Тест має містити хоча б один крок');
+
+    return db.funnelTest.create({
+        data: {
+            botId,
+            name: name.trim(),
+            description: description || null,
+            steps: normSteps,
+            expectedOutcome: expectedOutcome.trim(),
+            connectorId: connectorId || null,
+            sourceSessionId: sourceSessionId || null,
+            createdBy: createdBy || null,
+        },
+    });
+}
+
+async function updateTest(testId, patch) {
+    const data = {};
+    if (patch.name !== undefined) data.name = patch.name.trim();
+    if (patch.description !== undefined) data.description = patch.description;
+    if (patch.steps !== undefined) data.steps = Array.isArray(patch.steps) ? patch.steps.map(normalizeStep) : [];
+    if (patch.expectedOutcome !== undefined) data.expectedOutcome = patch.expectedOutcome.trim();
+    if (patch.connectorId !== undefined) data.connectorId = patch.connectorId || null;
+    return db.funnelTest.update({ where: { id: testId }, data });
+}
+
+async function deleteTest(testId) {
+    await db.testRun.deleteMany({ where: { testId } });
+    await db.funnelTest.delete({ where: { id: testId } });
+    return { ok: true };
+}
+
+async function duplicateTest(testId) {
+    const src = await db.funnelTest.findUnique({ where: { id: testId } });
+    if (!src) throw new Error('Test not found');
+    return db.funnelTest.create({
+        data: {
+            botId: src.botId,
+            name: `${src.name} (копія)`,
+            description: src.description,
+            steps: src.steps,
+            expectedOutcome: src.expectedOutcome,
+            connectorId: src.connectorId,
+            sourceSessionId: src.sourceSessionId,
+            createdBy: src.createdBy,
+        },
+    });
+}
+
+// Будує steps[] з реальної історії сесії — використовується кнопкою "Створити тест
+// з цієї сесії" (позначив повідомлення помилковим → одразу відтворити ВЕСЬ шлях
+// клієнта, включно з пересланими постами/фото/переходом з реклами, а не лише текст).
+async function createTestFromSession(sessionId, { name, expectedOutcome, connectorId, uptoMessageId, createdBy }) {
+    const session = await db.session.findUnique({ where: { id: sessionId }, include: { bot: true } });
+    if (!session) throw new Error('Session not found');
+
+    const messages = await db.message.findMany({ where: { sessionId }, orderBy: { createdAt: 'asc' } });
+    let cutoffAt = null;
+    if (uptoMessageId) {
+        const target = messages.find((m) => m.id === uptoMessageId);
+        if (target) cutoffAt = target.createdAt;
+    }
+
+    const userMessages = messages.filter((m) => m.role === 'user' && (!cutoffAt || m.createdAt <= cutoffAt));
+    const steps = userMessages.map((m) => {
+        const meta = m.metadata || {};
+        const sharedPost = meta.sharedPost || null;
+        const referral = meta.referral || null;
+        const imageUrl = meta.imageUrl || meta.lastReceiptImageUrl || null;
+        let type = 'text';
+        if (sharedPost) type = 'forward_post';
+        else if (referral) type = 'ad_reply';
+        else if (imageUrl) type = 'photo';
+        return normalizeStep({
+            type,
+            text: m.content || '',
+            imageUrl,
+            sharedPost,
+            referral,
+            entryAdId: meta.entryAdId || null,
+        });
+    });
+
+    if (steps.length === 0) {
+        throw new Error('У цій сесії немає повідомлень клієнта для відтворення');
+    }
+
+    return createTest({
+        botId: session.botId,
+        name: name || `Тест із сесії ${sessionId.slice(0, 8)} (${session.bot?.name || ''})`,
+        description: `Автоматично створено з реальної сесії ${sessionId}`,
+        steps,
+        expectedOutcome,
+        connectorId,
+        sourceSessionId: sessionId,
+        createdBy,
+    });
+}
+
+// ── Runner ───────────────────────────────────────────────────────────────────
+
+function buildJudgePrompt({ test, transcript, nodeQaEntries }) {
+    const transcriptText = transcript
+        .map((m) => `${m.role === 'user' ? 'КЛІЄНТ' : 'БОТ'}: ${m.content}`)
+        .join('\n');
+
+    const nodeQaText = nodeQaEntries.length
+        ? nodeQaEntries.map((n, i) => `${i + 1}. Нода "${n.label || n.nodeId}" (${n.nodeId}): очікується — ${n.qaExpectation}\n   Вхід ноди (userInput): ${n.userInput || '(немає)'}\n   Ефект ноди (зміни контексту): ${n.outputSummary}`).join('\n\n')
+        : '(жодна відвідана нода не має власних QA-очікувань)';
+
+    const system = [
+        'Ти — QA-суддя для чат-воронки (Telegram/Instagram-бот на базі LLM).',
+        'Тобі дають: 1) що очікується від УСЬОГО тесту (expectedOutcome), 2) повну транскрипцію діалогу клієнт↔бот,',
+        '3) список нод, які автор воронки позначив власними QA-очікуваннями (перевіряй їх НЕЗАЛЕЖНО від головного expectedOutcome — це регресійні перевірки, навіть якщо цей тест писався не для них).',
+        'Відповідай ЛИШЕ строгим JSON, без пояснень поза ним:',
+        '{"passed": boolean, "reasoning": "коротко чому", "failingNodeId": "id ноди-винуватця або null", "nodeVerdicts": [{"nodeId":"...","passed":boolean,"reasoning":"..."}]}',
+        'passed=false якщо: головна мета тесту НЕ досягнута, АБО бот вигадав факт (ціну/наявність/дані клієнта), АБО зациклився, АБО замовк, АБО хоч ОДНА нода зі списку QA-очікувань не виконала своє очікування.',
+        'nodeVerdicts — по одному запису на КОЖНУ ноду зі списку QA-очікувань вище (навіть якщо вона не винна).',
+    ].join(' ');
+
+    const user = [
+        `Назва тесту: ${test.name}`,
+        `Що перевіряємо (expectedOutcome): ${test.expectedOutcome}`,
+        '',
+        '=== ТРАНСКРИПЦІЯ ДІАЛОГУ ===',
+        transcriptText || '(порожньо — бот жодного разу не відповів)',
+        '',
+        '=== НОДИ З ВЛАСНИМИ QA-ОЧІКУВАННЯМИ, ВІДВІДАНІ ПІД ЧАС ЦЬОГО ПРОГОНУ ===',
+        nodeQaText,
+    ].join('\n');
+
+    return { system, user };
+}
+
+async function runTest(testId) {
+    const test = await db.funnelTest.findUnique({ where: { id: testId } });
+    if (!test) throw new Error('Test not found');
+
+    const run = await db.testRun.create({
+        data: { testId: test.id, botId: test.botId, status: 'running', connectorId: test.connectorId || null },
+    });
+
+    try {
+        const flow = await db.flowDefinition.findUnique({ where: { botId: test.botId } });
+        const nodesById = new Map((flow?.nodes || []).map((n) => [n.id, n]));
+
+        const steps = Array.isArray(test.steps) ? test.steps : [];
+        const firstStepIsRaw = steps[0] && steps[0].type === 'text';
+        const started = await startTestSession({
+            botId: test.botId,
+            contextOverride: firstStepIsRaw ? {} : { noPrerun: true },
+        });
+
+        const sessionId = started.sessionId;
+        const visitedNodeIds = new Set();
+
+        for (const rawStep of steps) {
+            const step = normalizeStep(rawStep);
+            const turn = await sendTestTurn({
+                sessionId,
+                text: step.text,
+                imageUrl: step.imageUrl,
+                sharedPost: step.sharedPost,
+                referral: step.referral,
+                entryAdId: step.entryAdId,
+            });
+            for (const tr of turn.newNodeTraces || []) visitedNodeIds.add(tr.nodeId);
+        }
+
+        const finalSession = await db.session.findUnique({
+            where: { id: sessionId },
+            include: { messages: { orderBy: { createdAt: 'asc' } } },
+        });
+        await endTestSession({ sessionId });
+
+        const transcript = finalSession.messages
+            .filter((m) => (m.role === 'user' || m.role === 'assistant') && !(m.metadata && m.metadata.hidden))
+            .map((m) => ({ role: m.role, content: m.content }));
+
+        const allTraces = finalSession.context?.flowRuntime?.nodeTraces || [];
+        const nodeQaEntries = [];
+        for (const nodeId of visitedNodeIds) {
+            const node = nodesById.get(nodeId);
+            const qaExpectation = node?.data?.qaExpectation;
+            if (!qaExpectation || !qaExpectation.trim()) continue;
+            const lastTrace = [...allTraces].reverse().find((t) => t.nodeId === nodeId);
+            nodeQaEntries.push({
+                nodeId,
+                label: node?.data?.label || nodeId,
+                qaExpectation: qaExpectation.trim(),
+                userInput: lastTrace?.userInput || '',
+                outputSummary: lastTrace ? JSON.stringify(lastTrace.output || {}).slice(0, 500) : '(немає трейсу)',
+            });
+        }
+
+        const apiKey = await resolveJudgeApiKey(test.connectorId);
+        let verdict;
+        if (!apiKey) {
+            verdict = { passed: false, reasoning: 'Немає доступного Claude API ключа для судді тесту (ні обраний конектор, ні системний ключ).', failingNodeId: null, nodeVerdicts: [] };
+        } else {
+            const { system, user } = buildJudgePrompt({ test, transcript, nodeQaEntries });
+            const raw = await callClaude({
+                sessionId: null,
+                systemPrompt: system,
+                messages: [{ role: 'user', content: user }],
+                options: { maxTokens: 1200, apiKey, model: 'claude-sonnet-4-6' },
+            });
+            try {
+                const jsonMatch = raw.match(/\{[\s\S]*\}/);
+                verdict = JSON.parse(jsonMatch ? jsonMatch[0] : raw);
+            } catch (_e) {
+                verdict = { passed: false, reasoning: `Суддя повернув невалідний JSON: ${raw.slice(0, 300)}`, failingNodeId: null, nodeVerdicts: [] };
+            }
+        }
+
+        const nodeVerdicts = Array.isArray(verdict.nodeVerdicts) ? verdict.nodeVerdicts : [];
+        const failingNodes = nodeVerdicts.filter((v) => v && v.passed === false);
+        const overallPassed = Boolean(verdict.passed) && failingNodes.length === 0;
+        const status = overallPassed ? 'passed' : 'failed';
+
+        // AppError на кожну "винну" ноду — та сама модель, яку читає вкладка «Ноди».
+        const errorTargets = [];
+        if (!overallPassed && verdict.failingNodeId && !failingNodes.some((f) => f.nodeId === verdict.failingNodeId)) {
+            errorTargets.push({ nodeId: verdict.failingNodeId, reasoning: verdict.reasoning || 'Тест не пройдено' });
+        }
+        for (const f of failingNodes) errorTargets.push({ nodeId: f.nodeId, reasoning: f.reasoning || 'QA-очікування ноди не виконано' });
+
+        for (const target of errorTargets) {
+            // NodeTraceTab (SessionDetail.jsx) прив'язує помилку до картки ноди за ВІКНОМ
+            // ЧАСУ (createdAt має впасти між timestamp цієї ноди й наступної) — а не лише
+            // за nodeId. Наш AppError пишеться вже ПІСЛЯ всього прогону (суддя оцінює по
+            // завершенню), тому без цього він завжди приліплювався б до ОСТАННЬОЇ ноди.
+            // Підставляємо createdAt = момент виконання самої ноди-винуватця з трейсу.
+            const lastTrace = [...allTraces].reverse().find((t) => t.nodeId === target.nodeId);
+            const createdAt = lastTrace?.tsIso ? new Date(Date.parse(lastTrace.tsIso) + 1) : new Date();
+            await db.appError.create({
+                data: {
+                    sessionId,
+                    botId: test.botId,
+                    errorType: 'test_failed',
+                    message: `Тест «${test.name}» провалено: ${target.reasoning}`,
+                    context: { nodeId: target.nodeId, testId: test.id, runId: run.id, testName: test.name },
+                    createdAt,
+                },
+            }).catch(() => {});
+        }
+
+        const finalVerdict = { ...verdict, passed: overallPassed };
+        await db.testRun.update({
+            where: { id: run.id },
+            data: { status, verdict: finalVerdict, sessionId, finishedAt: new Date() },
+        });
+        await db.funnelTest.update({
+            where: { id: test.id },
+            data: { lastRunStatus: status, lastRunAt: new Date() },
+        });
+
+        return { runId: run.id, testId: test.id, status, verdict: finalVerdict, sessionId, transcript };
+    } catch (error) {
+        await db.testRun.update({
+            where: { id: run.id },
+            data: { status: 'error', verdict: { passed: false, reasoning: error.message }, finishedAt: new Date() },
+        }).catch(() => {});
+        await db.funnelTest.update({
+            where: { id: testId },
+            data: { lastRunStatus: 'error', lastRunAt: new Date() },
+        }).catch(() => {});
+        return { runId: run.id, testId, status: 'error', verdict: { passed: false, reasoning: error.message }, sessionId: null, transcript: [] };
+    }
+}
+
+async function runAllTests(botId) {
+    const tests = await db.funnelTest.findMany({ where: { botId }, select: { id: true } });
+    const results = [];
+    for (const t of tests) {
+        const result = await runTest(t.id);
+        results.push(result);
+    }
+    return {
+        botId,
+        total: results.length,
+        passed: results.filter((r) => r.status === 'passed').length,
+        failed: results.filter((r) => r.status === 'failed').length,
+        errored: results.filter((r) => r.status === 'error').length,
+        results,
+    };
+}
+
+module.exports = {
+    listTests,
+    getTest,
+    createTest,
+    updateTest,
+    deleteTest,
+    duplicateTest,
+    createTestFromSession,
+    runTest,
+    runAllTests,
+};

@@ -320,11 +320,14 @@ function StatusTicks({ status, readAt, deliveredAt, failError }) {
 // ─── Chat bubble ────────────────────────────────────────────────────────────
 // Layout: user messages LEFT, bot/admin messages RIGHT (CRM style)
 
-function ChatBubble({ msg, highlighted, refProp, onDelete, onEdit, user, userPhotoApiUrl }) {
+function ChatBubble({ msg, highlighted, refProp, onDelete, onEdit, onFlag, onCreateTest, user, userPhotoApiUrl }) {
     const isUser = msg.role === 'user';
     const isSystem = msg.role === 'system';
     const canEdit = !isUser && !isSystem;
     const canDelete = !isUser && !isSystem;
+    const canFlag = !isSystem;
+    const [flagging, setFlagging] = useState(false);
+    const [flagDraft, setFlagDraft] = useState(msg.flagNote || '');
     const hasTgId = Boolean(msg.metadata?.telegramMessageId);
     const isAdminManual = msg.metadata?.source === 'admin_manual';
     // Zernio синхронізує в БД і повідомлення, які менеджер написав НАПРЯМУ в Instagram
@@ -415,14 +418,50 @@ function ChatBubble({ msg, highlighted, refProp, onDelete, onEdit, user, userPho
                         {reactions.join(' ')}
                     </div>
                 )}
+
+                {/* Позначка "помилково" — ручний QA прямо в сесії */}
+                {msg.flagged && !flagging && (
+                    <div className="mt-2 pt-2 border-t border-red-400/30 text-[11px] text-red-100 bg-red-950/30 -mx-4 -mb-2.5 px-4 pb-2.5 rounded-b-2xl">
+                        <div className="font-semibold">⚠ Позначено помилковим</div>
+                        {msg.flagNote && <div className="opacity-90 mt-0.5">{msg.flagNote}</div>}
+                        <div className="flex gap-2 mt-1.5">
+                            <button onClick={() => onCreateTest(msg)} className="text-[11px] px-2 py-0.5 rounded bg-white/15 hover:bg-white/25">🧪 Створити тест з цієї сесії</button>
+                            <button onClick={() => onFlag(msg, false, '')} className="text-[11px] px-2 py-0.5 rounded bg-white/10 hover:bg-white/20">Зняти позначку</button>
+                        </div>
+                    </div>
+                )}
+
+                {flagging && (
+                    <div className="mt-2 pt-2 border-t border-white/20 space-y-1.5">
+                        <textarea
+                            autoFocus
+                            value={flagDraft}
+                            onChange={e => setFlagDraft(e.target.value)}
+                            placeholder="Що саме не так у цій відповіді?"
+                            className="w-full bg-black/20 border border-white/20 rounded px-2 py-1 text-xs resize-none outline-none min-h-[50px]"
+                            rows={2}
+                        />
+                        <div className="flex gap-2 justify-end">
+                            <button onClick={() => setFlagging(false)} className="text-[11px] px-2 py-0.5 rounded bg-white/10 hover:bg-white/20">Скасувати</button>
+                            <button
+                                onClick={() => { onFlag(msg, true, flagDraft.trim()); setFlagging(false); }}
+                                className="text-[11px] px-2 py-0.5 rounded bg-red-500/60 hover:bg-red-500/80"
+                            >⚠ Позначити</button>
+                        </div>
+                    </div>
+                )}
             </div>
 
-            {/* Edit + Delete buttons — right of bot messages */}
-            {(canEdit || canDelete) && !editing && (
-                <div className="self-start mt-1 ml-1 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-0.5">
+            {/* Edit + Delete + Flag buttons — right of bot messages, left of user messages */}
+            {(canEdit || canDelete || canFlag) && !editing && !flagging && (
+                <div className={`self-start mt-1 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-0.5 ${isUser ? 'mr-1 order-first' : 'ml-1'}`}>
                     {canEdit && (
                         <button onClick={startEdit} title="Редагувати"
                             className="w-6 h-6 flex items-center justify-center rounded text-gray-600 hover:text-blue-400 hover:bg-blue-900/20 text-xs">✏️</button>
+                    )}
+                    {canFlag && !msg.flagged && (
+                        <button onClick={() => setFlagging(true)} title="Позначити помилковим"
+                            className="w-6 h-6 flex items-center justify-center rounded text-gray-600 hover:text-amber-400 hover:bg-amber-900/20 text-xs">⚠</button>
                     )}
                     {canDelete && (
                         <button onClick={() => onDelete(msg)} title={hasTgId ? 'Видалити з Telegram і сесії' : 'Видалити лише з сесії'}
@@ -582,7 +621,7 @@ function collectUrls(...objs) {
     return Array.from(set);
 }
 
-function NodeTraceCard({ trace, apiCalls, errors, defaultOpen }) {
+function NodeTraceCard({ trace, apiCalls, errors, defaultOpen, qaExpectation }) {
     const [open, setOpen] = useState(!!defaultOpen);
     const icon = NODE_ICON[trace.nodeType] || '📦';
     const hasErr = errors.length > 0;
@@ -604,6 +643,12 @@ function NodeTraceCard({ trace, apiCalls, errors, defaultOpen }) {
             </button>
             {open && (
                 <div className="px-3 pb-3 bg-gray-950 space-y-3 pt-2">
+                    {qaExpectation && (
+                        <div className="rounded p-2 bg-sky-950/30 border border-sky-900/40">
+                            <div className="text-[11px] text-sky-400 mb-0.5 font-semibold">🧪 QA-очікування цієї ноди</div>
+                            <div className="text-xs text-sky-200 whitespace-pre-wrap break-words">{qaExpectation}</div>
+                        </div>
+                    )}
                     {trace.branch != null && (
                         <div className="text-[11px]">
                             <span className="text-gray-500">Гілка: </span>
@@ -630,6 +675,9 @@ function NodeTraceCard({ trace, apiCalls, errors, defaultOpen }) {
                             <div className="text-[11px] text-red-400 mb-1 font-semibold">✖ Помилки</div>
                             {errors.map((e, i) => (
                                 <div key={i} className="text-xs text-red-300 bg-red-950/30 rounded p-2 mb-1">
+                                    {e.context?.testId && (
+                                        <div className="text-[10px] text-amber-300 mb-1">🧪 Тест «{e.context.testName || e.context.testId}»</div>
+                                    )}
                                     <div>{e.message}</div>
                                     {e.stack && <CollapsibleValue value={e.stack} />}
                                 </div>
@@ -778,7 +826,7 @@ function DeliveryLogSection({ log }) {
     );
 }
 
-function NodeTraceTab({ traces, apiCalls, errors, rawContext }) {
+function NodeTraceTab({ traces, apiCalls, errors, rawContext, nodeMap }) {
     const [page, setPage] = useState(0);
     const PAGE = 10;
     // Хронологічний порядок трейсів
@@ -809,7 +857,8 @@ function NodeTraceTab({ traces, apiCalls, errors, rawContext }) {
             <div className="flex-1 overflow-y-auto p-4">
                 <div className="max-w-3xl mx-auto space-y-2">
                     {slice.map(b => (
-                        <NodeTraceCard key={b.trace.seq} trace={b.trace} apiCalls={b.apiCalls} errors={b.errors} defaultOpen={slice.length <= 3} />
+                        <NodeTraceCard key={b.trace.seq} trace={b.trace} apiCalls={b.apiCalls} errors={b.errors} defaultOpen={slice.length <= 3}
+                            qaExpectation={nodeMap?.[b.trace.nodeId]?.data?.qaExpectation} />
                     ))}
                     {pages > 1 && (
                         <div className="flex items-center justify-center gap-2 pt-3">
@@ -1003,6 +1052,30 @@ export function SessionDetail() {
         }
     };
 
+    const handleFlagMessage = async (msg, flagged, note) => {
+        try {
+            const updated = await api.flagSessionMessage(id, msg.id, flagged, note);
+            setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, ...(updated.data || updated) } : m));
+        } catch (err) {
+            setSendError(err.message || 'Не вдалося позначити повідомлення');
+        }
+    };
+
+    const handleCreateTestFromMessage = async (msg) => {
+        const defaultExpected = msg.flagNote
+            ? `Бот НЕ повинен повторювати цю помилку: ${msg.flagNote}. Натомість відповідь має бути коректною й доречною.`
+            : 'Відповідь бота має бути коректною й доречною.';
+        const expectedOutcome = window.prompt('Очікуваний правильний результат (саме по ньому визначатиметься, пройдений тест чи ні):', defaultExpected);
+        if (!expectedOutcome || !expectedOutcome.trim()) return;
+        try {
+            const test = await api.createTestFromSession(id, { expectedOutcome: expectedOutcome.trim(), uptoMessageId: msg.id });
+            const botId = session?.botId || session?.bot?.id;
+            navigate(`/funnel/${botId}?openTest=${test.id}`);
+        } catch (err) {
+            setSendError(err.message || 'Не вдалося створити тест із сесії');
+        }
+    };
+
     const sendManualMessage = async () => {
         if (!draft.trim() && !photoFile && !docFile) { setSendError('Введіть повідомлення, додайте фото або документ'); return; }
         setSending(true);
@@ -1164,6 +1237,8 @@ export function SessionDetail() {
                                         refProp={el => { if (el) msgRefs.current[m.id] = el; else delete msgRefs.current[m.id]; }}
                                         onDelete={handleDeleteMessage}
                                         onEdit={handleEditMessage}
+                                        onFlag={handleFlagMessage}
+                                        onCreateTest={handleCreateTestFromMessage}
                                         user={session.user}
                                         userPhotoApiUrl={`/api/sessions/${session.id}/user-photo`}
                                     />
@@ -1194,6 +1269,7 @@ export function SessionDetail() {
                     apiCalls={apiCalls}
                     errors={sessErrors}
                     rawContext={session.context}
+                    nodeMap={nodeMap}
                 />
             )}
 

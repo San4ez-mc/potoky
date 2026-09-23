@@ -1141,13 +1141,13 @@ async function persistAssistantMessage(sessionId, content, metadata = {}) {
     });
 }
 
-async function persistUserMessage(sessionId, content) {
+async function persistUserMessage(sessionId, content, metadata = { source: 'test_session' }) {
     await db.message.create({
         data: {
             sessionId,
             role: 'user',
             content,
-            metadata: { source: 'test_session' },
+            metadata,
         },
     });
 }
@@ -5312,6 +5312,46 @@ async function sendTestMessage({ sessionId, message }) {
     };
 }
 
+// Реалістичніший за sendTestMessage крок тесту: приймає той самий "конверт" ходу
+// клієнта, що складають реальні канальні хендлери (instagramHandler.extractReferral,
+// zernioHandler sharedPost тощо) — текст + фото + пересланий пост + реферал з реклами.
+// Використовується funnelTests.js (система тестування), щоб відтворити реальний
+// вхідний по максимуму: те саме ctx.sharedPost/entryAdId/lastReferral, яке б виставив
+// production-хендлер, ставимо ПЕРЕД executeFlowStep, і той самий incomingImageUrl,
+// що приймає flow engine для живого фото.
+async function sendTestTurn({ sessionId, text = '', imageUrl = null, sharedPost = null, referral = null, entryAdId = null }) {
+    const session = await db.session.findUnique({ where: { id: sessionId } });
+    if (!session) throw new Error('Session not found');
+
+    const metadata = { source: 'funnel_test' };
+    if (imageUrl) metadata.imageUrl = imageUrl;
+    if (sharedPost) metadata.sharedPost = sharedPost;
+    if (referral) metadata.referral = referral;
+    if (entryAdId) metadata.entryAdId = entryAdId;
+    await persistUserMessage(sessionId, text || (imageUrl ? '[фото]' : sharedPost ? '[пересланий пост]' : ''), metadata);
+
+    if (sharedPost || referral || entryAdId) {
+        const ctxPatch = { ...(session.context || {}) };
+        if (sharedPost) ctxPatch.sharedPost = sharedPost;
+        if (referral) { ctxPatch.lastReferral = referral; ctxPatch.entryAdId = referral.adId || entryAdId || ctxPatch.entryAdId; }
+        if (entryAdId && !ctxPatch.entryAdId) ctxPatch.entryAdId = entryAdId;
+        await db.session.update({ where: { id: sessionId }, data: { context: ctxPatch } });
+    }
+
+    const beforeTraceCount = Array.isArray(session.context?.flowRuntime?.nodeTraces) ? session.context.flowRuntime.nodeTraces.length : 0;
+    const stepped = await executeFlowStep({ sessionId, incomingUserMessage: text || null, incomingImageUrl: imageUrl || null });
+    const allTraces = stepped.contextSnapshot?.flowRuntime?.nodeTraces || [];
+
+    return {
+        sessionId,
+        botResponse: stepped.botResponse,
+        currentState: stepped.session.state,
+        contextSnapshot: stepped.contextSnapshot,
+        newNodeTraces: allTraces.slice(beforeTraceCount),
+        warning: null,
+    };
+}
+
 async function getTestSessionState({ sessionId }) {
     const session = await db.session.findUnique({
         where: { id: sessionId },
@@ -5379,6 +5419,7 @@ async function endTestSession({ sessionId }) {
 module.exports = {
     startTestSession,
     sendTestMessage,
+    sendTestTurn,
     getTestSessionState,
     endTestSession,
     executeFlowStep,

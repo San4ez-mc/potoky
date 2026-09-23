@@ -19,7 +19,8 @@ const TOOLS = [...FLOWS_TOOLS, ...DEBUG_TOOLS];
 
 const flowsToolNames = ['list_funnels', 'get_funnel', 'new_bot', 'create_funnel', 'update_node', 'add_node', 'delete_node', 'create_edge',
     'update_funnel_key', 'delete_funnel_key', 'list_connectors', 'get_connector',
-    'create_connector', 'update_connector', 'delete_connector', 'get_node_stats', 'get_api_logs'];
+    'create_connector', 'update_connector', 'delete_connector', 'get_node_stats', 'get_api_logs',
+    'list_tests', 'get_test', 'create_test', 'update_test', 'delete_test', 'duplicate_test', 'run_test', 'run_all_tests'];
 
 async function callTool(name, args = {}) {
     if (flowsToolNames.includes(name)) return flowsCallTool(name, args);

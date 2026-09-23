@@ -13,6 +13,7 @@ const {
     getTestSessionState,
     endTestSession,
 } = require('../services/testSession');
+const funnelTests = require('../services/funnelTests');
 
 const router = Router();
 
@@ -814,6 +815,56 @@ router.delete('/:id/messages/:msgId',
         // Delete from DB
         await db.message.delete({ where: { id: msg.id } });
         res.json({ ok: true, telegramDeleted: Boolean(tgMsgId && chatId) });
+    })
+);
+
+// PATCH /api/sessions/:id/messages/:msgId/flag — позначити повідомлення помилковим
+// (ручний QA прямо в перегляді сесії) + примітка, що саме не так.
+router.patch('/:id/messages/:msgId/flag',
+    validateParams({
+        params: z.object({ id: z.string().uuid(), msgId: z.string().uuid() }),
+        body: z.object({ flagged: z.boolean(), note: z.string().optional() }),
+    }),
+    asyncHandler(async (req, res) => {
+        const msg = await db.message.findUnique({ where: { id: req.params.msgId } });
+        if (!msg || msg.sessionId !== req.params.id) {
+            return res.status(404).json({ ok: false, error: { message: 'Message not found' } });
+        }
+        const updated = await db.message.update({
+            where: { id: msg.id },
+            data: {
+                flagged: req.body.flagged,
+                flagNote: req.body.flagged ? (req.body.note || null) : null,
+                flaggedAt: req.body.flagged ? new Date() : null,
+            },
+        });
+        res.json({ ok: true, data: updated });
+    })
+);
+
+// POST /api/sessions/:id/create-test — одноклікове створення тесту з реальної сесії:
+// відтворює ВСІ повідомлення клієнта (включно з пересланими постами/фото/ad-реферал)
+// аж до позначеного повідомлення включно. expectedOutcome — очікуваний правильний
+// результат (за замовчуванням — інверсія примітки до флагу).
+router.post('/:id/create-test',
+    validateParams({
+        params: z.object({ id: z.string().uuid() }),
+        body: z.object({
+            name: z.string().optional(),
+            expectedOutcome: z.string().min(1),
+            connectorId: z.string().optional().nullable(),
+            uptoMessageId: z.string().uuid().optional(),
+        }),
+    }),
+    asyncHandler(async (req, res) => {
+        const test = await funnelTests.createTestFromSession(req.params.id, {
+            name: req.body.name,
+            expectedOutcome: req.body.expectedOutcome,
+            connectorId: req.body.connectorId,
+            uptoMessageId: req.body.uptoMessageId,
+            createdBy: req.session?.login || null,
+        });
+        res.json({ ok: true, data: test });
     })
 );
 

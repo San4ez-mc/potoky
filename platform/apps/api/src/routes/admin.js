@@ -8,6 +8,7 @@ const { validateParams } = require('../middleware/validateParams');
 const { authMiddleware, loginHandler, logoutHandler } = require('../middleware/auth');
 const { runBotRegression, runProjectRegressions } = require('../services/regressionRunner');
 const { startTestSession } = require('../services/testSession');
+const funnelTests = require('../services/funnelTests');
 const { requireSuperadmin, allowedProjectIds } = require('../middleware/rbac');
 
 const router = Router();
@@ -283,6 +284,112 @@ router.post('/projects/:slug/run-regressions',
     validateParams({ params: z.object({ slug: z.string().min(1) }) }),
     asyncHandler(async (req, res) => {
         const data = await runProjectRegressions(req.params.slug);
+        res.json({ ok: true, data });
+    })
+);
+
+// ── Funnel tests (повноцінна система тестування, apps/api/src/services/funnelTests.js) ──
+
+const stepSchema = z.object({
+    type: z.enum(['text', 'photo', 'forward_post', 'ad_reply']).optional(),
+    text: z.string().optional(),
+    imageUrl: z.string().optional().nullable(),
+    sharedPost: z.record(z.string(), z.any()).optional().nullable(),
+    referral: z.record(z.string(), z.any()).optional().nullable(),
+    entryAdId: z.string().optional().nullable(),
+    delayMs: z.number().optional().nullable(),
+});
+
+// GET /api/admin/bots/:id/tests — list saved tests for a bot
+router.get('/bots/:id/tests',
+    validateParams({ params: z.object({ id: z.string().uuid() }) }),
+    asyncHandler(async (req, res) => {
+        const data = await funnelTests.listTests(req.params.id);
+        res.json({ ok: true, data });
+    })
+);
+
+// POST /api/admin/bots/:id/tests — create a new test
+router.post('/bots/:id/tests',
+    validateParams({
+        params: z.object({ id: z.string().uuid() }),
+        body: z.object({
+            name: z.string().min(1),
+            description: z.string().optional(),
+            steps: z.array(stepSchema).min(1),
+            expectedOutcome: z.string().min(1),
+            connectorId: z.string().optional().nullable(),
+        }),
+    }),
+    asyncHandler(async (req, res) => {
+        const data = await funnelTests.createTest({
+            botId: req.params.id,
+            ...req.body,
+            createdBy: req.session?.login || null,
+        });
+        res.json({ ok: true, data });
+    })
+);
+
+// POST /api/admin/bots/:id/tests/run-all — run every saved test for this bot
+router.post('/bots/:id/tests/run-all',
+    validateParams({ params: z.object({ id: z.string().uuid() }) }),
+    asyncHandler(async (req, res) => {
+        const data = await funnelTests.runAllTests(req.params.id);
+        res.json({ ok: true, data });
+    })
+);
+
+// GET /api/admin/tests/:testId
+router.get('/tests/:testId',
+    validateParams({ params: z.object({ testId: z.string().uuid() }) }),
+    asyncHandler(async (req, res) => {
+        const data = await funnelTests.getTest(req.params.testId);
+        res.json({ ok: true, data });
+    })
+);
+
+// PUT /api/admin/tests/:testId — update
+router.put('/tests/:testId',
+    validateParams({
+        params: z.object({ testId: z.string().uuid() }),
+        body: z.object({
+            name: z.string().min(1).optional(),
+            description: z.string().optional().nullable(),
+            steps: z.array(stepSchema).optional(),
+            expectedOutcome: z.string().min(1).optional(),
+            connectorId: z.string().optional().nullable(),
+        }),
+    }),
+    asyncHandler(async (req, res) => {
+        const data = await funnelTests.updateTest(req.params.testId, req.body);
+        res.json({ ok: true, data });
+    })
+);
+
+// DELETE /api/admin/tests/:testId
+router.delete('/tests/:testId',
+    validateParams({ params: z.object({ testId: z.string().uuid() }) }),
+    asyncHandler(async (req, res) => {
+        const data = await funnelTests.deleteTest(req.params.testId);
+        res.json({ ok: true, data });
+    })
+);
+
+// POST /api/admin/tests/:testId/duplicate
+router.post('/tests/:testId/duplicate',
+    validateParams({ params: z.object({ testId: z.string().uuid() }) }),
+    asyncHandler(async (req, res) => {
+        const data = await funnelTests.duplicateTest(req.params.testId);
+        res.json({ ok: true, data });
+    })
+);
+
+// POST /api/admin/tests/:testId/run
+router.post('/tests/:testId/run',
+    validateParams({ params: z.object({ testId: z.string().uuid() }) }),
+    asyncHandler(async (req, res) => {
+        const data = await funnelTests.runTest(req.params.testId);
         res.json({ ok: true, data });
     })
 );

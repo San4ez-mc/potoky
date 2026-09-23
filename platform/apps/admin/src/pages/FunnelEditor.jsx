@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { ReactFlowProvider } from '@xyflow/react';
 import { useFunnelStore } from '../stores/funnelStore.js';
 import { useAuthStore } from '../stores/authStore.js';
@@ -49,7 +49,6 @@ function TopBar({
     onTest,
     onTidy,
     isTidying,
-    isTesting,
     missingKeys,
     missingSystemKeys,
     readOnly,
@@ -157,11 +156,10 @@ function TopBar({
 
                 <button
                     onClick={onTest}
-                    disabled={isTesting}
-                    title='Запустити тест воронки'
-                    className="text-xs px-2.5 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                    title='Тести воронки'
+                    className="text-xs px-2.5 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 transition-colors shrink-0"
                 >
-                    {isTesting ? '⟳ Тестується...' : '🧪 Тест'}
+                    🧪 Тести
                 </button>
 
                 <button
@@ -180,6 +178,8 @@ function TopBar({
 export function FunnelEditor() {
     const { botId } = useParams();
     const navigate = useNavigate();
+    const [searchParams, setSearchParams] = useSearchParams();
+    const openTestId = searchParams.get('openTest');
     const { bot, connectors, nodes, isDirty, isSaving, isLoading, error, selectedNode, keys, loadFunnel, saveFunnel, exportFunnel, importFunnel } = useFunnelStore();
     const canEdit = useAuthStore(s => s.canEdit);
     const readOnly = !canEdit;
@@ -193,8 +193,6 @@ export function FunnelEditor() {
     const [activeLeftTab, setActiveLeftTab] = useState('nodes'); // 'nodes' | 'keys' | 'env'
     const [editModalOpen, setEditModalOpen] = useState(false);
     const [testModalOpen, setTestModalOpen] = useState(false);
-    const [isTesting, setIsTesting] = useState(false);
-    const [testResult, setTestResult] = useState(null);
     const [isSavingEdit, setIsSavingEdit] = useState(false);
     const [missingSystemKeys, setMissingSystemKeys] = useState([]);
     const [isCompactLayout, setIsCompactLayout] = useState(false);
@@ -249,8 +247,7 @@ export function FunnelEditor() {
         navigate('/funnels');
     };
 
-    const handleOpenTestSession = () => {
-        const sessionId = testResult?.sessionId;
+    const handleOpenTestSession = (sessionId) => {
         if (!sessionId) return;
         const backToEditor = encodeURIComponent(`/funnel/${botId}`);
         navigate(`/sessions/${sessionId}?back=${backToEditor}`);
@@ -284,73 +281,34 @@ export function FunnelEditor() {
 
     const missingKeys = getRequiredKeys();
 
-    const handleRunTest = async () => {
-        // Webhook bots: open modal in JSON-editor mode without auto-starting
-        if (isWebhookBot) {
-            setTestModalOpen(true);
-            setTestResult(null);
-            return;
+    // "Тест" більше не запускає нічого автоматично — лише відкриває попап, де
+    // спочатку обираєш ЩО саме тестувати (збережений тест / новий / webhook-JSON).
+    const handleRunTest = () => {
+        if (!isWebhookBot) {
+            const allMissing = [...getRequiredKeys(), ...missingSystemKeys];
+            if (allMissing.length > 0) {
+                setLeftPanelOpen(true);
+                setActiveLeftTab('keys');
+            }
         }
-
-        const localMissing = getRequiredKeys();
-        const allMissing = [...localMissing];
-        if (missingSystemKeys.length > 0) {
-            allMissing.push(...missingSystemKeys);
-        }
-
-        if (allMissing.length > 0) {
-            setLeftPanelOpen(true);
-            setActiveLeftTab('keys');
-            setTestModalOpen(true);
-            setTestResult({
-                ok: false,
-                missingKeys: localMissing,
-                missingSystemKeys,
-                errors: [{
-                    step: 'Валідація ключів',
-                    message: missingSystemKeys.length > 0
-                        ? 'Перед тестом заповніть ключі воронки та системний Claude API key (Налаштування -> Ключі).'
-                        : 'Перед тестом заповніть обов\'язкові ключі воронки.',
-                }],
-            });
-            return;
-        }
-
         setTestModalOpen(true);
-        setIsTesting(true);
-        setTestResult(null);
-        try {
-            const result = await api.runBotRegression(botId);
-            setTestResult({
-                ok: true,
-                sessionId: result.sessionId,
-                finalState: result.finalState,
-                historyCount: result.historyCount,
-                outputFile: result.outputFile,
-                logs: result.logs,
-            });
-        } catch (err) {
-            setTestResult({
-                ok: false,
-                error: err.message,
-                missingKeys: missingKeys,
-                errors: [{ step: 'Тест', message: err.message }],
-            });
-        } finally {
-            setIsTesting(false);
-        }
     };
 
     const handleRunWebhookTest = async (body) => {
-        setIsTesting(true);
-        setTestResult(null);
-        try {
-            const result = await api.runWebhookTest(botId, body);
-            setTestResult({ ok: true, sessionId: result.sessionId, currentState: result.currentState });
-        } catch (err) {
-            setTestResult({ ok: false, errors: [{ step: 'Webhook POST', message: err.message }] });
-        } finally {
-            setIsTesting(false);
+        const result = await api.runWebhookTest(botId, body);
+        return { ok: true, sessionId: result.sessionId, currentState: result.currentState };
+    };
+
+    // Deep-link з SessionDetail ("🧪 Створити тест з цієї сесії" → ?openTest=<id>)
+    useEffect(() => {
+        if (openTestId) setTestModalOpen(true);
+    }, [openTestId]);
+
+    const closeTestModal = () => {
+        setTestModalOpen(false);
+        if (openTestId) {
+            searchParams.delete('openTest');
+            setSearchParams(searchParams, { replace: true });
         }
     };
 
@@ -414,7 +372,6 @@ export function FunnelEditor() {
                     onTest={handleRunTest}
                     onTidy={handleTidy}
                     isTidying={isTidying}
-                    isTesting={isTesting}
                     missingKeys={missingKeys}
                     missingSystemKeys={missingSystemKeys}
                     readOnly={readOnly}
@@ -523,13 +480,15 @@ export function FunnelEditor() {
 
                 <FunnelTestModal
                     isOpen={testModalOpen}
-                    onClose={() => { setTestModalOpen(false); setTestResult(null); }}
-                    isLoading={isTesting}
-                    result={testResult}
+                    onClose={closeTestModal}
+                    botId={botId}
                     onOpenSession={handleOpenTestSession}
                     isWebhookMode={isWebhookBot}
                     bodySchema={webhookBodySchema}
                     onRunWebhookTest={handleRunWebhookTest}
+                    initialTestId={openTestId}
+                    missingKeys={missingKeys}
+                    missingSystemKeys={missingSystemKeys}
                 />
             </div>
         </ReactFlowProvider>

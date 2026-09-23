@@ -121,6 +121,8 @@ export const api = {
     deleteSessionMessage: (sessionId, msgId) => req('DELETE', `/sessions/${sessionId}/messages/${msgId}`),
     deleteSessionsBulk: (ids) => req('POST', '/sessions/bulk-delete', { ids }),
     markSessionTest: (id, isTest) => req('PATCH', `/sessions/${id}/mark-test`, { isTest }),
+    flagSessionMessage: (sessionId, msgId, flagged, note) => reqWithMeta('PATCH', `/sessions/${sessionId}/messages/${msgId}/flag`, { flagged, note }),
+    createTestFromSession: (sessionId, payload) => req('POST', `/sessions/${sessionId}/create-test`, payload),
     getBotSessions: (botId, page = 0, params = {}) => {
         const q = new URLSearchParams({ page, limit: 50, ...params }).toString();
         return reqWithMeta('GET', `/bots/${botId}/sessions${q ? '?' + q : ''}`);
@@ -161,6 +163,16 @@ export const api = {
     runBotRegression: (botId) => req('POST', `/admin/bots/${botId}/run-regression`),
     runWebhookTest: (botId, body) => req('POST', `/admin/bots/${botId}/webhook-test`, body),
     runProjectRegressions: (projectSlug) => req('POST', `/admin/projects/${projectSlug}/run-regressions`),
+
+    // Funnel tests (повноцінна система тестування)
+    listFunnelTests: (botId) => req('GET', `/admin/bots/${botId}/tests`),
+    getFunnelTest: (testId) => req('GET', `/admin/tests/${testId}`),
+    createFunnelTest: (botId, data) => req('POST', `/admin/bots/${botId}/tests`, data),
+    updateFunnelTest: (testId, data) => req('PUT', `/admin/tests/${testId}`, data),
+    deleteFunnelTest: (testId) => req('DELETE', `/admin/tests/${testId}`),
+    duplicateFunnelTest: (testId) => req('POST', `/admin/tests/${testId}/duplicate`),
+    runFunnelTest: (testId) => req('POST', `/admin/tests/${testId}/run`),
+    runAllFunnelTests: (botId) => req('POST', `/admin/bots/${botId}/tests/run-all`),
 
     // Broadcasts
     getBroadcastEligibleBots: () => req('GET', '/broadcasts/eligible-bots'),

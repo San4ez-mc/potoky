@@ -1701,6 +1701,18 @@ export function NodeEditor({ embedded = false, onClose }) {
                     />
                     <span>🔁 Перезапустити воронку в тестовому режимі після цієї ноди <span className="text-gray-600">(підказка при наведенні)</span></span>
                 </label>
+                <div>
+                    <label className="text-xs text-gray-400 block mb-1">
+                        🧪 QA-очікування <span className="text-gray-600">(що ця нода має робити правильно)</span>
+                    </label>
+                    <textarea
+                        value={data.qaExpectation || ''}
+                        onChange={e => update({ qaExpectation: e.target.value })}
+                        placeholder="Напр.: відповідь має точно назвати ціну товару з каталогу, без вигадування. Перевіряється автоматично на КОЖНОМУ тесті воронки, що проходить через цю ноду — ловить регресії, навіть якщо тест писався не для цієї ноди."
+                        rows={3}
+                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-brand resize-y"
+                    />
+                </div>
             </div>
 
             {/* Type-specific editor */}

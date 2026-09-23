@@ -39,6 +39,13 @@ const EDIT_TOOL_NAMES = new Set([
     'create_broadcast',
     'approve_broadcast',
     'cancel_broadcast',
+    // Funnel tests
+    'create_test',
+    'update_test',
+    'delete_test',
+    'duplicate_test',
+    'run_test',
+    'run_all_tests',
 ]);
 
 const EDIT_TOOLS = TOOLS.filter((tool) => EDIT_TOOL_NAMES.has(tool.name));

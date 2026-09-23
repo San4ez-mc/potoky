@@ -2,6 +2,11 @@
 
 const { PrismaClient } = require('@prisma/client');
 const { computeAutoLayout } = require('@platform/flow-layout');
+// Система тестування (CRUD + прогін через flow engine + LLM-суддя) живе в apps/api,
+// бо тісно завʼязана на testSession.js (executeFlowStep) — той самий підхід, що
+// apps/api/src/routes/mcp-flows*.js уже застосовують у зворотному напрямку (require
+// цього файлу через відносний шлях, а не HTTP-виклик між процесами).
+const funnelTests = require('../../api/src/services/funnelTests');
 
 const prisma = new PrismaClient();
 
@@ -407,6 +412,90 @@ const TOOLS = [
             properties: { id: { type: 'string', description: 'Broadcast UUID' } },
             required: ['id'],
         },
+    },
+    // ── Funnel tests (повноцінна система тестування воронок) ──────────────────
+    {
+        name: 'list_tests',
+        description: 'List saved tests for a bot, with their last run status (passed/failed/error).',
+        inputSchema: {
+            type: 'object',
+            properties: { botId: { type: 'string', description: 'Bot UUID' } },
+            required: ['botId'],
+        },
+    },
+    {
+        name: 'get_test',
+        description: 'Get a single test with its full step list, expectedOutcome, and recent run history.',
+        inputSchema: {
+            type: 'object',
+            properties: { testId: { type: 'string' } },
+            required: ['testId'],
+        },
+    },
+    {
+        name: 'create_test',
+        description: 'Create a saved test for a bot. steps replay a real client turn-by-turn through the SAME flow engine a live user goes through (not a separate simulator) — each step can be plain text, or carry imageUrl/sharedPost (forwarded Instagram post: {kind,mediaId,caption,url})/referral (ad click: {ref,adId,source,type,adTitle}) to reproduce a real first-contact scenario. expectedOutcome is free text describing what must be true at the end — an LLM judge decides pass/fail from it AND from any per-node data.qaExpectation the visited nodes carry (catches regressions in nodes unrelated to this test). connectorId picks which saved AI connector judges the run (Claude Sonnet/Opus recommended for judging) — omit to use the system Claude key.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                botId: { type: 'string' },
+                name: { type: 'string' },
+                description: { type: 'string' },
+                steps: {
+                    type: 'array',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            type: { type: 'string', enum: ['text', 'photo', 'forward_post', 'ad_reply'] },
+                            text: { type: 'string' },
+                            imageUrl: { type: 'string' },
+                            sharedPost: { type: 'object', description: '{kind, mediaId, caption, url}' },
+                            referral: { type: 'object', description: '{ref, adId, source, type, adTitle}' },
+                            entryAdId: { type: 'string' },
+                        },
+                    },
+                },
+                expectedOutcome: { type: 'string', description: 'What must be true at the end — decides pass/fail' },
+                connectorId: { type: 'string', description: 'Saved AI connector UUID used as judge (optional)' },
+            },
+            required: ['botId', 'name', 'steps', 'expectedOutcome'],
+        },
+    },
+    {
+        name: 'update_test',
+        description: 'Update an existing test (name, description, steps, expectedOutcome, connectorId).',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                testId: { type: 'string' },
+                name: { type: 'string' },
+                description: { type: 'string' },
+                steps: { type: 'array', items: { type: 'object' } },
+                expectedOutcome: { type: 'string' },
+                connectorId: { type: 'string' },
+            },
+            required: ['testId'],
+        },
+    },
+    {
+        name: 'delete_test',
+        description: 'Delete a saved test and its run history.',
+        inputSchema: { type: 'object', properties: { testId: { type: 'string' } }, required: ['testId'] },
+    },
+    {
+        name: 'duplicate_test',
+        description: 'Clone a test as "<name> (копія)" so it can be edited independently.',
+        inputSchema: { type: 'object', properties: { testId: { type: 'string' } }, required: ['testId'] },
+    },
+    {
+        name: 'run_test',
+        description: 'Run one saved test now: replays its steps through the real flow engine in a fresh test session, then an LLM judge scores pass/fail against expectedOutcome and any per-node qaExpectation. On failure, writes AppError entries tagged to the responsible node(s) (visible in the session\'s "Ноди" tab).',
+        inputSchema: { type: 'object', properties: { testId: { type: 'string' } }, required: ['testId'] },
+    },
+    {
+        name: 'run_all_tests',
+        description: 'Run every saved test for a bot, one after another. Returns aggregate passed/failed/errored counts plus per-test results.',
+        inputSchema: { type: 'object', properties: { botId: { type: 'string' } }, required: ['botId'] },
     },
 ];
 
@@ -1148,6 +1237,15 @@ async function callTool(name, args = {}) {
         case 'create_broadcast': return createBroadcastMcp(args);
         case 'approve_broadcast': return approveBroadcastMcp(args);
         case 'cancel_broadcast': return cancelBroadcastMcp(args);
+        // Funnel tests
+        case 'list_tests': return funnelTests.listTests(args.botId);
+        case 'get_test': return funnelTests.getTest(args.testId);
+        case 'create_test': return funnelTests.createTest(args);
+        case 'update_test': return funnelTests.updateTest(args.testId, args);
+        case 'delete_test': return funnelTests.deleteTest(args.testId);
+        case 'duplicate_test': return funnelTests.duplicateTest(args.testId);
+        case 'run_test': return funnelTests.runTest(args.testId);
+        case 'run_all_tests': return funnelTests.runAllTests(args.botId);
         default: throw new Error(`Unknown tool: ${name}`);
     }
 }

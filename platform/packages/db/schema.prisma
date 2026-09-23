@@ -53,6 +53,7 @@ model Bot {
   flowDefinition  FlowDefinition?
   funnelKeys      FunnelKey[]
   userData        UserData[]
+  tests           FunnelTest[]
 
   @@index([projectId])
   @@map("bots")
@@ -121,16 +122,23 @@ model Session {
 // ============================================================
 
 model Message {
-  id        String   @id @default(uuid())
-  sessionId String
-  role      String   @db.VarChar(20)   // 'user' | 'assistant' | 'system'
-  content   String   @db.Text
-  metadata  Json     @default("{}")
-  createdAt DateTime @default(now())
+  id         String    @id @default(uuid())
+  sessionId  String
+  role       String    @db.VarChar(20)   // 'user' | 'assistant' | 'system'
+  content    String    @db.Text
+  metadata   Json      @default("{}")
+  createdAt  DateTime  @default(now())
+
+  // Ручне маркування "ця відповідь бота неправильна" прямо в перегляді сесії —
+  // джерело для одноклікового створення тесту (funnelTests.createTestFromSession).
+  flagged    Boolean   @default(false)
+  flagNote   String?   @db.Text
+  flaggedAt  DateTime?
 
   session Session @relation(fields: [sessionId], references: [id])
 
   @@index([sessionId])
+  @@index([flagged])
   @@map("messages")
 }
 
@@ -376,6 +384,57 @@ model UserData {
   @@index([telegramId])
   @@index([botId])
   @@map("user_data")
+}
+
+// ============================================================
+// FUNNEL TESTS (повноцінна система тестування воронок)
+// ============================================================
+
+// Збережений тест-кейс для конкретного бота. steps — впорядкований масив "ходів"
+// клієнта, що відтворюються через той самий flow engine, що й живий користувач
+// (executeFlowStep): { type:'text'|'photo'|'forward_post'|'ad_reply', text?, imageUrl?,
+// sharedPost?:{kind,mediaId,caption,url}, referral?:{ref,adId,source,type,adTitle},
+// delayMs? }. expectedOutcome — вільний текст: САМЕ по ньому LLM-суддя (обраний
+// connectorId) вирішує passed/failed після прогону — це замінює крихке порівняння
+// рядків, бо відповіді бота (LLM) щоразу трохи інші за формулюванням.
+model FunnelTest {
+  id             String    @id @default(uuid())
+  botId          String
+  name           String    @db.VarChar(255)
+  description    String?   @db.Text
+  steps          Json      @default("[]")
+  expectedOutcome String   @db.Text
+  connectorId    String?   // savedConnector (AI) — судить passed/failed; null = системний Claude ключ
+  sourceSessionId String?  // якщо тест створено з реальної сесії кнопкою "Створити тест"
+  createdBy      String?   @db.VarChar(255)
+  lastRunStatus  String?   @db.VarChar(20)  // 'passed' | 'failed' | 'error'
+  lastRunAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  bot  Bot        @relation(fields: [botId], references: [id])
+  runs TestRun[]
+
+  @@index([botId])
+  @@map("funnel_tests")
+}
+
+model TestRun {
+  id          String    @id @default(uuid())
+  testId      String
+  botId       String
+  sessionId   String?   // тестова Session, створена цим прогоном (для "Переглянути сесію")
+  status      String    @db.VarChar(20)  // 'passed' | 'failed' | 'error'
+  verdict     Json      @default("{}")   // { passed, reasoning, failingStepIndex, failingNodeId }
+  connectorId String?
+  startedAt   DateTime  @default(now())
+  finishedAt  DateTime?
+
+  test FunnelTest @relation(fields: [testId], references: [id])
+
+  @@index([testId])
+  @@index([botId])
+  @@map("test_runs")
 }
 
 // Ф0.1 — ідемпотентність вхідних Telegram-апдейтів (ретраї webhook = той самий update_id).

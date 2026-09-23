@@ -634,7 +634,15 @@ async function runPolicyInner(A, u) {
         } else if (r.status === 'found') {
             resetForNewProduct(A, P(ctx).sku);
             const samePresented = ctx.agent.presentedSku === P(ctx).sku && ctx.presentedAt && (Date.now() - Number(ctx.presentedAt)) < 6 * 3600 * 1000;
-            if (!samePresented) await present(A);
+            if (!samePresented) {
+                await present(A);
+                // 2026-09-23 (FunnelTest 6: «яка ціна?» разом із постом — картка ВЖЕ містить ціну, а
+                // compose відповідав на питання ще раз і навіть озвучив службову примітку «клієнт щойно
+                // переслав пост…»). Запитання про ціну, на яке щойно відповіла картка, знімаємо.
+                if (A.justPresented && Array.isArray(u.questions) && u.questions.length) {
+                    u.questions = u.questions.filter((q) => !/(ціна|ціну|цін[иі]|скільки\s+кошту|вартіст|почім|прайс)/i.test(String(q)));
+                }
+            }
             else if (u.wantsPhoto && !A.turnImage && (Date.now() - Number(ctx.presentedAt)) > 2 * 60 * 1000) { const urls = firstPhotoUrls(P(ctx)); if (urls.length) A.out.push({ photoUrls: urls, caption: '', step: 'photo_again' }); }
             if (ctx.adLinkMismatchAt && !ctx.adLinkMismatchAlertedAt) { await T.alert(A, 'n_ad_conflict_admin'); ctx.adLinkMismatchAlertedAt = Date.now(); }
             // нижче — продовжуємо тим самим ходом (параметри/колір могли бути вже в повідомленні)

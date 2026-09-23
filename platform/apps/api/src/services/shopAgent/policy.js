@@ -1106,7 +1106,7 @@ async function runPolicyInner(A, u) {
         const odH = ctx.orderData || {};
         if (ctx.agent.lastAsk === 'адресна доставка Новою Поштою?') {
             const yes = u.ready === 'yes' || /^\s*(так|да|ага|угу|вірно|правильно|саме\s+так|підтверджую)/i.test(text);
-            if (yes && !u.branch && !u.homeAddress) {
+            if (yes && !u.branch) {
                 await pause(A, 'home_delivery', 'n_agent_post_extra_admin', '🏠 Клієнт підтвердив АДРЕСНУ доставку Новою Поштою: «' + String(ctx.agent.homeAddressRaw || '').slice(0, 300) + '». Потрібно уточнити умови й оформити вручну.');
                 A.out.push({ text: 'Дякую, підтвердили 🙏 Адресну доставку Новою Поштою уточнить і оформить менеджер — напише вам тут найближчим часом 💛', step: 'home_delivery_handoff' });
                 ctx.agent.lastAsk = '';

@@ -925,6 +925,12 @@ async function runPolicyInner(A, u) {
             ctx.setSelection = initSetSelection(pp);
             applySetPricing(ctx, pp);
             if (!ctx.agent.setStageSent) { await T.funnelStage(A, ...STAGES.color); ctx.agent.setStageSent = true; }
+        } else if (!ctx.agent.setPricing) {
+            // Часткова вибірка з розділу 3 («лише кофта і джинси») створює setSelection одразу, тож
+            // гілка вище не виконувалась і ціна не рахувалась: падіння policy (setPricing undefined)
+            // та «решта −200 грн» (FunnelTest 4).
+            applySetPricing(ctx, pp);
+            if (!ctx.agent.setStageSent) { await T.funnelStage(A, ...STAGES.color); ctx.agent.setStageSent = true; }
         }
         // 2026-09-15 (власник: "якого кольору джинси ми тепер оформимо?"): раніше колір позицій
         // комплекту НІКОЛИ не резолвився й не питався — замовлення йшло з порожнім кольором для

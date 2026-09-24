@@ -1216,7 +1216,7 @@ async function runPolicyInner(A, u) {
                 const { text: pre, resolved: preResolved } = await compose(A, { questions: u.questions, nextStep: hesitating ? 'клієнт вагається — без тиску наведи ОДИН реальний аргумент оформити сьогодні (раніше отримає, черга на відправку) і заверши питанням «Оформляємо сьогодні?»' : 'заверши коротким переходом до підсумку (без самого підсумку — його додасть система)', maxSentences: 3, fallback: '' });
                 if (!preResolved && u.questions.length) await escalateUnresolved(A, u.questions[0]);
                 // підсумок уже показано — не повторюємо картку з ціною після кожного питання (FunnelTest 43)
-                txt = (pre ? pre + '\n\n' : '') + (hesitating ? summary : (ctx.agent.lastAsk === 'оформляємо?' && pre ? askLine : txt));
+                txt = (pre ? pre + '\n\n' : '') + (hesitating ? summary : (ctx.agent.lastAsk === 'оформляємо?' && pre ? messageText(A.assets, 'n_agent_order_ask_plain', ctx, A.session.id) : txt));
             }
             A.out.push({ text: txt, step: 'order_intent' });
             ctx.agent.lastAsk = 'оформляємо?'; return;
@@ -1357,7 +1357,7 @@ async function runPolicyInner(A, u) {
         if (u.homeAddress && !od.branch) { ctx.agent.cityNote = od.city ? ' у м. ' + od.city : ''; A.out.push({ text: await answerThenAsk(A, u, messageText(A.assets, 'n_agent_home_address_reject', ctx, A.session.id)), step: 'home_address' }); ctx.agent.lastAsk = 'номер відділення'; return; }
         if (!addressComplete(od)) {
             const missing = [!od.fullName && 'ПІБ', !od.phone && 'телефон', !od.city && 'місто', !od.branch && '№ відділення або поштомата'].filter(Boolean);
-            ctx.agent.ackLine = ctx.payStatus === 'confirmed' ? 'Оплату отримали ✅ ' : (u.claimsPaid || u.receiptLink || A.turnImage ? 'Дякую! Оплату звіримо, щойно надійде 🙏 ' : '');
+            ctx.agent.ackLine = ctx.payStatus === 'confirmed' ? 'Оплату отримали ✅ ' : (u.claimsPaid || u.receiptLink || (A.turnImage && Number(ctx.payAmount) > 0 && ctx.paymentInfo && ctx.paymentInfo.method) ? 'Дякую! Оплату звіримо, щойно надійде 🙏 ' : '');
             ctx.agent.missingFields = missing.join(', ');
             A.out.push({ text: await answerThenAsk(A, u, messageText(A.assets, 'n_agent_ask_address', ctx, A.session.id)), step: 'ask_address' }); ctx.agent.lastAsk = 'дані доставки: ' + missing.join(', '); return;
         }

@@ -11,15 +11,13 @@ const BOT_IDS = ['fcdee415-bef2-4a74-a650-e6e4b5a12322'];
 
 function patchCode(code) {
   if (code.includes('setSizeMap')) return { code, changed: false };
-  let out = code;
-  const a = "var __setLines = [];";
-  const b = "    __setLines.push('📏 ' + __it.name + '\n' + __itSizeLine);";
-  const c = "    setSizesText: __setLines.join('\n\n'),";
-  const d = "      __itSizeLine = __r.size ? ('Розмір: ' + __r.size)";
-  if (![a, b, c, d].every((s) => out.includes(s))) return { code, changed: false, reason: 'фрагменти не знайдено: ' + [a, b, c, d].map((x, i) => (out.includes(x) ? '' : 'abcd'[i])).join('') };
-  out = out.replace(a, a + " var __setSizeMap = {};");
-  out = out.replace(d, "      if (__r.size && __it.article) __setSizeMap[__it.article] = __r.size;\n" + d);
-  out = out.replace(c, c + "\n    setSizeMap: __setSizeMap,");
+  const a = 'var __setLines = [];';
+  const b = 'var __r = __setCalcOne(__itAvail);';
+  const c = 'isSetSizeCalc: true,';
+  if (![a, b, c].every((x) => code.includes(x))) return { code, changed: false, reason: 'фрагменти не знайдено' };
+  let out = code.replace(a, a + ' var __setSizeMap = {};');
+  out = out.replace(b, b + ' if (__r.size && __it.article) __setSizeMap[__it.article] = __r.size;');
+  out = out.replace(c, c + ' setSizeMap: __setSizeMap,');
   return { code: out, changed: true };
 }
 

@@ -570,7 +570,10 @@ async function runPolicyInner(A, u) {
             return;
         }
         const since = Date.now() - Number(ctx.postOrderMsgAt || 0);
-        if (u.questions.length && !u.statusQuestion) {
+        if (u.statusQuestion && !ctx.supplierTtn && !ctx.ttn) {
+            // 2026-09-24 (FunnelTest 44): «коли відправка / чому не відправили» до ТТН — стандартні терміни, а не вигадана причина.
+            A.out.push({ text: 'Одяг шиється під замовлення: відправка протягом 5 робочих днів з моменту оформлення (субота й неділя — вихідні). Номер накладної (ТТН) надішлемо сюди одразу після відправки 📦', step: 'post_status_terms' });
+        } else if (u.questions.length && !u.statusQuestion) {
             A.out.push({ text: await answerThenAsk(A, u, 'Ваше замовлення в роботі 💛'), step: 'post_q' });
         } else if (since > 30 * 60 * 1000) {
             A.out.push({ text: messageTextMultiline(A.assets, 'n_post_order_msg', ctx, A.session.id), step: 'post_order' }); ctx.postOrderMsgAt = Date.now();
@@ -1129,7 +1132,8 @@ async function runPolicyInner(A, u) {
                 A._questionEngaged = true;
                 const { text: pre, resolved: preResolved } = await compose(A, { questions: u.questions, nextStep: hesitating ? 'клієнт вагається — без тиску наведи ОДИН реальний аргумент оформити сьогодні (раніше отримає, черга на відправку) і заверши питанням «Оформляємо сьогодні?»' : 'заверши коротким переходом до підсумку (без самого підсумку — його додасть система)', maxSentences: 3, fallback: '' });
                 if (!preResolved && u.questions.length) await escalateUnresolved(A, u.questions[0]);
-                txt = (pre ? pre + '\n\n' : '') + (hesitating ? summary : txt);
+                // підсумок уже показано — не повторюємо картку з ціною після кожного питання (FunnelTest 43)
+                txt = (pre ? pre + '\n\n' : '') + (hesitating ? summary : (ctx.agent.lastAsk === 'оформляємо?' && pre ? askLine : txt));
             }
             A.out.push({ text: txt, step: 'order_intent' });
             ctx.agent.lastAsk = 'оформляємо?'; return;

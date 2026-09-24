@@ -376,7 +376,7 @@ async function runTest(testId, onProgress = () => {}) {
                     sessionId: null,
                     systemPrompt: system,
                     messages: [{ role: 'user', content: user }],
-                    options: { maxTokens: 3500, apiKey, model: 'claude-sonnet-4-6', temperature: 0 }, // детермінований суддя: менше «гойдалок» між прогонами
+                    options: { maxTokens: 3500, apiKey, model: process.env.FUNNEL_TEST_JUDGE_MODEL || 'claude-sonnet-4-6', temperature: 0 }, // FUNNEL_TEST_JUDGE_MODEL=claude-haiku-4-5 — дешевший суддя для рутинних прогонів // детермінований суддя: менше «гойдалок» між прогонами
                 });
                 try {
                     const jsonMatch = raw.match(/\{[\s\S]*\}/);
@@ -448,8 +448,14 @@ async function runTest(testId, onProgress = () => {}) {
     }
 }
 
-async function runAllTests(botId) {
-    const tests = await db.funnelTest.findMany({ where: { botId }, select: { id: true } });
+/**
+ * opts.only — масив id (або префіксів id) тестів; opts.failedOnly — лише ті, що в останньому прогоні не пройшли
+ * (економія токенів: повний набір з 47 тестів коштує близько $1.5–2 за прогін, тому після точкової правки ганяємо лише зачеплені).
+ */
+async function runAllTests(botId, opts = {}) {
+    let tests = await db.funnelTest.findMany({ where: { botId }, select: { id: true, lastRunStatus: true } });
+    if (Array.isArray(opts.only) && opts.only.length) tests = tests.filter((t) => opts.only.some((p) => t.id.startsWith(p)));
+    if (opts.failedOnly) tests = tests.filter((t) => t.lastRunStatus !== 'passed');
     const results = [];
     for (const t of tests) {
         const result = await runTest(t.id);

@@ -151,7 +151,19 @@ function setMatchesOriginal(sel, original) {
 function applySetPricing(ctx, pp) {
     const sel = ctx.setSelection;
     if (setMatchesOriginal(sel, ctx.agent.setOriginal)) {
-        const total = Number(pp.price) > 0 ? Number(pp.price) : setSelectionTotal(sel);
+        // 2026-09-24 (FunnelTest 37, «решта −200 грн»): у CRM ціна комплекту = 0 (вона лише в тексті картки «Комплект (4 в 1): 5290 ₴»),
+        // тож n_pay_amount, що бере ціну з product.price, рахував суму 0. Беремо рекламовану ціну з тексту, інакше суму позицій,
+        // і записуємо її в product.price — для оплати, CRM і постачальника.
+        let total = Number(pp.price) > 0 ? Number(pp.price) : 0;
+        if (!total) {
+            for (const v of Object.values(pp)) {
+                if (typeof v !== 'string') continue;
+                const m = v.match(/Комплект[^:\n]{0,20}:\s*(\d[\d\s]{2,6})\s*(?:₴|грн)/i);
+                if (m) { total = Number(m[1].replace(/\s/g, '')); if (total > 0) break; }
+            }
+        }
+        if (!total) total = setSelectionTotal(sel);
+        if (ctx.product && !(Number(ctx.product.price) > 0)) ctx.product.price = total;
         ctx.orderExtras = []; ctx.extraItems = []; ctx.orderUnitsTotal = total; ctx.orderUnits = [{ color: '', size: '' }]; ctx.orderUnitsText = ctx.setSizesText || 'весь комплект';
         ctx.agent.setPricing = { total, edited: false };
         return ctx.agent.setPricing;

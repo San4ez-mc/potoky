@@ -140,7 +140,7 @@ async function dispatchEasydrop(A, nodeId, group, alloc) {
                 testMode: A.ctx.testMode,
                 supplierCfg: alloc.supplierCfg,
                 product: { supplierArticle: l.supplierArticle, article: l.sku, sku: l.sku, price: l.price },
-                orderSku: l.sku, recommendedSize: l.size, sizeInput: {}, orderData: A.ctx.orderData, np: A.ctx.np, orderRef: A.ctx.orderRef,
+                orderSku: l.sku, recommendedSize: l.size, colorChoice: { color: l.color }, orderUnits: [{ color: l.color, size: l.size }], sizeInput: {}, orderData: A.ctx.orderData, np: A.ctx.np, orderRef: A.ctx.orderRef,
             };
             const r = await runNodeCode(nodeCode(A.assets, nodeId), { ctx: scoped, keys: A.keys, user: A.user, session: A.session, input: '', label: nodeId + ':' + group.name });
             A.trace.push({ tool: nodeId + ':' + group.name, ok: r.ok, ms: r.ms, error: r.error || null });

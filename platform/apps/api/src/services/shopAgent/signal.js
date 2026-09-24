@@ -105,4 +105,20 @@ function categoryWordIsSetComponent(text, ctx) {
     return stems.every((st) => st === 'комплект' || names.some((n) => n.includes(st)));
 }
 
-module.exports = { classifySignal, hasAnySignal, hasCategoryWord, categoryWordIsUpsell, categoryWordIsSetComponent };
+/**
+ * 2026-09-24 (FunnelTest «Лише кофту» у відповідь на «додати футболку чи лише основний товар?»): слово-категорія
+ * збігалось із категорією ПОТОЧНОГО головного товару і відкривало список «інших кофт», хоча клієнт лише підтвердив
+ * свій товар. Слово, що називає категорію активного товару, — не новий пошук, якщо клієнт не просить інші/ще варіанти.
+ */
+function categoryWordIsMain(text, ctx) {
+    const p = ctx && ctx.product;
+    if (!p || p.isSet) return false;
+    const clean = String(text || '').replace(/\[переслав[^\]]*\][^\n]*/gi, ' ');
+    if (/(інш|ще\s|є\s|які\s|другі|різн|покажіть|варіант|подібн)/i.test(clean)) return false;
+    const stems = clean.toLowerCase().match(new RegExp(CATEGORY_STEM_RE.source, 'gi')) || [];
+    if (!stems.length) return false;
+    const mainName = String(p.customerName || p.name || '').toLowerCase();
+    return stems.every((st) => mainName.includes(st));
+}
+
+module.exports = { classifySignal, hasAnySignal, hasCategoryWord, categoryWordIsUpsell, categoryWordIsSetComponent, categoryWordIsMain };

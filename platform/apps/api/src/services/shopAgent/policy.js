@@ -9,7 +9,7 @@ const T = require('./tools');
 const { compose } = require('./compose');
 const { messageText, messageTextMultiline, nodeData, norm, loadCategories } = require('./lib');
 const { dispatchOrder } = require('./supplierDispatch');
-const { hasCategoryWord, categoryWordIsUpsell, categoryWordIsSetComponent } = require('./signal');
+const { hasCategoryWord, categoryWordIsUpsell, categoryWordIsSetComponent, categoryWordIsMain } = require('./signal');
 const { resolveColorMention } = require('./cart');
 
 // 2026-09-14 (власник: "я взагалі проти будь-якого хардкоду... все в ноди перенеси"): TRUST_STEP1/2,
@@ -641,7 +641,7 @@ async function runPolicyInner(A, u) {
     // n_lookup навіть не викликався для таких повідомлень. Дозволяємо категорійне слово теж
     // відкрити повторний матчинг — АЛЕ тільки до оформлення замовлення (crmOrderId), щоб не
     // зачепити вже перевірену поведінку "після оформлення — лише хендофф менеджеру" (розділ 1).
-    const categorySignal = !ctx.crmOrderId && hasCategoryWord(text) && !categoryWordIsUpsell(text, ctx) && !categoryWordIsSetComponent(text, ctx);
+    const categorySignal = !ctx.crmOrderId && hasCategoryWord(text) && !categoryWordIsUpsell(text, ctx) && !categoryWordIsSetComponent(text, ctx) && !categoryWordIsMain(text, ctx);
     if (!P(ctx) || freshSignal || categorySignal) {
         if (u.productHint.fromList && ctx.catalogHintSkus) {
             const skus = String(ctx.catalogHintSkus).split(',').map((s) => s.trim()).filter(Boolean);
@@ -901,6 +901,10 @@ async function runPolicyInner(A, u) {
                 if (isHW) { ctx.agent.missingParam = missing; ask = missing ? messageText(A.assets, 'n_agent_ask_size_missing', ctx, A.session.id) : messageText(A.assets, 'n_agent_ask_size_both', ctx, A.session.id); }
                 else { ctx.agent.paramsPromptText = paramsPrompt || 'ваш розмір'; ask = messageText(A.assets, 'n_agent_ask_size_custom', ctx, A.session.id); }
             }
+            // Повторне прохання тих самих параметрів (клієнт відповідає про інше) — інакше звучить як збій
+            // (інваріант I2: дослівний повтор); перефразовуємо й лишаємо коротко.
+            ctx.agent.paramsAskCount = (ctx.agent.paramsAskCount || 0) + 1;
+            if (ask && ctx.agent.paramsAskCount > 1 && ctx.agent.lastAsk === (paramsPrompt || 'зріст і вага')) ask = (ctx.agent.paramsAskCount % 2 ? 'Щоб підібрати розмір, лишилось дізнатись зріст і вагу 🙂 Напишіть, будь ласка, скільки у вас — і одразу рухаємось далі.' : 'Мені ще потрібні зріст і вага для підбору розміру 📏 Напишіть їх, будь ласка 🙂');
             A.out.push({ text: chartJustSent ? (preNote + colorNote + ask) : await answerThenAsk(A, u, preNote + colorNote + ask), step: 'ask_params' }); ctx.agent.lastAsk = paramsPrompt || 'зріст і вага';
             return;
         }

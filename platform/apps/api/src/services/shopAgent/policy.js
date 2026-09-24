@@ -1017,6 +1017,23 @@ async function runPolicyInner(A, u) {
         // клієнт МІГ уже назвати колір(и) прямо в цьому повідомленні ("джинси сині, кофта чорна")
         // — розбираємо по позиціях тим самим matchSetItem/matchColor, що вже є для applySetEdit;
         // лишається неоднозначність — питаємо ОДНИМ повідомленням саме ці позиції, не всі одразу.
+        if (!ctx.crmOrderId && (u.removeItem || u.addItem || u.changeRequest)) {
+            const edited = await applySetEdit(A, u, pp);
+            if (edited) {
+                const lines = ctx.setSelection.map((it) => it.name + (it.color ? ' (' + it.color + ')' : '') + (it.qty > 1 ? ' ×' + it.qty : '') + ' — ' + (it.price * it.qty) + ' грн').join('\n');
+                const total = ctx.agent.setPricing.total;
+                const wasReady = ctx.orderIntent && ctx.orderIntent.ready === 'yes';
+                if (wasReady) ctx.orderIntent.ready = null; // змінений склад — підтверджуємо ще раз
+                ctx.agent.setLines = lines; ctx.agent.setTotal = total;
+                ctx.agent.setEditQuestion = ctx.setSelection.length ? 'Оформляємо так? 🙂' : 'Комплект лишився без жодної позиції — що додати?';
+                A.out.push({ text: messageTextMultiline(A.assets, 'n_agent_set_edit_confirm', ctx, A.session.id), step: 'set_edit' });
+                ctx.agent.lastAsk = 'оформляємо?'; ctx.agent.setEditNote = '';
+                return;
+            } else if (ctx.agent.setEditNote) {
+                A.out.push({ text: await answerThenAsk(A, u, messageText(A.assets, 'n_agent_set_edit_unclear', ctx, A.session.id)), step: 'set_edit_unclear' });
+                return;
+            }
+        }
         if (!ctx.agent.setColorsResolved) {
             const catNamesSet = ctx.agent.setParams && ctx.agent.setParams.categoryNames;
             const segments = [...(ctx.agent.setColorHints || []), text].flatMap((tx) => String(tx).split(/[,;\n]|\s+(?:і|та|и|й)\s+/iu)).map((s) => s.trim()).filter(Boolean);
@@ -1067,23 +1084,6 @@ async function runPolicyInner(A, u) {
                 return;
             }
             ctx.agent.setColorsResolved = true;
-        }
-        if (!ctx.crmOrderId && (u.removeItem || u.addItem || u.changeRequest)) {
-            const edited = await applySetEdit(A, u, pp);
-            if (edited) {
-                const lines = ctx.setSelection.map((it) => it.name + (it.color ? ' (' + it.color + ')' : '') + (it.qty > 1 ? ' ×' + it.qty : '') + ' — ' + (it.price * it.qty) + ' грн').join('\n');
-                const total = ctx.agent.setPricing.total;
-                const wasReady = ctx.orderIntent && ctx.orderIntent.ready === 'yes';
-                if (wasReady) ctx.orderIntent.ready = null; // змінений склад — підтверджуємо ще раз
-                ctx.agent.setLines = lines; ctx.agent.setTotal = total;
-                ctx.agent.setEditQuestion = ctx.setSelection.length ? 'Оформляємо так? 🙂' : 'Комплект лишився без жодної позиції — що додати?';
-                A.out.push({ text: messageTextMultiline(A.assets, 'n_agent_set_edit_confirm', ctx, A.session.id), step: 'set_edit' });
-                ctx.agent.lastAsk = 'оформляємо?'; ctx.agent.setEditNote = '';
-                return;
-            } else if (ctx.agent.setEditNote) {
-                A.out.push({ text: await answerThenAsk(A, u, messageText(A.assets, 'n_agent_set_edit_unclear', ctx, A.session.id)), step: 'set_edit_unclear' });
-                return;
-            }
         }
     }
 

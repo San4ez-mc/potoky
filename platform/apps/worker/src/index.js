@@ -802,6 +802,31 @@ async function cleanupOldLogs() {
 
 setTimeout(() => { cleanupOldLogs(); setInterval(cleanupOldLogs, LOG_CLEANUP_INTERVAL_MS); }, 5 * 60 * 1000);
 
+// ── Ретенція згенерованих зображень (2026-09-24) ─────────────────────
+// Контент-воронки (каруселі, сторіз, Imagen/FLUX) кладуть у session.context base64-картинки
+// (panoramaBase64/slidesBase64/finalImageBase64/…) — по 40+ МБ на сесію, разом ГБ у БД.
+// Картинки вже надіслані в Telegram, тож через IMAGE_RETENTION_DAYS від останньої активності
+// сесії прибираємо ВСІ top-level ключі context, що закінчуються на "Base64". Решту context не чіпаємо.
+const IMAGE_RETENTION_DAYS = Number(process.env.IMAGE_RETENTION_DAYS || 10);
+
+async function cleanupOldImages() {
+    const cutoff = new Date(Date.now() - IMAGE_RETENTION_DAYS * 86400000);
+    try {
+        const n = await db.$executeRaw`
+            UPDATE sessions s SET context = (
+                SELECT COALESCE(jsonb_object_agg(k, v), '{}'::jsonb)
+                FROM jsonb_each(s.context) AS t(k, v) WHERE k !~ 'Base64$'
+            )
+            WHERE "lastActive" < ${cutoff}
+              AND EXISTS (SELECT 1 FROM jsonb_object_keys(s.context) k WHERE k ~ 'Base64$')`;
+        if (n) logger.info('Ретенція зображень', { sessionsCleaned: n, olderThan: cutoff.toISOString(), days: IMAGE_RETENTION_DAYS });
+    } catch (err) {
+        logger.error('Ретенція зображень: помилка', { error: err.message });
+    }
+}
+
+setTimeout(() => { cleanupOldImages(); setInterval(cleanupOldImages, LOG_CLEANUP_INTERVAL_MS); }, 7 * 60 * 1000);
+
 // ── Broadcast queue ──────────────────────────────────────────
 const broadcastQueue = new Bull('broadcasts', REDIS_URL);
 

@@ -521,6 +521,13 @@ async function runPolicyInner(A, u) {
         A.out.push({ text: 'Я віртуальна помічниця магазину 🙂 Допомагаю з підбором і оформленням, а якщо потрібна жива людина — скажіть, і я одразу покличу менеджера 💛', step: 'bot_honest' });
         if (!/менеджер|людин|живий|покличте/i.test(text.replace(/бот\s+чи\s+(?:людина|живий)|(?:людина|живий)\s+чи\s+бот/ig, ''))) return;
     }
+    // 2026-09-24 (FunnelTest 28): «Поміняю відділення, напишу номер» — клієнт змінює адресу; бот чекає номер, а не питає про колір.
+    if (!u.branch && /(поміня|зміни|змінюю|інше|інший|друге)\S*\s+(?:відділенн|поштомат)/i.test(text)) {
+        if (ctx.orderData) delete ctx.orderData.branch;
+        delete ctx.np;
+        if (ctx.crmOrderId) { A.out.push({ text: 'Звісно 🙂 Напишіть, будь ласка, номер нового відділення чи поштомата — передам менеджеру, щоб змінили адресу до відправки.', step: 'branch_change_post' }); await T.alert(A, 'n_agent_post_extra_admin', { details: '📍 Клієнт хоче змінити відділення після оформлення: «' + text.slice(0, 200) + '»' }); return; }
+        A.out.push({ text: 'Звісно 🙂 Напишіть, будь ласка, номер нового відділення чи поштомата Нової пошти.', step: 'branch_change' }); ctx.agent.lastAsk = 'дані доставки: № відділення або поштомата'; return;
+    }
     // 0. Людина / претензія / повернення
     if (u.wantsHuman) {
         ctx.agent.handoffAsked = (ctx.agent.handoffAsked || 0) + 1;

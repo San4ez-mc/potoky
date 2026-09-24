@@ -574,6 +574,11 @@ async function runPolicyInner(A, u) {
             A.out.push({ text: await answerThenAsk(A, u, 'Ваше замовлення в роботі 💛'), step: 'post_q' });
         } else if (since > 30 * 60 * 1000) {
             A.out.push({ text: messageTextMultiline(A.assets, 'n_post_order_msg', ctx, A.session.id), step: 'post_order' }); ctx.postOrderMsgAt = Date.now();
+        } else if (Number(ctx.payAmount) > 0 && ctx.payStatus !== 'confirmed') {
+            // 2026-09-23 (FunnelTest, інваріант I1 «бот не мовчить»): клієнт відповідає «так, оформляйте» вже ПІСЛЯ
+            // видачі посилання на оплату — раніше бот мовчав (30 хв після post_order), і Zernio позначав розмову
+            // як «бот не веде далі». Коротке нагадування замість тиші.
+            A.out.push({ text: 'Дякую! 🙌 Чекаю на оплату за посиланням вище — щойно побачу її, одразу передам замовлення у відправку 💛', step: 'post_pay_reminder' });
         }
         if (since > 30 * 60 * 1000 || u.statusQuestion) await T.alert(A, 'n_post_order_admin');
         return;
@@ -587,6 +592,13 @@ async function runPolicyInner(A, u) {
         const ORD = { 'перш': 1, 'друг': 2, 'трет': 3, 'четверт': 4, 'п’ят': 5, "п'ят": 5, 'шост': 6, 'сьом': 7, 'восьм': 8, 'дев’ят': 9, "дев'ят": 9, 'десят': 10 };
         const om = text.toLowerCase().match(/(перш|друг|трет|четверт|п[’']ят|шост|сьом|восьм|дев[’']ят|десят)\S*\s+(?:відділенн|віділен|нп|нової\s+пошти)/);
         if (om) u.branch = String(ORD[om[1].replace('’', "'")] || ORD[om[1]] || '');
+    }
+    // 2026-09-23 (FunnelTest 31): 11 цифр («09912448883») LLM мовчки обрізала до 10 і оформлення йшло далі
+    // з чужим номером. Телефон приймаємо лише якщо в тексті є рівно 10 цифр з 0 (або 380 + 9); інакше просимо виправити.
+    let __phoneNote = '';
+    if (u.phone) {
+        const runs = String(text).replace(/[\s\-()+.]/g, '').match(/\d{9,13}/g) || [];
+        if (runs.length && !runs.some((r) => /^0\d{9}$/.test(r) || /^380\d{9}$/.test(r))) { u.phone = null; __phoneNote = 'Номер телефону виглядає некоректно — напишіть, будь ласка, 10 цифр, наприклад 0501234567 📱 '; }
     }
     const __dataThisTurn = !!((u.phone || u.fullName || u.city || u.branch) && !u.homeAddress);
     if (__dataThisTurn) {
@@ -611,7 +623,7 @@ async function runPolicyInner(A, u) {
         ctx.agent.receiptEarlyAlertAt = Date.now();
         await T.alert(A, 'n_agent_early_payment_admin', { details: '💬 «' + text.slice(0, 200) + '»', photoUrl: A.turnImage || '' });
     }
-    const preNote = (__dataThisTurn && !addressComplete(ctx.orderData) ? 'Дані доставки записала 📝 ' : '') + (earlyReceipt ? 'Дякую, оплату бачу — звіримо 🙏 Щоб оформити відправку, лишилось кілька кроків. ' : '') + (u.intent === 'wants_requisites' && !(ctx.paymentInfo && ctx.paymentInfo.method) ? 'Реквізити надішлю одразу після підбору розміру і кольору 🙂 ' : '');
+    const preNote = __phoneNote + (__dataThisTurn && !addressComplete(ctx.orderData) ? 'Дані доставки записала 📝 ' : '') + (earlyReceipt ? ((u.receiptLink || A.turnImage) ? 'Дякую, оплату бачу — звіримо 🙏 Щоб оформити відправку, лишилось кілька кроків. ' : 'Дякую! Щоб звірити оплату, скиньте, будь ласка, скріншот або посилання на квитанцію 🙏 ') : '') + (u.intent === 'wants_requisites' && !(ctx.paymentInfo && ctx.paymentInfo.method) ? 'Реквізити надішлю одразу після підбору розміру і кольору 🙂 ' : '');
 
     // 2. Товар
     // 2026-09-15 (живий кейс: у комплекті клієнт написав "чорні джинси"/"Чорний" — понял() LLM
@@ -1127,6 +1139,13 @@ async function runPolicyInner(A, u) {
         }
     }
 
+    // 7a2. Відмова від допродажу ПІСЛЯ підсумку («Лише основний товар» уже на етапі оплати) — прибираємо його з
+    //      замовлення й перераховуємо суму (FunnelTest 20: «решта 2798» рахувалась із відхиленою футболкою).
+    if (ctx.orderIntent && ctx.orderIntent.addUpsell && u.addUpsell === false && !ctx.crmOrderId) {
+        ctx.orderIntent.addUpsell = false; ctx.orderIntent.upsellUnits = undefined; ctx.orderIntent.upsellQty = undefined; ctx.orderIntent.upsellNote = undefined;
+        if (ctx.paymentInfo && ctx.paymentInfo.method) { ctx.orderRef = ''; await T.payAmount(A); await sendRequisites(A, u); return; }
+    }
+
     // 7b. Колір/кількість допродажу, названі ПІЗНІШЕ за підсумок (FunnelTest 9: бот спитав спосіб
     //     оплати, клієнт відповів «одна біла і одна чорна футболка» — orderIntent уже був
     //     зафіксований без цих даних, вони губились, і в замовленні лишалась 1 футболка без кольору).
@@ -1192,7 +1211,7 @@ async function runPolicyInner(A, u) {
                 if (!payQResolved) await escalateUnresolved(A, u.questions[0]);
                 A.out.push({ text: payQTxt, step: 'pay_q' });
             }
-            const payAck = (u.claimsPaid || u.receiptLink || A.turnImage) ? messageTextMultiline(A.assets, 'n_agent_pay_ack_receipt', ctx, A.session.id) + '\n\n' : ((u.phone || u.fullName || u.city || u.branch) ? messageTextMultiline(A.assets, 'n_agent_pay_ack_address', ctx, A.session.id) + '\n\n' : (u.addUpsell === false && ctx.agent.upsellOffered ? messageTextMultiline(A.assets, 'n_agent_pay_ack_no_upsell', ctx, A.session.id) + '\n\n' : ''));
+            const payAck = (u.receiptLink || A.turnImage) ? messageTextMultiline(A.assets, 'n_agent_pay_ack_receipt', ctx, A.session.id) + '\n\n' : ((u.phone || u.fullName || u.city || u.branch) ? messageTextMultiline(A.assets, 'n_agent_pay_ack_address', ctx, A.session.id) + '\n\n' : (u.addUpsell === false && ctx.agent.upsellOffered ? messageTextMultiline(A.assets, 'n_agent_pay_ack_no_upsell', ctx, A.session.id) + '\n\n' : ''));
             A.out.push({ text: payAck + payTpl, step: 'pay_options' });
             ctx.agent.lastAsk = 'спосіб оплати 1 чи 2'; return;
         }

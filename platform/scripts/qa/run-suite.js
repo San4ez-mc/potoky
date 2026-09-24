@@ -21,13 +21,16 @@ const only = args.only ? String(args.only).toLowerCase() : null;
 const which = args.bot && args.bot !== 'all' ? [args.bot] : Object.keys(BOTS);
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 
+const RUN_ID = String(Date.now()).slice(-4); // код прогону: робить «новий» продукт у O5 справді новим
+const withRun = (v) => (typeof v === 'string' ? v.split('{{RUN}}').join(RUN_ID) : v);
+
 async function sync(botKey) {
     const { id: botId, defs } = BOTS[botKey];
     const existing = await db.funnelTest.findMany({ where: { botId }, select: { id: true, name: true } });
     const byName = new Map(existing.map((t) => [t.name, t.id]));
     const ids = [];
     for (const d of defs) {
-        const payload = { name: d.name, description: d.description, steps: d.steps, expectedOutcome: d.expectedOutcome, connectorId: JUDGE_CONNECTOR };
+        const payload = { name: d.name, description: withRun(d.description), steps: d.steps.map((st) => ({ ...st, text: withRun(st.text) })), expectedOutcome: withRun(d.expectedOutcome), connectorId: JUDGE_CONNECTOR };
         if (byName.has(d.name)) { await ft.updateTest(byName.get(d.name), payload); ids.push({ id: byName.get(d.name), name: d.name }); }
         else { const created = await ft.createTest({ botId, ...payload }); ids.push({ id: created.id, name: d.name }); }
     }

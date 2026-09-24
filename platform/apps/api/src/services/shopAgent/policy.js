@@ -582,6 +582,11 @@ async function runPolicyInner(A, u) {
             A.out.push({ text: await answerThenAsk(A, u, 'Ваше замовлення в роботі 💛'), step: 'post_q' });
         } else if (since > 30 * 60 * 1000) {
             A.out.push({ text: messageTextMultiline(A.assets, 'n_post_order_msg', ctx, A.session.id), step: 'post_order' }); ctx.postOrderMsgAt = Date.now();
+        } else if (hasCategoryWord(text) && /(додай|ще\s|також|плюс|хочу\s|дода[тй])/i.test(text)) {
+            // «Додайте ще футболку білу» після оформлення — це додатковий товар, а не «так, оформляйте» (FunnelTest 44).
+            A.out.push({ text: messageText(A.assets, 'n_agent_post_extra_ack', ctx, A.session.id), step: 'post_extra' });
+            ctx.agent.orderRefDisplay = ctx.orderRef || ctx.crmOrderId;
+            await T.alert(A, 'n_agent_post_extra_admin', { details: '💬 «' + text.slice(0, 200) + '»' });
         } else if (Number(ctx.payAmount) > 0 && ctx.payStatus !== 'confirmed') {
             // 2026-09-23 (FunnelTest, інваріант I1 «бот не мовчить»): клієнт відповідає «так, оформляйте» вже ПІСЛЯ
             // видачі посилання на оплату — раніше бот мовчав (30 хв після post_order), і Zernio позначав розмову
@@ -654,6 +659,12 @@ async function runPolicyInner(A, u) {
         if (u.productHint.fromList && ctx.catalogHintSkus) {
             const skus = String(ctx.catalogHintSkus).split(',').map((s) => s.trim()).filter(Boolean);
             const hit = skus.find((s) => s.toLowerCase() === String(u.productHint.fromList).toLowerCase()) || skus.find((s) => String(u.productHint.fromList).toLowerCase().includes(s.toLowerCase()));
+            // «2,4» — два пункти списку одразу (FunnelTest 34): перший стає основним, другий — окремою позицією.
+            const mm = text.match(/^\s*(\d)\s*(?:,|і|та|и|\+|\s)\s*(\d)\s*$/);
+            if (mm && skus[Number(mm[1]) - 1] && skus[Number(mm[2]) - 1] && mm[1] !== mm[2]) {
+                ctx.catalogHintPick = skus[Number(mm[1]) - 1]; ctx.extraProductMention = skus[Number(mm[2]) - 1];
+                u.productHint = { ...u.productHint, fromList: ctx.catalogHintPick };
+            } else
             if (hit) ctx.catalogHintPick = hit;
             else if (skus.length) {
                 // 2026-09-23 (FunnelTest 2: «так, першу» після списку футболок — LLM віддала fromList зі

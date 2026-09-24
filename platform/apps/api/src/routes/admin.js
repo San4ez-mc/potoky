@@ -340,6 +340,35 @@ router.post('/bots/:id/tests/run-all',
     })
 );
 
+// POST /api/admin/bots/:id/tests/run-all-async — старт прогону всіх тестів, повертає job одразу
+router.post('/bots/:id/tests/run-all-async',
+    validateParams({ params: z.object({ id: z.string().uuid() }) }),
+    asyncHandler(async (req, res) => {
+        const job = await funnelTests.startJob({ botId: req.params.id });
+        res.json({ ok: true, data: funnelTests.getJob(job.id) });
+    })
+);
+
+// POST /api/admin/tests/:testId/run-async — старт прогону одного тесту
+router.post('/tests/:testId/run-async',
+    validateParams({ params: z.object({ testId: z.string().uuid() }) }),
+    asyncHandler(async (req, res) => {
+        const test = await funnelTests.getTest(req.params.testId);
+        const job = await funnelTests.startJob({ botId: test.botId, testIds: [test.id] });
+        res.json({ ok: true, data: funnelTests.getJob(job.id) });
+    })
+);
+
+// GET /api/admin/test-jobs/:jobId — поточний стан прогону (опитується з UI)
+router.get('/test-jobs/:jobId',
+    validateParams({ params: z.object({ jobId: z.string().uuid() }) }),
+    asyncHandler(async (req, res) => {
+        const job = funnelTests.getJob(req.params.jobId);
+        if (!job) return res.status(404).json({ ok: false, error: { message: 'Прогін не знайдено (сервер міг перезапуститись)' } });
+        res.json({ ok: true, data: job });
+    })
+);
+
 // GET /api/admin/tests/:testId
 router.get('/tests/:testId',
     validateParams({ params: z.object({ testId: z.string().uuid() }) }),

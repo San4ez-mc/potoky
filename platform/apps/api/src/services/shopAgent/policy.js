@@ -544,6 +544,12 @@ async function runPolicyInner(A, u) {
         if ((u.claimsPaid || u.receiptLink || A.turnImage) && ctx.payStatus !== 'confirmed' && Number(ctx.payAmount) > 0) {
             await tryReconcile(A);
             if (ctx.payStatus === 'confirmed') { await afterOrderAccepted(A); return; }
+            if (!u.receiptLink && !A.turnImage) {
+                // «Відправив»/«Оплатив» текстом — не доказ оплати (FunnelTest 13): просимо квитанцію, не підтверджуємо.
+                A.out.push({ text: 'Дякую! Щоб звірити оплату, скиньте, будь ласка, скріншот або посилання на квитанцію 🙏', step: 'post_receipt_ask' });
+                await T.alert(A, 'n_receipt_alert', { photoUrl: '' });
+                return;
+            }
             A.out.push({ text: messageText(A.assets, 'n_post_order_receipt_msg', ctx, A.session.id), step: 'post_receipt' });
             if (A.turnImage) ctx.receiptNew = true;
             await T.alert(A, 'n_receipt_alert', { photoUrl: A.turnImage || '' });

@@ -174,6 +174,8 @@ function applySetPricing(ctx, pp) {
     ctx.extraItems = setSelectionToExtraItems(sel);
     ctx.orderExtras = ctx.extraItems.map((it) => ({ id: it.id, sku: it.sku, name: it.name, price: it.price, color: it.color, size: it.size, qty: it.qty, supplier: it.supplier, supplierArticle: it.supplierArticle, sum: it.price * it.qty, offers: [] }));
     ctx.orderUnitsTotal = 0; ctx.orderUnits = [{ color: '', size: '' }]; ctx.orderUnitsText = '';
+    // Склад змінено: ціна комплекту більше не діє — n_pay_amount не має додавати її до суми позицій (інакше подвійний підрахунок).
+    if (ctx.product && ctx.product.isSet) ctx.product.price = 0;
     const total = setSelectionTotal(sel);
     ctx.agent.setPricing = { total, edited: true };
     return ctx.agent.setPricing;

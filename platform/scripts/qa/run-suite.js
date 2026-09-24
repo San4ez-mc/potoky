@@ -8,6 +8,7 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
 const { db } = require('@platform/db');
 const ft = require('../../apps/api/src/services/funnelTests');
+const { PROFILE } = require('./qa-profile');
 
 const JUDGE_CONNECTOR = '4f9fbe29-e85a-40dd-93ed-4ed1b5f9fba6'; // Claude ключ для контент платформи
 const BOTS = {
@@ -45,12 +46,27 @@ async function cleanupQaPosts() {
     log('cleanup QA posts → HTTP', r.status, (await r.text()).slice(0, 120));
 }
 
+
+// Повертаємо профіль QA-проєкту онбордингу до еталона (onboarding-save оновлює за назвою) — щоб зміни попередніх прогонів (ціна тощо) не впливали.
+async function resetOnboardProfile() {
+    const ob = BOTS.onboard.id;
+    const get = async (key) => (await db.funnelKey.findUnique({ where: { botId_key: { botId: ob, key } }, select: { value: true } }))?.value;
+    const projectId = await get('CONTENT2_TEST_PROJECT_ID');
+    const secret = await get('CONTENT2_WEBHOOK_SECRET');
+    if (!projectId || !secret) { log('reset: пропущено'); return; }
+    for (const item of PROFILE) {
+        await fetch('http://localhost:3002/api/webhooks/onboarding-save', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-webhook-secret': secret }, body: JSON.stringify({ projectId, kind: item.kind, data: item.data }) });
+    }
+    log('reset QA-профілю онбордингу виконано');
+}
+
 async function main() {
     const results = [];
     for (const botKey of which) {
         const ids = await sync(botKey);
         log(`[${BOTS[botKey].label}] тестів у БД: ${ids.length}`);
         if (args['sync-only']) continue;
+        if (botKey === 'onboard' && !args['no-cleanup']) await resetOnboardProfile();
         if (botKey === 'cm' && !args['no-cleanup']) await cleanupQaPosts();
         for (const { id, name } of ids) {
             if (only && !name.toLowerCase().includes(only)) continue;

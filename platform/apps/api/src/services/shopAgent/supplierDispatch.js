@@ -52,6 +52,14 @@ function buildLines(ctx) {
         // 2026-09-23 (Edits 7f98dc20/b2e868c2/dd2f0f7e/aaddc01f/c7df5958: «одна чорна + одна графітова» →
         // оформило два чорних): колір/розмір брались лише з colorChoice.color (один на всю кількість), тоді
         // як CRM групує по orderUnits. Групуємо одиниці за колір+розмір — кожна група окремий рядок.
+        // Комплект у початковому складі: постачальнику й CRM потрібні КОМПОНЕНТИ (з кольором/розміром), а не один рядок
+        // «set1112» без складу. Ціну комплекту розподіляємо пропорційно цінам позицій (сума лишається рекламованою).
+        if (ctx.product.isSet && Array.isArray(ctx.setSelection) && ctx.setSelection.length) {
+            const sumItems = ctx.setSelection.reduce((t, it) => t + (Number(it.price) || 0) * (Number(it.qty) || 1), 0);
+            const scale = sumItems > 0 ? Number(ctx.orderUnitsTotal) / sumItems : 1;
+            for (const it of ctx.setSelection) lines.push({ sku: it.article, id: it.id, name: it.name, price: (Number(it.price) || 0) * scale, qty: Number(it.qty) || 1, color: it.color || '', size: it.size || '', supplierName: it.supplier || '', supplierArticle: it.supplierArticle || '', isSetItem: true });
+            return lines.filter((l) => l.sku || l.id);
+        }
         const base = { sku: ctx.product.sku, id: ctx.product.id, name: ctx.product.customerName || ctx.product.name, supplierName: ctx.product.supplier || '', supplierArticle: ctx.product.supplierArticle || '', isMain: true };
         const fallbackColor = (ctx.colorChoice && ctx.colorChoice.color) || '';
         const units = Array.isArray(ctx.orderUnits) && ctx.orderUnits.length ? ctx.orderUnits : [{ color: fallbackColor, size: ctx.recommendedSize || '' }];

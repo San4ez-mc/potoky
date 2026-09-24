@@ -10,6 +10,8 @@ return (async () => {
     ? context.items
     : [{ text: context.text||context.content||'', imageUrl: context.imageUrl, videoUrl: context.videoUrl }];
 
+  function sleep(ms) { return new Promise(function(r){ setTimeout(r, ms); }); }
+
   async function postOne(it, replyTo) {
     var text = String(it.text||'').slice(0,500);
     var mt = it.videoUrl ? 'VIDEO' : (it.imageUrl ? 'IMAGE' : 'TEXT');
@@ -17,8 +19,16 @@ return (async () => {
     if(mt==='IMAGE') body += '&image_url='+encodeURIComponent(it.imageUrl);
     if(mt==='VIDEO') body += '&video_url='+encodeURIComponent(it.videoUrl);
     if(replyTo) body += '&reply_to_id='+encodeURIComponent(replyTo);
-    var c = await fetch(base+'/threads?'+qs, {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:body});
-    var cj = await c.json();
+    var cj = null;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      var c = await fetch(base+'/threads?'+qs, {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:body});
+      cj = await c.json();
+      if (cj && cj.id) break;
+      var ecode = cj && cj.error && cj.error.code;
+      // code 1/2 = тимчасова помилка Meta ("unknown error"/"service unavailable") — повторюємо з паузою
+      if (ecode === 1 || ecode === 2) { await sleep(6000); continue; }
+      break;
+    }
     if(!cj || !cj.id) return { error:'CONTAINER_FAILED '+JSON.stringify(cj).slice(0,300) };
     if(mt!=='TEXT'){ await new Promise(function(r){ setTimeout(r, mt==='VIDEO'?20000:3000); }); }
     var p = await fetch(base+'/threads_publish?creation_id='+encodeURIComponent(cj.id)+'&'+qs, {method:'POST'});
@@ -28,11 +38,12 @@ return (async () => {
   }
 
   var ids = [];
-  var prev = null;
+  var prev = context.replyToId || null;   // replyToId — дослати відповідь під уже опублікований пост
   var err = null;
   for (var i = 0; i < items.length; i++) {
     var it = items[i] || {};
     if(!String(it.text||'').trim() && !it.imageUrl && !it.videoUrl) continue;
+    if (prev) await sleep(5000);   // Meta радить не смикати відповідь одразу після публікації батьківського поста
     var r = await postOne(it, prev);
     if(r.error){ err = 'пост '+(i+1)+'/'+items.length+': '+r.error; break; }
     ids.push(r.id);

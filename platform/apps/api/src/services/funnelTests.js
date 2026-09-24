@@ -17,6 +17,7 @@
 //  - при провалі — пишеться AppError з context.nodeId на кожну "винну" ноду, тож
 //    вона підсвічується у вкладці «Ноди» сесії так само, як звичайна помилка виконання.
 
+const crypto = require('crypto');
 const { db } = require('@platform/db');
 const { callClaude } = require('@platform/claude');
 const { startTestSession, sendTestTurn, endTestSession } = require('./testSession');
@@ -207,7 +208,25 @@ async function createTestFromSession(sessionId, { name, expectedOutcome, connect
 
 // ── Runner ───────────────────────────────────────────────────────────────────
 
-function buildJudgePrompt({ test, transcript, nodeQaEntries, stateText }) {
+// Виклики інструментів агента та зовнішніх систем за сесію (збереження в content2, MCP, http-ноди…).
+// Клієнт їх не бачить у діалозі, тож без цього суддя не може перевірити «бот РЕАЛЬНО зберіг дані».
+// Службові рядки моделі (claude / agent-context) пропускаємо — там лише шум.
+async function collectToolEvidence(sessionId) {
+    const calls = await db.apiCall.findMany({
+        where: { sessionId, NOT: { service: { in: ['claude', 'agent'] } } },
+        orderBy: { createdAt: 'asc' },
+        take: 80,
+        select: { service: true, method: true, requestData: true, responseData: true, statusCode: true, error: true },
+    }).catch(() => []);
+    const clip = (v, n) => { const s = typeof v === 'string' ? v : JSON.stringify(v || {}); return s.length > n ? s.slice(0, n) + '…' : s; };
+    return calls.map((c, i) => {
+        const req = c.requestData || {};
+        const res = c.responseData || {};
+        return `${i + 1}. ${c.service}.${c.method} [${c.statusCode == null ? 'n/a' : c.statusCode}]${c.error ? ' ПОМИЛКА: ' + clip(c.error, 200) : ''}\n   запит: ${clip(req.input !== undefined ? req.input : req, 500)}\n   відповідь: ${clip(res.preview !== undefined ? res.preview : res, 400)}`;
+    }).join('\n');
+}
+
+function buildJudgePrompt({ test, transcript, nodeQaEntries, stateText, toolText }) {
     const transcriptText = transcript
         .map((m) => `${m.role === 'user' ? 'КЛІЄНТ' : 'БОТ'}: ${m.content}`)
         .join('\n');
@@ -224,6 +243,7 @@ function buildJudgePrompt({ test, transcript, nodeQaEntries, stateText }) {
         '{"passed": boolean, "reasoning": "коротко чому", "failingNodeId": "id ноди-винуватця або null", "nodeVerdicts": [{"nodeId":"...","passed":boolean,"reasoning":"..."}]}',
         'passed=false якщо: головна мета тесту НЕ досягнута, АБО бот вигадав факт (ціну/наявність/дані клієнта), АБО зациклився, АБО замовк, АБО хоч ОДНА нода зі списку QA-очікувань не виконала своє очікування.',
         'nodeVerdicts — по одному запису на КОЖНУ ноду зі списку QA-очікувань вище (навіть якщо вона не винна).',
+        'Якщо тест вимагає, щоб бот щось зберіг/викликав (профіль, пости, правила, пошук у базі знань) — звіряй із розділом «ВИКЛИКИ ІНСТРУМЕНТІВ»: слова бота «зберіг» без відповідного успішного виклику (статус 200, ok:true) = вигадка й провал.',
     ].join(' ');
 
     const user = [
@@ -238,12 +258,13 @@ function buildJudgePrompt({ test, transcript, nodeQaEntries, stateText }) {
         '',
         '=== НОДИ З ВЛАСНИМИ QA-ОЧІКУВАННЯМИ, ВІДВІДАНІ ПІД ЧАС ЦЬОГО ПРОГОНУ ===',
         nodeQaText,
+        ...(toolText ? ['', '=== ВИКЛИКИ ІНСТРУМЕНТІВ І ЗОВНІШНІХ СИСТЕМ ПІД ЧАС ПРОГОНУ (клієнт їх не бачить; джерело правди про збереження й пошук) ===', toolText] : []),
     ].join('\n');
 
     return { system, user };
 }
 
-async function runTest(testId) {
+async function runTest(testId, onProgress = () => {}) {
     const test = await db.funnelTest.findUnique({ where: { id: testId } });
     if (!test) throw new Error('Test not found');
 
@@ -271,8 +292,11 @@ async function runTest(testId) {
         const sessionId = started.sessionId;
         const visitedNodeIds = new Set();
 
-        for (const rawStep of steps) {
-            const step = normalizeStep(rawStep);
+        onProgress({ phase: 'started', sessionId });
+        for (let i = 0; i < steps.length; i += 1) {
+            const step = normalizeStep(steps[i]);
+            const label = step.text || (step.sharedPost ? '[пересланий пост]' : step.imageUrl ? '[фото]' : step.referral ? '[перехід з реклами]' : '');
+            onProgress({ phase: 'step', index: i, total: steps.length, label: String(label).slice(0, 80), sessionId });
             if (agentMode) {
                 await runAgentTurn({ botId: test.botId, sessionId, step });
                 continue;
@@ -335,12 +359,14 @@ async function runTest(testId) {
             });
         }
 
+        onProgress({ phase: 'judge', sessionId });
         const apiKey = await resolveJudgeApiKey(test.connectorId);
         let verdict;
         if (!apiKey) {
             verdict = { passed: false, reasoning: 'Немає доступного Claude API ключа для судді тесту (ні обраний конектор, ні системний ключ).', failingNodeId: null, nodeVerdicts: [] };
         } else {
-            const { system, user } = buildJudgePrompt({ test, transcript, nodeQaEntries, stateText });
+            const toolText = await collectToolEvidence(sessionId);
+            const { system, user } = buildJudgePrompt({ test, transcript, nodeQaEntries, stateText, toolText });
             const raw = await callClaude({
                 sessionId: null,
                 systemPrompt: system,
@@ -428,6 +454,78 @@ async function runAllTests(botId) {
     };
 }
 
+// ── Асинхронні прогони з живим прогресом ─────────────────────────────────────
+// Довгий HTTP-запит (кілька тестів × десятки секунд) впирається в таймаут проксі, а UI
+// не бачить, що відбувається. Тому запуск повертає jobId одразу, а прогрес (який тест,
+// який крок, суддя) лежить у памʼяті процесу і читається опитуванням getJob().
+const jobs = new Map();
+
+function pruneJobs() {
+    const cutoff = Date.now() - 60 * 60 * 1000;
+    for (const [id, j] of jobs) if (j.finishedAtMs && j.finishedAtMs < cutoff) jobs.delete(id);
+}
+
+async function startJob({ botId, testIds = null }) {
+    pruneJobs();
+    const tests = await db.funnelTest.findMany({
+        where: { botId, ...(testIds ? { id: { in: testIds } } : {}) },
+        orderBy: { createdAt: 'asc' },
+    });
+    const job = {
+        id: crypto.randomUUID(),
+        botId,
+        status: 'running',
+        startedAtMs: Date.now(),
+        finishedAtMs: null,
+        items: tests.map((t) => ({
+            testId: t.id,
+            name: t.name,
+            status: 'pending',
+            phase: null,
+            stepIndex: null,
+            totalSteps: Array.isArray(t.steps) ? t.steps.length : 0,
+            stepLabel: '',
+            startedAtMs: null,
+            finishedAtMs: null,
+            sessionId: null,
+            verdict: null,
+            transcript: null,
+        })),
+    };
+    jobs.set(job.id, job);
+
+    (async () => {
+        for (const item of job.items) {
+            item.status = 'running';
+            item.startedAtMs = Date.now();
+            const r = await runTest(item.testId, (p) => {
+                item.phase = p.phase;
+                if (p.sessionId) item.sessionId = p.sessionId;
+                if (p.phase === 'step') { item.stepIndex = p.index; item.stepLabel = p.label; }
+            });
+            item.status = r.status;
+            item.phase = 'done';
+            item.verdict = r.verdict;
+            item.sessionId = r.sessionId || item.sessionId;
+            item.transcript = r.transcript;
+            item.finishedAtMs = Date.now();
+        }
+        job.status = 'done';
+        job.finishedAtMs = Date.now();
+    })().catch((e) => {
+        job.status = 'error';
+        job.error = e.message;
+        job.finishedAtMs = Date.now();
+    });
+
+    return job;
+}
+
+function getJob(jobId) {
+    const job = jobs.get(jobId);
+    return job ? { ...job, nowMs: Date.now() } : null;
+}
+
 module.exports = {
     listTests,
     getTest,
@@ -438,4 +536,6 @@ module.exports = {
     createTestFromSession,
     runTest,
     runAllTests,
+    startJob,
+    getJob,
 };

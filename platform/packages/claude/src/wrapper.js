@@ -513,6 +513,7 @@ async function callClaude({ sessionId, systemPrompt, messages, options = {} }) {
     const requestBody = {
         model: options.model || MODEL,
         max_tokens: options.maxTokens || MAX_TOKENS,
+        ...(options.temperature != null ? { temperature: options.temperature } : {}),
         system: [
             {
                 type: 'text',

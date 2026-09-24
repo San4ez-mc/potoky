@@ -376,7 +376,7 @@ async function runTest(testId, onProgress = () => {}) {
                     sessionId: null,
                     systemPrompt: system,
                     messages: [{ role: 'user', content: user }],
-                    options: { maxTokens: 3500, apiKey, model: 'claude-sonnet-4-6' },
+                    options: { maxTokens: 3500, apiKey, model: 'claude-sonnet-4-6', temperature: 0 }, // детермінований суддя: менше «гойдалок» між прогонами
                 });
                 try {
                     const jsonMatch = raw.match(/\{[\s\S]*\}/);

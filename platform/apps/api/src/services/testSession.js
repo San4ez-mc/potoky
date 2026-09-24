@@ -4763,6 +4763,12 @@ ${_baseUrl}/legal/terms — Правила використання`;
                     if (data.finishTool && toolCall.name === data.finishTool) {
                         agentDone = true;
                         finishToolInput = toolCall.input || {};
+                        // finishTool не HTTP, тож раніше не лишав сліду — а тест/діагностика мусять бачити, що агент завершив діалог.
+                        logFlowApiCall({
+                            sessionId: session.id, service: 'agent-tool', method: toolCall.name,
+                            requestData: { input: toolCall.input || {} }, responseData: { preview: 'finish (діалог завершено агентом)' },
+                            statusCode: 200, durationMs: 0,
+                        }).catch(() => {});
                         toolResults.push({ type: 'tool_result', tool_use_id: toolCall.id, content: 'Готово, завершую.' });
                         continue;
                     }

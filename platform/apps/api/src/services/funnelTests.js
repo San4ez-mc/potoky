@@ -239,7 +239,7 @@ function buildJudgePrompt({ test, transcript, nodeQaEntries, stateText, toolText
         'Ти — QA-суддя для чат-воронки (Telegram/Instagram-бот на базі LLM).',
         'Тобі дають: 1) що очікується від УСЬОГО тесту (expectedOutcome), 2) повну транскрипцію діалогу клієнт↔бот,',
         '3) список нод, які автор воронки позначив власними QA-очікуваннями (перевіряй їх НЕЗАЛЕЖНО від головного expectedOutcome — це регресійні перевірки, навіть якщо цей тест писався не для них).',
-        'Відповідай ЛИШЕ строгим JSON, без пояснень поза ним:',
+        'Відповідай ЛИШЕ строгим JSON — НІЯКОГО тексту, аналізу чи markdown до або після нього; починай відповідь одразу з символу {. Поле reasoning — не довше 700 символів:',
         '{"passed": boolean, "reasoning": "коротко чому", "failingNodeId": "id ноди-винуватця або null", "nodeVerdicts": [{"nodeId":"...","passed":boolean,"reasoning":"..."}]}',
         'passed=false якщо: головна мета тесту НЕ досягнута, АБО бот вигадав факт (ціну/наявність/дані клієнта), АБО зациклився, АБО замовк, АБО хоч ОДНА нода зі списку QA-очікувань не виконала своє очікування.',
         'nodeVerdicts — по одному запису на КОЖНУ ноду зі списку QA-очікувань вище (навіть якщо вона не винна).',
@@ -252,9 +252,7 @@ function buildJudgePrompt({ test, transcript, nodeQaEntries, stateText, toolText
         '',
         '=== ТРАНСКРИПЦІЯ ДІАЛОГУ ===',
         transcriptText || '(порожньо — бот жодного разу не відповів)',
-        '',
-        '=== ФІНАЛЬНИЙ СТАН ЗАМОВЛЕННЯ У СИСТЕМІ (структуровані дані, клієнт їх не бачить; джерело правди про те, що реально зафіксовано) ===',
-        stateText || '(немає)',
+        ...(stateText ? ['', '=== ФІНАЛЬНИЙ СТАН ЗАМОВЛЕННЯ У СИСТЕМІ (структуровані дані, клієнт їх не бачить; джерело правди про те, що реально зафіксовано) ===', stateText] : []),
         '',
         '=== НОДИ З ВЛАСНИМИ QA-ОЧІКУВАННЯМИ, ВІДВІДАНІ ПІД ЧАС ЦЬОГО ПРОГОНУ ===',
         nodeQaText,
@@ -333,7 +331,7 @@ async function runTest(testId, onProgress = () => {}) {
         // Знімок стану замовлення (структура, якої клієнт не бачить у тексті): судді треба знати, що РЕАЛЬНО
         // зафіксовано — позиції, кольори допродажу, суми, адреса — а не лише що бот сказав.
         const c = finalSession.context || {};
-        const stateText = JSON.stringify({
+        const stateRaw = JSON.stringify({
             crmOrderId: c.crmOrderId, payment: c.paymentInfo, payAmount: c.payAmount, payStatus: c.payStatus,
             mainProduct: c.product && { sku: c.product.sku, name: c.product.customerName || c.product.name, isSet: c.product.isSet, setItems: Array.isArray(c.product.setItems) ? c.product.setItems.map((i) => i.article) : undefined },
             colorChoice: c.colorChoice, recommendedSize: c.recommendedSize,
@@ -342,6 +340,9 @@ async function runTest(testId, onProgress = () => {}) {
             orderIntent: c.orderIntent && { addUpsell: c.orderIntent.addUpsell, upsellQty: c.orderIntent.upsellQty, upsellUnits: c.orderIntent.upsellUnits },
             orderUnits: c.orderUnits, orderTotal: c.orderTotal, orderData: c.orderData,
         });
+        // Не-магазинні воронки (онбординг, Content Manager…) не мають цих полів → "{}". Порожній обʼєкт суддя
+        // читає як «нічого не збережено», тому для них блок стану не показуємо (докази — у розділі викликів інструментів).
+        const stateText = stateRaw === '{}' ? '' : stateRaw;
 
         const allTraces = finalSession.context?.flowRuntime?.nodeTraces || [];
         const nodeQaEntries = [];
@@ -367,17 +368,22 @@ async function runTest(testId, onProgress = () => {}) {
         } else {
             const toolText = await collectToolEvidence(sessionId);
             const { system, user } = buildJudgePrompt({ test, transcript, nodeQaEntries, stateText, toolText });
-            const raw = await callClaude({
-                sessionId: null,
-                systemPrompt: system,
-                messages: [{ role: 'user', content: user }],
-                options: { maxTokens: 1200, apiKey, model: 'claude-sonnet-4-6' },
-            });
-            try {
-                const jsonMatch = raw.match(/\{[\s\S]*\}/);
-                verdict = JSON.parse(jsonMatch ? jsonMatch[0] : raw);
-            } catch (_e) {
-                verdict = { passed: false, reasoning: `Суддя повернув невалідний JSON: ${raw.slice(0, 300)}`, failingNodeId: null, nodeVerdicts: [] };
+            // Суддя інколи починає з прози й упирається в ліміт токенів → невалідний JSON. Даємо запас токенів і ОДИН повтор.
+            let raw = '';
+            for (let attempt = 0; attempt < 2; attempt += 1) {
+                raw = await callClaude({
+                    sessionId: null,
+                    systemPrompt: system,
+                    messages: [{ role: 'user', content: user }],
+                    options: { maxTokens: 3500, apiKey, model: 'claude-sonnet-4-6' },
+                });
+                try {
+                    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+                    verdict = JSON.parse(jsonMatch ? jsonMatch[0] : raw);
+                    break;
+                } catch (_e) {
+                    verdict = { passed: false, reasoning: `Суддя повернув невалідний JSON: ${raw.slice(0, 300)}`, failingNodeId: null, nodeVerdicts: [] };
+                }
             }
         }
 

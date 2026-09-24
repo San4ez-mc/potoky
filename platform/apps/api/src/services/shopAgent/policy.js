@@ -7,7 +7,7 @@
  */
 const T = require('./tools');
 const { compose } = require('./compose');
-const { messageText, messageTextMultiline, nodeData, norm, loadCategories } = require('./lib');
+const { messageText, messageTextMultiline, nodeData, norm, loadCategories, loadCatalog } = require('./lib');
 const { dispatchOrder } = require('./supplierDispatch');
 const { hasCategoryWord, categoryWordIsUpsell, categoryWordIsSetComponent, categoryWordIsMain } = require('./signal');
 const { resolveColorMention } = require('./cart');
@@ -257,7 +257,18 @@ async function answerThenAsk(A, u, askText, o = {}) {
     // на питання клієнта — типова для продажного тону звичка закінчувати заклик до дії. Заборона —
     // явним nextStep, а не сподівання, що модель здогадається з відсутності інструкції.
     const nextStep = askText ? 'скажи/спитай (можна своїми словами, зміст той самий): «' + askText + '»' : 'НІЧОГО більше не питай і не пропонуй наступний крок — просто дай коротку відповідь на питання клієнта, без заклику до дії в кінці.';
-    const { text, resolved } = await compose(A, { questions: u.questions, ack: o.ack, nextStep, kb, availAnswer, fallback: askText });
+    // 2026-09-24 (FunnelTest 38): питання про допродаж («з чого футболка?») — факти про нього лежать у картці товару допродажу,
+    // а не в ФАКТАХ основного товару; підтягуємо текстові поля товару допродажу з каталогу CRM.
+    let upFacts = '';
+    try {
+        const up = A.ctx.product && Array.isArray(A.ctx.product.upsellItems) && A.ctx.product.upsellItems[0];
+        if (up && up.id && u.questions.length) {
+            const cat = await loadCatalog(A.botId, A.keys);
+            const pr = cat.products.find((x) => x.id === up.id);
+            if (pr) upFacts = 'ІНФОРМАЦІЯ ПРО ТОВАР ДОПРОДАЖУ (' + (pr.customerName || pr.name) + '):\n' + Object.entries(pr).filter(([k, v]) => typeof v === 'string' && v.length > 12 && !/^https?:/.test(v) && !/^(id|sku|supplierArticle|createdAt|updatedAt)$/.test(k)).map(([k, v]) => v).join('\n').slice(0, 1200);
+        }
+    } catch (e) { /* best-effort */ }
+    const { text, resolved } = await compose(A, { questions: u.questions, ack: o.ack, nextStep, kb, availAnswer, extraFacts: upFacts, fallback: askText });
     if (!resolved && u.questions.length) await escalateUnresolved(A, u.questions[0]);
     return text || askText;
 }

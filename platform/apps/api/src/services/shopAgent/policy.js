@@ -515,6 +515,12 @@ async function runPolicyInner(A, u) {
     // 2026-09-24 (FunnelTest 16): «Не відкривається посилання» LLM не завжди відносила до wantsManualReq —
     // детермінований страхувальний розбір: скарга на посилання оплати → одразу ручні реквізити.
     if (!u.wantsManualReq && /(не\s+(?:відкрива|відкрит|працю|грузит|вантаж)[^.!?]{0,40}(?:посилан|лінк|ссылк))|((?:посилан|лінк|ссылк)[^.!?]{0,40}не\s+(?:відкрива|відкрит|працю|грузит|вантаж))/i.test(text)) u.wantsManualReq = true;
+    // 2026-09-24 (FunnelTest 40): на пряме «Ви бот?» бот чесно каже, що він віртуальна помічниця; жива людина — за проханням.
+    if (/(^|[^а-яіїєґ])(ви|ти|це)\s+(?:просто\s+)?(?:чат[\s-]?)?бот[іи]?[\s?!.]*$|бот\s+чи\s+(?:людина|живий)|(?:людина|живий)\s+чи\s+бот/i.test(text) && !/я\s+не\s+бот/i.test(text)) {
+        ctx.agent.botQuestionCount = (ctx.agent.botQuestionCount || 0) + 1;
+        A.out.push({ text: 'Я віртуальна помічниця магазину 🙂 Допомагаю з підбором і оформленням, а якщо потрібна жива людина — скажіть, і я одразу покличу менеджера 💛', step: 'bot_honest' });
+        if (!/менеджер|людин|живий|покличте/i.test(text.replace(/бот\s+чи\s+(?:людина|живий)|(?:людина|живий)\s+чи\s+бот/ig, ''))) return;
+    }
     // 0. Людина / претензія / повернення
     if (u.wantsHuman) {
         ctx.agent.handoffAsked = (ctx.agent.handoffAsked || 0) + 1;
@@ -977,7 +983,9 @@ async function runPolicyInner(A, u) {
         else {
             ctx.agent.wantColor = u.color || '';
             const ask = u.color ? messageText(A.assets, 'n_agent_ask_color_specific', ctx, A.session.id) : messageText(A.assets, 'n_agent_ask_color_generic', ctx, A.session.id);
-            A.out.push({ text: await answerThenAsk(A, u, preNote + ask), step: 'ask_color' }); ctx.agent.lastAsk = 'колір'; return;
+            ctx.agent.colorAskCount = (ctx.agent.colorAskCount || 0) + 1;
+            const askVar = (ctx.agent.colorAskCount > 1 && ctx.agent.lastAsk === 'колір') ? ('Нагадаю: лишилось обрати колір 🎨 ' + ask) : ask;
+            A.out.push({ text: await answerThenAsk(A, u, preNote + askVar), step: 'ask_color' }); ctx.agent.lastAsk = 'колір'; return;
         }
     }
 

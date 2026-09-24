@@ -73,7 +73,14 @@ async function kbContext(A) {
     const c = _kbCache.get(key);
     if (c && Date.now() - c.at < 60 * 1000) return c.items;
     const r = await crmFetch(A.keys, '/knowledge/context?scope=' + encodeURIComponent(scope), {}, 4000);
-    const hits = Array.isArray(r.data) ? r.data : [];
+    let hits = Array.isArray(r.data) ? r.data : [];
+    // Запитання про допродаж/додаткову позицію (напр. «з чого футболка?») — підтягуємо ще й знання про товар допродажу
+    // (FunnelTest 38: бот казав «уточню», хоча відповідь у базі є, але вона product-scope іншого товару).
+    const upId = A.ctx.product && Array.isArray(A.ctx.product.upsellItems) && A.ctx.product.upsellItems[0] && A.ctx.product.upsellItems[0].id;
+    if (upId && scope !== 'product:' + upId) {
+        const r2 = await crmFetch(A.keys, '/knowledge/context?scope=' + encodeURIComponent('product:' + upId), {}, 4000);
+        if (Array.isArray(r2.data)) { const seen = new Set(hits.map((h) => h.id || h.question)); hits = hits.concat(r2.data.filter((h) => !seen.has(h.id || h.question))); }
+    }
     const items = hits.map((h) => ({ q: String(h.question || '').slice(0, 200), a: String(h.answer || '').slice(0, 600) })).filter((h) => h.a);
     if (r.ok) _kbCache.set(key, { at: Date.now(), items });
     return items;

@@ -700,6 +700,12 @@ async function runPolicyInner(A, u) {
             if (!hintResolved && u.questions.length) await escalateUnresolved(A, u.questions[0]);
             A.out.push({ text: txt, step: 'hint' }); ctx.agent.lastAsk = 'який із показаних товарів цікавить';
             return;
+        } else if (!P(ctx) && ctx.agent.hintList && /^[\s?!.…]*$|^\s*(ау|алло|ало|ей|еу|ну)[\s?!.]*$/i.test(text.trim())) {
+            // 2026-09-24 (FunnelTest 41): «?»/«Ау» після показаного списку — нетерплячка, а не новий запит; показуємо
+            // список ще раз замість скидання в «що вас цікавить».
+            A.out.push({ text: ['Ось варіанти, які ми показали 👇', String(ctx.agent.hintList), 'Який сподобався? Можна відповісти номером, кольором або надіслати фото 😊'].join('\n\n'), step: 'hint_repeat' });
+            ctx.agent.lastAsk = 'який із показаних товарів цікавить';
+            return;
         } else if (!P(ctx)) {
             if (ctx.hasProductSignal && !ctx.unknownNotifiedAt && !ctx.looksLikeReceipt) { ctx.lastCustomerMessage = text; await T.tool(A, 'n_unknown_debug'); await T.alert(A, 'n_unknown_admin', { photoUrl: A.turnImage || '' }); ctx.unknownNotifiedAt = Date.now(); }
             if (ctx.looksLikeReceipt) {

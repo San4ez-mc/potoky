@@ -16,7 +16,7 @@ function patchCode(code) {
   const b = "    __setLines.push('📏 ' + __it.name + '\n' + __itSizeLine);";
   const c = "    setSizesText: __setLines.join('\n\n'),";
   const d = "      __itSizeLine = __r.size ? ('Розмір: ' + __r.size)";
-  if (![a, b, c, d].every((s) => out.includes(s))) return { code, changed: false, reason: 'фрагменти не знайдено' };
+  if (![a, b, c, d].every((s) => out.includes(s))) return { code, changed: false, reason: 'фрагменти не знайдено: ' + [a, b, c, d].map((x, i) => (out.includes(x) ? '' : 'abcd'[i])).join('') };
   out = out.replace(a, a + " var __setSizeMap = {};");
   out = out.replace(d, "      if (__r.size && __it.article) __setSizeMap[__it.article] = __r.size;\n" + d);
   out = out.replace(c, c + "\n    setSizeMap: __setSizeMap,");

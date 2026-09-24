@@ -370,21 +370,35 @@ async function runTest(testId, onProgress = () => {}) {
             const toolText = await collectToolEvidence(sessionId);
             const { system, user } = buildJudgePrompt({ test, transcript, nodeQaEntries, stateText, toolText });
             // Суддя інколи починає з прози й упирається в ліміт токенів → невалідний JSON. Даємо запас токенів і ОДИН повтор.
-            let raw = '';
-            for (let attempt = 0; attempt < 2; attempt += 1) {
-                raw = await callClaude({
-                    sessionId: null,
-                    systemPrompt: system,
-                    messages: [{ role: 'user', content: user }],
-                    options: { maxTokens: 3500, apiKey, model: process.env.FUNNEL_TEST_JUDGE_MODEL || 'claude-sonnet-4-6', temperature: 0 }, // FUNNEL_TEST_JUDGE_MODEL=claude-haiku-4-5 — дешевший суддя для рутинних прогонів // детермінований суддя: менше «гойдалок» між прогонами
-                });
-                try {
-                    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-                    verdict = JSON.parse(jsonMatch ? jsonMatch[0] : raw);
-                    break;
-                } catch (_e) {
-                    verdict = { passed: false, reasoning: `Суддя повернув невалідний JSON: ${raw.slice(0, 300)}`, failingNodeId: null, nodeVerdicts: [] };
+            // Економія токенів: рутинний суддя — Haiku 4.5 (~5× дешевше); якщо він видав «не пройшов» — підозрілий випадок,
+            // перевіряємо Sonnet 4.6 і беремо його вердикт (FUNNEL_TEST_JUDGE_MODEL / FUNNEL_TEST_ESCALATE=0 змінюють поведінку).
+            const judgeWith = async (model) => {
+                let raw = ''; let v;
+                for (let attempt = 0; attempt < 2; attempt += 1) {
+                    raw = await callClaude({
+                        sessionId: null,
+                        systemPrompt: system,
+                        messages: [{ role: 'user', content: user }],
+                        options: { maxTokens: 3500, apiKey, model, temperature: 0 },
+                    });
+                    try {
+                        const jsonMatch = raw.match(/\{[\s\S]*\}/);
+                        v = JSON.parse(jsonMatch ? jsonMatch[0] : raw);
+                        break;
+                    } catch (_e) {
+                        v = { passed: false, reasoning: `Суддя повернув невалідний JSON: ${raw.slice(0, 300)}`, failingNodeId: null, nodeVerdicts: [] };
+                    }
                 }
+                return v;
+            };
+            const cheapModel = process.env.FUNNEL_TEST_JUDGE_MODEL || 'claude-haiku-4-5-20251001';
+            const strongModel = 'claude-sonnet-4-6';
+            verdict = await judgeWith(cheapModel);
+            const looksFailed = !verdict.passed || (Array.isArray(verdict.nodeVerdicts) && verdict.nodeVerdicts.some((x) => x && x.passed === false));
+            if (looksFailed && cheapModel !== strongModel && process.env.FUNNEL_TEST_ESCALATE !== '0') {
+                const strong = await judgeWith(strongModel);
+                strong.reasoning = '[перевірено Sonnet] ' + (strong.reasoning || '');
+                verdict = strong;
             }
         }
 

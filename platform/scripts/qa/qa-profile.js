@@ -2,7 +2,7 @@
 // Вигаданий бізнес для QA-тестів воронок (онбординг + Content Manager). Живе лише в ізольованих
 // проєктах content2 «QA — тести воронок» і «QA — порожній» — реальні компанії тести не чіпають.
 
-const QA_PROJECT_NAME = 'QA — тести воронок';
+const QA_PROJECT_NAME = 'QA — Content Manager';
 const QA_EMPTY_PROJECT_NAME = 'QA — порожній';
 
 const PRODUCT_MAIN = 'Підписка «Ранок з Крихтою»';

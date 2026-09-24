@@ -22,6 +22,7 @@ const { db } = require('@platform/db');
 const { callClaude } = require('@platform/claude');
 const { startTestSession, sendTestTurn, endTestSession } = require('./testSession');
 const shopAgent = require('./shopAgent');
+const { checkInvariants } = require('./funnelInvariants');
 
 /**
  * Один хід клієнта для бота на shopAgent: пишемо повідомлення клієнта в сесію так, як це
@@ -389,7 +390,11 @@ async function runTest(testId, onProgress = () => {}) {
 
         const nodeVerdicts = Array.isArray(verdict.nodeVerdicts) ? verdict.nodeVerdicts : [];
         const failingNodes = nodeVerdicts.filter((v) => v && v.passed === false);
-        const overallPassed = Boolean(verdict.passed) && failingNodes.length === 0;
+        // Детерміновані інваріанти (лише для магазинного агента): «не мовчить», «немає дублів», «жодних витоків»…
+        const invariantViolations = (typeof agentMode !== 'undefined' && agentMode) ? checkInvariants(transcript, finalSession.context) : [];
+        if (invariantViolations.length) verdict.reasoning = 'ПОРУШЕНО ІНВАРІАНТИ: ' + invariantViolations.map((x) => x.id + ' — ' + x.message).join(' | ') + ' || ' + (verdict.reasoning || '');
+        verdict.invariantViolations = invariantViolations;
+        const overallPassed = Boolean(verdict.passed) && failingNodes.length === 0 && invariantViolations.length === 0;
         const status = overallPassed ? 'passed' : 'failed';
 
         // AppError на кожну "винну" ноду — та сама модель, яку читає вкладка «Ноди».

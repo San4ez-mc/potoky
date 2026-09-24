@@ -57,7 +57,7 @@ function buildLines(ctx) {
         if (ctx.product.isSet && Array.isArray(ctx.setSelection) && ctx.setSelection.length) {
             const sumItems = ctx.setSelection.reduce((t, it) => t + (Number(it.price) || 0) * (Number(it.qty) || 1), 0);
             const scale = sumItems > 0 ? Number(ctx.orderUnitsTotal) / sumItems : 1;
-            for (const it of ctx.setSelection) lines.push({ sku: it.article, id: it.id, name: it.name, price: (Number(it.price) || 0) * scale, qty: Number(it.qty) || 1, color: it.color || '', size: it.size || '', supplierName: it.supplier || '', supplierArticle: it.supplierArticle || '', isSetItem: true });
+            for (const it of ctx.setSelection) lines.push({ sku: it.article, id: it.id, name: it.name, price: Math.round((Number(it.price) || 0) * scale * 100) / 100, qty: Number(it.qty) || 1, color: it.color || '', size: it.size || '', supplierName: it.supplier || '', supplierArticle: it.supplierArticle || '', isSetItem: true });
             return lines.filter((l) => l.sku || l.id);
         }
         const base = { sku: ctx.product.sku, id: ctx.product.id, name: ctx.product.customerName || ctx.product.name, supplierName: ctx.product.supplier || '', supplierArticle: ctx.product.supplierArticle || '', isMain: true };

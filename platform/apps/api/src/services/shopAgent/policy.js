@@ -1085,7 +1085,7 @@ async function runPolicyInner(A, u) {
                 ctx.agent.lastAsk = 'колір позицій комплекту';
                 return;
             }
-            ctx.agent.setColorsResolved = true;
+            ctx.agent.setColorsResolved = true; applySetPricing(ctx, pp); // кольори позицій вже відомі — переносимо їх у extraItems (для CRM і постачальника)
         }
     }
 

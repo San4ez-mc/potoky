@@ -150,6 +150,8 @@ function setMatchesOriginal(sel, original) {
  * клієнт щось прибрав/додав/змінив кількість — рахуємо чесно, сумою реальних цін позицій. */
 function applySetPricing(ctx, pp) {
     const sel = ctx.setSelection;
+    // Розміри позицій із n_calc (setSizeMap) — у структуру замовлення для CRM/постачальника.
+    if (ctx.setSizeMap && Array.isArray(sel)) for (const it of sel) if (!it.size && ctx.setSizeMap[it.article]) it.size = ctx.setSizeMap[it.article];
     if (setMatchesOriginal(sel, ctx.agent.setOriginal)) {
         // 2026-09-24 (FunnelTest 37, «решта −200 грн»): у CRM ціна комплекту = 0 (вона лише в тексті картки «Комплект (4 в 1): 5290 ₴»),
         // тож n_pay_amount, що бере ціну з product.price, рахував суму 0. Беремо рекламовану ціну з тексту, інакше суму позицій,
@@ -1241,7 +1243,13 @@ async function runPolicyInner(A, u) {
         if (u.prepaymentObjection && !ctx.trustScriptStep) { A.out.push({ text: messageTextMultiline(A.assets, 'n_agent_trust1', ctx, A.session.id), step: 'trust1' }); ctx.trustScriptStep = 1; ctx.agent.lastAsk = 'оформимо з передплатою 200?'; return; }
         if (ctx.trustScriptStep === 1 && (u.prepaymentObjection || u.trustPromise === false || u.ready === 'no')) { A.out.push({ text: messageText(A.assets, 'n_agent_trust2', ctx, A.session.id), step: 'trust2' }); ctx.trustScriptStep = 2; ctx.agent.lastAsk = 'обіцяєте прийти на пошту?'; return; }
         if (ctx.trustScriptStep === 2 && u.trustPromise === false) { A.out.push({ text: messageText(A.assets, 'n_agent_handoff', ctx, A.session.id), step: 'trust_handoff' }); await pause(A, 'handoff', 'n_agent_trust_declined_admin', '💬 «' + text.slice(0, 200) + '»'); return; }
-        if (ctx.trustScriptStep === 2 && (u.trustPromise === true || u.ready === 'yes')) ctx.paymentInfo = { method: 'cod_trust' };
+        if (ctx.trustScriptStep === 2 && (u.trustPromise === true || u.ready === 'yes')) {
+            // 2026-09-24 (власник: «чистого накладеного платежу в магазині немає»; FunnelTest T12): бот сам виняток без
+            // передоплати НЕ надає — передає менеджеру, який вирішує індивідуально (раніше: method 'cod_trust', оформлення без 200 грн).
+            A.out.push({ text: 'Дякую за відповідь 🙏 Виняток без передоплати вирішує менеджер — передаю йому, він напише вам тут найближчим часом 💛', step: 'trust_handoff_manager' });
+            await pause(A, 'handoff', 'n_agent_trust_declined_admin', '💬 Клієнт просить виняток без передоплати і обіцяє забрати посилку: «' + text.slice(0, 200) + '»');
+            return;
+        }
         else if (ctx.trustScriptStep === 1 && (u.ready === 'yes' || u.payMethod === 'cod')) ctx.paymentInfo = { method: 'cod' };
         else if (u.payMethod) ctx.paymentInfo = { method: u.payMethod, ...(u.country ? { country: u.country } : {}) };
         else if (ctx.agent.lastAsk === 'спосіб оплати 1 чи 2' && !u.questions.length) {

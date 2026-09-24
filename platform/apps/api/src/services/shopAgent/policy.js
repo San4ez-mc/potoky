@@ -1044,6 +1044,30 @@ async function runPolicyInner(A, u) {
                 return;
             }
         }
+        // 2026-09-24 (аудит постачальників): позиції комплекту з власною сіткою (джинси — талія, футболка, взуття), яких n_calc
+        // не підібрав за зростом/вагою, лишались з порожнім size — замовлення й постачальник отримували позицію без розміру.
+        // Спершу беремо розмір із тексту клієнта («джинси 32, лофери 43»), інакше питаємо один раз списком.
+        if (!ctx.crmOrderId && !ctx.agent.setSizesAsked2) {
+            const sizeName = (x) => String((x && (x.name || x.size || x.value)) || x || '').trim();
+            const escRe = (v) => v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const segsS = text.split(/[,;\n]|\s+(?:і|та|и|й)\s+/iu).map((x) => x.trim()).filter(Boolean);
+            for (const seg of segsS) {
+                const item = matchSetItem(seg, ctx.setSelection, ctx.agent.setParams && ctx.agent.setParams.categoryNames);
+                if (!item || item.size || !Array.isArray(item.sizes)) continue;
+                const hit = item.sizes.map(sizeName).find((sz) => sz && new RegExp('(^|[^0-9A-Za-z])' + escRe(sz) + '($|[^0-9A-Za-z])', 'i').test(seg));
+                if (hit) item.size = hit;
+            }
+            const needSz = ctx.setSelection.filter((it) => !it.size && Array.isArray(it.sizes) && it.sizes.length > 1 && !(ctx.setSizeMap && ctx.setSizeMap[it.article]));
+            if (needSz.length) {
+                ctx.agent.setSizeAskCount = (ctx.agent.setSizeAskCount || 0) + 1;
+                if (ctx.agent.setSizeAskCount <= 2) {
+                    const lines = needSz.map((it) => '📏 ' + it.name + '\nДоступні розміри: ' + it.sizes.map(sizeName).join(', ')).join('\n\n');
+                    A.out.push({ text: (ctx.agent.setSizeAskCount > 1 ? 'Нагадаю: лишилось обрати розмір 🙂\n\n' : 'Підкажіть, будь ласка, розмір для решти позицій 🙂\n\n') + lines, step: 'set_size_ask' });
+                    ctx.agent.lastAsk = 'розміри позицій комплекту'; applySetPricing(ctx, pp); return;
+                }
+                ctx.agent.setSizesAsked2 = true;
+            }
+        }
         if (!ctx.agent.setColorsResolved) {
             const catNamesSet = ctx.agent.setParams && ctx.agent.setParams.categoryNames;
             const segments = [...(ctx.agent.setColorHints || []), text].flatMap((tx) => String(tx).split(/[,;\n]|\s+(?:і|та|и|й)\s+/iu)).map((s) => s.trim()).filter(Boolean);

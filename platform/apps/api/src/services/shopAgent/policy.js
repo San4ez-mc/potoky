@@ -515,6 +515,11 @@ async function runPolicyInner(A, u) {
     // 2026-09-24 (FunnelTest 16): «Не відкривається посилання» LLM не завжди відносила до wantsManualReq —
     // детермінований страхувальний розбір: скарга на посилання оплати → одразу ручні реквізити.
     if (!u.wantsManualReq && /(не\s+(?:відкрива|відкрит|працю|грузит|вантаж)[^.!?]{0,40}(?:посилан|лінк|ссылк))|((?:посилан|лінк|ссылк)[^.!?]{0,40}не\s+(?:відкрива|відкрит|працю|грузит|вантаж))/i.test(text)) u.wantsManualReq = true;
+    // Клієнт стверджує, що він не бот («Я не бот, я людина») — не підігруємо, коротко й чесно.
+    if (/я\s+не\s+бот|я\s+(?:жива\s+)?людина/i.test(text) && !/[?]/.test(text)) {
+        A.out.push({ text: 'Розумію 🙂 Я віртуальна помічниця магазину, а жива людина — наш менеджер, він підключиться до розмови, щойно буде вільний 💛', step: 'not_bot_reply' });
+        return;
+    }
     // 2026-09-24 (FunnelTest 40): на пряме «Ви бот?» бот чесно каже, що він віртуальна помічниця; жива людина — за проханням.
     if (/(^|[^а-яіїєґ])(ви|ти|це)\s+(?:просто\s+)?(?:чат[\s-]?)?бот[іи]?[\s?!.]*$|бот\s+чи\s+(?:людина|живий)|(?:людина|живий)\s+чи\s+бот/i.test(text) && !/я\s+не\s+бот/i.test(text)) {
         ctx.agent.botQuestionCount = (ctx.agent.botQuestionCount || 0) + 1;
@@ -991,7 +996,7 @@ async function runPolicyInner(A, u) {
             ctx.agent.wantColor = u.color || '';
             const ask = u.color ? messageText(A.assets, 'n_agent_ask_color_specific', ctx, A.session.id) : messageText(A.assets, 'n_agent_ask_color_generic', ctx, A.session.id);
             ctx.agent.colorAskCount = (ctx.agent.colorAskCount || 0) + 1;
-            const askVar = (ctx.agent.colorAskCount > 1 && ctx.agent.lastAsk === 'колір') ? ('Нагадаю: лишилось обрати колір 🎨 ' + ask) : ask;
+            const askVar = (ctx.agent.colorAskCount > 1 && ctx.agent.lastAsk === 'колір') ? (['Нагадаю: лишилось обрати колір 🎨 ', 'Ще раз про колір 🎨 ', 'Лишилось лише обрати колір 🎨 '][ctx.agent.colorAskCount % 3] + ask) : ask;
             A.out.push({ text: await answerThenAsk(A, u, preNote + askVar), step: 'ask_color' }); ctx.agent.lastAsk = 'колір'; return;
         }
     }
@@ -1285,7 +1290,7 @@ async function runPolicyInner(A, u) {
         if (ctx.trustScriptStep === 2 && (u.trustPromise === true || u.ready === 'yes')) {
             // 2026-09-24 (власник: «чистого накладеного платежу в магазині немає»; FunnelTest T12): бот сам виняток без
             // передоплати НЕ надає — передає менеджеру, який вирішує індивідуально (раніше: method 'cod_trust', оформлення без 200 грн).
-            A.out.push({ text: 'Дякую за відповідь 🙏 Виняток без передоплати вирішує менеджер — передаю йому, він напише вам тут найближчим часом 💛', step: 'trust_handoff_manager' });
+            A.out.push({ text: 'Дякую за відповідь 🙏 Передаю ваше питання менеджеру — він напише вам тут найближчим часом 💛', step: 'trust_handoff_manager' });
             await pause(A, 'handoff', 'n_agent_trust_declined_admin', '💬 Клієнт просить виняток без передоплати і обіцяє забрати посилку: «' + text.slice(0, 200) + '»');
             return;
         }

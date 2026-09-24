@@ -106,7 +106,7 @@ function initSetSelection(pp) {
     // fixedColor — нове поле CRM (ProductSetComponent.fixedColor, 2026-09-15): власник фіксує
     // колір позиції САМЕ В МЕЖАХ цього комплекту (напр. джинси завжди сині для цього набору) —
     // тоді бот ніколи не питає й не вгадує, бере готове значення з CRM.
-    return (pp.setItems || []).map((it) => ({ article: it.article, id: it.id, name: it.name, price: Number(it.price) || 0, supplier: it.supplier || '', supplierArticle: it.supplierArticle || '', colors: it.colors || [], colorPhotos: it.colorPhotos || {}, sizes: it.sizes || [], qty: 1, color: it.fixedColor || '', size: '' }));
+    return (pp.setItems || []).map((it) => ({ article: it.article, id: it.id, name: it.name, price: Number(it.price) || 0, supplier: it.supplier || '', supplierArticle: it.supplierArticle || '', colors: it.colors || [], colorPhotos: it.colorPhotos || {}, sizes: (Array.isArray(it.sizes) && it.sizes.length) ? it.sizes : ((Array.isArray(it.structuredSizes) && it.structuredSizes.length) ? it.structuredSizes : ((it.sizeChartData && Array.isArray(it.sizeChartData.sizes)) ? it.sizeChartData.sizes : [])), qty: 1, color: it.fixedColor || '', size: '' }));
 }
 function stemsOf(name) {
     return String(name || '').toLowerCase().replace(/[«»().,]/g, ' ').split(/\s+/).filter((w) => w.length >= 4 && !/^(чоловіч|жіноч|дитяч|артикул|комплект)/.test(w)).map((w) => w.slice(0, 5));

@@ -615,6 +615,12 @@ async function runPolicyInner(A, u) {
             return;
         }
         const since = Date.now() - Number(ctx.postOrderMsgAt || 0);
+        if (u.clothingSize && !ctx.supplierTtn && !ctx.ttn && !u.statusQuestion) {
+            // 2026-09-24 (FunnelTest 28): зміна розміру після оформлення — чітке підтвердження + сигнал менеджеру, а не «в роботі 💛».
+            A.out.push({ text: 'Звісно, змінила на ' + String(u.clothingSize).toUpperCase() + ' 👍 Передаю менеджеру, щоб виправили розмір у замовленні до відправки.', step: 'post_size_change' });
+            await T.alert(A, 'n_agent_post_extra_admin', { details: '📏 Клієнт просить змінити розмір на ' + String(u.clothingSize).toUpperCase() + ' після оформлення: «' + text.slice(0, 200) + '»' });
+            return;
+        }
         if (u.statusQuestion && !ctx.supplierTtn && !ctx.ttn) {
             // 2026-09-24 (FunnelTest 44): «коли відправка / чому не відправили» до ТТН — стандартні терміни, а не вигадана причина.
             A.out.push({ text: 'Одяг шиється під замовлення: відправка протягом 5 робочих днів з моменту оформлення (субота й неділя — вихідні). Номер накладної (ТТН) надішлемо сюди одразу після відправки 📦', step: 'post_status_terms' });
@@ -869,6 +875,7 @@ async function runPolicyInner(A, u) {
     if (u.wantsSizeChart && ctx.recommendedSize && pp.sizeChartUrl && !A._chartSent) { // явне повторне прохання сітки — надсилаємо знову (FunnelTest 27: обіцяли «ще раз» без вкладення)
         A.out.push({ photoUrls: [pp.sizeChartUrl], caption: messageText(A.assets, 'n_agent_size_chart_caption', ctx, A.session.id), step: 'size_chart' });
         ctx.agent.chartSentFor = pp.sku; A._chartSent = true;
+        if (Array.isArray(u.questions)) u.questions = u.questions.filter((q) => !/(сітк|заміри|таблиц)/i.test(String(q))); // відповідь уже пішла фото — compose не має «обіцяти» її вдруге
     }
 
     // 2026-09-18 (живий кейс, LaT1K/C0043: клієнт явно написав "мені потрібен M розмір
@@ -991,7 +998,7 @@ async function runPolicyInner(A, u) {
     if (pp.colors && !(ctx.colorChoice && (ctx.colorChoice.color || (Array.isArray(ctx.colorChoice.colors) && ctx.colorChoice.colors.length)))) {
         const c = u.colorMatched || matchColor(pp, u.color) || (ctx.sizeInput && ctx.sizeInput.color) || matchColor(pp, ctx.agent.pendingColor) || matchColor(pp, ctx.agent.pendingColorRaw) || null;
         if (c) { ctx.colorChoice = { color: c, qty: u.qty || undefined }; delete ctx.agent.pendingColor; delete ctx.agent.pendingColorRaw; }
-        else if (isSoftDecline(u)) { A.out.push({ text: await answerThenAsk(A, u, messageText(A.assets, 'n_agent_soft_decline_color', ctx, A.session.id)), step: 'ask_color_soft' }); return; }
+        else if (isSoftDecline(u) || u.intent === 'thanks') { A.out.push({ text: await answerThenAsk(A, u, messageText(A.assets, 'n_agent_soft_decline_color', ctx, A.session.id)), step: 'ask_color_soft' }); return; }
         else {
             ctx.agent.wantColor = u.color || '';
             const ask = u.color ? messageText(A.assets, 'n_agent_ask_color_specific', ctx, A.session.id) : messageText(A.assets, 'n_agent_ask_color_generic', ctx, A.session.id);

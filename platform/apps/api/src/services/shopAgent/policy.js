@@ -496,8 +496,13 @@ async function runPolicyInner(A, u) {
     }
     const freshSignal = !!(A.turnSharedPost || A.newEntryAd || u.productHint.article || u.productHint.fromList || (A.turnImage && !u.claimsPaid && !u.receiptLink && !(ctx.paymentInfo && ctx.paymentInfo.method) ));
 
+    // 2026-09-24 (FunnelTest 16): «Не відкривається посилання» LLM не завжди відносила до wantsManualReq —
+    // детермінований страхувальний розбір: скарга на посилання оплати → одразу ручні реквізити.
+    if (!u.wantsManualReq && /(не\s+(?:відкрива|відкрит|працю|грузит|вантаж)[^.!?]{0,40}(?:посилан|лінк|ссылк))|((?:посилан|лінк|ссылк)[^.!?]{0,40}не\s+(?:відкрива|відкрит|працю|грузит|вантаж))/i.test(text)) u.wantsManualReq = true;
     // 0. Людина / претензія / повернення
     if (u.wantsHuman) {
+        ctx.agent.handoffAsked = (ctx.agent.handoffAsked || 0) + 1;
+        if (ctx.agent.handoffAsked > 1) { A.out.push({ text: 'Менеджер уже підключається 🙏 Дякую за терпіння — відповість сюди найближчим часом 💛', step: 'handoff_again' }); return; }
         A.out.push({ text: messageText(A.assets, 'n_agent_handoff', ctx, A.session.id), step: 'handoff' });
         await pause(A, 'handoff', 'n_agent_handoff_admin', '💬 «' + text.slice(0, 200) + '»');
         return;
@@ -810,9 +815,9 @@ async function runPolicyInner(A, u) {
     // не виконується для цього товару. LLM продовжує чесно обіцяти фото (бо URL є), а код його
     // просто не надсилає. Обробляємо повторний запит сітки ОКРЕМО від секції розміру — щоб він
     // спрацьовував і після того, як розмір уже відомий.
-    if (u.wantsSizeChart && ctx.recommendedSize && pp.sizeChartUrl && ctx.agent.chartSentFor !== pp.sku) {
+    if (u.wantsSizeChart && ctx.recommendedSize && pp.sizeChartUrl && !A._chartSent) { // явне повторне прохання сітки — надсилаємо знову (FunnelTest 27: обіцяли «ще раз» без вкладення)
         A.out.push({ photoUrls: [pp.sizeChartUrl], caption: messageText(A.assets, 'n_agent_size_chart_caption', ctx, A.session.id), step: 'size_chart' });
-        ctx.agent.chartSentFor = pp.sku;
+        ctx.agent.chartSentFor = pp.sku; A._chartSent = true;
     }
 
     // 2026-09-18 (живий кейс, LaT1K/C0043: клієнт явно написав "мені потрібен M розмір
@@ -893,8 +898,8 @@ async function runPolicyInner(A, u) {
             // (фото з підписом) вже щойно пішла окремим виходом цього ж ходу. Той самий принцип,
             // що вже застосований для A.justPresented: якщо відповідь ВЖЕ дана (тут — фото),
             // не даємо compose() дублювати її текстом.
-            const chartJustSent = !!(u.wantsSizeChart && pp.sizeChartUrl && ctx.agent.chartSentFor !== pp.sku);
-            if (chartJustSent) { A.out.push({ photoUrls: [pp.sizeChartUrl], caption: messageText(A.assets, 'n_agent_size_chart_caption', ctx, A.session.id), step: 'size_chart' }); ctx.agent.chartSentFor = pp.sku; }
+            const chartJustSent = !!(u.wantsSizeChart && pp.sizeChartUrl && !A._chartSent);
+            if (chartJustSent) { A._chartSent = true; A.out.push({ photoUrls: [pp.sizeChartUrl], caption: messageText(A.assets, 'n_agent_size_chart_caption', ctx, A.session.id), step: 'size_chart' }); ctx.agent.chartSentFor = pp.sku; }
             let colorNote = '';
             if (u.color && !u.colorMatched && colorsOf(pp)) { ctx.agent.wantColorRaw = u.color; colorNote = messageText(A.assets, 'n_agent_color_note_mismatch', ctx, A.session.id) + ' '; }
             else if (u.colorMatched) { ctx.agent.colorMatchedNote = u.colorMatched; colorNote = messageText(A.assets, 'n_agent_color_note_matched', ctx, A.session.id) + ' '; }
@@ -1033,7 +1038,8 @@ async function runPolicyInner(A, u) {
                 // підвантажує colorPhotos для set-компонентів), альбомом ПЕРЕД текстом питання.
                 const colorPhotoUrls = askItem.colors.map((c) => askItem.colorPhotos && askItem.colorPhotos[c]).filter(Boolean);
                 if (colorPhotoUrls.length) A.out.push({ photoUrls: colorPhotoUrls.slice(0, 10), caption: '', step: 'set_color_ask_photos' });
-                A.out.push({ text: await answerThenAsk(A, u, messageTextMultiline(A.assets, 'n_agent_set_color_ask', ctx, A.session.id)), step: 'set_color_ask' });
+                ctx.agent.setColorAskCount = (ctx.agent.setColorAskCount || 0) + 1;
+                A.out.push({ text: await answerThenAsk(A, u, (ctx.agent.setColorAskCount > 1 && ctx.agent.lastAsk === 'колір позицій комплекту' ? 'Нагадаю, лишилось обрати колір 🙂\n\n' : '') + messageTextMultiline(A.assets, 'n_agent_set_color_ask', ctx, A.session.id)), step: 'set_color_ask' });
                 ctx.agent.lastAsk = 'колір позицій комплекту';
                 return;
             }

@@ -509,6 +509,13 @@ async function universalQuestionFallback(A, u) {
 async function runPolicyInner(A, u) {
     const { ctx } = A; ctx.agent = ctx.agent || {};
     const text = String(A.turnText || '');
+    // 2026-09-25 (FunnelTest 32): фото БЕЗ тексту у відповідь на питання про колір — це зразок кольору, а не новий товар:
+    // не перезапускаємо розпізнавання (раніше перемикало на іншу кофту), просимо співставити з палітрою товару.
+    if (ctx.product && ctx.product.sku && A.turnImage && /колір/i.test(String(ctx.agent.lastAsk || '')) && !ctx.crmOrderId && !String(text).replace(/\[фото\]/gi, '').trim() && ctx.product.colors) {
+        A.out.push({ text: 'Дякую за фото! 🎨 У цієї моделі є кольори: ' + ctx.product.colors + '. Який із них найближчий до вашого зразка? Напишіть назву, і я одразу зафіксую 🙂', step: 'color_sample_ask' });
+        ctx.agent.lastAsk = 'колір';
+        return;
+    }
     // 2026-09-23 (FunnelTest 1): у відповіді на допродаж («так, 2 футболки…») understand() ставить
     // productHint.article на артикул ДОПРОДАЖУ — freshSignal підміняв ним головний товар (кофту).
     // Артикул саме запропонованого допродажу — це не новий головний товар.

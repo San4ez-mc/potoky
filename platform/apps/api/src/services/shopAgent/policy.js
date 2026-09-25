@@ -1288,8 +1288,8 @@ async function runPolicyInner(A, u) {
             // Допродаж уже доданий клієнтом як додатковий товар («і ще футболку») — не пропонуємо його вдруге.
             const upItem = Array.isArray(pp.upsellItems) && pp.upsellItems[0];
             const upsellAlreadyExtra = !!(pp.upsell && upItem && Array.isArray(ctx.extraItems) && ctx.extraItems.some((x) => x && ((x.id && x.id === upItem.id) || (x.sku && upItem.sku && x.sku === upItem.sku))));
-            const askLine = (!isSetFull && pp.upsell && !upsellAlreadyExtra) ? messageText(A.assets, 'n_agent_order_ask_upsell', ctx, A.session.id) : messageText(A.assets, 'n_agent_order_ask_plain', ctx, A.session.id);
-            if (!isSetFull && pp.upsell && !upsellAlreadyExtra) ctx.agent.upsellOffered = true;
+            const askLine = (!isSetFull && pp.upsell && !upsellAlreadyExtra && !(ctx.agent.pendingSecondPick && !ctx.agent.secondPickAsked)) ? messageText(A.assets, 'n_agent_order_ask_upsell', ctx, A.session.id) : messageText(A.assets, 'n_agent_order_ask_plain', ctx, A.session.id);
+            if (!isSetFull && pp.upsell && !upsellAlreadyExtra && !(ctx.agent.pendingSecondPick && !ctx.agent.secondPickAsked)) ctx.agent.upsellOffered = true;
             const hesitating = (u.intent === 'hesitate' || u.intent === 'postpone');
             // «2,4»: другий обраний варіант нагадуємо один раз у підсумку (відповідь ловить блок перед extraResolve).
             let secondPickLine = '';

@@ -618,6 +618,7 @@ async function runPolicyInner(A, u) {
         if (!u.clothingSize) { const sm = text.match(/(?:змін|поміня|заміни|переробі|краще|давайте)\S*[^.!?]{0,25}?(?:розмір|размер|на)\s+(XXXL|XXL|XL|XS|S|M|L)(?![A-Za-z])/i); if (sm) u.clothingSize = sm[1]; }
         if (u.clothingSize && !ctx.supplierTtn && !ctx.ttn && !u.statusQuestion) {
             // 2026-09-24 (FunnelTest 28): зміна розміру після оформлення — чітке підтвердження + сигнал менеджеру, а не «в роботі 💛».
+            { const ns = String(u.clothingSize).toUpperCase(); ctx.recommendedSize = ns; if (Array.isArray(ctx.orderUnits)) ctx.orderUnits = ctx.orderUnits.map((x) => ({ ...x, size: ns })); if (ctx.colorChoice) ctx.colorChoice = { ...ctx.colorChoice, size: ns }; }
             A.out.push({ text: 'Звісно, змінила на ' + String(u.clothingSize).toUpperCase() + ' 👍 Передаю менеджеру, щоб виправили розмір у замовленні до відправки.', step: 'post_size_change' });
             await T.alert(A, 'n_agent_post_extra_admin', { details: '📏 Клієнт просить змінити розмір на ' + String(u.clothingSize).toUpperCase() + ' після оформлення: «' + text.slice(0, 200) + '»' });
             return;
@@ -648,6 +649,8 @@ async function runPolicyInner(A, u) {
     //     адресу чи скинути чек ще до підбору розміру; нічого не губимо і не перепитуємо потім).
     // 2026-09-23 (FunnelTest, «перше відділення»): слово-числівник LLM не завжди повертає числом —
     // страхуємо детермінованим розбором, щоб номер не губився.
+    // Квитанція чи «оплатив 200» до вибору способу оплати = варіант 1 (200 грн передоплата).
+    if (!u.payMethod && (u.claimsPaid || u.receiptLink || A.turnImage) && /(^|\D)200(\D|$)/.test(text) && !(ctx.paymentInfo && ctx.paymentInfo.method)) u.payMethod = 'cod';
     if (!u.branch && !u.homeAddress) {
         const ORD = { 'перш': 1, 'друг': 2, 'трет': 3, 'четверт': 4, 'п’ят': 5, "п'ят": 5, 'шост': 6, 'сьом': 7, 'восьм': 8, 'дев’ят': 9, "дев'ят": 9, 'десят': 10 };
         const om = text.toLowerCase().match(/(перш|друг|трет|четверт|п[’']ят|шост|сьом|восьм|дев[’']ят|десят)\S*\s+(?:відділенн|віділен|нп|нової\s+пошти)/);
@@ -769,7 +772,8 @@ async function runPolicyInner(A, u) {
         } else if (!P(ctx) && ctx.agent.hintList && /^[\s?!.…]*$|^\s*(ау|алло|ало|ей|еу|ну)[\s?!.]*$/i.test(text.trim())) {
             // 2026-09-24 (FunnelTest 41): «?»/«Ау» після показаного списку — нетерплячка, а не новий запит; показуємо
             // список ще раз замість скидання в «що вас цікавить».
-            A.out.push({ text: ['Ось варіанти, які ми показали 👇', String(ctx.agent.hintList), 'Який сподобався? Можна відповісти номером, кольором або надіслати фото 😊'].join('\n\n'), step: 'hint_repeat' });
+            ctx.agent.hintRepeatCount = (ctx.agent.hintRepeatCount || 0) + 1;
+            A.out.push({ text: ctx.agent.hintRepeatCount % 2 ? 'Я тут 🙂 Оберіть, будь ласка, номер варіанту зі списку вище — і одразу підберу розмір.' : 'Тут-тут 💛 Напишіть номер або колір із показаного списку, і рухаємось далі.', step: 'hint_repeat' });
             ctx.agent.lastAsk = 'який із показаних товарів цікавить';
             return;
         } else if (!P(ctx)) {

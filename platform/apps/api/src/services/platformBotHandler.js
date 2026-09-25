@@ -266,33 +266,117 @@ async function resolveOpenAIKey(botId) {
  * помилку — 2026-08-30: тепер шле сповіщення (system-фолбек гарантує доставку
  * навіть якщо в цього бота немає власного ADMIN_TELEGRAM_ID).
  */
+/** Ключ Gemini для резервної розшифровки — тим же ланцюжком, що й ключ OpenAI вище. */
+async function resolveGeminiKey(botId) {
+    try {
+        const km = Object.fromEntries((await db.funnelKey.findMany({
+            where: { botId, key: { in: ['GEMINI_API_KEY', 'GEMINI_CONNECTOR_ID'] } },
+            select: { key: true, value: true },
+        })).map((k) => [k.key, (k.value || '').trim()]));
+        if (km.GEMINI_API_KEY) return km.GEMINI_API_KEY;
+        if (km.GEMINI_CONNECTOR_ID) {
+            const c = await db.savedConnector.findUnique({ where: { id: km.GEMINI_CONNECTOR_ID }, select: { config: true } });
+            const k = c?.config?.api_key || c?.config?.apiKey || c?.config?.key;
+            if (k) return String(k).trim();
+        }
+        const any = await db.savedConnector.findFirst({ where: { type: 'google_gemini', isActive: true }, select: { config: true } });
+        const k = any?.config?.api_key || any?.config?.apiKey || any?.config?.key;
+        return k ? String(k).trim() : '';
+    } catch (err) {
+        logger.warn('[platformBotHandler] resolveGeminiKey failed', { error: err.message });
+        return '';
+    }
+}
+
+/**
+ * Резерв розшифровки: Gemini приймає аудіо прямо в запиті.
+ *
+ * Модель береться з env, а не зашита: Google ретайрнув уже три покоління flash
+ * поспіль, і кожного разу резерв мовчки переставав працювати (урок 11 у CLAUDE.md).
+ */
+async function transcribeViaGemini(buf, apiKey, language = 'uk') {
+    const model = process.env.GEMINI_FALLBACK_MODEL || 'gemini-flash-latest';
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            contents: [{
+                parts: [
+                    { text: `Розшифруй це голосове повідомлення дослівно (мова: ${language}). Поверни ЛИШЕ текст сказаного, без коментарів і без лапок.` },
+                    { inline_data: { mime_type: 'audio/ogg', data: buf.toString('base64') } },
+                ],
+            }],
+        }),
+        signal: AbortSignal.timeout(60000),
+    });
+    if (!res.ok) throw new Error(`Gemini ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
+    const j = await res.json();
+    const text = (j?.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join(' ').trim();
+    if (!text) throw new Error('Gemini повернув порожню розшифровку');
+    return text;
+}
+
 async function transcribeAudio(fileUrl, apiKey, language = 'uk', botId = null) {
+    let buf;
     try {
         const fileRes = await fetch(fileUrl);
         if (!fileRes.ok) return null;
-        const buf = Buffer.from(await fileRes.arrayBuffer());
-        const form = new FormData();
-        form.append('file', new Blob([buf], { type: 'audio/ogg' }), 'voice.ogg');
-        form.append('model', 'whisper-1');
-        if (language) form.append('language', language);
-        const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${apiKey}` },
-            body: form,
-        });
-        if (!res.ok) {
-            const errTxt = await res.text().catch(() => '');
-            logger.warn('[platformBotHandler] Whisper error', { status: res.status, body: errTxt.slice(0, 200) });
-            notifyAdminOfServiceOutage(null, 'OpenAI Whisper (транскрипція голосу)', `HTTP ${res.status}: ${errTxt.slice(0, 300)}`, { botId }).catch(() => {});
-            return null;
-        }
-        const data = await res.json();
-        return (data.text || '').trim() || null;
+        buf = Buffer.from(await fileRes.arrayBuffer());
     } catch (err) {
-        logger.warn('[platformBotHandler] transcribeAudio failed', { error: err.message });
-        notifyAdminOfServiceOutage(null, 'OpenAI Whisper (транскрипція голосу)', err.message, { botId }).catch(() => {});
+        logger.warn('[platformBotHandler] не вдалось завантажити голосове', { error: err.message });
         return null;
     }
+
+    // Whisper з однією повторною спробою: 503 «Unable to verify model access» —
+    // тимчасова відмова OpenAI, і саме через неї клієнтка втратила голосове,
+    // хоча ключ і доступ до моделі були справні.
+    let whisperErr = '';
+    for (let attempt = 0; attempt < 2 && apiKey; attempt++) {
+        try {
+            const form = new FormData();
+            form.append('file', new Blob([buf], { type: 'audio/ogg' }), 'voice.ogg');
+            form.append('model', 'whisper-1');
+            if (language) form.append('language', language);
+            const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${apiKey}` },
+                body: form,
+            });
+            if (res.ok) {
+                const data = await res.json();
+                const text = (data.text || '').trim();
+                if (text) return text;
+                whisperErr = 'порожня розшифровка';
+                break;
+            }
+            whisperErr = `HTTP ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`;
+            const retriable = res.status === 429 || res.status >= 500;
+            if (!retriable) break;
+            await new Promise((r) => setTimeout(r, 1500));
+        } catch (err) {
+            whisperErr = err.message;
+            await new Promise((r) => setTimeout(r, 1500));
+        }
+    }
+    if (whisperErr) logger.warn('[platformBotHandler] Whisper error', { error: whisperErr });
+
+    // Резерв. Голос для власниці — основний спосіб писати на ходу, тож мовчки
+    // втратити його гірше, ніж розшифрувати трохи гіршою моделлю.
+    const geminiKey = await resolveGeminiKey(botId);
+    if (geminiKey) {
+        try {
+            const text = await transcribeViaGemini(buf, geminiKey, language);
+            logger.info('[platformBotHandler] голосове розшифровано резервом (Gemini)', { botId });
+            return text;
+        } catch (err) {
+            logger.warn('[platformBotHandler] резерв Gemini теж не впорався', { error: err.message });
+            notifyAdminOfServiceOutage(null, 'Розшифровка голосу', `Whisper: ${whisperErr || 'немає ключа'}; Gemini: ${err.message}`, { botId }).catch(() => {});
+            return null;
+        }
+    }
+
+    notifyAdminOfServiceOutage(null, 'OpenAI Whisper (транскрипція голосу)', `${whisperErr || 'немає ключа'} (резерву Gemini не налаштовано)`, { botId }).catch(() => {});
+    return null;
 }
 
 /**

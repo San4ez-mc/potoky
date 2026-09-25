@@ -678,6 +678,12 @@ async function runPolicyInner(A, u) {
     // для кожної пари окремо й збираємо дві одиниці, а не питаємо зріст/вагу заново.
     {
         const prs = [...String(text).matchAll(/(\d{3})\s*(?:см)?\s*[\/,\s]\s*(\d{2,3})\s*(?:кг)?/gi)].map((m) => ({ h: Number(m[1]), w: Number(m[2]) })).filter((x) => x.h >= 140 && x.h <= 220 && x.w >= 35 && x.w <= 200);
+        if (prs.length < 2) {
+            // Формат словами: «185 см зросту, десь 58 кг … 187 см, 100 кг» — зрости й ваги по порядку.
+            const hs = [...String(text).matchAll(/(\d{3})\s*см/gi)].map((m) => Number(m[1]));
+            const ws = [...String(text).matchAll(/(\d{2,3})\s*кг/gi)].map((m) => Number(m[1]));
+            if (hs.length >= 2 && ws.length >= 2) { prs.length = 0; prs.push({ h: hs[0], w: ws[0] }, { h: hs[1], w: ws[1] }); }
+        }
         if (prs.length >= 2 && ctx.product && !ctx.product.isSet && !ctx.crmOrderId) {
             const sizes = [];
             for (const pr of prs.slice(0, 2)) { ctx.sizeInput = { ...(ctx.sizeInput || {}), height: pr.h, weight: pr.w }; await T.calcSize(A); sizes.push(ctx.recommendedSize); }

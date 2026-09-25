@@ -189,7 +189,7 @@ async function funnelStage(A, stageName, stageOrder) {
 // ── Telegram-алерт менеджеру (той самий формат, що notifyTg-ноди) ─────────────────────────────
 async function alert(A, nodeIdOrFields, extra = {}) {
     const { ctx, keys, session } = A;
-    if (ctx.testMode) { A.trace.push({ alert: typeof nodeIdOrFields === 'string' ? nodeIdOrFields : (nodeIdOrFields.title || '?'), skipped: 'testMode' }); return false; }
+    if (ctx.testMode) { const _t = typeof nodeIdOrFields === 'string' ? nodeIdOrFields : (nodeIdOrFields.title || '?'); A.trace.push({ alert: _t, skipped: 'testMode' }); ctx.testAlerts = [...(ctx.testAlerts || []), _t]; return false; }
     const f = typeof nodeIdOrFields === 'string' ? alertFields(A.assets, nodeIdOrFields, ctx) : nodeIdOrFields;
     const adminId = keys.ADMIN_TELEGRAM_ID || ''; const tok = keys.TELEGRAM_BOT_TOKEN || '';
     if (!adminId || !/^\d+:[A-Za-z0-9_-]{20,}$/.test(tok)) { A.trace.push({ alert: f.title, error: 'no ADMIN_TELEGRAM_ID/TELEGRAM_BOT_TOKEN' }); return false; }

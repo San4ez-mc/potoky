@@ -340,6 +340,9 @@ async function runTest(testId, onProgress = () => {}) {
             upsellItem: c.product && Array.isArray(c.product.upsellItems) && c.product.upsellItems[0] ? { sku: c.product.upsellItems[0].sku, name: c.product.upsellItems[0].name, price: c.product.upsellItems[0].price } : undefined,
             orderIntent: c.orderIntent && { addUpsell: c.orderIntent.addUpsell, upsellQty: c.orderIntent.upsellQty, upsellUnits: c.orderIntent.upsellUnits },
             orderUnits: c.orderUnits, orderTotal: c.orderTotal, orderData: c.orderData,
+            extraItems: Array.isArray(c.extraItems) && c.extraItems.length ? c.extraItems.map((i) => ({ sku: i.sku, name: i.name, color: i.color, size: i.size, qty: i.qty, price: i.price })) : undefined,
+            managerAlertsSent: c.testAlerts && c.testAlerts.length ? c.testAlerts : undefined,
+            handoffPaused: c.funnelPaused || undefined,
         });
         // Не-магазинні воронки (онбординг, Content Manager…) не мають цих полів → "{}". Порожній обʼєкт суддя
         // читає як «нічого не збережено», тому для них блок стану не показуємо (докази — у розділі викликів інструментів).

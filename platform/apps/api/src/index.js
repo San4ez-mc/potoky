@@ -24,6 +24,7 @@ const webhookRouter = require('./routes/webhook');
 const funnelsRouter = require('./routes/funnels');
 const ragRouter = require('./routes/rag');
 const webSearchRouter = require('./routes/websearch');
+const remindersRouter = require('./routes/reminders');
 const alertsRouter = require('./routes/alerts');
 const connectorsRouter = require('./routes/connectors');
 const savedConnectorsRouter = require('./routes/saved-connectors');
@@ -178,6 +179,7 @@ app.use('/api/tracked-links', trackedLinksRouter);
 app.use('/api/rag', ragRouter);
 // Пошук в інтернеті для agent-нод. Ключ Serper — заголовком з ключів воронки, не з .env.
 app.use('/api/websearch', webSearchRouter);
+app.use('/api/reminders', remindersRouter);
 // Технічні сповіщення власнику: свій секрет у заголовку, не сесія адмінки.
 app.use('/api/alerts', alertsRouter);
 // Channel links CRUD is used by the admin UI → session auth

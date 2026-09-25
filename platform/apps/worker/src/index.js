@@ -946,6 +946,16 @@ setTimeout(() => {
     setInterval(checkGroupSilence, SILENCE_CHECK_INTERVAL_MS);
 }, 90 * 1000);
 
+// ── Нагадування, поставлені асистентом ───────────────────────────────
+// Раз на хвилину: людина каже «о 12:30», і спізнення на п'ять хвилин уже
+// псує сенс. Перевірка дешева — вибірка за індексом dueAt.
+const { deliverReminders } = require('./reminders');
+const REMINDERS_INTERVAL_MS = 60 * 1000;
+setTimeout(() => {
+    deliverReminders();
+    setInterval(deliverReminders, REMINDERS_INTERVAL_MS);
+}, 30 * 1000);
+
 // ── Зведення по групах: щоденне і щотижневе (ТЗ Digital Hiring, Етап 2) ──
 // Сама функція вирішує, чи зараз ранкове вікно і чи не слала вона сьогодні —
 // тому інтервал може бути частим і не мусить збігатися з розкладом.

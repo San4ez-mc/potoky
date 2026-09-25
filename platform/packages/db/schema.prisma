@@ -54,6 +54,7 @@ model Bot {
   funnelKeys      FunnelKey[]
   userData        UserData[]
   tests           FunnelTest[]
+  reminders       Reminder[]
 
   @@index([projectId])
   @@map("bots")
@@ -449,4 +450,28 @@ model ProcessedMessage {
   @@unique([botId, updateId])
   @@index([createdAt])
   @@map("processed_messages")
+}
+
+/**
+ * Нагадування, які ставить сам асистент на прохання людини.
+ *
+ * «Нагадай завтра після 12:30» — перше, про що просить власниця, і поки цього не
+ * було, асистент чесно відмовляв. Нагадування зберігаємо окремою таблицею, а не
+ * в контексті сесії: воркер має знаходити прострочені за часом, а не перебирати
+ * всі активні розмови.
+ */
+model Reminder {
+  id        String    @id @default(uuid())
+  botId     String
+  bot       Bot       @relation(fields: [botId], references: [id], onDelete: Cascade)
+  sessionId String?
+  chatId    String // кому слати: telegram chat_id (людина або група)
+  text      String
+  dueAt     DateTime
+  sentAt    DateTime?
+  canceledAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([dueAt, sentAt])
+  @@index([botId, sessionId])
 }

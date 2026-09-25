@@ -1229,6 +1229,19 @@ async function runPolicyInner(A, u) {
             if (!ctx.extraProductMention) ctx.extraProductMention = u.extraProducts || u.alsoWants;
             await T.extraResolve(A);
         }
+        // 7a (перенесено вище підсумку, щоб колір потрапляв у нього). Колір ДОДАТКОВОГО товару («і ще футболку» → extraItems), названий пізніше: «футболка біла».
+        if (!ctx.crmOrderId && Array.isArray(ctx.extraItems) && ctx.extraItems.length) {
+            const segsX = text.split(/[,;\n]|\s+(?:і|та|и|й)\s+/iu).map((x) => x.trim()).filter(Boolean);
+            for (const it of ctx.extraItems) {
+                if (it.color || !Array.isArray(it.colorsList) || !it.colorsList.length) continue;
+                for (const seg of segsX) {
+                    if (!stemsOf(it.name).some((st) => seg.toLowerCase().includes(st))) continue;
+                    const c = matchColor({ colors: it.colorsList.join(',') }, seg);
+                    if (c) { it.color = c; if (ctx.extraItemsText) ctx.extraItemsText = String(ctx.extraItemsText).split('\n').map((ln) => (stemsOf(it.name).some((st) => ln.toLowerCase().includes(st)) ? ln.replace(/КОЛІР НЕ ОБРАНО \(є:[^)]*\)/, 'колір: ' + c) : ln)).join('\n'); break; }
+                }
+            }
+        }
+
         // 2026-09-15 (живий кейс, власник: "бот не поняв, які я хочу футболки, це баг") — відповідь
         // САМЕ на наше запитання n_agent_upsell_clarify ("з допродажем чи без") могла бути ГОЛИМ
         // кольором+кількістю ("Чорні, 2") без слова "так" — u.ready лишався не 'yes', тому вся
@@ -1284,19 +1297,6 @@ async function runPolicyInner(A, u) {
             }
             A.out.push({ text: txt, step: 'order_intent' });
             ctx.agent.lastAsk = 'оформляємо?'; return;
-        }
-    }
-
-    // 7a. Колір ДОДАТКОВОГО товару («і ще футболку» → extraItems), названий пізніше: «футболка біла».
-    if (!ctx.crmOrderId && Array.isArray(ctx.extraItems) && ctx.extraItems.length) {
-        const segsX = text.split(/[,;\n]|\s+(?:і|та|и|й)\s+/iu).map((x) => x.trim()).filter(Boolean);
-        for (const it of ctx.extraItems) {
-            if (it.color || !Array.isArray(it.colorsList) || !it.colorsList.length) continue;
-            for (const seg of segsX) {
-                if (!stemsOf(it.name).some((st) => seg.toLowerCase().includes(st))) continue;
-                const c = matchColor({ colors: it.colorsList.join(',') }, seg);
-                if (c) { it.color = c; break; }
-            }
         }
     }
 

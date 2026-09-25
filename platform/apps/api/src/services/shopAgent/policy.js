@@ -1056,7 +1056,9 @@ async function runPolicyInner(A, u) {
             const ask = u.color ? messageText(A.assets, 'n_agent_ask_color_specific', ctx, A.session.id) : messageText(A.assets, 'n_agent_ask_color_generic', ctx, A.session.id);
             ctx.agent.colorAskCount = (ctx.agent.colorAskCount || 0) + 1;
             const askVar = (ctx.agent.colorAskCount > 1 && ctx.agent.lastAsk === 'колір') ? (['Нагадаю: лишилось обрати колір 🎨 ', 'Ще раз про колір 🎨 ', 'Лишилось лише обрати колір 🎨 '][ctx.agent.colorAskCount % 3] + ask) : ask;
-            A.out.push({ text: await answerThenAsk(A, u, preNote + askVar), step: 'ask_color' }); ctx.agent.lastAsk = 'колір'; return;
+            // Клієнт ставить уточнювальні питання про колір (зразок, відтінок) — після 2-го підряд питання лише відповідаємо, не тиснемо повтором.
+            const answerOnly = u.questions.length && ctx.agent.colorAskCount > 2 && ctx.agent.lastAsk === 'колір';
+            A.out.push({ text: await answerThenAsk(A, u, answerOnly ? '' : preNote + askVar), step: 'ask_color' }); ctx.agent.lastAsk = 'колір'; return;
         }
     }
 

@@ -14,6 +14,7 @@ function productFacts(ctx) {
     if (p.desc) f.push('Опис: ' + String(p.desc).replace(/\s+/g, ' ').slice(0, 700));
     if (p.colors) f.push('Кольори: ' + p.colors + '.');
     if (Array.isArray(p.sizes) && p.sizes.length) f.push('Розміри: ' + p.sizes.join(', ') + '.');
+    else if (p.sizeChartData && Array.isArray(p.sizeChartData.sizes) && p.sizeChartData.sizes.length) f.push('Розміри в наявності (за розмірною сіткою товару): ' + p.sizeChartData.sizes.join(', ') + '. Інших розмірів немає.'); // лофери: розміри лише в sizeChartData (41–45), у p.sizes порожньо
     // 2026-09-14 (власник): розмірна сітка йде клієнту ЛИШЕ картинкою (n_agent_size_chart_caption,
     // за u.wantsSizeChart) АБО через питання параметрів категорії (isHW/paramsPrompt) — ніколи
     // текстом. Раніше сюди підмішувалась p.sizeChartText як «факт» для LLM — вона могла проговорити

@@ -1279,8 +1279,11 @@ async function runPolicyInner(A, u) {
             const summary = isSetFull
                 ? messageText(A.assets, 'n_agent_order_summary_header', ctx, A.session.id) + '\n' + (pp.customerName || pp.name) + '\n\n' + ctx.setSelection.map((it) => '• ' + it.name + (it.color ? ' (' + it.color + ')' : '') + (it.qty > 1 ? ' ×' + it.qty : '') + ' — ' + (it.price * it.qty) + ' грн').join('\n') + '\n\nРазом: ' + total + ' грн' + (ctx.shop && ctx.shop.terms ? '\n' + ctx.shop.terms : '')
                 : (() => { const units = ctx.orderUnitsText || ((ctx.colorChoice && ctx.colorChoice.color ? ctx.colorChoice.color : '') + (ctx.recommendedSize ? ' ' + ctx.recommendedSize : '')); return messageText(A.assets, 'n_agent_order_summary_header', ctx, A.session.id) + '\n' + (pp.customerName || pp.name) + (units ? ' — ' + units : '') + ' — ' + total + ' грн' + (ctx.extraItemsText ? '\n' + ctx.extraItemsText : '') + (ctx.shop && ctx.shop.terms ? '\n' + ctx.shop.terms : ''); })();
-            const askLine = (!isSetFull && pp.upsell) ? messageText(A.assets, 'n_agent_order_ask_upsell', ctx, A.session.id) : messageText(A.assets, 'n_agent_order_ask_plain', ctx, A.session.id);
-            if (!isSetFull && pp.upsell) ctx.agent.upsellOffered = true;
+            // Допродаж уже доданий клієнтом як додатковий товар («і ще футболку») — не пропонуємо його вдруге.
+            const upItem = Array.isArray(pp.upsellItems) && pp.upsellItems[0];
+            const upsellAlreadyExtra = !!(pp.upsell && upItem && Array.isArray(ctx.extraItems) && ctx.extraItems.some((x) => x && ((x.id && x.id === upItem.id) || (x.sku && upItem.sku && x.sku === upItem.sku))));
+            const askLine = (!isSetFull && pp.upsell && !upsellAlreadyExtra) ? messageText(A.assets, 'n_agent_order_ask_upsell', ctx, A.session.id) : messageText(A.assets, 'n_agent_order_ask_plain', ctx, A.session.id);
+            if (!isSetFull && pp.upsell && !upsellAlreadyExtra) ctx.agent.upsellOffered = true;
             const hesitating = (u.intent === 'hesitate' || u.intent === 'postpone');
             let txt = summary + '\n\n' + askLine;
             if (ctx.agent.lastAsk === 'оформляємо?' && !u.questions.length && !hesitating) {

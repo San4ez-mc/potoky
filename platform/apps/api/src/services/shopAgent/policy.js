@@ -704,7 +704,7 @@ async function runPolicyInner(A, u) {
     // n_lookup навіть не викликався для таких повідомлень. Дозволяємо категорійне слово теж
     // відкрити повторний матчинг — АЛЕ тільки до оформлення замовлення (crmOrderId), щоб не
     // зачепити вже перевірену поведінку "після оформлення — лише хендофф менеджеру" (розділ 1).
-    const categorySignal = !ctx.crmOrderId && hasCategoryWord(text) && !categoryWordIsUpsell(text, ctx) && !categoryWordIsSetComponent(text, ctx) && !categoryWordIsMain(text, ctx);
+    const categorySignal = !ctx.crmOrderId && hasCategoryWord(text) && !categoryWordIsUpsell(text, ctx) && !categoryWordIsSetComponent(text, ctx) && !categoryWordIsMain(text, ctx) && !u.wantsSizeChart;
     if (!P(ctx) || freshSignal || categorySignal) {
         if (u.productHint.fromList && ctx.catalogHintSkus) {
             const skus = String(ctx.catalogHintSkus).split(',').map((s) => s.trim()).filter(Boolean);
@@ -773,7 +773,7 @@ async function runPolicyInner(A, u) {
             // 2026-09-24 (FunnelTest 41): «?»/«Ау» після показаного списку — нетерплячка, а не новий запит; показуємо
             // список ще раз замість скидання в «що вас цікавить».
             ctx.agent.hintRepeatCount = (ctx.agent.hintRepeatCount || 0) + 1;
-            A.out.push({ text: ctx.agent.hintRepeatCount % 2 ? 'Я тут 🙂 Оберіть, будь ласка, номер варіанту зі списку вище — і одразу підберу розмір.' : 'Тут-тут 💛 Напишіть номер або колір із показаного списку, і рухаємось далі.', step: 'hint_repeat' });
+            A.out.push({ text: ctx.agent.hintRepeatCount % 2 ? ('Я тут 🙂 Оберіть, будь ласка, номер варіанту зі списку вище' + ((ctx.sizeInput && ctx.sizeInput.height && !ctx.sizeInput.weight) ? ' і напишіть вагу — підберу розмір.' : ' — і одразу підберу розмір.')) : 'Тут-тут 💛 Напишіть номер або колір із показаного списку, і рухаємось далі.', step: 'hint_repeat' });
             ctx.agent.lastAsk = 'який із показаних товарів цікавить';
             return;
         } else if (!P(ctx)) {

@@ -921,7 +921,9 @@ async function runPolicyInner(A, u) {
     // не виконується для цього товару. LLM продовжує чесно обіцяти фото (бо URL є), а код його
     // просто не надсилає. Обробляємо повторний запит сітки ОКРЕМО від секції розміру — щоб він
     // спрацьовував і після того, як розмір уже відомий.
-    if (u.wantsSizeChart && ctx.recommendedSize && pp.sizeChartUrl && !A._chartSent) { // явне повторне прохання сітки — надсилаємо знову (FunnelTest 27: обіцяли «ще раз» без вкладення)
+    // «Не бачу фото» одразу після надісланої сітки — клієнт не отримав зображення: шлемо ще раз (LLM не завжди ставить wantsSizeChart).
+    if (!u.wantsSizeChart && pp.sizeChartUrl && ctx.agent.chartSentFor === pp.sku && /не\s+(бачу|відкрива\S*|завантаж\S*)\s+(фото|сітк\S*|картинк\S*|зображенн\S*)/i.test(String(A.turnText || ''))) u.wantsSizeChart = true;
+    if (u.wantsSizeChart && (ctx.recommendedSize || ctx.agent.chartSentFor === pp.sku) && pp.sizeChartUrl && !A._chartSent) { // явне повторне прохання сітки — надсилаємо знову (FunnelTest 27: обіцяли «ще раз» без вкладення)
         A.out.push({ photoUrls: [pp.sizeChartUrl], caption: messageText(A.assets, 'n_agent_size_chart_caption', ctx, A.session.id), step: 'size_chart' });
         ctx.agent.chartSentFor = pp.sku; A._chartSent = true;
         if (Array.isArray(u.questions)) u.questions = u.questions.filter((q) => !/(сітк|заміри|таблиц)/i.test(String(q))); // відповідь уже пішла фото — compose не має «обіцяти» її вдруге

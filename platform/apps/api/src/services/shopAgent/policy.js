@@ -686,7 +686,7 @@ async function runPolicyInner(A, u) {
         }
         if (prs.length >= 2 && ctx.product && !ctx.product.isSet && !ctx.crmOrderId) {
             const sizes = [];
-            for (const pr of prs.slice(0, 2)) { ctx.sizeInput = { ...(ctx.sizeInput || {}), height: pr.h, weight: pr.w }; await T.calcSize(A); sizes.push(ctx.recommendedSize); }
+            for (const pr of prs.slice(0, 2)) { ctx.recommendedSize = null; ctx.sizeOutOfRange = false; ctx.sizeInput = { ...(ctx.sizeInput || {}), height: pr.h, weight: pr.w, clothingSize: undefined }; await T.calcSize(A); sizes.push(ctx.recommendedSize); }
             if (sizes.every(Boolean)) {
                 const cols = (u.units || []).map((x) => x && x.color);
                 u.units = sizes.map((sz, i) => ({ color: cols[i] || '', size: sz }));

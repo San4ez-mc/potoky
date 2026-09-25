@@ -674,6 +674,20 @@ async function runPolicyInner(A, u) {
         if (u.height) si.height = u.height; if (u.weight) si.weight = u.weight; if (u.clothingSize) si.clothingSize = u.clothingSize; if (u.chest) si.chest = u.chest; if (u.footLength) si.footLength = u.footLength; if (u.waist) si.waist = u.waist; if (u.belly) si.belly = true;
         ctx.sizeInput = si;
     }
+    // 2026-09-24 (FunnelTest 23): два одержувачі в одному повідомленні («185/58 темно-сіру, 187/100 чорну») — рахуємо розмір
+    // для кожної пари окремо й збираємо дві одиниці, а не питаємо зріст/вагу заново.
+    {
+        const prs = [...String(text).matchAll(/(\d{3})\s*(?:см)?\s*[\/,\s]\s*(\d{2,3})\s*(?:кг)?/gi)].map((m) => ({ h: Number(m[1]), w: Number(m[2]) })).filter((x) => x.h >= 140 && x.h <= 220 && x.w >= 35 && x.w <= 200);
+        if (prs.length >= 2 && ctx.product && !ctx.product.isSet && !ctx.crmOrderId) {
+            const sizes = [];
+            for (const pr of prs.slice(0, 2)) { ctx.sizeInput = { ...(ctx.sizeInput || {}), height: pr.h, weight: pr.w }; await T.calcSize(A); sizes.push(ctx.recommendedSize); }
+            if (sizes.every(Boolean)) {
+                const cols = (u.units || []).map((x) => x && x.color);
+                u.units = sizes.map((sz, i) => ({ color: cols[i] || '', size: sz }));
+                u.qty = sizes.length; ctx.recommendedSize = sizes[0]; ctx.agent.pairSizes = sizes;
+            }
+        }
+    }
     if (u.colorMatched) ctx.agent.pendingColor = u.colorMatched; else if (u.color) ctx.agent.pendingColorRaw = u.color;
     // 2026-09-23 (FunnelTest 4: «джинси хочу чорні» до підбору розміру губилось — секція кольорів
     // комплекту виконується лише ПІСЛЯ розміру і бачила тільки текст свого ходу): запамʼятовуємо

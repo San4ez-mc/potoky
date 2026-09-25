@@ -141,7 +141,8 @@ async function monoStatement(A) {
     const { ctx, keys } = A;
     if (ctx.testMode) {
         // Тестова виписка: крок тесту з bankPaid=N імітує надходження N грн (коментар = референс замовлення).
-        ctx.monoStatement = ctx.testBankPaid ? [{ id: 'test-tx-1', time: Math.floor(Date.now() / 1000), amountUah: Number(ctx.testBankPaid), comment: String(ctx.orderRef || ''), counterName: 'Test Payer', description: 'test payment' }] : [];
+        const _paid = (global.__testBankPaid && global.__testBankPaid[A.session.id]) || ctx.testBankPaid;
+        ctx.monoStatement = _paid ? [{ id: 'test-tx-1', time: Math.floor(Date.now() / 1000), amountUah: Number(_paid), comment: String(ctx.orderRef || ''), counterName: 'Test Payer', description: 'test payment' }] : [];
         return { ok: true, test: true };
     }
     let token = ''; let account = '0';

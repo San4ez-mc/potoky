@@ -301,10 +301,7 @@ async function runTest(testId, onProgress = () => {}) {
                 await runAgentTurn({ botId: test.botId, sessionId, step });
                 continue;
             }
-            if (step.bankPaid) {
-                const cur = await db.session.findUnique({ where: { id: sessionId }, select: { context: true } });
-                await db.session.update({ where: { id: sessionId }, data: { context: { ...(cur.context || {}), testBankPaid: step.bankPaid } } });
-            }
+            if (step.bankPaid) { global.__testBankPaid = global.__testBankPaid || {}; global.__testBankPaid[sessionId] = step.bankPaid; } // тестова виписка: читає shopAgent/tools.monoStatement (у тому ж процесі)
             const turn = await sendTestTurn({
                 sessionId,
                 text: step.text,

@@ -334,7 +334,7 @@ if (w && h && wMatches.length) {
         if (bwr && w > Number(bwr[1]) && w <= Number(bwr[1]) + 3) bumpCands.push(bwk);
       }
       bumpCands.sort(function (a, b) { return order.indexOf(a) - order.indexOf(b); });
-      var baseW = bumpCands[0]; var nx = order[order.indexOf(baseW) + 1]; size = (nx && chart[nx]) ? nx : baseW;
+      var baseW = bumpCands[0]; var nx = order[order.indexOf(baseW) + 1]; size = (nx && chart[nx] && order.indexOf(baseW) < order.indexOf('XL')) ? nx : baseW; // від XL і більше зріст розмір не піднімає (як менеджери)
     }
     else size = wMatches[0];
   }

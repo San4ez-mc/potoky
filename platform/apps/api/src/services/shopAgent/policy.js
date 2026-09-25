@@ -791,6 +791,7 @@ async function runPolicyInner(A, u) {
                         const px = catX.products.find((x) => String(x.sku).toUpperCase() === String(ctx.agent.multiPickExtra).toUpperCase());
                         if (px) A.out.push({ text: 'І другий обраний варіант 👌 ' + (px.customerName || px.name).split('\n')[0] + ' — ' + px.price + ' грн. Додати його до замовлення окремою позицією чи оформляємо тільки перший? 🙂', step: 'multi_pick_second' });
                     } catch (e) { /* best-effort */ }
+                    if (ctx.agent.multiPickExtra) ctx.agent.pendingSecondPick = ctx.agent.multiPickExtra;
                     delete ctx.agent.multiPickExtra;
                 }
                 // 2026-09-23 (FunnelTest 6: «яка ціна?» разом із постом — картка ВЖЕ містить ціну, а
@@ -1225,6 +1226,11 @@ async function runPolicyInner(A, u) {
         // фото/артикул ІНШОГО товару зі словом-зв'язкою "і ще"/"також" (ADD_EXTRA-рішення
         // reconcile()) — ставить ctx.extraProductMention НАПРЯМУ. Той самий T.extraResolve()
         // (уже перевірений, реально резолвить у офер/ціну), просто ще одне джерело сигналу.
+        // «2,4»: відповідь клієнта на нагадування про другий обраний варіант.
+        if (ctx.agent.pendingSecondPick && ctx.agent.secondPickAsked) {
+            if (/^(так|да|ага|додайте|додай|давайте|обидва|обидві|і другий|плюс)(?=[\s,.!]|$)/iu.test(text.trim()) || u.addUpsell === true) { ctx.extraProductMention = ctx.agent.pendingSecondPick; delete ctx.agent.pendingSecondPick; delete ctx.agent.secondPickAsked; }
+            else if (/(лише|тільки)\s+(перш|основн)|без\s+нього|не\s+треба|не\s+потрібн|^ні(?=[\s,.!]|$)/iu.test(text.trim())) { delete ctx.agent.pendingSecondPick; delete ctx.agent.secondPickAsked; }
+        }
         if ((u.extraProducts || u.alsoWants || ctx.extraProductMention) && !(pp.isSet && ctx.setMode === 'set')) {
             if (!ctx.extraProductMention) ctx.extraProductMention = u.extraProducts || u.alsoWants;
             await T.extraResolve(A);
@@ -1285,7 +1291,10 @@ async function runPolicyInner(A, u) {
             const askLine = (!isSetFull && pp.upsell && !upsellAlreadyExtra) ? messageText(A.assets, 'n_agent_order_ask_upsell', ctx, A.session.id) : messageText(A.assets, 'n_agent_order_ask_plain', ctx, A.session.id);
             if (!isSetFull && pp.upsell && !upsellAlreadyExtra) ctx.agent.upsellOffered = true;
             const hesitating = (u.intent === 'hesitate' || u.intent === 'postpone');
-            let txt = summary + '\n\n' + askLine;
+            // «2,4»: другий обраний варіант нагадуємо один раз у підсумку (відповідь ловить блок перед extraResolve).
+            let secondPickLine = '';
+            if (ctx.agent.pendingSecondPick && !ctx.agent.secondPickAsked) { ctx.agent.secondPickAsked = true; secondPickLine = '\n\nВи також обирали другий варіант (арт. ' + ctx.agent.pendingSecondPick + ') — додати його окремою позицією чи лише основний? 🙂'; }
+            let txt = summary + '\n\n' + askLine + secondPickLine;
             if (ctx.agent.lastAsk === 'оформляємо?' && !u.questions.length && !hesitating) {
                 // «Оформляємо?» уже питали, клієнт написав щось без рішення — коротка реакція + те саме питання, без повторного підсумку
                 txt = (await compose(A, { ack: 'відреагуй одним реченням на репліку клієнта (нічого не обіцяй і не змінюй склад замовлення сама)', nextStep: 'і спитай: «' + askLine + '»', maxSentences: 2, fallback: askLine })).text;

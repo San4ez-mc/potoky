@@ -522,6 +522,11 @@ async function runPolicyInner(A, u) {
     const _szRaw = ctx.product ? ((ctx.product.sizes && ctx.product.sizes.length) ? ctx.product.sizes : (ctx.product.structuredSizes && ctx.product.structuredSizes.length ? ctx.product.structuredSizes : (ctx.product.sizeChartData && ctx.product.sizeChartData.sizes) || ((String(ctx.product.desc || '').match(/Розміри:\s*([^\n]+)/i) || [])[1] || ''))) : '';
     const _szl = ctx.product ? (Array.isArray(_szRaw) ? _szRaw : String(_szRaw || '').split(/[,;\s]+/)).map((z) => String(z).trim()).filter(Boolean) : [];
     if (u.clothingSize && _szl.length && _szl.every((z) => /^\d+$/.test(z)) && /^(XXXL|XXL|XL|XS|S|M|L)$/i.test(String(u.clothingSize).trim())) {
+        if (/допродаж/i.test(String(ctx.agent.lastAsk || '')) && !ctx.crmOrderId) {
+            // Питання про літерний розмір одразу після пропозиції футболки: чесно розводимо — джинси числові, літерні розміри стосуються футболки.
+            A.out.push({ text: 'Для цих джинсів розміри числові: ' + _szl.join(', ') + ' — літерні S/M/L бувають лише у футболки 🙂 Розмір джинсів у нас уже зафіксований. Додати футболку до замовлення (підберемо їй розмір окремо) чи оформляємо лише джинси?', step: 'letter_size_numeric' });
+            return;
+        }
         if (!Array.isArray(u.questions) || !u.questions.length) u.questions = ['Чи є розмір ' + String(u.clothingSize).toUpperCase() + '? (у цього товару розміри числові: ' + _szl.join(', ') + ')'];
         u.clothingSize = null;
     }

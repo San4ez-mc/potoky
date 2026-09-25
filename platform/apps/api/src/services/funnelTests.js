@@ -65,6 +65,7 @@ function normalizeStep(step) {
         referral: step.referral || null,
         entryAdId: step.entryAdId || null,
         delayMs: Number.isFinite(step.delayMs) ? step.delayMs : null,
+        bankPaid: Number(step.bankPaid) > 0 ? Number(step.bankPaid) : null, // імітація: на рахунок надійшла оплата на цю суму (тестова виписка)
     };
 }
 
@@ -299,6 +300,10 @@ async function runTest(testId, onProgress = () => {}) {
             if (agentMode) {
                 await runAgentTurn({ botId: test.botId, sessionId, step });
                 continue;
+            }
+            if (step.bankPaid) {
+                const cur = await db.session.findUnique({ where: { id: sessionId }, select: { context: true } });
+                await db.session.update({ where: { id: sessionId }, data: { context: { ...(cur.context || {}), testBankPaid: step.bankPaid } } });
             }
             const turn = await sendTestTurn({
                 sessionId,

@@ -139,7 +139,11 @@ async function deleteInvoice(A) {
 }
 async function monoStatement(A) {
     const { ctx, keys } = A;
-    if (ctx.testMode) { if (!Array.isArray(ctx.monoStatement)) ctx.monoStatement = []; return { ok: true, test: true }; }
+    if (ctx.testMode) {
+        // Тестова виписка: крок тесту з bankPaid=N імітує надходження N грн (коментар = референс замовлення).
+        ctx.monoStatement = ctx.testBankPaid ? [{ id: 'test-tx-1', time: Math.floor(Date.now() / 1000), amountUah: Number(ctx.testBankPaid), comment: String(ctx.orderRef || ''), counterName: 'Test Payer', description: 'test payment' }] : [];
+        return { ok: true, test: true };
+    }
     let token = ''; let account = '0';
     try {
         const r = await crmFetch(keys, '/fops', {}, 3000);

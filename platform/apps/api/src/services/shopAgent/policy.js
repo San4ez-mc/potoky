@@ -237,6 +237,10 @@ async function escalateUnresolved(A, question) {
     const nq = normQ(question); if (!nq) return;
     const seen = A.ctx.agent.escalatedQuestions || [];
     if (seen.includes(nq)) return;
+    // Те саме питання іншими словами («не обтягуватимуть?» / «як сидять?» про той самий крій) — менеджеру вже пішов алерт, вдруге не спамимо.
+    const stemsQ = (t) => String(t).toLowerCase().split(/[^a-zа-яіїєґ0-9]+/i).filter((w) => w.length >= 5).map((w) => w.slice(0, 5));
+    const mine = stemsQ(nq);
+    if (seen.length && mine.length && seen.some((q) => stemsQ(q).filter((w) => mine.includes(w)).length >= 1)) { A.ctx.agent.escalatedQuestions = seen.concat(nq).slice(-20); return; }
     A.ctx.agent.escalatedQuestions = seen.concat(nq).slice(-20);
     await T.kbAsk(A, question);
     await T.alert(A, 'n_agent_unknown_question_admin', { details: '💬 «' + String(question).slice(0, 200) + '»' });
@@ -256,6 +260,11 @@ async function answerThenAsk(A, u, askText, o = {}) {
     // сама, за власною ініціативою, дописувала «підкажіть зріст і вагу» вдруге в кінці відповіді
     // на питання клієнта — типова для продажного тону звичка закінчувати заклик до дії. Заборона —
     // явним nextStep, а не сподівання, що модель здогадається з відсутності інструкції.
+    // Клієнт вдруге наполягає на питанні, про яке менеджеру вже пішов алерт — не тиснемо «дайте зріст/вагу», лише підтверджуємо, що менеджер відповість.
+    const _stq = (t) => String(t).toLowerCase().split(/[^a-zа-яіїєґ0-9]+/i).filter((w) => w.length >= 5).map((w) => w.slice(0, 5));
+    const _prevEsc = (A.ctx.agent.escalatedQuestions || []);
+    const repeatOfEscalated = u.questions.length && _prevEsc.length && u.questions.some((q) => { const m = _stq(q); return m.length && _prevEsc.some((e) => _stq(e).some((w) => m.includes(w))); });
+    if (repeatOfEscalated) askText = '';
     const nextStep = askText ? 'скажи/спитай (можна своїми словами, зміст той самий): «' + askText + '»' : 'НІЧОГО більше не питай і не пропонуй наступний крок — просто дай коротку відповідь на питання клієнта, без заклику до дії в кінці.';
     const { text, resolved } = await compose(A, { questions: u.questions, ack: o.ack, nextStep, kb, availAnswer, fallback: askText });
     if (!resolved && u.questions.length) await escalateUnresolved(A, u.questions[0]);
@@ -819,7 +828,7 @@ async function runPolicyInner(A, u) {
                 for (const pr of catH.products) if (hs.has(String(pr.sku).toUpperCase()) && pr.sizeChartData && Array.isArray(pr.sizeChartData.sizes)) pr.sizeChartData.sizes.forEach((z) => { const n = Number(String(z).replace(/\D/g, '')); if (n) nums.push(n); });
                 if (nums.length) {
                     const lo = Math.min(...nums), hi = Math.max(...nums);
-                    sizeFact = '\nРозміри показаних товарів у наявності: ' + lo + '–' + hi + '. Якщо клієнт назвав розмір поза цим діапазоном — ОДРАЗУ, у цьому ж повідомленні, чесно скажи, що такого розміру немає (є ' + lo + '–' + hi + '), і запропонуй або підібрати інший варіант, або оформити без нього, або покликати менеджера.';
+                    sizeFact = '\nРозміри показаних товарів у наявності: ' + lo + '–' + hi + '. Якщо клієнт назвав розмір поза цим діапазоном — ОДРАЗУ, у цьому ж повідомленні, чесно скажи, що такого розміру немає (є ' + lo + '–' + hi + '), і ОБОВʼЯЗКОВО запропонуй оформити замовлення без цього товару, а також підібрати інший варіант або покликати менеджера.';
                 }
             } catch (e) { /* best-effort */ }
             const { text: txt, resolved: hintResolved } = await compose(A, { questions: u.questions, noGreeting: A.botSpokeBefore, extraFacts: 'СПИСОК ТОВАРІВ, ЯКІ ПІДХОДЯТЬ ПІД ЗАПИТ (вже пронумеровано, кожен товар — своя позиція):\n' + list + sizeFact, nextStep: 'наведи ЦЕЙ список рівно так, як він є — кожен номер на своєму рядку, з порожнім рядком між позиціями, без артикулів у дужках, ціни лишити — і спитай, який сподобався (можна відповісти номером, фото чи кольором; артикул просити не треба, фото вже надіслано)', fallback: messageTextMultiline(A.assets, 'n_agent_catalog_hint_fallback', ctx, A.session.id) });

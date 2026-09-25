@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { format } from 'date-fns';
 import { FunnelEditModal } from '../components/funnel/FunnelEditModal.jsx';
+import { FunnelTestModal } from '../components/funnel/FunnelTestModal.jsx';
 
 function Modal({ isOpen, title, children, onClose }) {
     if (!isOpen) return null;
@@ -70,8 +71,7 @@ export function Bots() {
     const [createForm, setCreateForm] = useState({ projectId: '', name: '', slug: '', description: '' });
     const [editInfoBot, setEditInfoBot] = useState(null);
     const [archiveConfirm, setArchiveConfirm] = useState(null); // botId being confirmed
-    const [runningTestsBotId, setRunningTestsBotId] = useState(null);
-    const [testRunSummary, setTestRunSummary] = useState(null); // { botId, botName, total, passed, failed, errored }
+    const [testModalBot, setTestModalBot] = useState(null); // воронка, для якої відкрито попап прогону тестів
     const navigate = useNavigate();
     const searchRef = useRef(null);
 
@@ -263,20 +263,9 @@ export function Bots() {
         }
     };
 
-    // "▶ Тести" — запустити всі збережені тести цієї воронки одночасно, прямо зі списку
-    // воронок (те саме, що кнопка «Запустити всі тести» у попапі тестів редактора).
-    const handleRunAllTests = async (bot) => {
-        setRunningTestsBotId(bot.id);
-        setTestRunSummary(null);
-        try {
-            const result = await api.runAllFunnelTests(bot.id);
-            setTestRunSummary({ botId: bot.id, botName: bot.name, ...result });
-        } catch (e) {
-            setTestRunSummary({ botId: bot.id, botName: bot.name, error: e.message || 'Не вдалося запустити тести' });
-        } finally {
-            setRunningTestsBotId(null);
-        }
-    };
+    // "▶ Тести" — відкрити попап і одразу запустити всі тести воронки з живим прогресом
+    // (той самий попап, що й «🧪 Тести» в редакторі воронки).
+    const handleRunAllTests = (bot) => setTestModalBot(bot);
 
     if (loading) return (
         <div className="flex items-center justify-center h-full">
@@ -305,18 +294,6 @@ export function Bots() {
                     + Нова воронка
                 </button>
             </div>
-
-            {/* Результат "▶ Тести" зі списку воронок */}
-            {testRunSummary && (
-                <div className={`flex items-center gap-3 rounded-lg border px-4 py-2.5 text-sm ${testRunSummary.error ? 'border-amber-800 bg-amber-900/20 text-amber-200' : testRunSummary.failed ? 'border-red-800 bg-red-900/20 text-red-200' : 'border-emerald-800 bg-emerald-900/20 text-emerald-200'}`}>
-                    <span className="font-medium">{testRunSummary.botName}:</span>
-                    {testRunSummary.error
-                        ? <span>{testRunSummary.error}</span>
-                        : <span>усього {testRunSummary.total} · пройдено {testRunSummary.passed} · провалено {testRunSummary.failed}{testRunSummary.errored ? ` · помилки ${testRunSummary.errored}` : ''}</span>}
-                    <button onClick={() => navigate(`/funnel/${testRunSummary.botId}`)} className="ml-auto text-xs underline hover:no-underline">деталі →</button>
-                    <button onClick={() => setTestRunSummary(null)} className="text-xs opacity-70 hover:opacity-100">✕</button>
-                </div>
-            )}
 
             {/* Filters */}
             <div className="flex flex-wrap gap-2 items-end">
@@ -458,7 +435,7 @@ export function Bots() {
                                         <button onClick={() => navigate(`/funnel/${bot.id}`)} className="flex-1 px-3 py-2 bg-brand/20 text-brand-light text-xs rounded-lg font-medium">Редагувати</button>
                                         <button onClick={() => navigate(`/bots/${bot.id}/sessions`)} className="px-3 py-2 bg-gray-800 text-gray-300 text-xs rounded-lg">Сесії</button>
                                         <button onClick={() => navigate(`/funnel/${bot.id}/analytics`)} className="px-3 py-2 bg-gray-800 text-gray-300 text-xs rounded-lg">📊</button>
-                                        <button onClick={() => handleRunAllTests(bot)} disabled={runningTestsBotId === bot.id} title="Запустити всі тести воронки" className="px-3 py-2 bg-emerald-900/30 text-emerald-400 text-xs rounded-lg disabled:opacity-50">{runningTestsBotId === bot.id ? '⟳' : '▶'}</button>
+                                        <button onClick={() => handleRunAllTests(bot)} title="Запустити всі тести воронки" className="px-3 py-2 bg-emerald-900/30 text-emerald-400 text-xs rounded-lg">▶</button>
                                         <button onClick={() => setEditInfoBot(bot)} className="px-3 py-2 bg-gray-800 text-gray-300 text-xs rounded-lg">ℹ</button>
                                         <button onClick={() => setArchiveConfirm(bot.id)} className="px-3 py-2 bg-gray-800 text-gray-500 text-xs rounded-lg">📦</button>
                                     </>
@@ -569,7 +546,7 @@ export function Bots() {
                                                     <button onClick={() => navigate(`/funnel/${bot.id}`)} title="Редагувати" className="w-7 h-7 flex items-center justify-center bg-brand/20 hover:bg-brand/30 text-brand-light text-sm rounded-lg transition-colors">✏️</button>
                                                     <button onClick={() => navigate(`/bots/${bot.id}/sessions`)} title="Сесії" className="w-7 h-7 flex items-center justify-center bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-colors">💬</button>
                                                     <button onClick={() => navigate(`/funnel/${bot.id}/analytics`)} title="Аналітика" className="w-7 h-7 flex items-center justify-center bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-colors">📊</button>
-                                                    <button onClick={() => handleRunAllTests(bot)} disabled={runningTestsBotId === bot.id} title="Запустити всі тести воронки" className="w-7 h-7 flex items-center justify-center bg-emerald-900/30 hover:bg-emerald-900/50 text-emerald-400 text-sm rounded-lg transition-colors disabled:opacity-50">{runningTestsBotId === bot.id ? '⟳' : '▶'}</button>
+                                                    <button onClick={() => handleRunAllTests(bot)} title="Запустити всі тести воронки" className="w-7 h-7 flex items-center justify-center bg-emerald-900/30 hover:bg-emerald-900/50 text-emerald-400 text-sm rounded-lg transition-colors">▶</button>
                                                     <button onClick={() => setArchiveConfirm(bot.id)} title="Архівувати" className="w-7 h-7 flex items-center justify-center bg-gray-800 hover:bg-orange-900/30 text-gray-500 hover:text-orange-400 text-sm rounded-lg transition-colors">📦</button>
                                                 </>
                                             )}
@@ -681,6 +658,14 @@ export function Bots() {
                     </div>
                 </div>
             </Modal>
+
+            <FunnelTestModal
+                isOpen={Boolean(testModalBot)}
+                botId={testModalBot?.id}
+                autoRunAll
+                onClose={() => setTestModalBot(null)}
+                onOpenSession={(sid) => navigate(`/sessions/${sid}?back=${encodeURIComponent('/funnels')}`)}
+            />
         </div>
     );
 }

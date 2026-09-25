@@ -173,6 +173,9 @@ export const api = {
     duplicateFunnelTest: (testId) => req('POST', `/admin/tests/${testId}/duplicate`),
     runFunnelTest: (testId) => req('POST', `/admin/tests/${testId}/run`),
     runAllFunnelTests: (botId) => req('POST', `/admin/bots/${botId}/tests/run-all`),
+    startAllFunnelTestsJob: (botId) => req('POST', `/admin/bots/${botId}/tests/run-all-async`),
+    startFunnelTestJob: (testId) => req('POST', `/admin/tests/${testId}/run-async`),
+    getFunnelTestJob: (jobId) => req('GET', `/admin/test-jobs/${jobId}`),
 
     // Broadcasts
     getBroadcastEligibleBots: () => req('GET', '/broadcasts/eligible-bots'),

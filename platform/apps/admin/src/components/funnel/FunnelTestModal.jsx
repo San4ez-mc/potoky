@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../../api/client.js';
 
 // Try to build a template JSON from a bodySchema documentation string like:
@@ -232,7 +232,7 @@ function TestRow({ test, onRun, onEdit, onDuplicate, onDelete, running, disabled
             <div className="flex flex-col gap-1 shrink-0">
                 <button onClick={() => onRun(test)} disabled={running || disabled}
                     className="text-[11px] px-2.5 py-1 rounded bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-800 disabled:opacity-50">
-                    {running ? '...' : '▶ Запустити'}
+                    {running ? '⟳' : '▶ Запустити'}
                 </button>
                 <button onClick={() => onEdit(test)} className="text-[11px] px-2.5 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300">✎ Редагувати</button>
                 <button onClick={() => onDuplicate(test)} className="text-[11px] px-2.5 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300">⧉ Копіювати</button>
@@ -242,70 +242,120 @@ function TestRow({ test, onRun, onEdit, onDuplicate, onDelete, running, disabled
     );
 }
 
-function RunResultView({ result, onOpenSession, onBack }) {
-    if (!result) return null;
-    const passed = result.status === 'passed';
-    const isError = result.status === 'error';
+const fmtDur = (ms) => {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+};
+
+function JobItemRow({ item, nowMs, onOpenSession }) {
+    const [open, setOpen] = useState(false);
+    const finished = ['passed', 'failed', 'error'].includes(item.status);
+    const total = item.totalSteps || 1;
+    const doneSteps = item.phase === 'judge' || finished ? total : (item.stepIndex ?? 0);
+    const pct = finished ? 100 : Math.min(100, Math.round((doneSteps / total) * 100));
+    const elapsed = item.startedAtMs ? fmtDur((item.finishedAtMs || nowMs) - item.startedAtMs) : null;
+
+    const live = item.status === 'pending' ? 'у черзі'
+        : item.phase === 'judge' ? '⚖ суддя оцінює діалог…'
+        : item.phase === 'step' ? `крок ${(item.stepIndex ?? 0) + 1} з ${item.totalSteps}: «${item.stepLabel || '…'}»`
+        : 'запуск тестової сесії…';
+
+    const tone = item.status === 'passed' ? 'border-emerald-900/40 bg-emerald-900/10'
+        : item.status === 'failed' ? 'border-red-900/40 bg-red-900/10'
+        : item.status === 'error' ? 'border-amber-900/40 bg-amber-900/10'
+        : item.status === 'running' ? 'border-brand/40 bg-brand/5'
+        : 'border-gray-800 bg-gray-900/40';
+    const icon = item.status === 'passed' ? '✓' : item.status === 'failed' ? '✕' : item.status === 'error' ? '⚠' : item.status === 'running' ? '⟳' : '·';
+    const iconCls = item.status === 'passed' ? 'text-emerald-400' : item.status === 'failed' ? 'text-red-400' : item.status === 'error' ? 'text-amber-400' : item.status === 'running' ? 'text-brand-light animate-spin inline-block' : 'text-gray-600';
+
     return (
-        <div className="space-y-3">
-            <div className={`rounded-lg border p-4 ${passed ? 'border-emerald-900/40 bg-emerald-900/10' : isError ? 'border-amber-900/40 bg-amber-900/10' : 'border-red-900/40 bg-red-900/10'}`}>
-                <div className={`font-medium mb-1 ${passed ? 'text-emerald-300' : isError ? 'text-amber-300' : 'text-red-300'}`}>
-                    {passed ? '✓ Тест пройдено' : isError ? '⚠ Помилка виконання тесту' : '✕ Тест провалено'}
-                </div>
-                <div className="text-sm text-gray-200">{result.verdict?.reasoning}</div>
-                {Array.isArray(result.verdict?.nodeVerdicts) && result.verdict.nodeVerdicts.some(v => v.passed === false) && (
-                    <div className="mt-2 space-y-1">
-                        {result.verdict.nodeVerdicts.filter(v => v.passed === false).map((v, i) => (
-                            <div key={i} className="text-xs text-red-300 bg-gray-900/50 rounded px-2 py-1.5 border border-red-900/20">
-                                <span className="font-mono">{v.nodeId}</span>: {v.reasoning}
-                            </div>
-                        ))}
-                    </div>
-                )}
+        <div className={`rounded-lg border p-3 ${tone}`}>
+            <div className="flex items-center gap-2">
+                <span className={`text-sm w-4 text-center ${iconCls}`}>{icon}</span>
+                <span className="text-sm text-white font-medium flex-1 min-w-0 truncate" title={item.name}>{item.name}</span>
+                {elapsed && <span className="text-[11px] text-gray-400 font-mono shrink-0">⏱ {elapsed}</span>}
             </div>
-
-            {Array.isArray(result.transcript) && result.transcript.length > 0 && (
-                <div className="rounded-lg border border-gray-800 bg-gray-900/50 p-3">
-                    <div className="text-xs font-semibold text-gray-300 mb-2">Транскрипція діалогу</div>
-                    <div className="space-y-1.5 max-h-64 overflow-y-auto">
-                        {result.transcript.map((m, i) => (
-                            <div key={i} className={`text-xs rounded px-2 py-1.5 ${m.role === 'user' ? 'bg-gray-800 text-gray-200' : 'bg-brand/10 text-brand-light'}`}>
-                                <span className="text-[10px] opacity-60">{m.role === 'user' ? 'клієнт' : 'бот'}:</span> {m.content}
-                            </div>
-                        ))}
-                    </div>
-                </div>
+            {!finished && (
+                <>
+                    <div className="text-xs text-gray-400 mt-1.5 truncate">{live}</div>
+                    {item.status === 'running' && (
+                        <div className="h-1 bg-gray-800 rounded mt-1.5 overflow-hidden">
+                            <div className="h-full bg-brand transition-all duration-500" style={{ width: `${Math.max(pct, 4)}%` }} />
+                        </div>
+                    )}
+                </>
             )}
-
-            <div className="flex justify-end gap-2">
-                {result.sessionId && (
-                    <button onClick={() => onOpenSession(result.sessionId)} className="px-4 py-2 rounded-lg bg-brand hover:bg-brand-dark text-white text-sm">
-                        Переглянути сесію →
-                    </button>
-                )}
-                <button onClick={onBack} className="px-4 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm">← До списку тестів</button>
-            </div>
+            {finished && (
+                <>
+                    <div className="text-xs text-gray-200 mt-1.5">
+                        <span className="font-semibold">{item.status === 'passed' ? 'Пройдено' : item.status === 'failed' ? 'Провалено' : 'Помилка виконання'}.</span>{' '}
+                        {item.verdict?.reasoning}
+                    </div>
+                    {Array.isArray(item.verdict?.nodeVerdicts) && item.verdict.nodeVerdicts.filter(v => v.passed === false).map((v, i) => (
+                        <div key={i} className="text-xs text-red-300 bg-gray-900/50 rounded px-2 py-1 mt-1 border border-red-900/20">
+                            <span className="font-mono">{v.nodeId}</span>: {v.reasoning}
+                        </div>
+                    ))}
+                    <div className="flex gap-2 mt-2">
+                        {Array.isArray(item.transcript) && item.transcript.length > 0 && (
+                            <button onClick={() => setOpen(o => !o)} className="text-[11px] px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300">
+                                {open ? '▲ сховати діалог' : '▼ діалог'}
+                            </button>
+                        )}
+                        {item.sessionId && (
+                            <button onClick={() => onOpenSession(item.sessionId)} className="text-[11px] px-2 py-1 rounded bg-brand/20 hover:bg-brand/30 text-brand-light">Сесія →</button>
+                        )}
+                    </div>
+                    {open && (
+                        <div className="space-y-1 mt-2 max-h-56 overflow-y-auto">
+                            {item.transcript.map((m, i) => (
+                                <div key={i} className={`text-xs rounded px-2 py-1.5 ${m.role === 'user' ? 'bg-gray-800 text-gray-200' : 'bg-brand/10 text-brand-light'}`}>
+                                    <span className="text-[10px] opacity-60">{m.role === 'user' ? 'клієнт' : 'бот'}:</span> {m.content}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </>
+            )}
         </div>
     );
 }
 
-function RunAllResultView({ result, onBack }) {
-    if (!result) return null;
+function JobView({ job, offsetMs, onOpenSession, onBack }) {
+    const [, force] = useState(0);
+    useEffect(() => {
+        if (job.status !== 'running') return undefined;
+        const t = setInterval(() => force(x => x + 1), 1000);
+        return () => clearInterval(t);
+    }, [job.status]);
+
+    const nowMs = Date.now() + offsetMs;
+    const items = job.items || [];
+    const count = (s) => items.filter(i => i.status === s).length;
+    const finishedCount = count('passed') + count('failed') + count('error');
+    const running = job.status === 'running';
+
     return (
         <div className="space-y-3">
-            <div className="rounded-lg border border-gray-800 bg-gray-900/50 p-3 text-sm text-gray-200">
-                Усього: {result.total} · <span className="text-emerald-400">пройдено {result.passed}</span> · <span className="text-red-400">провалено {result.failed}</span>{result.errored ? <> · <span className="text-amber-400">помилки {result.errored}</span></> : null}
+            <div className="rounded-lg border border-gray-800 bg-gray-900/50 p-3 flex items-center gap-3 text-sm text-gray-200">
+                <span className={running ? 'text-brand-light' : job.status === 'error' ? 'text-red-400' : 'text-emerald-400'}>
+                    {running ? '⟳ Виконується' : job.status === 'error' ? '⚠ Збій прогону' : '● Завершено'}
+                </span>
+                <span>{finishedCount} з {items.length}</span>
+                <span className="text-emerald-400">✓ {count('passed')}</span>
+                <span className="text-red-400">✕ {count('failed')}</span>
+                {count('error') > 0 && <span className="text-amber-400">⚠ {count('error')}</span>}
+                <span className="ml-auto font-mono text-gray-400">⏱ {fmtDur((job.finishedAtMs || nowMs) - job.startedAtMs)}</span>
             </div>
-            <div className="space-y-1.5">
-                {result.results.map((r) => (
-                    <div key={r.testId} className={`text-xs rounded px-3 py-2 border ${r.status === 'passed' ? 'border-emerald-900/40 bg-emerald-900/10 text-emerald-300' : r.status === 'error' ? 'border-amber-900/40 bg-amber-900/10 text-amber-300' : 'border-red-900/40 bg-red-900/10 text-red-300'}`}>
-                        <div className="font-medium">{r.status === 'passed' ? '✓' : r.status === 'error' ? '⚠' : '✕'} {r.testId}</div>
-                        {r.verdict?.reasoning && <div className="opacity-80 mt-0.5">{r.verdict.reasoning}</div>}
-                    </div>
-                ))}
+            {job.error && <div className="text-xs text-red-400">{job.error}</div>}
+            {items.length === 0 && <div className="text-sm text-gray-500 text-center py-6">У цієї воронки ще немає тестів.</div>}
+            <div className="space-y-2">
+                {items.map(item => <JobItemRow key={item.testId} item={item} nowMs={nowMs} onOpenSession={onOpenSession} />)}
             </div>
             <div className="flex justify-end">
-                <button onClick={onBack} className="px-4 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm">← До списку тестів</button>
+                <button onClick={onBack} className="px-4 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm">
+                    {running ? '← До списку (прогін триває на сервері)' : '← До списку тестів'}
+                </button>
             </div>
         </div>
     );
@@ -320,6 +370,7 @@ export function FunnelTestModal({
     bodySchema = '',
     onRunWebhookTest,
     initialTestId = null,
+    autoRunAll = false,
     missingKeys = [],
     missingSystemKeys = [],
 }) {
@@ -329,15 +380,17 @@ export function FunnelTestModal({
     const [webhookResult, setWebhookResult] = useState(null);
     const [webhookLoading, setWebhookLoading] = useState(false);
 
-    const [view, setView] = useState('list'); // 'list' | 'form' | 'result' | 'run-all-result'
+    const [view, setView] = useState('list'); // 'list' | 'form' | 'job'
     const [tests, setTests] = useState([]);
     const [testsLoading, setTestsLoading] = useState(false);
     const [savedConnectors, setSavedConnectors] = useState([]);
     const [editingTest, setEditingTest] = useState(null); // test being edited, or null = new
     const [saving, setSaving] = useState(false);
-    const [runningId, setRunningId] = useState(null); // testId or 'ALL'
-    const [runResult, setRunResult] = useState(null);
-    const [runAllResult, setRunAllResult] = useState(null);
+    const [job, setJob] = useState(null);
+    const [jobOffset, setJobOffset] = useState(0); // серверний час мінус клієнтський
+    const autoStartedRef = useRef(false);
+    const jobKey = `funnelTestJob:${botId}`;
+    const jobRunning = Boolean(job && job.status === 'running');
     const [loadError, setLoadError] = useState('');
 
     const loadTests = async () => {
@@ -361,18 +414,70 @@ export function FunnelTestModal({
         }
     }, [isOpen, isWebhookMode, bodySchema]);
 
+    const applyJob = (j) => {
+        setJobOffset((j.nowMs || Date.now()) - Date.now());
+        setJob(j);
+        try { sessionStorage.setItem(jobKey, j.status === 'running' ? j.id : ''); } catch { /* ignore */ }
+    };
+
+    const startJob = async (starter) => {
+        setLoadError('');
+        try {
+            const j = await starter();
+            applyJob(j);
+            setView('job');
+        } catch (e) {
+            setLoadError(e.message);
+        }
+    };
+
     useEffect(() => {
+        if (!isOpen) autoStartedRef.current = false;
         if (!isOpen || isWebhookMode) return;
         setView('list');
-        setRunResult(null);
-        setRunAllResult(null);
+        setJob(null);
         setLoadError('');
         loadTests();
         api.getSavedConnectors()
             .then(res => setSavedConnectors((res || []).filter(s => s.type?.startsWith('claude'))))
             .catch(() => setSavedConnectors([]));
+
+        // Якщо прогін іще триває на сервері (попап закривали/перезавантажили сторінку) — повертаємось до нього.
+        let resumed = false;
+        try {
+            const savedId = sessionStorage.getItem(jobKey);
+            if (savedId) {
+                resumed = true;
+                api.getFunnelTestJob(savedId)
+                    .then(j => { if (j.status === 'running') { applyJob(j); setView('job'); } })
+                    .catch(() => {});
+            }
+        } catch { /* ignore */ }
+
+        if (autoRunAll && botId && !autoStartedRef.current && !resumed) {
+            autoStartedRef.current = true;
+            startJob(() => api.startAllFunnelTestsJob(botId));
+        }
+        if (!autoRunAll) autoStartedRef.current = false;
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isOpen, isWebhookMode, botId]);
+    }, [isOpen, isWebhookMode, botId, autoRunAll]);
+
+    // Опитуємо сервер раз на секунду, поки прогін виконується.
+    useEffect(() => {
+        if (view !== 'job' || !job || job.status !== 'running') return undefined;
+        const t = setInterval(async () => {
+            try {
+                const j = await api.getFunnelTestJob(job.id);
+                applyJob(j);
+                if (j.status !== 'running') loadTests();
+            } catch (e) {
+                setJob(prev => (prev ? { ...prev, status: 'error', error: e.message, finishedAtMs: Date.now() } : prev));
+                try { sessionStorage.setItem(jobKey, ''); } catch { /* ignore */ }
+            }
+        }, 1000);
+        return () => clearInterval(t);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [view, job?.id, job?.status]);
 
     // Deep-link from SessionDetail's "Створити тест з цієї сесії" — open the new test straight in edit view.
     useEffect(() => {
@@ -422,34 +527,8 @@ export function FunnelTestModal({
         }
     };
 
-    const handleRunOne = async (test) => {
-        setRunningId(test.id);
-        try {
-            const result = await api.runFunnelTest(test.id);
-            setRunResult(result);
-            setView('result');
-            await loadTests();
-        } catch (e) {
-            setRunResult({ status: 'error', verdict: { reasoning: e.message }, transcript: [] });
-            setView('result');
-        } finally {
-            setRunningId(null);
-        }
-    };
-
-    const handleRunAll = async () => {
-        setRunningId('ALL');
-        try {
-            const result = await api.runAllFunnelTests(botId);
-            setRunAllResult(result);
-            setView('run-all-result');
-            await loadTests();
-        } catch (e) {
-            setLoadError(e.message);
-        } finally {
-            setRunningId(null);
-        }
-    };
+    const handleRunOne = (test) => startJob(() => api.startFunnelTestJob(test.id));
+    const handleRunAll = () => startJob(() => api.startAllFunnelTestsJob(botId));
 
     const handleDelete = async (test) => {
         if (!window.confirm(`Видалити тест «${test.name}»?`)) return;
@@ -472,8 +551,7 @@ export function FunnelTestModal({
 
     const title = isWebhookMode ? '🔗 Тест Webhook-воронки'
         : view === 'form' ? (editingTest ? '✎ Редагувати тест' : '+ Новий тест')
-        : view === 'result' ? 'Результат тесту'
-        : view === 'run-all-result' ? 'Результати всіх тестів'
+        : view === 'job' ? (job?.items?.length === 1 ? '▶ Прогін тесту' : '▶▶ Прогін тестів')
         : '🧪 Тести воронки';
 
     return (
@@ -540,10 +618,8 @@ export function FunnelTestModal({
                             onSave={handleSaveTest}
                             onCancel={() => { setView('list'); setEditingTest(null); }}
                         />
-                    ) : view === 'result' ? (
-                        <RunResultView result={runResult} onOpenSession={onOpenSession} onBack={() => { setView('list'); setRunResult(null); }} />
-                    ) : view === 'run-all-result' ? (
-                        <RunAllResultView result={runAllResult} onBack={() => { setView('list'); setRunAllResult(null); }} />
+                    ) : view === 'job' && job ? (
+                        <JobView job={job} offsetMs={jobOffset} onOpenSession={onOpenSession} onBack={() => setView('list')} />
                     ) : (
                         <>
                             {loadError && <div className="text-xs text-red-400">{loadError}</div>}
@@ -558,10 +634,17 @@ export function FunnelTestModal({
                                     className="px-3 py-1.5 rounded-lg bg-brand hover:bg-brand-dark text-white text-xs font-medium">
                                     + Новий тест
                                 </button>
-                                <button onClick={handleRunAll} disabled={!tests.length || Boolean(runningId) || blockedByKeys}
-                                    className="px-3 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-800 text-xs font-medium disabled:opacity-50">
-                                    {runningId === 'ALL' ? 'Запуск усіх...' : '▶▶ Запустити всі тести'}
-                                </button>
+                                <div className="flex items-center gap-2">
+                                    {jobRunning && (
+                                        <button onClick={() => setView('job')} className="px-3 py-1.5 rounded-lg bg-brand/20 text-brand-light text-xs font-medium">
+                                            ⟳ Прогін триває — показати
+                                        </button>
+                                    )}
+                                    <button onClick={handleRunAll} disabled={!tests.length || jobRunning || blockedByKeys}
+                                        className="px-3 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-800 text-xs font-medium disabled:opacity-50">
+                                        ▶▶ Запустити всі тести
+                                    </button>
+                                </div>
                             </div>
 
                             {testsLoading && <div className="text-sm text-gray-500 text-center py-6">Завантаження тестів...</div>}
@@ -572,7 +655,7 @@ export function FunnelTestModal({
                             )}
                             <div className="space-y-2">
                                 {tests.map(t => (
-                                    <TestRow key={t.id} test={t} running={runningId === t.id} disabled={blockedByKeys}
+                                    <TestRow key={t.id} test={t} running={false} disabled={blockedByKeys || jobRunning}
                                         onRun={handleRunOne}
                                         onEdit={(test) => { setEditingTest(test); setView('form'); }}
                                         onDuplicate={handleDuplicate}

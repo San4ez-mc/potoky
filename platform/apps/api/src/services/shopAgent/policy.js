@@ -513,6 +513,7 @@ async function runPolicyInner(A, u) {
     // не перезапускаємо розпізнавання (раніше перемикало на іншу кофту), просимо співставити з палітрою товару.
     if (ctx.product && ctx.product.sku && A.turnImage && /колір/i.test(String(ctx.agent.lastAsk || '')) && !ctx.crmOrderId && !String(text).replace(/\[фото\]/gi, '').trim() && ctx.product.colors) {
         A.out.push({ text: 'Дякую за фото! 🎨 У цієї моделі є кольори: ' + ctx.product.colors + '. Який із них найближчий до вашого зразка? Напишіть назву, і я одразу зафіксую 🙂', step: 'color_sample_ask' });
+        ctx.agent.colorAskCount = (ctx.agent.colorAskCount || 0) + 1;
         ctx.agent.lastAsk = 'колір';
         return;
     }

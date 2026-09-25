@@ -264,7 +264,7 @@ async function answerThenAsk(A, u, askText, o = {}) {
     const _stq = (t) => String(t).toLowerCase().split(/[^a-zа-яіїєґ0-9]+/i).filter((w) => w.length >= 5).map((w) => w.slice(0, 5));
     const _prevEsc = (A.ctx.agent.escalatedQuestions || []);
     const repeatOfEscalated = u.questions.length && _prevEsc.length && u.questions.some((q) => { const m = _stq(q); return m.length && _prevEsc.some((e) => _stq(e).some((w) => m.includes(w))); });
-    if (repeatOfEscalated) askText = '';
+    if (repeatOfEscalated || A.ctx.funnelPaused) askText = ''; // після передачі менеджеру («Зараз покличу менеджера») не тиснемо «Оформляємо?»/«дайте дані»
     const nextStep = askText ? 'скажи/спитай (можна своїми словами, зміст той самий): «' + askText + '»' : 'НІЧОГО більше не питай і не пропонуй наступний крок — просто дай коротку відповідь на питання клієнта, без заклику до дії в кінці.';
     const { text, resolved } = await compose(A, { questions: u.questions, ack: o.ack, nextStep, kb, availAnswer, fallback: askText });
     if (!resolved && u.questions.length) await escalateUnresolved(A, u.questions[0]);
@@ -1081,6 +1081,10 @@ async function runPolicyInner(A, u) {
     if (pp.colors && !(ctx.colorChoice && (ctx.colorChoice.color || (Array.isArray(ctx.colorChoice.colors) && ctx.colorChoice.colors.length)))) {
         const c = u.colorMatched || matchColor(pp, u.color) || (ctx.sizeInput && ctx.sizeInput.color) || matchColor(pp, ctx.agent.pendingColor) || matchColor(pp, ctx.agent.pendingColorRaw) || null;
         if (c) { ctx.colorChoice = { color: c, qty: u.qty || undefined }; delete ctx.agent.pendingColor; delete ctx.agent.pendingColorRaw; }
+        else if (ctx.agent.softColorCount > 0 && /^\s*(ок|окей|окей\.|добре|добре\.|гуд|ясно|зрозуміло|угу|ага|👍|🙏|ok|okay)[\s.!]*$/iu.test(String(text))) {
+            // «Окей» після м'якого закриття — без повторного питання про колір.
+            A.out.push({ text: (['👌', 'Домовились 🙂', 'Добре 💛'])[(ctx.agent.softColorCount || 0) % 3], step: 'ack_after_soft' }); ctx.agent.lastAsk = 'колір'; return;
+        }
         else if (isSoftDecline(u) || u.intent === 'thanks') {
             ctx.agent.softColorCount = (ctx.agent.softColorCount || 0) + 1;
             const softTxt = ctx.agent.softColorCount > 1 ? (['Звісно 🙂 Я на звʼязку — напишіть, коли оберете колір.', 'Без проблем 💛 Щойно визначитесь із кольором — одразу продовжимо.'][ctx.agent.softColorCount % 2]) : await answerThenAsk(A, u, messageText(A.assets, 'n_agent_soft_decline_color', ctx, A.session.id));

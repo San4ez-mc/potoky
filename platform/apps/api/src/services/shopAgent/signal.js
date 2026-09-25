@@ -81,7 +81,8 @@ function hasCategoryWord(text) {
 function categoryWordIsUpsell(text, ctx) {
     const p = ctx && ctx.product;
     const up = p && Array.isArray(p.upsellItems) && p.upsellItems[0];
-    if (!up || !(ctx.agent && ctx.agent.upsellOffered)) return false;
+    // Допродаж міг ще не пропонуватись («З якої тканини футболка?» на першій картці) — слово-категорія допродажу все одно не підміняє головний товар.
+    if (!up || !(p && p.sku)) return false;
     const clean = String(text || '').replace(/\[переслав[^\]]*\][^\n]*/gi, ' ');
     const stems = clean.toLowerCase().match(new RegExp(CATEGORY_STEM_RE.source, 'gi')) || [];
     if (!stems.length) return false;

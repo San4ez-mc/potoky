@@ -540,7 +540,7 @@ async function runPolicyInner(A, u) {
         return;
     }
     // Питання про відтінок після фото-зразка («Такий колір є?», «Це який колір?»): за фото відтінок не визначаємо — чесно, без вигаданого «схожий є».
-    if (ctx.product && ctx.product.sku && ctx.agent.colorSampleAsked && /колір/i.test(String(ctx.agent.lastAsk || '')) && !ctx.crmOrderId && !A.turnImage && /(такий|схожий|цей|це\s+який|який\s+це|який\s+саме)[^?]{0,20}колір|колір[^?]{0,15}(є|такий|схожий)/i.test(String(text)) && ctx.product.colors) {
+    if (ctx.product && ctx.product.sku && ctx.agent.colorSampleAsked && /колір/i.test(String(ctx.agent.lastAsk || '')) && !ctx.crmOrderId && !A.turnImage && /(такий|схожий|цей|це\s+який|який\s+це|який\s+саме)[^?]{0,20}(колір|відтін)|(колір|відтін)[^?]{0,15}(є|такий|схожий)/i.test(String(text)) && ctx.product.colors) {
         ctx.agent.colorSampleReplies = (ctx.agent.colorSampleReplies || 0) + 1;
         const t1 = 'За фото я не можу точно визначити відтінок 🙈 У цієї моделі є: ' + ctx.product.colors + '. Напишіть, будь ласка, який із них вам ближчий, — або я уточню у менеджера 🙂';
         const t2 = 'Точно порівняти відтінок за фото не вийде — орієнтуйтесь на назви: ' + ctx.product.colors + '. Якщо сумніваєтесь, передам питання менеджеру 💛';

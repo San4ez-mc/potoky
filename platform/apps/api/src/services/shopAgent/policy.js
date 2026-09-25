@@ -615,6 +615,7 @@ async function runPolicyInner(A, u) {
             return;
         }
         const since = Date.now() - Number(ctx.postOrderMsgAt || 0);
+        if (!u.clothingSize) { const sm = text.match(/(?:змін|поміня|заміни|переробі|краще|давайте)\S*[^.!?]{0,25}?(?:розмір|размер|на)\s+(XXXL|XXL|XL|XS|S|M|L)(?![A-Za-z])/i); if (sm) u.clothingSize = sm[1]; }
         if (u.clothingSize && !ctx.supplierTtn && !ctx.ttn && !u.statusQuestion) {
             // 2026-09-24 (FunnelTest 28): зміна розміру після оформлення — чітке підтвердження + сигнал менеджеру, а не «в роботі 💛».
             A.out.push({ text: 'Звісно, змінила на ' + String(u.clothingSize).toUpperCase() + ' 👍 Передаю менеджеру, щоб виправили розмір у замовленні до відправки.', step: 'post_size_change' });
@@ -998,7 +999,11 @@ async function runPolicyInner(A, u) {
     if (pp.colors && !(ctx.colorChoice && (ctx.colorChoice.color || (Array.isArray(ctx.colorChoice.colors) && ctx.colorChoice.colors.length)))) {
         const c = u.colorMatched || matchColor(pp, u.color) || (ctx.sizeInput && ctx.sizeInput.color) || matchColor(pp, ctx.agent.pendingColor) || matchColor(pp, ctx.agent.pendingColorRaw) || null;
         if (c) { ctx.colorChoice = { color: c, qty: u.qty || undefined }; delete ctx.agent.pendingColor; delete ctx.agent.pendingColorRaw; }
-        else if (isSoftDecline(u) || u.intent === 'thanks') { A.out.push({ text: await answerThenAsk(A, u, messageText(A.assets, 'n_agent_soft_decline_color', ctx, A.session.id)), step: 'ask_color_soft' }); return; }
+        else if (isSoftDecline(u) || u.intent === 'thanks') {
+            ctx.agent.softColorCount = (ctx.agent.softColorCount || 0) + 1;
+            const softTxt = ctx.agent.softColorCount > 1 ? (['Звісно 🙂 Я на звʼязку — напишіть, коли оберете колір.', 'Без проблем 💛 Щойно визначитесь із кольором — одразу продовжимо.'][ctx.agent.softColorCount % 2]) : await answerThenAsk(A, u, messageText(A.assets, 'n_agent_soft_decline_color', ctx, A.session.id));
+            A.out.push({ text: softTxt, step: 'ask_color_soft' }); return;
+        }
         else {
             ctx.agent.wantColor = u.color || '';
             const ask = u.color ? messageText(A.assets, 'n_agent_ask_color_specific', ctx, A.session.id) : messageText(A.assets, 'n_agent_ask_color_generic', ctx, A.session.id);

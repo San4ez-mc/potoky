@@ -472,4 +472,5 @@ model Reminder {
 
   @@index([dueAt, sentAt])
   @@index([botId, sessionId])
+  @@map("reminders")
 }

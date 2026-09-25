@@ -657,7 +657,7 @@ async function runPolicyInner(A, u) {
     // 2026-09-23 (FunnelTest, «перше відділення»): слово-числівник LLM не завжди повертає числом —
     // страхуємо детермінованим розбором, щоб номер не губився.
     // Квитанція чи «оплатив 200» до вибору способу оплати = варіант 1 (200 грн передоплата).
-    if (!u.payMethod && (u.claimsPaid || u.receiptLink || A.turnImage) && /(^|\D)200(\D|$)/.test(text) && !(ctx.paymentInfo && ctx.paymentInfo.method)) { u.payMethod = 'cod'; ctx.agent.paidBeforeInvoice = true; }
+    if ((u.claimsPaid || u.receiptLink || A.turnImage || /оплатив|сплатив|переказав|скинув\s+(?:квитанц|чек)|ось\s+(?:квитанц|чек)/i.test(text)) && /(^|\D)200(\D|$)/.test(text) && !(ctx.paymentInfo && ctx.paymentInfo.method) && !ctx.crmOrderId) { u.payMethod = 'cod'; ctx.agent.paidBeforeInvoice = true; }
     if (!u.branch && !u.homeAddress) {
         const ORD = { 'перш': 1, 'друг': 2, 'трет': 3, 'четверт': 4, 'п’ят': 5, "п'ят": 5, 'шост': 6, 'сьом': 7, 'восьм': 8, 'дев’ят': 9, "дев'ят": 9, 'десят': 10 };
         const om = text.toLowerCase().match(/(перш|друг|трет|четверт|п[’']ят|шост|сьом|восьм|дев[’']ят|десят)\S*\s+(?:відділенн|віділен|нп|нової\s+пошти)/);

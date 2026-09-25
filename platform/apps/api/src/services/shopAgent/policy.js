@@ -326,6 +326,13 @@ function resetForNewProduct(A, sku) {
 async function sendRequisites(A, u) {
     const { ctx } = A;
     if (Number(ctx.payAmount) === 0) { A.out.push({ text: messageTextMultiline(A.assets, 'n_trust_confirm_msg', ctx, A.session.id), step: 'trust_confirm' }); ctx.requisitesSentAt = Date.now(); return; }
+    if (ctx.agent.paidBeforeInvoice && !ctx.requisitesSentAt) {
+        // 2026-09-25 (FunnelTest 18): клієнт уже сплатив 200 грн ДО вибору способу — нове посилання не видаємо, дякуємо й збираємо дані.
+        A.out.push({ text: 'Дякую! Бачу, що ви вже переказали 200 грн — щойно платіж надійде, звірю 🙏 Щоб оформити відправку, напишіть, будь ласка: ПІБ, телефон, місто та № відділення або поштомата 📦', step: 'paid_before_invoice' });
+        ctx.requisitesSentAt = Date.now(); ctx.agent.lastAsk = 'дані для відправки Новою Поштою: ПІБ, телефон, місто, № відділення';
+        await T.alert(A, 'n_agent_early_payment_admin', { details: '💬 Клієнт написав, що оплатив 200 грн до видачі реквізитів: «' + String(A.turnText || '').slice(0, 200) + '»', photoUrl: A.turnImage || '' });
+        return;
+    }
     await T.createInvoice(A);
     if (ctx.ibanPayUrl) A.out.push({ text: messageTextMultiline(A.assets, 'n_requisites', ctx, A.session.id + ':req'), step: 'requisites' });
     else { A.out.push({ text: messageTextMultiline(A.assets, 'n_req_fallback_msg', ctx, A.session.id), step: 'requisites_fallback' }); await sendManualRequisites(A, false); }
@@ -650,7 +657,7 @@ async function runPolicyInner(A, u) {
     // 2026-09-23 (FunnelTest, «перше відділення»): слово-числівник LLM не завжди повертає числом —
     // страхуємо детермінованим розбором, щоб номер не губився.
     // Квитанція чи «оплатив 200» до вибору способу оплати = варіант 1 (200 грн передоплата).
-    if (!u.payMethod && (u.claimsPaid || u.receiptLink || A.turnImage) && /(^|\D)200(\D|$)/.test(text) && !(ctx.paymentInfo && ctx.paymentInfo.method)) u.payMethod = 'cod';
+    if (!u.payMethod && (u.claimsPaid || u.receiptLink || A.turnImage) && /(^|\D)200(\D|$)/.test(text) && !(ctx.paymentInfo && ctx.paymentInfo.method)) { u.payMethod = 'cod'; ctx.agent.paidBeforeInvoice = true; }
     if (!u.branch && !u.homeAddress) {
         const ORD = { 'перш': 1, 'друг': 2, 'трет': 3, 'четверт': 4, 'п’ят': 5, "п'ят": 5, 'шост': 6, 'сьом': 7, 'восьм': 8, 'дев’ят': 9, "дев'ят": 9, 'десят': 10 };
         const om = text.toLowerCase().match(/(перш|друг|трет|четверт|п[’']ят|шост|сьом|восьм|дев[’']ят|десят)\S*\s+(?:відділенн|віділен|нп|нової\s+пошти)/);

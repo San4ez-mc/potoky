@@ -297,11 +297,11 @@ async function runTest(testId, onProgress = () => {}) {
             const step = normalizeStep(steps[i]);
             const label = step.text || (step.sharedPost ? '[пересланий пост]' : step.imageUrl ? '[фото]' : step.referral ? '[перехід з реклами]' : '');
             onProgress({ phase: 'step', index: i, total: steps.length, label: String(label).slice(0, 80), sessionId });
+            if (step.bankPaid) { global.__testBankPaid = global.__testBankPaid || {}; global.__testBankPaid[sessionId] = step.bankPaid; } // тестова виписка: читає shopAgent/tools.monoStatement (у тому ж процесі)
             if (agentMode) {
                 await runAgentTurn({ botId: test.botId, sessionId, step });
                 continue;
             }
-            if (step.bankPaid) { global.__testBankPaid = global.__testBankPaid || {}; global.__testBankPaid[sessionId] = step.bankPaid; } // тестова виписка: читає shopAgent/tools.monoStatement (у тому ж процесі)
             const turn = await sendTestTurn({
                 sessionId,
                 text: step.text,

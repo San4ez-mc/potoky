@@ -13,6 +13,9 @@ const { loadKeys, resolveToken } = require('./silenceChecker');
 
 /** Скільки спізнення ще має сенс: після простою сервера нічні нагадування не валимо гуртом. */
 const MAX_LATE_MS = 6 * 3600 * 1000;
+// Чат може бути недоступний (бот не запущений людиною, заблокований, видалена група).
+// Без стелі воркер довбав би той самий чат щохвилини до кінця вікна.
+const MAX_ATTEMPTS = 5;
 
 async function sendMessage(token, chatId, text) {
     const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -29,7 +32,7 @@ async function deliverReminders() {
             where: { sentAt: null, canceledAt: null, dueAt: { lte: new Date() } },
             orderBy: { dueAt: 'asc' },
             take: 100,
-            select: { id: true, botId: true, chatId: true, text: true, dueAt: true },
+            select: { id: true, botId: true, chatId: true, text: true, dueAt: true, attempts: true },
         });
         if (!due.length) return;
 
@@ -51,7 +54,14 @@ async function deliverReminders() {
                 await db.reminder.update({ where: { id: r.id }, data: { sentAt: new Date() } });
                 logger.info('[reminders] надіслано', { id: r.id, botId: r.botId });
             } catch (err) {
-                logger.warn('[reminders] не вдалось надіслати', { id: r.id, error: err.message });
+                const attempts = (r.attempts ?? 0) + 1;
+                const hopeless = attempts >= MAX_ATTEMPTS
+                    || /chat not found|bot was blocked|user is deactivated|initiate conversation/i.test(err.message);
+                await db.reminder.update({
+                    where: { id: r.id },
+                    data: { attempts, ...(hopeless ? { canceledAt: new Date() } : {}) },
+                }).catch(() => {});
+                logger.warn('[reminders] не вдалось надіслати', { id: r.id, attempts, closed: hopeless, error: err.message });
             }
         }
     } catch (err) {

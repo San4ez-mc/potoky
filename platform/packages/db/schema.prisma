@@ -468,6 +468,7 @@ model Reminder {
   dueAt     DateTime
   sentAt    DateTime?
   canceledAt DateTime?
+  attempts  Int       @default(0) // невдалі спроби доставки; після кількох закриваємо
   createdAt DateTime  @default(now())
 
   @@index([dueAt, sentAt])

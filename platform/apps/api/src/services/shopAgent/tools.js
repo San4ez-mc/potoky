@@ -142,6 +142,7 @@ async function monoStatement(A) {
     if (ctx.testMode) {
         // Тестова виписка: крок тесту з bankPaid=N імітує надходження N грн (коментар = референс замовлення).
         const _paid = (global.__testBankPaid && global.__testBankPaid[A.session.id]) || ctx.testBankPaid;
+        console.log('[bankmock] monoStatement session=' + String(A.session.id).slice(0, 8) + ' paid=' + _paid + ' keys=' + Object.keys(global.__testBankPaid || {}).map((k) => k.slice(0, 8)).join(','));
         ctx.monoStatement = _paid ? [{ id: 'test-tx-1', time: Math.floor(Date.now() / 1000), amountUah: Number(_paid), comment: String(ctx.orderRef || ''), counterName: 'Test Payer', description: 'test payment' }] : [];
         return { ok: true, test: true };
     }

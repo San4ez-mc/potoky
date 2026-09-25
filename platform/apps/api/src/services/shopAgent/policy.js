@@ -633,7 +633,7 @@ async function runPolicyInner(A, u) {
         if (!u.clothingSize) { const sm = text.match(/(?:змін|поміня|заміни|переробі|краще|давайте)\S*[^.!?]{0,25}?(?:розмір|размер|на)\s+(XXXL|XXL|XL|XS|S|M|L)(?![A-Za-z])/i); if (sm) u.clothingSize = sm[1]; }
         if (u.clothingSize && !ctx.supplierTtn && !ctx.ttn && !u.statusQuestion) {
             // 2026-09-24 (FunnelTest 28): зміна розміру після оформлення — чітке підтвердження + сигнал менеджеру, а не «в роботі 💛».
-            { const ns = String(u.clothingSize).toUpperCase(); ctx.recommendedSize = ns; if (Array.isArray(ctx.orderUnits)) ctx.orderUnits = ctx.orderUnits.map((x) => ({ ...x, size: ns })); if (ctx.colorChoice) ctx.colorChoice = { ...ctx.colorChoice, size: ns }; }
+            { const ns = String(u.clothingSize).toUpperCase(); delete ctx.agent.pairSizes; ctx.recommendedSize = ns; if (Array.isArray(ctx.orderUnits)) ctx.orderUnits = ctx.orderUnits.map((x) => ({ ...x, size: ns })); if (ctx.colorChoice) ctx.colorChoice = { ...ctx.colorChoice, size: ns }; }
             A.out.push({ text: 'Звісно, змінила на ' + String(u.clothingSize).toUpperCase() + ' 👍 Передаю менеджеру, щоб виправили розмір у замовленні до відправки.', step: 'post_size_change' });
             await T.alert(A, 'n_agent_post_extra_admin', { details: '📏 Клієнт просить змінити розмір на ' + String(u.clothingSize).toUpperCase() + ' після оформлення: «' + text.slice(0, 200) + '»' });
             return;

@@ -39,7 +39,16 @@ async function resolveProduct(A, u) {
 
 async function setApply(A) { return tool(A, 'n_set_apply'); }
 async function calcSize(A) { return tool(A, 'n_calc'); }
-async function checkAvail(A) { return tool(A, 'n_avail'); }
+async function checkAvail(A) {
+    const r = await tool(A, 'n_avail');
+    // Два одержувачі з різними параметрами: n_avail ставить усім одиницям один recommendedSize — підставляємо розмір кожної пари.
+    const c = A.ctx, ps = c.agent && c.agent.pairSizes;
+    if (Array.isArray(ps) && Array.isArray(c.orderUnits) && c.orderUnits.length === ps.length) {
+        c.orderUnits = c.orderUnits.map((x, i) => ({ ...x, size: ps[i] || x.size }));
+        c.orderUnitsText = c.orderUnits.length + ' шт: ' + c.orderUnits.map((x) => [x.color, x.size].filter(Boolean).join(' ') || '—').join(', ');
+    }
+    return r;
+}
 async function availSearch(A) { return tool(A, 'n_avail_search'); }
 async function extraResolve(A) { return tool(A, 'n_extra_resolve'); }
 async function orderPrefill(A) { return tool(A, 'n_order_prefill'); }

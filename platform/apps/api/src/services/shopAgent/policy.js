@@ -519,7 +519,7 @@ async function runPolicyInner(A, u) {
     const { ctx } = A; ctx.agent = ctx.agent || {};
     const text = String(A.turnText || '');
     // Літерний розмір (S/M/L) для товару з числовою сіткою (джинси 29–36): не зберігаємо як розмір замовлення — відповідаємо, що розміри числові.
-    const _szRaw = ctx.product ? ((ctx.product.sizes && ctx.product.sizes.length) ? ctx.product.sizes : (ctx.product.structuredSizes && ctx.product.structuredSizes.length ? ctx.product.structuredSizes : (ctx.product.sizeChartData && ctx.product.sizeChartData.sizes) || '')) : '';
+    const _szRaw = ctx.product ? ((ctx.product.sizes && ctx.product.sizes.length) ? ctx.product.sizes : (ctx.product.structuredSizes && ctx.product.structuredSizes.length ? ctx.product.structuredSizes : (ctx.product.sizeChartData && ctx.product.sizeChartData.sizes) || ((String(ctx.product.desc || '').match(/Розміри:\s*([^\n]+)/i) || [])[1] || ''))) : '';
     const _szl = ctx.product ? (Array.isArray(_szRaw) ? _szRaw : String(_szRaw || '').split(/[,;\s]+/)).map((z) => String(z).trim()).filter(Boolean) : [];
     if (u.clothingSize && _szl.length && _szl.every((z) => /^\d+$/.test(z)) && /^(XXXL|XXL|XL|XS|S|M|L)$/i.test(String(u.clothingSize).trim())) {
         if (!Array.isArray(u.questions) || !u.questions.length) u.questions = ['Чи є розмір ' + String(u.clothingSize).toUpperCase() + '? (у цього товару розміри числові: ' + _szl.join(', ') + ')'];

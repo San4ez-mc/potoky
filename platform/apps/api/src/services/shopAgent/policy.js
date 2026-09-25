@@ -7,7 +7,7 @@
  */
 const T = require('./tools');
 const { compose } = require('./compose');
-const { messageText, messageTextMultiline, nodeData, norm, loadCategories } = require('./lib');
+const { messageText, messageTextMultiline, nodeData, norm, loadCategories, loadCatalog } = require('./lib');
 const { dispatchOrder } = require('./supplierDispatch');
 const { hasCategoryWord, categoryWordIsUpsell, categoryWordIsSetComponent, categoryWordIsMain } = require('./signal');
 const { resolveColorMention } = require('./cart');
@@ -712,7 +712,7 @@ async function runPolicyInner(A, u) {
             // «2,4» — два пункти списку одразу (FunnelTest 34): перший стає основним, другий — окремою позицією.
             const mm = text.match(/^\s*(\d)\s*(?:,|і|та|и|\+|\s)\s*(\d)\s*$/);
             if (mm && skus[Number(mm[1]) - 1] && skus[Number(mm[2]) - 1] && mm[1] !== mm[2]) {
-                ctx.catalogHintPick = skus[Number(mm[1]) - 1]; ctx.extraProductMention = skus[Number(mm[2]) - 1];
+                ctx.catalogHintPick = skus[Number(mm[1]) - 1]; ctx.extraProductMention = skus[Number(mm[2]) - 1]; ctx.agent.multiPickExtra = skus[Number(mm[2]) - 1];
                 u.productHint = { ...u.productHint, fromList: ctx.catalogHintPick };
             } else
             if (hit) ctx.catalogHintPick = hit;
@@ -749,6 +749,15 @@ async function runPolicyInner(A, u) {
             const samePresented = ctx.agent.presentedSku === P(ctx).sku && ctx.presentedAt && (Date.now() - Number(ctx.presentedAt)) < 6 * 3600 * 1000;
             if (!samePresented) {
                 await present(A);
+                // «2,4»: після картки першого варіанту коротко показуємо й другий, обраний одночасно (FunnelTest 34).
+                if (ctx.agent.multiPickExtra) {
+                    try {
+                        const catX = await loadCatalog(A.botId, A.keys);
+                        const px = catX.products.find((x) => String(x.sku).toUpperCase() === String(ctx.agent.multiPickExtra).toUpperCase());
+                        if (px) A.out.push({ text: 'І другий обраний варіант 👌 ' + (px.customerName || px.name).split('\n')[0] + ' — ' + px.price + ' грн. Додала його до замовлення окремою позицією.', step: 'multi_pick_second' });
+                    } catch (e) { /* best-effort */ }
+                    delete ctx.agent.multiPickExtra;
+                }
                 // 2026-09-23 (FunnelTest 6: «яка ціна?» разом із постом — картка ВЖЕ містить ціну, а
                 // compose відповідав на питання ще раз і навіть озвучив службову примітку «клієнт щойно
                 // переслав пост…»). Запитання про ціну, на яке щойно відповіла картка, знімаємо.

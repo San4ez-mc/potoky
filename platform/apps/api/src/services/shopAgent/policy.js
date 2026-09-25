@@ -518,6 +518,11 @@ async function universalQuestionFallback(A, u) {
 async function runPolicyInner(A, u) {
     const { ctx } = A; ctx.agent = ctx.agent || {};
     const text = String(A.turnText || '');
+    // Літерний розмір (S/M/L) для товару з числовою сіткою (джинси 29–36): не зберігаємо як розмір замовлення — відповідаємо, що розміри числові.
+    if (u.clothingSize && ctx.product && Array.isArray(ctx.product.sizes) && ctx.product.sizes.length && ctx.product.sizes.every((z) => /^\d+$/.test(String(z).trim())) && /^(XXXL|XXL|XL|XS|S|M|L)$/i.test(String(u.clothingSize).trim())) {
+        if (!Array.isArray(u.questions) || !u.questions.length) u.questions = ['Чи є розмір ' + String(u.clothingSize).toUpperCase() + '? (у цього товару розміри числові: ' + ctx.product.sizes.join(', ') + ')'];
+        u.clothingSize = null;
+    }
     // 2026-09-25 (FunnelTest 32): фото БЕЗ тексту у відповідь на питання про колір — це зразок кольору, а не новий товар:
     // не перезапускаємо розпізнавання (раніше перемикало на іншу кофту), просимо співставити з палітрою товару.
     if (ctx.product && ctx.product.sku && A.turnImage && /колір/i.test(String(ctx.agent.lastAsk || '')) && !ctx.crmOrderId && !String(text).replace(/\[фото\]/gi, '').trim() && ctx.product.colors) {

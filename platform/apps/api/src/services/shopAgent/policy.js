@@ -522,8 +522,18 @@ async function runPolicyInner(A, u) {
     // не перезапускаємо розпізнавання (раніше перемикало на іншу кофту), просимо співставити з палітрою товару.
     if (ctx.product && ctx.product.sku && A.turnImage && /колір/i.test(String(ctx.agent.lastAsk || '')) && !ctx.crmOrderId && !String(text).replace(/\[фото\]/gi, '').trim() && ctx.product.colors) {
         A.out.push({ text: 'Дякую за фото! 🎨 У цієї моделі є кольори: ' + ctx.product.colors + '. Який із них найближчий до вашого зразка? Напишіть назву, і я одразу зафіксую 🙂', step: 'color_sample_ask' });
+        ctx.agent.colorSampleAsked = true;
         ctx.agent.colorAskCount = (ctx.agent.colorAskCount || 0) + 1;
         ctx.agent.lastAsk = 'колір';
+        return;
+    }
+    // Питання про відтінок після фото-зразка («Такий колір є?», «Це який колір?»): за фото відтінок не визначаємо — чесно, без вигаданого «схожий є».
+    if (ctx.product && ctx.product.sku && ctx.agent.colorSampleAsked && /колір/i.test(String(ctx.agent.lastAsk || '')) && !ctx.crmOrderId && !A.turnImage && /(такий|схожий|цей|це\s+який|який\s+це|який\s+саме)[^?]{0,20}колір|колір[^?]{0,15}(є|такий|схожий)/i.test(String(text)) && ctx.product.colors) {
+        ctx.agent.colorSampleReplies = (ctx.agent.colorSampleReplies || 0) + 1;
+        const t1 = 'За фото я не можу точно визначити відтінок 🙈 У цієї моделі є: ' + ctx.product.colors + '. Напишіть, будь ласка, який із них вам ближчий, — або я уточню у менеджера 🙂';
+        const t2 = 'Точно порівняти відтінок за фото не вийде — орієнтуйтесь на назви: ' + ctx.product.colors + '. Якщо сумніваєтесь, передам питання менеджеру 💛';
+        A.out.push({ text: ctx.agent.colorSampleReplies % 2 ? t1 : t2, step: 'color_sample_honest' });
+        ctx.agent.colorAskCount = (ctx.agent.colorAskCount || 0) + 1;
         return;
     }
     // 2026-09-23 (FunnelTest 1): у відповіді на допродаж («так, 2 футболки…») understand() ставить

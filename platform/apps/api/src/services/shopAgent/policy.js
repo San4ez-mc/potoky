@@ -814,7 +814,7 @@ async function runPolicyInner(A, u) {
             let sizeFact = '';
             try {
                 const catH = await loadCatalog(A.botId, A.keys);
-                const hs = new Set((ctx.catalogHintSkus || []).map((x) => String(x).toUpperCase()));
+                const hs = new Set([...(ctx.catalogHintSkus || []), ...[...list.matchAll(/артикул\s+([A-Za-z0-9_-]+)/gi)].map((m) => m[1])].map((x) => String(x).toUpperCase()));
                 const nums = [];
                 for (const pr of catH.products) if (hs.has(String(pr.sku).toUpperCase()) && pr.sizeChartData && Array.isArray(pr.sizeChartData.sizes)) pr.sizeChartData.sizes.forEach((z) => { const n = Number(String(z).replace(/\D/g, '')); if (n) nums.push(n); });
                 if (nums.length) {

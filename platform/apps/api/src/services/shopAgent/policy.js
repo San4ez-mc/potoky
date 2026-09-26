@@ -953,6 +953,7 @@ async function runPolicyInner(A, u) {
         } else if (r.status === 'hint') {
             const photos = Array.isArray(ctx.catalogHintPhotos) ? ctx.catalogHintPhotos.filter((x) => /^https?:/.test(String(x))).slice(0, 4) : [];
             if (photos.length && ctx.agent.hintPhotosFor !== ctx.catalogHintSkus) { A.out.push({ photoUrls: photos, caption: '', step: 'hint_photos' }); ctx.agent.hintPhotosFor = ctx.catalogHintSkus; }
+            if (u.height || u.weight) ctx.sizeInput = { ...(ctx.sizeInput || {}), ...(u.height ? { height: u.height } : {}), ...(u.weight ? { weight: u.weight } : {}) };
             const list = String(ctx.catalogHint || '');
             ctx.agent.hintList = list;
             A._questionEngaged = true;
@@ -968,7 +969,7 @@ async function runPolicyInner(A, u) {
                     sizeFact = '\nРозміри показаних товарів у наявності: ' + lo + '–' + hi + '. Якщо клієнт назвав розмір поза цим діапазоном — ОДРАЗУ, у цьому ж повідомленні, чесно скажи, що такого розміру немає (є ' + lo + '–' + hi + '), і ОБОВʼЯЗКОВО запропонуй оформити замовлення без цього товару, а також підібрати інший варіант або покликати менеджера.';
                 }
             } catch (e) { /* best-effort */ }
-            const { text: txt, resolved: hintResolved } = await compose(A, { questions: u.questions, noGreeting: A.botSpokeBefore, extraFacts: 'СПИСОК ТОВАРІВ, ЯКІ ПІДХОДЯТЬ ПІД ЗАПИТ (вже пронумеровано, кожен товар — своя позиція):\n' + list + sizeFact, nextStep: 'наведи ЦЕЙ список рівно так, як він є — кожен номер на своєму рядку, з порожнім рядком між позиціями, без артикулів у дужках, ціни лишити — і спитай, який сподобався (можна відповісти номером, фото чи кольором; артикул просити не треба, фото вже надіслано)', fallback: messageTextMultiline(A.assets, 'n_agent_catalog_hint_fallback', ctx, A.session.id) });
+            const { text: txt, resolved: hintResolved } = await compose(A, { questions: u.questions, noGreeting: A.botSpokeBefore, extraFacts: 'СПИСОК ТОВАРІВ, ЯКІ ПІДХОДЯТЬ ПІД ЗАПИТ (вже пронумеровано, кожен товар — своя позиція):\n' + list + sizeFact, nextStep: 'наведи ЦЕЙ список рівно так, як він є — кожен номер на своєму рядку, з порожнім рядком між позиціями, без артикулів у дужках, ціни лишити — і спитай, який сподобався (можна відповісти номером, фото чи кольором; артикул просити не треба, фото вже надіслано)' + (((u.height || (ctx.sizeInput && ctx.sizeInput.height)) && !(u.weight || (ctx.sizeInput && ctx.sizeInput.weight))) ? '; і додай, що зріст уже є, а для підбору розміру лишилось написати вагу' : ''), fallback: messageTextMultiline(A.assets, 'n_agent_catalog_hint_fallback', ctx, A.session.id) });
             if (!hintResolved && u.questions.length) await escalateUnresolved(A, u.questions[0]);
             A.out.push({ text: txt, step: 'hint' }); ctx.agent.lastAsk = 'який із показаних товарів цікавить';
             return;

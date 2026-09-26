@@ -246,6 +246,13 @@ async function escalateUnresolved(A, question) {
     await T.alert(A, 'n_agent_unknown_question_admin', { details: '💬 «' + String(question).slice(0, 200) + '»' });
 }
 
+/** Питання клієнта повторює (за словами) те, що вже передано менеджеру — тоді не тиснемо «Оформляємо?». */
+function isRepeatOfEscalated(A, u) {
+    const stq = (t) => String(t).toLowerCase().split(/[^a-zа-яіїєґ0-9]+/i).filter((w) => w.length >= 5).map((w) => w.slice(0, 5));
+    const prev = (A.ctx.agent && A.ctx.agent.escalatedQuestions) || [];
+    return !!(u.questions && u.questions.length && prev.length && u.questions.some((q) => { const m = stq(q); return m.length && prev.some((e) => stq(e).some((w) => m.includes(w))); }));
+}
+
 async function answerThenAsk(A, u, askText, o = {}) {
     // askText — ГОТОВИЙ текст для клієнта (не інструкція). Без питань клієнта він іде як є;
     // з питаннями → факти (KB, наявність) → одна відповідь + той самий крок своїми словами.
@@ -614,7 +621,10 @@ async function runPolicyInner(A, u) {
     // «плюс футболку» / «і ще футболку»: слово-додавання + назва допродажу, а LLM не виділила extraProducts — додаємо допродаж як додаткову позицію.
     {
         const upX = ctx.product && Array.isArray(ctx.product.upsellItems) && ctx.product.upsellItems[0];
-        if (!ctx.crmOrderId && upX && !u.extraProducts && !u.alsoWants && /(^|\s)(і\s+ще|а\s+ще|ще|також|плюс|додай\S*|додат\S*)(?=\s|$|,)/i.test(text) && stemsOf(upX.name).some((st) => text.toLowerCase().includes(st))) u.extraProducts = upX.sku || upX.name;
+        if (!ctx.crmOrderId && upX && !u.extraProducts && !u.alsoWants && /(^|\s)(і\s+ще|а\s+ще|ще|також|плюс|додай\S*|додат\S*)(?=\s|$|,)/i.test(text) && stemsOf(upX.name).some((st) => text.toLowerCase().includes(st))) {
+            const already = Array.isArray(ctx.extraItems) && ctx.extraItems.some((x) => x && x.sku === upX.sku);
+            if (!already) { ctx.extraProductMention = String(upX.sku || upX.name); try { await T.extraResolve(A); } catch (e) { /* best-effort */ } }
+        }
     }
     // Резерв/«відкладіть на кілька днів»: без передоплати не резервуємо (рішення власника: винятків бот не дає) — чесно, без «добре, без поспіху».
     if (!ctx.crmOrderId && ctx.product && ctx.product.sku && /(відклад|відкласт|заброн|зарезерв|резерв)\S*/i.test(text) && !/(не\s+відклад)/i.test(text)) {
@@ -1518,7 +1528,8 @@ async function runPolicyInner(A, u) {
                 const { text: pre, resolved: preResolved } = await compose(A, { questions: u.questions, nextStep: hesitating ? 'клієнт вагається — без тиску наведи ОДИН реальний аргумент оформити сьогодні (раніше отримає, черга на відправку) і заверши питанням «Оформляємо сьогодні?»' : 'заверши коротким переходом до підсумку (без самого підсумку — його додасть система)', maxSentences: 3, fallback: '' });
                 if (!preResolved && u.questions.length) await escalateUnresolved(A, u.questions[0]);
                 // підсумок уже показано — не повторюємо картку з ціною після кожного питання (FunnelTest 43)
-                txt = (pre ? pre + '\n\n' : '') + (hesitating ? summary : (ctx.agent.lastAsk === 'оформляємо?' && pre ? messageText(A.assets, 'n_agent_order_ask_plain', ctx, A.session.id) : txt));
+                txt = (pre ? pre + '\n\n' : '') + (hesitating ? summary : (ctx.agent.lastAsk === 'оформляємо?' && pre ? (isRepeatOfEscalated(A, u) ? '' : messageText(A.assets, 'n_agent_order_ask_plain', ctx, A.session.id)) : txt));
+                if (!String(txt).trim()) txt = pre || txt;
             }
             A.out.push({ text: txt, step: 'order_intent' });
             ctx.agent.lastAsk = 'оформляємо?'; return;

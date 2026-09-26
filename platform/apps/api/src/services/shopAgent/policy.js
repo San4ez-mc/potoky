@@ -928,7 +928,14 @@ async function runPolicyInner(A, u) {
                     try {
                         const catX = await loadCatalog(A.botId, A.keys);
                         const px = catX.products.find((x) => String(x.sku).toUpperCase() === String(ctx.agent.multiPickExtra).toUpperCase());
-                        if (px) A.out.push({ text: 'І другий обраний варіант 👌 ' + (px.customerName || px.name).split('\n')[0] + ' — ' + px.price + ' грн. Додати його до замовлення окремою позицією чи оформляємо тільки перший? 🙂', step: 'multi_pick_second' });
+                        if (px) {
+                            // Клієнт вибрав ДВА пункти зі списку («2,4») — обидва потрапляють у замовлення; другий — окремою позицією (можна прибрати словами).
+                            ctx.extraProductMention = String(px.sku);
+                            try { await T.extraResolve(A); } catch (e) { /* best-effort */ }
+                            const added = Array.isArray(ctx.extraItems) && ctx.extraItems.some((x) => String(x.sku).toUpperCase() === String(px.sku).toUpperCase());
+                            A.out.push({ text: 'І другий обраний варіант 👌 ' + (px.customerName || px.name).split('\n')[0] + ' — ' + px.price + ' грн.' + (added ? ' Додала його окремою позицією до замовлення (якщо не потрібен — напишіть) 🙂' : ' Додати його до замовлення окремою позицією чи оформляємо тільки перший? 🙂'), step: 'multi_pick_second' });
+                            if (added) { ctx.agent.multiPickExtra = null; }
+                        }
                     } catch (e) { /* best-effort */ }
                     if (ctx.agent.multiPickExtra) ctx.agent.pendingSecondPick = ctx.agent.multiPickExtra;
                     delete ctx.agent.multiPickExtra;

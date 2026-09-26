@@ -41,6 +41,13 @@ async function shiftSessionTime(sessionId, hours) {
  */
 async function runAgentTurn({ botId, sessionId, step }) {
     let text = step.text || '';
+    if (step.type === 'burst' && Array.isArray(step.texts) && step.texts.length) {
+        // Серія коротких повідомлень підряд без відповіді між ними (у 48% реальних діалогів): кожне лишається окремим повідомленням клієнта,
+        // а бот отримує їх злитими одним ходом — так само, як дебаунс zernioHandler (mergedText).
+        for (const t of step.texts) await db.message.create({ data: { sessionId, role: 'user', content: String(t), metadata: { source: 'test', burst: true } } });
+        await shopAgent.handleTurn({ botId, sessionId, text: step.texts.map(String).join('\n') });
+        return;
+    }
     if (step.type === 'comment') {
         // Коментар під постом: клієнт «пише» текст-коментар, пост (підпис) іде як sharedPost, публічну відповідь класифікує агент.
         const cs = await db.session.findUnique({ where: { id: sessionId }, select: { context: true } });
@@ -77,6 +84,7 @@ async function runAgentTurn({ botId, sessionId, step }) {
 function normalizeStep(step) {
     return {
         type: step.type || 'text',
+        texts: Array.isArray(step.texts) ? step.texts.map(String) : null,
         text: (typeof step.text === 'string' && step.text) ? step.text : (step.type === 'voice' ? (step.transcript ? String(step.transcript) : '[вкладення]') : (Number(step.mediaCount) > 1 ? '[' + Number(step.mediaCount) + ' медіа]' : '')),
         imageUrl: step.imageUrl || null,
         sharedPost: step.sharedPost || null,

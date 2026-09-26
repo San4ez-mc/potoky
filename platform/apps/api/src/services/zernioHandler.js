@@ -1378,7 +1378,7 @@ async function handleIncomingMessage(botId, body) {
     // 2026-09-08 (реальні замовлення 01:53, 02:14, 03:14): після тексту з адресою Instagram досилає порожнє вкладення
     // типу «template» без файлу й тексту. У воронку його не пускаємо — інакше «[вкладення без файлу: template]»
     // стає окремим ходом клієнта і провокує зайву відповідь.
-    if (!text && !attachment && !sharedPost && unknownAtts.length) {
+    if (!text && !attachment && !sharedPost && unknownAtts.length && rawAttTypes.every((t) => /template/i.test(t))) {
         logger.info('[zernioHandler] attachment-only inbound without file — stored, flow not run', { botId, sessionId: session.id, types: rawAttTypes });
         return { ok: true, processed: 1, skipped: 'attachment-without-file' };
     }
@@ -1418,7 +1418,14 @@ async function handleIncomingMessage(botId, body) {
         // ctxPatch: пост/реклама/реферал цього повідомлення — runFlowAndDeliver накладе їх на контекст ЩЕ РАЗ перед
         // запуском, бо прогін, що саме виконується, наприкінці перезаписує контекст своїм знімком (2026-09-09,
         // oleksandr.ruslanovych / tetianashablenko: пост, що прийшов під час прогону, губився — бот не бачив товар).
-        scheduleFlowRun(session.id, { botId, contactId, conversationId, contactName, text, imageUrl: inImageUrl, ctxPatch: patch });
+        // Відео/зникаюче фото/файл без тексту: бот їх не бачить — передаємо мітку, щоб він попросив фото чи текст (а не мовчав).
+        let runText = text;
+        if (!runText && !inImageUrl && !sharedPost) {
+            if (attachment && attachment.type === 'video') runText = '[відео]';
+            else if (attachment && attachment.type !== 'photo') runText = '[вкладення]';
+            else if (!attachment && unknownAtts.length) runText = '[вкладення]';
+        }
+        scheduleFlowRun(session.id, { botId, contactId, conversationId, contactName, text: runText, imageUrl: inImageUrl, ctxPatch: patch });
     }
     logger.info('[zernioHandler] Inbound stored', { botId, sessionId: session.id, hasAd: !!adId });
     return { ok: true, processed: 1 };

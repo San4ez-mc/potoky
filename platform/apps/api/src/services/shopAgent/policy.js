@@ -621,7 +621,7 @@ async function runPolicyInner(A, u) {
     // «плюс футболку» / «і ще футболку»: слово-додавання + назва допродажу, а LLM не виділила extraProducts — додаємо допродаж як додаткову позицію.
     {
         const upX = ctx.product && Array.isArray(ctx.product.upsellItems) && ctx.product.upsellItems[0];
-        if (!ctx.crmOrderId && upX && !u.extraProducts && !u.alsoWants && /(^|\s)(і\s+ще|а\s+ще|ще|також|плюс|додай\S*|додат\S*)(?=\s|$|,)/i.test(text) && stemsOf(upX.name).some((st) => text.toLowerCase().includes(st))) {
+        if (!ctx.crmOrderId && upX && !ctx.agent.upsellOffered && !u.extraProducts && !u.alsoWants && /(^|\s)(і\s+ще|а\s+ще|ще|також|плюс|додай\S*|додат\S*)(?=\s|$|,)/i.test(text) && stemsOf(upX.name).some((st) => text.toLowerCase().includes(st))) {
             const already = Array.isArray(ctx.extraItems) && ctx.extraItems.some((x) => x && x.sku === upX.sku);
             if (!already) { ctx.extraProductMention = String(upX.sku || upX.name); try { await T.extraResolve(A); } catch (e) { /* best-effort */ } }
         }

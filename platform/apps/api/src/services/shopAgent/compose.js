@@ -107,7 +107,7 @@ async function compose(A, o = {}) {
     } catch (e) { logger.warn('[compose] upsell facts failed', { error: e.message }); }
     // 2026-09-24 (FunnelTest 39: «уточню» двічі на одну тему): якщо питання вже передавали менеджеру — не повторюємо фразу.
     const escalatedBefore = (ctx.agent && Array.isArray(ctx.agent.escalatedQuestions) && ctx.agent.escalatedQuestions.length)
-        ? 'ПОПЕРЕДЖЕННЯ: у цій розмові питання клієнта вже передано менеджеру і бот уже казав «уточню». Якщо й зараз у ФАКТАХ немає відповіді — НЕ використовуй слова «уточню», «уточнимо», «уточнити», «перевірю» ні в якій формі; скажи коротко, що менеджер уже в курсі й відповість сюди, щойно зможе.' : '';
+        ? 'ПОПЕРЕДЖЕННЯ: у цій розмові питання клієнта вже передано менеджеру і бот уже казав «уточню». Якщо й зараз у ФАКТАХ немає відповіді — НЕ використовуй слова «уточню», «уточнимо», «уточнити», «перевірю» ні в якій формі; скажи коротко, що менеджер уже в курсі й відповість сюди, щойно зможе; НЕ пропонуй «рухатись далі з оформленням» і не питай «Оформляємо?».' : '';
     const facts = [productFacts(ctx), shopFacts(ctx), o.extraFacts || '', upFacts, escalatedBefore, (o.kb || []).length ? 'БАЗА ЗНАНЬ (факти саме про цей магазин, точніші за будь-які припущення):\n' + o.kb.map((h) => '• ' + (h.q ? 'Питання: ' + h.q + ' → ' : '') + 'Відповідь: ' + h.a).join('\n') : '', o.availAnswer ? 'НАЯВНІСТЬ (система щойно перевірила каталог):\n' + o.availAnswer : ''].filter(Boolean).join('\n\n');
     const sizeChartRule = sizeChartRuleFor(ctx);
     const hasQuestions = !!(o.questions && o.questions.length);

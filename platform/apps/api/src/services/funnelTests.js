@@ -344,6 +344,7 @@ async function runTest(testId, onProgress = () => {}) {
             orderUnits: c.orderUnits, orderTotal: c.orderTotal, orderData: c.orderData,
             extraItems: Array.isArray(c.extraItems) && c.extraItems.length ? c.extraItems.map((i) => ({ sku: i.sku, name: i.name, color: i.color, size: i.size, qty: i.qty, price: i.price })) : undefined,
             managerAlertsSent: c.testAlerts && c.testAlerts.length ? c.testAlerts : undefined,
+            supplierOrder: c.supplierHandled ? { placed: true, status: c.supplierOrderStatus, result: c.supplierOrderResult } : undefined, // замовлення постачальнику (у тесті — mock-виклик, рівно один раз на групу)
             handoffPaused: c.funnelPaused || undefined,
         });
         // Не-магазинні воронки (онбординг, Content Manager…) не мають цих полів → "{}". Порожній обʼєкт суддя

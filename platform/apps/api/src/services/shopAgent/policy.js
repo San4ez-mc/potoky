@@ -1418,7 +1418,7 @@ async function runPolicyInner(A, u) {
     if (ctx.agent.paidBeforeInvoice && ctx.requisitesSentAt && !ctx.crmOrderId && /^\s*[12]\s*[.!]?\s*$/.test(text) && !addressComplete(ctx.orderData)) {
         // клієнт підтверджує варіант після того, як уже сплатив і в нього вже попросили дані — не повторюємо прохання
         ctx.paymentInfo = { method: text.trim().startsWith('2') ? 'full' : 'cod' };
-        A.out.push({ text: 'Зафіксувала ✅ Чекаю ваші дані для відправки, і оформлю замовлення.', step: 'method_confirm_after_paid' });
+        A.out.push({ text: 'Зафіксувала ✅ Варіант 1: передплата 200 грн вже є — щойно надійдуть дані для відправки, одразу оформлю замовлення 💛', step: 'method_confirm_after_paid' });
         return;
     }
     const givingAddressNow = !!(u.phone || u.fullName || u.city || u.branch || u.region) && !addressComplete(ctx.orderData);

@@ -121,7 +121,9 @@ function categoryWordIsMain(text, ctx) {
     const stems = clean.toLowerCase().match(new RegExp(CATEGORY_STEM_RE.source, 'gi')) || [];
     if (!stems.length) return false;
     const mainName = String(p.customerName || p.name || '').toLowerCase();
-    return stems.every((st) => mainName.includes(st));
+    const upN = (p.upsellItems && p.upsellItems[0] && String(p.upsellItems[0].name || '').toLowerCase()) || '';
+    // «кофту без футболки»: слова головного товару й допродажу разом — не новий товар.
+    return stems.every((st) => mainName.includes(st) || (upN && upN.includes(st)));
 }
 
 module.exports = { classifySignal, hasAnySignal, hasCategoryWord, categoryWordIsUpsell, categoryWordIsSetComponent, categoryWordIsMain };

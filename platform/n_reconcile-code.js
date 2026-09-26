@@ -32,6 +32,7 @@ function matchByAmount(amount, hints){ hints=hints||{}; if(!amount)return null; 
   cands.sort(function(a,b){return Number(b.time)-Number(a.time);}); return cands[0]; }
 var found = matchByRef();
 var via = found ? 'mono:ref' : '';
+var partialTx = null; if(found && expected && Number(found.amountUah)+0.01 < expected){ partialTx = found; found = null; via = ''; }
 // Крок 2: лінк-квитанція у тексті (check.monobank.ua / pb.ua/check тощо) — парсимо кодом
 if(!found){
   var link=(String(context.lastUserMessage||input||'').match(/https?:\/\/[^\s]+/)||[])[0];
@@ -67,5 +68,6 @@ if(!found && expected && claimedPaid){
   var amtCands = stmt.filter(function(t){ return !isC(t.id) && Math.abs(Number(t.amountUah)-expected)<0.01; });
   if(amtCands.length===1){ found = amtCands[0]; via='mono:amount'; }
 }
-if(found){ consumed.push(found.id); return { payStatus:'confirmed', payStatusText:'підтверджено ✅', payVia:via, payTxId:found.id, consumedTxIds:consumed, payConfirmedLine:'Оплату отримали ✅ ' }; }
+if(found){ consumed.push(found.id); return { payStatus:'confirmed', payStatusText:'підтверджено ✅', payVia:via, payPaidAmount:Number(found.amountUah)||0, payTxId:found.id, consumedTxIds:consumed, payConfirmedLine:'Оплату отримали ✅ ' }; }
+if(partialTx){ return { payStatus:'partial', payStatusText:'часткова оплата', payVia:'mono:ref', payPaidAmount:Number(partialTx.amountUah), payShortAmount:Math.round((expected-Number(partialTx.amountUah))*100)/100, payConfirmedLine:'' }; }
 return { payStatus:'not_found', payStatusText:'ще не скинуто', payVia:'none', payConfirmedLine:'' };

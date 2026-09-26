@@ -270,10 +270,14 @@ async function answerThenAsk(A, u, askText, o = {}) {
     let directKb = '';
     try {
         const stq = (t) => String(t).toLowerCase().split(/[^a-zа-яіїєґ0-9]+/i).filter((w) => w.length >= 5).map((w) => w.slice(0, 5));
-        let best = null; let bestN = 0;
+        let best = null; let bestN = 0; let bestMine = 0;
         for (const q of (u.questions || [])) {
             const mine = new Set(stq(q));
-            for (const h of kb) { const n = new Set(stq(h.q)); let c = 0; for (const w of n) if (mine.has(w)) c += 1; if (c > bestN) { bestN = c; best = h; } }
+            for (const h of kb) { const n = new Set(stq(h.q)); let c = 0; for (const w of n) if (mine.has(w)) c += 1; if (c > bestN) { bestN = c; best = h; bestMine = mine.size; } }
+        }
+        // Коротке питання повністю збігається за словами з записом бази знань — відповідаємо самим записом (модель інакше вигадує «зазвичай наступного дня»).
+        if (best && u.questions.length === 1 && !o.ack && bestN >= 1 && bestN === bestMine && bestMine <= 2 && String(best.a).length <= 500) {
+            return String(best.a).trim() + (askText ? '\n\n' + askText : '');
         }
         if (best && bestN >= 1) directKb = 'НАЙБЛИЖЧА ВІДПОВІДЬ З БАЗИ ЗНАНЬ НА ПИТАННЯ КЛІЄНТА (якщо вона по суті відповідає — скажи саме її, без власних термінів чи припущень): ' + best.a;
     } catch (e) { /* best-effort */ }
@@ -458,6 +462,18 @@ async function tryReconcile(A) {
     await T.monoStatement(A);
     ctx.lastUserMessage = A.turnText || '';
     await T.reconcile(A);
+    // Оплата з правильним референсом, але МЕНШЕ потрібної: не підтверджуємо — просимо доплатити різницю.
+    if (ctx.payStatus === 'partial') {
+        const paid = Number(ctx.payPaidAmount) || 0; const short = Number(ctx.payShortAmount) || Math.max(0, (Number(ctx.payAmount) || 0) - paid);
+        A.out.push({ text: 'Бачу вашу оплату ' + paid + ' грн, а потрібно ' + ctx.payAmount + ' грн 🙏 Доплатіть, будь ласка, ще ' + short + ' грн за тими самими реквізитами — щойно побачу, одразу оформлю відправку 💛', step: 'pay_partial' });
+        A._partialPay = true;
+        await T.alert(A, 'n_receipt_alert', { photoUrl: '' });
+        ctx.payCheckedAt = Date.now(); return;
+    }
+    if (ctx.payStatus === 'confirmed' && Number(ctx.payPaidAmount) > Number(ctx.payAmount) + 1 && Number(ctx.payAmount) > 0) {
+        A.out.push({ text: 'Бачу оплату ' + ctx.payPaidAmount + ' грн — це більше за передоплату ' + ctx.payAmount + ' грн 🙂 Різницю врахуємо: менеджер звірить суму й, за потреби, звʼяжеться з вами.', step: 'pay_overpaid' });
+        await T.alert(A, 'n_receipt_alert', { photoUrl: '' });
+    }
     if (ctx.payStatus === 'confirmed') { await T.markConsumed(A); await T.deleteInvoice(A); }
     ctx.payCheckedAt = Date.now();
 }
@@ -544,6 +560,25 @@ async function universalQuestionFallback(A, u) {
 async function runPolicyInner(A, u) {
     const { ctx } = A; ctx.agent = ctx.agent || {};
     const text = String(A.turnText || '');
+    // Голий номер («2») у відповідь на показаний список — це вибір пункту, а не кількість: детерміновано (LLM іноді читає як qty і картка не показується).
+    if (ctx.agent.lastAsk === 'який із показаних товарів цікавить' && ctx.catalogHintSkus && !(u.productHint && u.productHint.fromList)) {
+        const bare = String(text).trim().match(/^(?:№\s*)?(\d)\s*[.)!]?$/);
+        const skusL = String(ctx.catalogHintSkus).split(',').map((x) => x.trim()).filter(Boolean);
+        if (bare && skusL[Number(bare[1]) - 1]) { u.productHint = { ...(u.productHint || {}), fromList: skusL[Number(bare[1]) - 1] }; u.qty = null; u.units = []; }
+    }
+    // Після оформлення клієнт називає ІНШИЙ артикул («а ще хочу джинси j0032») — не підміняємо товар оформленого замовлення (воно вже
+    // пішло в CRM/постачальнику): додатковий товар передаємо менеджеру, перше замовлення лишається як є.
+    if (ctx.crmOrderId && !ctx.funnelPaused && u.productHint && u.productHint.article && ctx.product && ctx.product.sku
+        && String(u.productHint.article).trim().toLowerCase() !== String(ctx.product.sku).trim().toLowerCase() && !A.turnImage) {
+        await T.alert(A, 'n_agent_post_extra_admin', { details: '➕ Клієнт після оформлення хоче додати товар (арт. ' + u.productHint.article + '): «' + text.slice(0, 200) + '». Уточнити: додати до цієї посилки чи окреме замовлення.' });
+        A.out.push({ text: 'Дякую! Додатковий товар (арт. ' + u.productHint.article + ') до вже оформленого замовлення передаю менеджеру — він уточнить, чи можна додати його до цієї посилки (якщо вона ще не відправлена) або оформити окремо, і напише вам тут 💛', step: 'add_item_post_order' });
+        return;
+    }
+    // Резерв/«відкладіть на кілька днів»: без передоплати не резервуємо (рішення власника: винятків бот не дає) — чесно, без «добре, без поспіху».
+    if (!ctx.crmOrderId && ctx.product && ctx.product.sku && /(відклад|відкласт|заброн|зарезерв|резерв)\S*/i.test(text) && !/(не\s+відклад)/i.test(text)) {
+        A.out.push({ text: 'Резервувати товар без передоплати ми, на жаль, не можемо — замовлення фіксується після передоплати 200 грн. Якщо потрібні індивідуальні умови, напишіть «менеджер», і колега підключиться 💛', step: 'no_reserve' });
+        return;
+    }
     // Голосове чи файл (у чат приходить лише «[вкладення]» без тексту й фото): бот не може його прослухати/відкрити — просимо написати текстом.
     if (/^\s*\[вкладення\]\s*$/i.test(text) && !A.turnImage) {
         ctx.agent.attachmentAsks = (ctx.agent.attachmentAsks || 0) + 1;
@@ -605,7 +640,20 @@ async function runPolicyInner(A, u) {
         if (!/менеджер|людин|живий|покличте/i.test(text.replace(/бот\s+чи\s+(?:людина|живий)|(?:людина|живий)\s+чи\s+бот/ig, ''))) return;
     }
     // 2026-09-24 (FunnelTest 28): «Поміняю відділення, напишу номер» — клієнт змінює адресу; бот чекає номер, а не питає про колір.
-    if (!u.branch && /(поміня|зміни|змінюю|інше|інший|друге)\S*\s+(?:відділенн|поштомат)/i.test(text)) {
+    // Після оформлення: адресна доставка («привезіть додому», кур'єр) — існує, але рідкісна: підтверджуємо й передаємо менеджеру.
+    if (ctx.crmOrderId && !ctx.funnelPaused && /(адресн\S*\s+достав|достав\S*\s+(додому|за\s+адрес|до\s+дверей)|кур['’ʼ]?єр|до\s+дверей|додому\s+(привез|достав|відправ))/i.test(text)) {
+        await pause(A, 'home_delivery', 'n_agent_post_extra_admin', '🏠 Клієнт після оформлення просить АДРЕСНУ доставку Новою Поштою: «' + text.slice(0, 300) + '». Потрібно уточнити умови й змінити вручну.');
+        A.out.push({ text: 'Адресна доставка Новою поштою є, але замовляють її нечасто — тому передаю ваш запит менеджеру: він уточнить деталі й вартість та напише вам тут 💛', step: 'home_delivery_post' });
+        return;
+    }
+    // Після оформлення: зміна відділення на конкретне («Змініть відділення на №12») — фіксуємо й передаємо менеджеру до відправки.
+    if (ctx.crmOrderId && u.branch && /(поміня|змін|замін)\S*[^.!?]{0,30}?(?:відділенн|поштомат)/i.test(text)) {
+        if (ctx.orderData) ctx.orderData.branch = String(u.branch);
+        await T.alert(A, 'n_agent_post_extra_admin', { details: '📦 Клієнт просить змінити відділення на «' + u.branch + '» (до відправки): «' + text.slice(0, 200) + '»' });
+        A.out.push({ text: 'Записала: відділення №' + u.branch + ' ✅ Передала менеджеру, щоб змінили адресу в замовленні до відправки.', step: 'branch_change_done' });
+        return;
+    }
+    if (!u.branch && /(поміня|змін|замін|інше|інший|друге)\S*[^.!?]{0,30}?(?:відділенн|поштомат)/i.test(text)) {
         if (ctx.orderData) delete ctx.orderData.branch;
         delete ctx.np;
         if (ctx.crmOrderId) { A.out.push({ text: 'Звісно 🙂 Напишіть, будь ласка, номер нового відділення чи поштомата — передам менеджеру, щоб змінили адресу до відправки.', step: 'branch_change_post' }); await T.alert(A, 'n_agent_post_extra_admin', { details: '📍 Клієнт хоче змінити відділення після оформлення: «' + text.slice(0, 200) + '»' }); return; }
@@ -641,6 +689,7 @@ async function runPolicyInner(A, u) {
     if (ctx.crmOrderId && !freshSignal) {
         if ((u.claimsPaid || u.receiptLink || A.turnImage) && ctx.payStatus !== 'confirmed' && Number(ctx.payAmount) > 0) {
             await tryReconcile(A);
+            if (A._partialPay) return;
             if (ctx.payStatus === 'confirmed') { await afterOrderAccepted(A); return; }
             if (!u.receiptLink && !A.turnImage) {
                 // «Відправив»/«Оплатив» текстом — не доказ оплати (FunnelTest 13): просимо квитанцію, не підтверджуємо.
@@ -1529,7 +1578,7 @@ async function runPolicyInner(A, u) {
         ctx.orderData = od;
         if (u.wantsCard) { await sendCard(A); return; }
         if (u.wantsManualReq) { await sendManualRequisites(A, true); return; }
-        if (u.claimsPaid || u.receiptLink || A.turnImage) await tryReconcile(A);
+        if (u.claimsPaid || u.receiptLink || A.turnImage) { await tryReconcile(A); if (A._partialPay) return; }
         // Відмовляємо в доставці додому лише коли номера відділення/поштомата дійсно НЕМА (ні
         // з цього ходу, ні з попереднього) — якщо він УЖЕ є в od.branch (щойно взятий вище або
         // з минулого ходу), homeAddress:true просто означає "клієнт заодно описав адресу
@@ -1549,7 +1598,7 @@ async function runPolicyInner(A, u) {
     else if (u.wantsManualReq && !ctx.crmOrderId) { await sendManualRequisites(A, true); return; }
 
     // 10. Звірка оплати (перед створенням замовлення — щоб стадія була правильна)
-    if (Number(ctx.payAmount) > 0 && ctx.payStatus !== 'confirmed' && (u.claimsPaid || u.receiptLink || A.turnImage || !ctx.payCheckedAt)) await tryReconcile(A);
+    if (Number(ctx.payAmount) > 0 && ctx.payStatus !== 'confirmed' && (u.claimsPaid || u.receiptLink || A.turnImage || !ctx.payCheckedAt)) { await tryReconcile(A); if (A._partialPay) return; }
 
     // 11–13. CRM → постачальник → підтвердження
     const res = await afterOrderAccepted(A);

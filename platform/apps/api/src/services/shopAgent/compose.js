@@ -88,6 +88,10 @@ function extractJsonLoose(raw) {
 
 async function compose(A, o = {}) {
     const { ctx, keys } = A;
+    // Частина викликів (перед підсумком замовлення, оплата) не передавала базу знань — модель тоді вигадувала («відправка наступного дня»). Завжди підвантажуємо.
+    if (o.kb === undefined && Array.isArray(o.questions) && o.questions.length) {
+        try { o = { ...o, kb: await require('./tools').kbContext(A) }; } catch (e) { /* best-effort */ }
+    }
     const model = keys.AGENT_COMPOSE_MODEL || 'claude-sonnet-4-6';
     const persona = keys.PERSONA_NAME || 'Оля'; const shop = keys.SHOP_TAG || 'магазин';
     // 2026-09-24 (FunnelTest 38): питання про допродаж («з чого футболка?») — факти про нього лежать у картці товару допродажу,

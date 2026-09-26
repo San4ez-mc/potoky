@@ -561,10 +561,12 @@ async function runPolicyInner(A, u) {
     const { ctx } = A; ctx.agent = ctx.agent || {};
     const text = String(A.turnText || '');
     // Голий номер («2») у відповідь на показаний список — це вибір пункту, а не кількість: детерміновано (LLM іноді читає як qty і картка не показується).
-    if (ctx.agent.lastAsk === 'який із показаних товарів цікавить' && ctx.catalogHintSkus && !(u.productHint && u.productHint.fromList)) {
+    if (ctx.agent.lastAsk === 'який із показаних товарів цікавить' && ctx.catalogHintSkus) {
         const bare = String(text).trim().match(/^(?:№\s*)?(\d)\s*[.)!]?$/);
         const skusL = String(ctx.catalogHintSkus).split(',').map((x) => x.trim()).filter(Boolean);
-        if (bare && skusL[Number(bare[1]) - 1]) { u.productHint = { ...(u.productHint || {}), fromList: skusL[Number(bare[1]) - 1] }; u.qty = null; u.units = []; }
+        const flv = u.productHint && u.productHint.fromList ? String(u.productHint.fromList).toLowerCase() : '';
+        const inList = !!flv && skusL.some((x) => x.toLowerCase() === flv);
+        if (bare && !inList && skusL[Number(bare[1]) - 1]) { u.productHint = { ...(u.productHint || {}), fromList: skusL[Number(bare[1]) - 1] }; u.qty = null; u.units = []; }
     }
     // Після оформлення клієнт називає ІНШИЙ артикул («а ще хочу джинси j0032») — не підміняємо товар оформленого замовлення (воно вже
     // пішло в CRM/постачальнику): додатковий товар передаємо менеджеру, перше замовлення лишається як є.

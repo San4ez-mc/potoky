@@ -430,7 +430,9 @@ function fillUpsellSize(ctx) {
     const oi = ctx.orderIntent; const upI = ctx.product && Array.isArray(ctx.product.upsellItems) && ctx.product.upsellItems[0];
     if (!oi || !oi.addUpsell || !Array.isArray(oi.upsellUnits) || !oi.upsellUnits.length || !ctx.recommendedSize || !upI) return;
     const upSizes = new Set((upI.offers || []).flatMap((o) => (o.properties || []).filter((q) => /розм|size/i.test(q.name || '')).map((q) => String(q.value).toUpperCase().trim())));
-    if (upSizes.has(String(ctx.recommendedSize).toUpperCase())) oi.upsellUnits = oi.upsellUnits.map((x) => ({ ...x, size: x.size || ctx.recommendedSize }));
+    // Офери допродажу часто без властивості «Розмір» (лише колір) — літерний розмір клієнта тоді вважаємо застосовним (одяг).
+    const letter = /^(XXXL|XXL|XL|XS|S|M|L)$/i.test(String(ctx.recommendedSize));
+    if (upSizes.has(String(ctx.recommendedSize).toUpperCase()) || (!upSizes.size && letter)) oi.upsellUnits = oi.upsellUnits.map((x) => ({ ...x, size: x.size || ctx.recommendedSize }));
 }
 
 async function tryReconcile(A) {

@@ -744,7 +744,7 @@ async function runPolicyInner(A, u) {
     // 2026-09-23 (FunnelTest 4: «джинси хочу чорні» до підбору розміру губилось — секція кольорів
     // комплекту виконується лише ПІСЛЯ розміру і бачила тільки текст свого ходу): запамʼятовуємо
     // сирі повідомлення з кольором, поки комплект активний, і розбираємо їх по позиціях пізніше.
-    if (ctx.product && ctx.product.isSet && (ctx.setMode === 'set' || (Array.isArray(ctx.setSelection) && ctx.setSelection.length)) && (u.color || u.colorMatched) && !ctx.agent.setColorsResolved) {
+    if (ctx.product && ctx.product.isSet && (ctx.setMode === 'set' || (Array.isArray(ctx.setSelection) && ctx.setSelection.length)) && !ctx.agent.setColorsResolved) {
         ctx.agent.setColorHints = (ctx.agent.setColorHints || []).concat(text).slice(-5);
     }
     const earlyReceipt = (u.receiptLink || u.claimsPaid || (A.turnImage && addressComplete(ctx.orderData))) && !ctx.crmOrderId && !(ctx.paymentInfo && ctx.paymentInfo.method);
@@ -1226,9 +1226,13 @@ async function runPolicyInner(A, u) {
                 // кольорів") — фото офера кожного доступного кольору ЦІЄЇ позиції (n_lookup вже
                 // підвантажує colorPhotos для set-компонентів), альбомом ПЕРЕД текстом питання.
                 const colorPhotoUrls = askItem.colors.map((c) => askItem.colorPhotos && askItem.colorPhotos[c]).filter(Boolean);
-                if (colorPhotoUrls.length) A.out.push({ photoUrls: colorPhotoUrls.slice(0, 10), caption: '', step: 'set_color_ask_photos' });
+                // фото кольорів — один раз на позицію, не при кожному нагадуванні
+                if (colorPhotoUrls.length && ctx.agent.setColorPhotosFor !== askItem.article) { A.out.push({ photoUrls: colorPhotoUrls.slice(0, 10), caption: '', step: 'set_color_ask_photos' }); ctx.agent.setColorPhotosFor = askItem.article; }
                 ctx.agent.setColorAskCount = (ctx.agent.setColorAskCount || 0) + 1;
-                A.out.push({ text: await answerThenAsk(A, u, (ctx.agent.setColorAskCount > 1 && ctx.agent.lastAsk === 'колір позицій комплекту' ? 'Нагадаю, лишилось обрати колір 🙂\n\n' : '') + messageTextMultiline(A.assets, 'n_agent_set_color_ask', ctx, A.session.id)), step: 'set_color_ask' });
+                const _repeatSet = ctx.agent.setColorAskCount > 1 && ctx.agent.lastAsk === 'колір позицій комплекту';
+                const _nm = String(askItem.name).split('\n')[0];
+                const _shortSet = _repeatSet && ctx.agent.setColorAskCount > 2 ? ['Ще лишилось обрати колір для «' + _nm + '» 🙂 Напишіть назву або номер зі списку вище.', 'Коли визначитесь із кольором для «' + _nm + '» — напишіть номер чи назву, і оформлюємо 💛'][ctx.agent.setColorAskCount % 2] : '';
+                A.out.push({ text: await answerThenAsk(A, u, _shortSet || ((_repeatSet ? 'Нагадаю, лишилось обрати колір 🙂\n\n' : '') + messageTextMultiline(A.assets, 'n_agent_set_color_ask', ctx, A.session.id))), step: 'set_color_ask' });
                 ctx.agent.lastAsk = 'колір позицій комплекту';
                 return;
             }

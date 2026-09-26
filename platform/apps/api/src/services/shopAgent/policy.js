@@ -276,7 +276,7 @@ async function answerThenAsk(A, u, askText, o = {}) {
             for (const h of kb) { const n = new Set(stq(h.q)); let c = 0; for (const w of n) if (mine.has(w)) c += 1; if (c > bestN) { bestN = c; best = h; bestMine = mine.size; } }
         }
         // Коротке питання повністю збігається за словами з записом бази знань — відповідаємо самим записом (модель інакше вигадує «зазвичай наступного дня»).
-        if (best && u.questions.length === 1 && !o.ack && bestN >= 1 && bestN === bestMine && bestMine <= 2 && String(best.a).length <= 500) {
+        if (best && u.questions.length === 1 && !o.ack && bestN >= 1 && bestN === bestMine && bestMine <= 2 && String(best.a).length <= 500 && (A.ctx.product && A.ctx.product.sku || !/передопл|передплат|\d+\s*грн/i.test(best.a))) {
             return String(best.a).trim() + (askText ? '\n\n' + askText : '');
         }
         if (best && bestN >= 1) directKb = 'НАЙБЛИЖЧА ВІДПОВІДЬ З БАЗИ ЗНАНЬ НА ПИТАННЯ КЛІЄНТА (якщо вона по суті відповідає — скажи саме її, без власних термінів чи припущень): ' + best.a;

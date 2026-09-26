@@ -533,6 +533,12 @@ async function universalQuestionFallback(A, u) {
 async function runPolicyInner(A, u) {
     const { ctx } = A; ctx.agent = ctx.agent || {};
     const text = String(A.turnText || '');
+    // Голосове чи файл (у чат приходить лише «[вкладення]» без тексту й фото): бот не може його прослухати/відкрити — просимо написати текстом.
+    if (/^\s*\[вкладення\]\s*$/i.test(text) && !A.turnImage) {
+        ctx.agent.attachmentAsks = (ctx.agent.attachmentAsks || 0) + 1;
+        A.out.push({ text: ['Дякую! 🙏 Голосові та файли я, на жаль, не можу прослухати чи відкрити — напишіть, будь ласка, текстом, і я одразу допоможу 💛', 'Бачу вкладення, але не можу його відкрити 🙈 Напишіть питання текстом, будь ласка, — відповім одразу.'][ctx.agent.attachmentAsks % 2], step: 'attachment_unreadable' });
+        return;
+    }
     // Літерний розмір (S/M/L) для товару з числовою сіткою (джинси 29–36): не зберігаємо як розмір замовлення — відповідаємо, що розміри числові.
     const _szRaw = ctx.product ? ((ctx.product.sizes && ctx.product.sizes.length) ? ctx.product.sizes : (ctx.product.structuredSizes && ctx.product.structuredSizes.length ? ctx.product.structuredSizes : (ctx.product.sizeChartData && ctx.product.sizeChartData.sizes) || ((String(ctx.product.desc || '').match(/Розміри:\s*([^\n]+)/i) || [])[1] || ''))) : '';
     const _szl = ctx.product ? (Array.isArray(_szRaw) ? _szRaw : String(_szRaw || '').split(/[,;\s]+/)).map((z) => String(z).trim()).filter(Boolean) : [];

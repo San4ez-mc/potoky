@@ -87,6 +87,16 @@ async function handleTurn({ botId, sessionId, text, imageUrl, sharedPost, entryA
     // між ними» — зливаємо ПОСПІЛЬ ідучі чисто текстові виходи одного ходу в одне повідомлення тут,
     // в ОДНОМУ місці для всієї policy.js, а не точково в кожній секції окремо. Див. lib.js.
     A.out = mergeConsecutiveTextOutputs(A.out);
+    // Одне й те саме фото (картка товару + прев'ю зі списку, обкладинка й фото кольору) не надсилаємо двічі за один хід.
+    {
+        const seenPhotos = new Set();
+        const photoKey = (u) => { try { const x = new URL(String(u)); return x.searchParams.get('asset_id') || x.pathname.split('/').pop(); } catch (e) { return String(u).split('?')[0].split('/').pop(); } };
+        A.out = A.out.map((o) => {
+            if (!o.photoUrls || !o.photoUrls.length) return o;
+            const urls = o.photoUrls.filter((u) => { const k = photoKey(u); if (!k || seenPhotos.has(k)) return false; seenPhotos.add(k); return true; });
+            return { ...o, photoUrls: urls, _hadPhotos: true };
+        }).filter((o) => !(o._hadPhotos && !o.photoUrls.length && !o.text && !o.caption));
+    }
     const replies = [];
     if (!dryRun) {
         for (const o of A.out) {

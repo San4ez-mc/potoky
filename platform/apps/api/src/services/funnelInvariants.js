@@ -23,6 +23,17 @@ function checkInvariants(transcript, ctx = {}) {
         if (!answered && !(paused && isLast)) v.push({ id: 'I1', message: 'Бот не відповів на повідомлення клієнта: «' + String(t[i].content || '').slice(0, 80) + '»' });
     }
 
+    // I23. Одне й те саме фото не надсилається двічі за один хід клієнта (картка + прев'ю зі списку тощо).
+    {
+        const key = (u) => { try { const x = new URL(String(u)); return x.searchParams.get('asset_id') || x.pathname.split('/').pop(); } catch (e) { return String(u).split('?')[0].split('/').pop(); } };
+        let seen = new Set(); let reported = false;
+        for (const m of t) {
+            if (m.role === 'user') { seen = new Set(); reported = false; continue; }
+            if (m.role !== 'assistant' || !Array.isArray(m.photoUrls)) continue;
+            for (const u of m.photoUrls) { const k = key(u); if (!k) continue; if (seen.has(k) && !reported) { v.push({ id: 'I23', message: 'Те саме фото надіслано двічі за один хід клієнта (' + k.slice(0, 40) + ')' }); reported = true; } seen.add(k); }
+        }
+    }
+
     // I2. Немає двох однакових текстових повідомлень бота поспіль.
     let prev = null;
     for (const m of t) {

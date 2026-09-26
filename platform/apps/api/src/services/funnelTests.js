@@ -24,6 +24,15 @@ const { startTestSession, sendTestTurn, endTestSession } = require('./testSessio
 const shopAgent = require('./shopAgent');
 const { checkInvariants } = require('./funnelInvariants');
 
+/** Зсуває збережені в сесії часові мітки (мс) назад на N годин — імітація «клієнт повернувся через N годин/днів». */
+async function shiftSessionTime(sessionId, hours) {
+    const ms = hours * 3600 * 1000;
+    const s = await db.session.findUnique({ where: { id: sessionId }, select: { context: true, lastActive: true } });
+    const shift = (o) => { if (!o || typeof o !== 'object') return; for (const k of Object.keys(o)) { const v = o[k]; if (typeof v === 'number' && v > 1e12 && /(At|Time|Ts)$/i.test(k)) o[k] = v - ms; } };
+    const ctx = { ...(s.context || {}) }; shift(ctx); if (ctx.agent) { ctx.agent = { ...ctx.agent }; shift(ctx.agent); }
+    await db.session.update({ where: { id: sessionId }, data: { context: ctx, lastActive: new Date(Date.now() - ms) } });
+}
+
 /**
  * Один хід клієнта для бота на shopAgent: пишемо повідомлення клієнта в сесію так, як це
  * робить zernioHandler (пост → "[переслав post] підпис", фото → "[фото]"), кладемо в
@@ -59,12 +68,14 @@ async function runAgentTurn({ botId, sessionId, step }) {
 function normalizeStep(step) {
     return {
         type: step.type || 'text',
-        text: typeof step.text === 'string' ? step.text : '',
+        text: (typeof step.text === 'string' && step.text) ? step.text : (step.type === 'voice' ? '[вкладення]' : (Number(step.mediaCount) > 1 ? '[' + Number(step.mediaCount) + ' медіа]' : '')),
         imageUrl: step.imageUrl || null,
         sharedPost: step.sharedPost || null,
         referral: step.referral || null,
         entryAdId: step.entryAdId || null,
         delayMs: Number.isFinite(step.delayMs) ? step.delayMs : null,
+        afterHours: Number(step.afterHours) > 0 ? Number(step.afterHours) : null, // пауза перед кроком: зсуває збережені часові мітки сесії назад (клієнт повернувся через N годин)
+        mediaCount: Number(step.mediaCount) > 1 ? Number(step.mediaCount) : null, // альбом із N фото: у чат приходить «[N медіа]» + перше фото
         bankPaid: Number(step.bankPaid) > 0 ? Number(step.bankPaid) : null, // імітація: на рахунок надійшла оплата на цю суму (тестова виписка)
     };
 }
@@ -297,6 +308,7 @@ async function runTest(testId, onProgress = () => {}) {
             const step = normalizeStep(steps[i]);
             const label = step.text || (step.sharedPost ? '[пересланий пост]' : step.imageUrl ? '[фото]' : step.referral ? '[перехід з реклами]' : '');
             onProgress({ phase: 'step', index: i, total: steps.length, label: String(label).slice(0, 80), sessionId });
+            if (step.afterHours) await shiftSessionTime(sessionId, step.afterHours);
             if (step.bankPaid) { global.__testBankPaid = global.__testBankPaid || {}; global.__testBankPaid[sessionId] = step.bankPaid; } // тестова виписка: читає shopAgent/tools.monoStatement (у тому ж процесі)
             if (agentMode) {
                 await runAgentTurn({ botId: test.botId, sessionId, step });
@@ -327,7 +339,7 @@ async function runTest(testId, onProgress = () => {}) {
                 const att = m.metadata && m.metadata.attachment;
                 if (m.role === 'assistant' && att) {
                     const n = Array.isArray(att.urls) ? att.urls.length : (Array.isArray(att.photoUrls) ? att.photoUrls.length : 1);
-                    return { role: m.role, content: '[бот надіслав фото ×' + n + (m.content ? ' з підписом: ' + m.content : '') + ']' };
+                    return { role: m.role, content: '[бот надіслав фото ×' + n + (m.content ? ' з підписом: ' + m.content : '') + ']', photoUrls: Array.isArray(att.urls) ? att.urls : (att.url ? [att.url] : []) };
                 }
                 return { role: m.role, content: m.content };
             });

@@ -576,6 +576,23 @@ async function runPolicyInner(A, u) {
         A.out.push({ text: 'Дякую! Додатковий товар (арт. ' + u.productHint.article + ') до вже оформленого замовлення передаю менеджеру — він уточнить, чи можна додати його до цієї посилки (якщо вона ще не відправлена) або оформити окремо, і напише вам тут 💛', step: 'add_item_post_order' });
         return;
     }
+    // Російською «спасибо, подумаю»/«позже»/«не сейчас» — м'яка відмова (як «подумаю»), без тиску й повтору картки.
+    if (!ctx.crmOrderId && ctx.product && ctx.product.sku && /(^|\s)(подума(ю|ем|ть)|позже|потом\s+напишу|пока\s+не\s+над|не\s+сейчас|отложу)/i.test(text) && u.intent !== 'hesitate') u.intent = 'hesitate';
+    // Розмір більший за наявні («2XXL», «3XL», «XXXL») для товару без такого розміру: чесно називаємо наявні, не читаємо як XXL.
+    {
+        const big = text.match(/(?<![A-Za-z0-9])(2XXL|3XL|3XXL|XXXL|2XL|ХХХЛ)(?![A-Za-z])/i);
+        const szs = ctx.product ? (Array.isArray(ctx.product.sizes) ? ctx.product.sizes : String(ctx.product.sizes || '').split(/[,;\s]+/)).map((z) => String(z).trim().toUpperCase()).filter(Boolean) : [];
+        if (big && szs.length && !szs.includes('XXXL') && !ctx.crmOrderId) {
+            A.out.push({ text: 'Для цієї моделі розміри: ' + szs.join(', ') + (/до\s*\d+\s*кг/i.test(String(ctx.product.desc || '')) ? ' (' + ((String(ctx.product.desc).match(/до\s*\d+\s*кг/i) || [''])[0]) + ')' : '') + ' — більших, на жаль, немає 🙏 Флісові костюми в нас йдуть до XXXL. Підкажіть зріст і вагу — підберу найкращий розмір з наявних 📏', step: 'size_beyond_range' });
+            ctx.agent.lastAsk = 'параметри для розміру';
+            return;
+        }
+    }
+    // Голе число після підсумку з пропозицією допродажу («2») — двозначне: кількість основного товару чи допродажу; питаємо, а не мовчки ігноруємо.
+    if (!ctx.crmOrderId && ctx.agent.lastAsk === 'оформляємо?' && /^\s*([2-9])\s*$/.test(text) && ctx.agent.upsellOffered) {
+        A.out.push({ text: 'Уточніть, будь ласка: ' + text.trim() + ' — це кількість основного товару чи допродажу до замовлення? 🙂 Напишіть, скільки чого додати.', step: 'qty_clarify' });
+        return;
+    }
     // Резерв/«відкладіть на кілька днів»: без передоплати не резервуємо (рішення власника: винятків бот не дає) — чесно, без «добре, без поспіху».
     if (!ctx.crmOrderId && ctx.product && ctx.product.sku && /(відклад|відкласт|заброн|зарезерв|резерв)\S*/i.test(text) && !/(не\s+відклад)/i.test(text)) {
         A.out.push({ text: 'Резервувати товар без передоплати ми, на жаль, не можемо — замовлення фіксується після передоплати 200 грн. Якщо потрібні індивідуальні умови, напишіть «менеджер», і колега підключиться 💛', step: 'no_reserve' });
@@ -793,7 +810,7 @@ async function runPolicyInner(A, u) {
     // 2026-09-23 (FunnelTest 31): 11 цифр («09912448883») LLM мовчки обрізала до 10 і оформлення йшло далі
     // з чужим номером. Телефон приймаємо лише якщо в тексті є рівно 10 цифр з 0 (або 380 + 9); інакше просимо виправити.
     let __phoneNote = '';
-    if (u.phone) {
+    {
         const runs = String(text).replace(/[\s\-()+.]/g, '').match(/\d{9,13}/g) || [];
         if (runs.length && !runs.some((r) => /^0\d{9}$/.test(r) || /^380\d{9}$/.test(r))) { u.phone = null; __phoneNote = 'Номер телефону виглядає некоректно — напишіть, будь ласка, 10 цифр, наприклад 0501234567 📱 '; }
     }

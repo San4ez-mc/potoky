@@ -17,6 +17,7 @@ function checkInvariants(transcript, ctx = {}) {
     // I1. Бот не мовчить: після кожного повідомлення клієнта — хоч одна відповідь бота до наступного клієнтського.
     for (let i = 0; i < t.length; i++) {
         if (t[i].role !== 'user') continue;
+        if (t[i + 1] && t[i + 1].role === 'user') continue; // серія повідомлень підряд: відповідь потрібна на останнє з них
         let answered = false;
         for (let j = i + 1; j < t.length && t[j].role !== 'user'; j++) { if (t[j].role === 'assistant') { answered = true; break; } }
         const isLast = !t.slice(i + 1).some((m) => m.role === 'user');

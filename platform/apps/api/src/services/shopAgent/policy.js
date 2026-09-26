@@ -266,7 +266,18 @@ async function answerThenAsk(A, u, askText, o = {}) {
     const repeatOfEscalated = u.questions.length && _prevEsc.length && u.questions.some((q) => { const m = _stq(q); return m.length && _prevEsc.some((e) => _stq(e).some((w) => m.includes(w))); });
     if (repeatOfEscalated || A.ctx.funnelPaused) askText = ''; // після передачі менеджеру («Зараз покличу менеджера») не тиснемо «Оформляємо?»/«дайте дані»
     const nextStep = askText ? 'скажи/спитай (можна своїми словами, зміст той самий): «' + askText + '»' : 'НІЧОГО більше не питай і не пропонуй наступний крок — просто дай коротку відповідь на питання клієнта, без заклику до дії в кінці.';
-    const { text, resolved } = await compose(A, { questions: u.questions, ack: o.ack, nextStep, kb, availAnswer, fallback: askText });
+    // Модель іноді ігнорує запис бази знань і відповідає «зазвичай наступного дня»: підсвічуємо найближчий за словами запис як пряму відповідь.
+    let directKb = '';
+    try {
+        const stq = (t) => String(t).toLowerCase().split(/[^a-zа-яіїєґ0-9]+/i).filter((w) => w.length >= 5).map((w) => w.slice(0, 5));
+        let best = null; let bestN = 0;
+        for (const q of (u.questions || [])) {
+            const mine = new Set(stq(q));
+            for (const h of kb) { const n = new Set(stq(h.q)); let c = 0; for (const w of n) if (mine.has(w)) c += 1; if (c > bestN) { bestN = c; best = h; } }
+        }
+        if (best && bestN >= 1) directKb = 'НАЙБЛИЖЧА ВІДПОВІДЬ З БАЗИ ЗНАНЬ НА ПИТАННЯ КЛІЄНТА (якщо вона по суті відповідає — скажи саме її, без власних термінів чи припущень): ' + best.a;
+    } catch (e) { /* best-effort */ }
+    const { text, resolved } = await compose(A, { questions: u.questions, ack: o.ack, nextStep, kb, availAnswer, extraFacts: directKb, fallback: askText });
     if (!resolved && u.questions.length) await escalateUnresolved(A, u.questions[0]);
     return text || askText;
 }

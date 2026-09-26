@@ -112,11 +112,19 @@ async function handleTurn({ botId, sessionId, text, imageUrl, sharedPost, entryA
     {
         const seenPhotos = new Set();
         const photoKey = (u) => { try { const x = new URL(String(u)); return x.searchParams.get('asset_id') || x.pathname.split('/').pop(); } catch (e) { return String(u).split('?')[0].split('/').pop(); } };
+        // Фото, надіслані клієнту за останні 30 хв (прев'ю зі списку → картка того ж товару), повторно не шлемо; явні повтори (сітка, «ще раз») — шлемо.
+        const now = Date.now(); const recent = ctx.agent.sentPhotoKeys || {};
+        for (const k of Object.keys(recent)) if (now - recent[k] > 30 * 60 * 1000) delete recent[k];
+        const RESEND_OK = /^(photo_again|size_chart|photo_on_demand)/;
         A.out = A.out.map((o) => {
             if (!o.photoUrls || !o.photoUrls.length) return o;
-            const urls = o.photoUrls.filter((u) => { const k = photoKey(u); if (!k || seenPhotos.has(k)) return false; seenPhotos.add(k); return true; });
+            const resend = RESEND_OK.test(String(o.step || ''));
+            const urls = o.photoUrls.filter((u) => { const k = photoKey(u); if (!k || seenPhotos.has(k) || (!resend && recent[k])) return false; seenPhotos.add(k); return true; });
+            urls.forEach((u) => { recent[photoKey(u)] = now; });
+            if (!urls.length && o.caption) return { text: o.caption, step: o.step };
             return { ...o, photoUrls: urls, _hadPhotos: true };
         }).filter((o) => !(o._hadPhotos && !o.photoUrls.length && !o.text && !o.caption));
+        ctx.agent.sentPhotoKeys = recent;
     }
     const replies = [];
     if (!dryRun) {

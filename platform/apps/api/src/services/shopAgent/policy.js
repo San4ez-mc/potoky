@@ -524,7 +524,8 @@ async function enforceInsistLimit(A) {
     if (ctx.agent.unresolvedStreak < 2) return;
     ctx.agent.unresolvedStreak = 0;
     A.out = [{ text: messageText(A.assets, 'n_agent_insist_handoff', ctx, A.session.id), step: 'insist_handoff' }];
-    await pause(A, 'unresolved_insist', 'n_agent_insist_handoff_admin', '💬 клієнт наполягає на відповіді, яку бот не може дати — передано менеджеру');
+    // менеджеру про це питання вже пішов алерт (escalateUnresolved) — вдруге не дублюємо
+    await pause(A, 'unresolved_insist', (ctx.agent.escalatedQuestions && ctx.agent.escalatedQuestions.length) ? null : 'n_agent_insist_handoff_admin', '💬 клієнт наполягає на відповіді, яку бот не може дати — передано менеджеру');
 }
 
 /** Останній рубіж: якщо клієнт про щось запитав, а ЖОДНА секція каскаду не провела це питання
@@ -604,11 +605,16 @@ async function runPolicyInner(A, u) {
         return;
     }
     // Доставка за кордон: питання запам'ятовуємо; коли клієнт підтверджує замовлення — передаємо менеджеру (міжнародне відправлення бот сам не оформлює).
-    if (/(за\s*кордон|закордон|міжнародн|в\s+(польщ|німеччин|європ|чех|литв|латві|молдов|румун|словач|канад|ізраїл|туреч|сша|америк|англі|італі|франц|іспан)|до\s+(польщ|німеччин|європ|чех|литв|латві|молдов|румун|словач|канад|ізраїл|туреч|сша|америк|англі|італі|франц|іспан))/i.test(text)) ctx.agent.abroadAsked = true;
-    if (ctx.agent.abroadAsked && !ctx.crmOrderId && !ctx.funnelPaused && ctx.product && ctx.product.sku && (u.ready === 'yes' || /^\s*(так|да|ага|давайте|оформ)/i.test(text))) {
+    if (/(за\s*кордон|закордон|міжнародн|в\s+(польщ|німеччин|європ|чех|литв|латві|молдов|румун|словач|канад|ізраїл|туреч|сша|америк|англі|італі|франц|іспан)|до\s+(польщ|німеччин|європ|чех|литв|латві|молдов|румун|словач|канад|ізраїл|туреч|сша|америк|англі|італі|франц|іспан))/i.test(text)) { ctx.agent.abroadAsked = true; ctx.agent.abroadAskedTurn = ctx.agent.turns; }
+    if (ctx.agent.abroadAsked && !ctx.crmOrderId && !ctx.funnelPaused && ctx.product && ctx.product.sku && ctx.agent.turns > (ctx.agent.abroadAskedTurn || 0) && /^\s*(так|да|ага|давайте|оформ)/i.test(text)) {
         await pause(A, 'intl_order', 'n_agent_intl_admin', '🌍 Клієнт питав про доставку за кордон і підтвердив замовлення: «' + text.slice(0, 200) + '». Потрібно уточнити умови міжнародного відправлення й оформити вручну.');
         A.out.push({ text: 'Щоб оформити відправку за кордон, підключаю менеджера — він уточнить умови доставки, вартість і оформить замовлення, напише вам тут 💛', step: 'intl_handoff' });
         return;
+    }
+    // «плюс футболку» / «і ще футболку»: слово-додавання + назва допродажу, а LLM не виділила extraProducts — додаємо допродаж як додаткову позицію.
+    {
+        const upX = ctx.product && Array.isArray(ctx.product.upsellItems) && ctx.product.upsellItems[0];
+        if (!ctx.crmOrderId && upX && !u.extraProducts && !u.alsoWants && /(^|\s)(і\s+ще|а\s+ще|ще|також|плюс|додай\S*|додат\S*)(?=\s|$|,)/i.test(text) && stemsOf(upX.name).some((st) => text.toLowerCase().includes(st))) u.extraProducts = upX.sku || upX.name;
     }
     // Резерв/«відкладіть на кілька днів»: без передоплати не резервуємо (рішення власника: винятків бот не дає) — чесно, без «добре, без поспіху».
     if (!ctx.crmOrderId && ctx.product && ctx.product.sku && /(відклад|відкласт|заброн|зарезерв|резерв)\S*/i.test(text) && !/(не\s+відклад)/i.test(text)) {

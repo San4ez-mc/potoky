@@ -1187,6 +1187,19 @@ async function runPolicyInner(A, u) {
                 const hit = item.sizes.map(sizeName).find((sz) => sz && new RegExp('(^|[^0-9A-Za-z])' + escRe(sz) + '($|[^0-9A-Za-z])', 'i').test(seg));
                 if (hit) item.size = hit;
             }
+            // Позиція комплекту без списку розмірів у CRM (джинси): беремо його з рядка «Розміри:» опису самого товару в каталозі.
+            if (ctx.setSelection.some((it) => !it.size && (!Array.isArray(it.sizes) || !it.sizes.length))) {
+                try {
+                    const catS = await loadCatalog(A.botId, A.keys);
+                    for (const it of ctx.setSelection) {
+                        if (it.size || (Array.isArray(it.sizes) && it.sizes.length)) continue;
+                        const cp = catS.products.find((x) => String(x.sku).toUpperCase() === String(it.article).toUpperCase());
+                        const line = cp && (String(cp.desc || '').match(/Розміри:\s*([^\n]+)/i) || [])[1];
+                        const list = line ? line.split(/[,;]+/).map((z) => z.trim()).filter(Boolean) : [];
+                        if (list.length > 1) it.sizes = list;
+                    }
+                } catch (e) { /* best-effort */ }
+            }
             const needSz = ctx.setSelection.filter((it) => !it.size && Array.isArray(it.sizes) && it.sizes.length > 1 && !(ctx.setSizeMap && ctx.setSizeMap[it.article]));
             if (needSz.length) {
                 ctx.agent.setSizeAskCount = (ctx.agent.setSizeAskCount || 0) + 1;

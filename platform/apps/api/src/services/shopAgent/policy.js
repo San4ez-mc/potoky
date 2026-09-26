@@ -425,6 +425,14 @@ async function afterOrderAccepted(A) {
     return 'done';
 }
 
+/** Допродаж без розміру («ще дві білі футболки»): беремо розмір клієнта, якщо допродаж його має (за офферами товару). */
+function fillUpsellSize(ctx) {
+    const oi = ctx.orderIntent; const upI = ctx.product && Array.isArray(ctx.product.upsellItems) && ctx.product.upsellItems[0];
+    if (!oi || !oi.addUpsell || !Array.isArray(oi.upsellUnits) || !oi.upsellUnits.length || !ctx.recommendedSize || !upI) return;
+    const upSizes = new Set((upI.offers || []).flatMap((o) => (o.properties || []).filter((q) => /розм|size/i.test(q.name || '')).map((q) => String(q.value).toUpperCase().trim())));
+    if (upSizes.has(String(ctx.recommendedSize).toUpperCase())) oi.upsellUnits = oi.upsellUnits.map((x) => ({ ...x, size: x.size || ctx.recommendedSize }));
+}
+
 async function tryReconcile(A) {
     const { ctx } = A;
     if (Number(ctx.payAmount) === 0 || ctx.payStatus === 'confirmed') return;
@@ -1316,14 +1324,7 @@ async function runPolicyInner(A, u) {
         if (u.ready === 'yes' || gaveAddress || u.payMethod || answeringUpsellClarify) {
             const addUpsellFinal = answeringUpsellClarify ? !upsellExplicitNo : !!u.addUpsell;
             ctx.orderIntent = { ready: 'yes', addUpsell: addUpsellFinal, upsellQty: u.upsellQty || upsellQtyFallback || undefined, upsellNote: u.upsellNote || (answeringUpsellClarify && addUpsellFinal ? text : undefined), upsellUnits: u.upsellUnits || undefined, units: u.units || undefined, qty: u.qty || undefined, extras: undefined, extraProducts: undefined };
-            // Допродаж без розміру («ще дві білі футболки»): беремо розмір клієнта, якщо допродаж його має (за офферами товару).
-            {
-                const oi = ctx.orderIntent; const upI = ctx.product && Array.isArray(ctx.product.upsellItems) && ctx.product.upsellItems[0];
-                if (oi.addUpsell && Array.isArray(oi.upsellUnits) && oi.upsellUnits.length && ctx.recommendedSize && upI) {
-                    const upSizes = new Set((upI.offers || []).flatMap((o) => (o.properties || []).filter((q) => /розм|size/i.test(q.name || '')).map((q) => String(q.value).toUpperCase().trim())));
-                    if (upSizes.has(String(ctx.recommendedSize).toUpperCase())) oi.upsellUnits = oi.upsellUnits.map((x) => ({ ...x, size: x.size || ctx.recommendedSize }));
-                }
-            }
+            fillUpsellSize(ctx);
             if (gaveAddress) { ctx.orderIntent.prefill = { fullName: u.fullName || undefined, phone: u.phone || undefined, city: u.city || undefined, branch: u.branch || undefined, region: u.region || undefined }; await T.orderPrefill(A); }
             if (pp.upsell && u.addUpsell == null && u.ready === 'yes' && ctx.agent.upsellOffered && !u.upsellNote && !gaveAddress && !u.payMethod && !answeringUpsellClarify) {
                 // згода без відповіді на допродаж — одне уточнення
@@ -1384,6 +1385,7 @@ async function runPolicyInner(A, u) {
     if (ctx.orderIntent && ctx.orderIntent.addUpsell && !ctx.crmOrderId && (u.upsellUnits || u.upsellQty || u.upsellNote)) {
         const oi = ctx.orderIntent;
         if (u.upsellUnits) oi.upsellUnits = u.upsellUnits;
+        fillUpsellSize(ctx);
         if (u.upsellQty) oi.upsellQty = u.upsellQty;
         if (u.upsellNote) oi.upsellNote = u.upsellNote;
         if (ctx.paymentInfo && ctx.paymentInfo.method) { ctx.orderRef = ''; await T.payAmount(A); await sendRequisites(A, u); return; }

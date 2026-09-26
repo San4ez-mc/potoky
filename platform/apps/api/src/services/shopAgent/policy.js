@@ -271,6 +271,11 @@ async function answerThenAsk(A, u, askText, o = {}) {
     const _stq = (t) => String(t).toLowerCase().split(/[^a-zа-яіїєґ0-9]+/i).filter((w) => w.length >= 5).map((w) => w.slice(0, 5));
     const _prevEsc = (A.ctx.agent.escalatedQuestions || []);
     const repeatOfEscalated = u.questions.length && _prevEsc.length && u.questions.some((q) => { const m = _stq(q); return m.length && _prevEsc.some((e) => _stq(e).some((w) => m.includes(w))); });
+    // Клієнт повторює питання, яке вже передано менеджеру: коротко й БЕЗ повторення фрази «передала/уточню» (різні варіанти), без тиску.
+    if (repeatOfEscalated && !o.ack) {
+        A.ctx.agent.repeatEscCount = (A.ctx.agent.repeatEscCount || 0) + 1;
+        return ['Менеджер уже в курсі вашого питання й напише сюди, щойно зможе 💛', 'Дякую за терпіння 🙏 Відповідь по цьому питанню вам напише менеджер тут.', 'Питання вже у менеджера — він відповість у цьому чаті 🙂'][A.ctx.agent.repeatEscCount % 3];
+    }
     if (repeatOfEscalated || A.ctx.funnelPaused) askText = ''; // після передачі менеджеру («Зараз покличу менеджера») не тиснемо «Оформляємо?»/«дайте дані»
     const nextStep = askText ? 'скажи/спитай (можна своїми словами, зміст той самий): «' + askText + '»' : 'НІЧОГО більше не питай і не пропонуй наступний крок — просто дай коротку відповідь на питання клієнта, без заклику до дії в кінці.';
     // Модель іноді ігнорує запис бази знань і відповідає «зазвичай наступного дня»: підсвічуємо найближчий за словами запис як пряму відповідь.

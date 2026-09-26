@@ -1463,6 +1463,7 @@ async function runPolicyInner(A, u) {
             // 2026-09-15 (живий кейс, власник: "форматування не застосувалось") — список позицій
             // комплекту йшов одним суцільним рядком через кому; тепер, як і скрізь для комплекту
             // (set_edit_confirm, humanSetList), кожна позиція на своєму рядку з буллетом.
+            ctx.agent.lastSummaryKey = String(ctx.orderUnitsText || '') + '|' + total; // що саме показали клієнту в підсумку (щоб помітити зміну складу перед оплатою)
             const summary = isSetFull
                 ? messageText(A.assets, 'n_agent_order_summary_header', ctx, A.session.id) + '\n' + (pp.customerName || pp.name) + '\n\n' + ctx.setSelection.map((it) => '• ' + it.name + (it.color ? ' (' + it.color + ')' : '') + (it.qty > 1 ? ' ×' + it.qty : '') + ' — ' + (it.price * it.qty) + ' грн').join('\n') + '\n\nРазом: ' + total + ' грн' + '\n' + shipTerms(ctx)
                 : (() => { const units = ctx.orderUnitsText || ((ctx.colorChoice && ctx.colorChoice.color ? ctx.colorChoice.color : '') + (ctx.recommendedSize ? ' ' + ctx.recommendedSize : '')); return messageText(A.assets, 'n_agent_order_summary_header', ctx, A.session.id) + '\n' + (pp.customerName || pp.name) + (units ? ' — ' + units : '') + ' — ' + total + ' грн' + (ctx.extraItemsText ? '\n' + ctx.extraItemsText : '') + '\n' + shipTerms(ctx); })();
@@ -1586,7 +1587,16 @@ async function runPolicyInner(A, u) {
                 A.out.push({ text: payQTxt, step: 'pay_q' });
             }
             const payAck = (u.receiptLink || A.turnImage) ? messageTextMultiline(A.assets, 'n_agent_pay_ack_receipt', ctx, A.session.id) + '\n\n' : ((u.phone || u.fullName || u.city || u.branch) ? messageTextMultiline(A.assets, 'n_agent_pay_ack_address', ctx, A.session.id) + '\n\n' : (u.addUpsell === false && ctx.agent.upsellOffered ? messageTextMultiline(A.assets, 'n_agent_pay_ack_no_upsell', ctx, A.session.id) + '\n\n' : ''));
-            A.out.push({ text: payAck + payTpl, step: 'pay_options' });
+            // Склад замовлення змінився після підсумку («лишіть тільки чорну») — коротко підтверджуємо новий склад і суму перед варіантами оплати.
+            let changedLine = '';
+            try {
+                const pp2 = P(ctx); const isSet2 = !!(pp2 && pp2.isSet && ctx.setMode === 'set');
+                if (ctx.agent.lastSummaryKey && !isSet2 && ctx.orderUnitsText) {
+                    const nowKey = String(ctx.orderUnitsText) + '|' + (ctx.orderUnitsTotal || (pp2 && pp2.price) || '');
+                    if (nowKey !== ctx.agent.lastSummaryKey) changedLine = 'Залишила у замовленні: ' + ctx.orderUnitsText + ' — ' + (ctx.orderUnitsTotal || (pp2 && pp2.price)) + ' грн ✅\n\n';
+                }
+            } catch (e) { /* best-effort */ }
+            A.out.push({ text: changedLine + payAck + payTpl, step: 'pay_options' });
             ctx.agent.lastAsk = 'спосіб оплати 1 чи 2'; return;
         }
         await T.payAmount(A);

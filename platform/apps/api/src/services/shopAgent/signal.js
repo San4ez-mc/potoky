@@ -84,7 +84,7 @@ function categoryWordIsUpsell(text, ctx) {
     // Допродаж міг ще не пропонуватись («З якої тканини футболка?» на першій картці) — слово-категорія допродажу все одно не підміняє головний товар.
     if (!up || !(p && p.sku)) return false;
     // «і ще футболку», «додайте футболку» — клієнт хоче ДОДАТИ позицію: це не питання про допродаж, а додавання (старий шлях ADD_EXTRA).
-    if (/(^|\s)(і\s+ще|також|плюс|додай\S*|додат\S*|візьму|беру|хочу)(?=\s|$)/iu.test(String(text || ''))) return false;
+    if (/(^|\s)(і\s+ще|а\s+ще|ще|також|плюс|додай\S*|додат\S*|візьму|беру|хочу)(?=\s|$)/iu.test(String(text || ''))) return false;
     const clean = String(text || '').replace(/\[переслав[^\]]*\][^\n]*/gi, ' ');
     const stems = clean.toLowerCase().match(new RegExp(CATEGORY_STEM_RE.source, 'gi')) || [];
     if (!stems.length) return false;

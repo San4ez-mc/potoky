@@ -273,7 +273,8 @@ async function answerThenAsk(A, u, askText, o = {}) {
         let best = null; let bestN = 0; let bestMine = 0;
         for (const q of (u.questions || [])) {
             const mine = new Set(stq(q));
-            for (const h of kb) { const n = new Set(stq(h.q)); let c = 0; for (const w of n) if (mine.has(w)) c += 1; if (c > bestN) { bestN = c; best = h; bestMine = mine.size; } }
+            const askedMilitary = /військов|зсу|убд|воїн|захисник/i.test(String(q));
+            for (const h of kb) { if (!askedMilitary && /військов|зсу|убд/i.test(String(h.q))) continue; const n = new Set(stq(h.q)); let c = 0; for (const w of n) if (mine.has(w)) c += 1; if (c > bestN) { bestN = c; best = h; bestMine = mine.size; } }
         }
         // Коротке питання повністю збігається за словами з записом бази знань — відповідаємо самим записом (модель інакше вигадує «зазвичай наступного дня»).
         if (best && u.questions.length === 1 && !o.ack && bestN >= 1 && bestN === bestMine && bestMine <= 2 && String(best.a).length <= 500 && (A.ctx.product && A.ctx.product.sku || !/передопл|передплат|\d+\s*грн/i.test(best.a))) {
@@ -327,7 +328,14 @@ async function present(A) {
     const urls = firstPhotoUrls(p);
     if (urls.length) A.out.push({ photoUrls: urls, caption: '', step: 'present_photo' });
     const greet = A.botSpokeBefore ? '' : ('Вітаю! 💛 Я ' + (A.keys.PERSONA_NAME || 'Оля') + ' з ' + (A.keys.SHOP_TAG || 'магазину') + '.\n');
-    const card = messageTextMultiline(A.assets, 'n_welcome', ctx, A.session.id + ':present');
+    let card = messageTextMultiline(A.assets, 'n_welcome', ctx, A.session.id + ':present');
+    // Останній рядок картки («Підкажіть зріст і вагу») підганяємо під товар: числові розміри (джинси) → просимо розмір за талією; зріст і вага вже відомі → рядок прибираємо.
+    try {
+        const szLine = ((String(p.desc || '').match(/Розміри:\s*([^\n]+)/i) || [])[1] || '').trim();
+        const szItems = szLine.split(/[,;]+/).map((z) => z.trim().replace(/\s*\(.*$/, '')).filter(Boolean);
+        if (szItems.length > 1 && szItems.every((z) => /^\d+$/.test(z))) card = card.replace(/👉[^\n]*/, '👉 Підкажіть, будь ласка, ваш розмір за талією (' + szLine.replace(/\s*\(.*$/, '') + ') 😊');
+        else if (ctx.sizeInput && ctx.sizeInput.height && ctx.sizeInput.weight) card = card.replace(/\n*👉[^\n]*(зріст|вага)[^\n]*/i, '');
+    } catch (e) { /* best-effort */ }
     A.out.push({ text: greet + card, step: 'present' });
     ctx.productJustPresented = true; ctx.presentedAt = Date.now(); ctx.lastPresentedSku = p.sku; ctx.agent.presentedSku = p.sku;
     ctx.agent.lastAsk = p.followUpQuestion || '';
@@ -640,7 +648,7 @@ async function runPolicyInner(A, u) {
         return;
     }
     // Питання про відтінок після фото-зразка («Такий колір є?», «Це який колір?»): за фото відтінок не визначаємо — чесно, без вигаданого «схожий є».
-    if (ctx.product && ctx.product.sku && ctx.agent.colorSampleAsked && /колір/i.test(String(ctx.agent.lastAsk || '')) && !ctx.crmOrderId && !A.turnImage && /(такий|схожий|цей|це\s+який|який\s+це|який\s+саме)[^?]{0,20}(колір|відтін)|(колір|відтін)[^?]{0,15}(є|такий|схожий)/i.test(String(text)) && ctx.product.colors) {
+    if (ctx.product && ctx.product.sku && ctx.agent.colorSampleAsked && /колір/i.test(String(ctx.agent.lastAsk || '')) && !ctx.crmOrderId && !A.turnImage && /(такий|схожий|цей|це\s+який|який\s+це|який\s+саме)[^?]{0,20}(колір|відтін)|(колір|відтін)[^?]{0,15}(є|такий|схожий)|(на|з)\s+фото[^?]{0,20}(колір|відтін)|(колір|відтін)[^?]{0,20}(на|з)\s+фото/i.test(String(text)) && ctx.product.colors) {
         ctx.agent.colorSampleReplies = (ctx.agent.colorSampleReplies || 0) + 1;
         const t1 = 'За фото я не можу точно визначити відтінок 🙈 У цієї моделі є: ' + ctx.product.colors + '. Напишіть, будь ласка, який із них вам ближчий, — або я уточню у менеджера 🙂';
         const t2 = 'Точно порівняти відтінок за фото не вийде — орієнтуйтесь на назви: ' + ctx.product.colors + '. Якщо сумніваєтесь, передам питання менеджеру 💛';
@@ -1216,14 +1224,17 @@ async function runPolicyInner(A, u) {
     if (pp.colors && !(ctx.colorChoice && (ctx.colorChoice.color || (Array.isArray(ctx.colorChoice.colors) && ctx.colorChoice.colors.length)))) {
         const c = u.colorMatched || matchColor(pp, u.color) || (ctx.sizeInput && ctx.sizeInput.color) || matchColor(pp, ctx.agent.pendingColor) || matchColor(pp, ctx.agent.pendingColorRaw) || null;
         if (c) { ctx.colorChoice = { color: c, qty: u.qty || undefined }; delete ctx.agent.pendingColor; delete ctx.agent.pendingColorRaw; }
-        else if (ctx.agent.softColorCount > 0 && /^\s*(ок|окей|окей\.|добре|добре\.|гуд|ясно|зрозуміло|угу|ага|👍|🙏|ok|okay)[\s.!]*$/iu.test(String(text))) {
+        else if (ctx.agent.softColorCount > 0 && /^\s*(ок|окей|добре|гуд|ясно|зрозуміло|угу|ага|👍|🙏|ok|okay|хорошо|ладно|понятно|ясно|договорились)[\s.!]*$/iu.test(String(text))) {
+            // Другий підряд «окей/хорошо» після м'якого закриття — мовчимо (природно: розмову вже закрито), щоб не давати зайвої відповіді.
+            if (ctx.agent.softAckAt && Date.now() - ctx.agent.softAckAt < 30 * 60 * 1000) return;
+            ctx.agent.softAckAt = Date.now();
             // «Окей» після м'якого закриття — без повторного питання про колір.
             A.out.push({ text: (['👌', 'Домовились 🙂', 'Добре 💛'])[(ctx.agent.softColorCount || 0) % 3], step: 'ack_after_soft' }); ctx.agent.lastAsk = 'колір'; return;
         }
         else if (isSoftDecline(u) || u.intent === 'thanks') {
             ctx.agent.softColorCount = (ctx.agent.softColorCount || 0) + 1;
             const softTxt = ctx.agent.softColorCount > 1 ? (['Звісно 🙂 Я на звʼязку — напишіть, коли оберете колір.', 'Без проблем 💛 Щойно визначитесь із кольором — одразу продовжимо.'][ctx.agent.softColorCount % 2]) : await answerThenAsk(A, u, messageText(A.assets, 'n_agent_soft_decline_color', ctx, A.session.id));
-            A.out.push({ text: softTxt, step: 'ask_color_soft' }); return;
+            A.out.push({ text: softTxt, step: 'ask_color_soft' }); ctx.agent.softAckAt = Date.now(); return;
         }
         else {
             ctx.agent.wantColor = u.color || '';

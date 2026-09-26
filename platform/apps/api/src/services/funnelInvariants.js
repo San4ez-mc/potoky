@@ -18,6 +18,7 @@ function checkInvariants(transcript, ctx = {}) {
     for (let i = 0; i < t.length; i++) {
         if (t[i].role !== 'user') continue;
         if (t[i + 1] && t[i + 1].role === 'user') continue; // серія повідомлень підряд: відповідь потрібна на останнє з них
+        if (/^\s*(дякую|спасибо|ок|окей|добре|хорошо|ладно|ясно|зрозуміло|понятно|угу|ага|👍|🙏)[\s.!]*$/i.test(String(t[i].content || '')) && t.slice(0, i).some((m) => m.role === 'assistant')) continue; // «дякую/окей» після відповіді — тиша допустима
         let answered = false;
         for (let j = i + 1; j < t.length && t[j].role !== 'user'; j++) { if (t[j].role === 'assistant') { answered = true; break; } }
         const isLast = !t.slice(i + 1).some((m) => m.role === 'user');

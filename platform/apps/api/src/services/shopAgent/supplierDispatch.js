@@ -134,7 +134,7 @@ async function dispatchBrewdrop(A, group, alloc) {
     };
     const r = await runNodeCode(nodeCode(A.assets, 'n_supplier_order'), { ctx: scoped, keys: A.keys, user: A.user, session: A.session, input: '', label: 'n_supplier_order:' + group.name });
     A.trace.push({ tool: 'n_supplier_order:' + group.name, ok: r.ok, ms: r.ms, error: r.error || null });
-    return { supplier: group.name, mechanism: 'brewdrop', status: scoped.supplierOrderStatus || 'error', result: scoped.supplierOrderResult || '', ttn: scoped.supplierTtn || '', id: scoped.supplierOrderId || '', needsManual: !!scoped.supplierNeedsManual };
+    return { supplier: group.name, mechanism: 'brewdrop', status: scoped.supplierOrderStatus || (A.ctx.testMode ? 'test_mock' : 'error'), result: scoped.supplierOrderResult || '', ttn: scoped.supplierTtn || '', id: scoped.supplierOrderId || '', needsManual: !!scoped.supplierNeedsManual };
 }
 
 /** EasyDrop (offline/cart) не підтримує кількість &gt;1 і кілька товарів за один виклик (якщо

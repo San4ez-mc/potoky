@@ -352,7 +352,7 @@ async function sendRequisites(A, u) {
     if (Number(ctx.payAmount) === 0) { A.out.push({ text: messageTextMultiline(A.assets, 'n_trust_confirm_msg', ctx, A.session.id), step: 'trust_confirm' }); ctx.requisitesSentAt = Date.now(); return; }
     if (ctx.agent.paidBeforeInvoice && !ctx.requisitesSentAt) {
         // 2026-09-25 (FunnelTest 18): клієнт уже сплатив 200 грн ДО вибору способу — нове посилання не видаємо, дякуємо й збираємо дані.
-        A.out.push({ text: 'Дякую! Бачу, що ви вже переказали 200 грн — щойно платіж надійде, звірю 🙏 Щоб оформити відправку, напишіть, будь ласка: ПІБ, телефон, місто та № відділення або поштомата 📦', step: 'paid_before_invoice' });
+        A.out.push({ text: 'Дякую! Бачу, що ви вже переказали 200 грн — приймаю це як варіант 1 (передплата 200 грн, решта при отриманні) і звірю платіж 🙏 Щоб оформити відправку, напишіть, будь ласка: ПІБ, телефон, місто та № відділення або поштомата 📦', step: 'paid_before_invoice' });
         ctx.requisitesSentAt = Date.now(); ctx.agent.lastAsk = 'дані для відправки Новою Поштою: ПІБ, телефон, місто, № відділення';
         await T.alert(A, 'n_agent_early_payment_admin', { details: '💬 Клієнт написав, що оплатив 200 грн до видачі реквізитів: «' + String(A.turnText || '').slice(0, 200) + '»', photoUrl: A.turnImage || '' });
         return;
@@ -1543,7 +1543,7 @@ async function runPolicyInner(A, u) {
     if (ctx.agent.paidBeforeInvoice && ctx.requisitesSentAt && !ctx.crmOrderId && /^\s*[12]\s*[.!]?\s*$/.test(text) && !addressComplete(ctx.orderData)) {
         // клієнт підтверджує варіант після того, як уже сплатив і в нього вже попросили дані — не повторюємо прохання
         ctx.paymentInfo = { method: text.trim().startsWith('2') ? 'full' : 'cod' };
-        A.out.push({ text: 'Зафіксувала ✅ Варіант 1: передплата 200 грн вже є — щойно надійдуть дані для відправки, одразу оформлю замовлення 💛', step: 'method_confirm_after_paid' });
+        A.out.push({ text: 'Так, варіант 1 підтверджено ✅ Більше нічого питати не буду — лише чекаю дані для відправки з мого попереднього повідомлення 💛', step: 'method_confirm_after_paid' });
         return;
     }
     const givingAddressNow = !!(u.phone || u.fullName || u.city || u.branch || u.region) && !addressComplete(ctx.orderData);

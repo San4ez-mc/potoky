@@ -744,7 +744,7 @@ async function runPolicyInner(A, u) {
     // 2026-09-23 (FunnelTest 4: «джинси хочу чорні» до підбору розміру губилось — секція кольорів
     // комплекту виконується лише ПІСЛЯ розміру і бачила тільки текст свого ходу): запамʼятовуємо
     // сирі повідомлення з кольором, поки комплект активний, і розбираємо їх по позиціях пізніше.
-    if (ctx.product && ctx.product.isSet && ctx.setMode === 'set' && (u.color || u.colorMatched) && !ctx.agent.setColorsResolved) {
+    if (ctx.product && ctx.product.isSet && (ctx.setMode === 'set' || (Array.isArray(ctx.setSelection) && ctx.setSelection.length)) && (u.color || u.colorMatched) && !ctx.agent.setColorsResolved) {
         ctx.agent.setColorHints = (ctx.agent.setColorHints || []).concat(text).slice(-5);
     }
     const earlyReceipt = (u.receiptLink || u.claimsPaid || (A.turnImage && addressComplete(ctx.orderData))) && !ctx.crmOrderId && !(ctx.paymentInfo && ctx.paymentInfo.method);

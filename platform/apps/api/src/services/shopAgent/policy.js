@@ -581,7 +581,9 @@ async function runPolicyInner(A, u) {
     // Розмір більший за наявні («2XXL», «3XL», «XXXL») для товару без такого розміру: чесно називаємо наявні, не читаємо як XXL.
     {
         const big = text.match(/(?<![A-Za-z0-9])(2XXL|3XL|3XXL|XXXL|2XL|ХХХЛ)(?![A-Za-z])/i);
-        const szs = ctx.product ? (Array.isArray(ctx.product.sizes) ? ctx.product.sizes : String(ctx.product.sizes || '').split(/[,;\s]+/)).map((z) => String(z).trim().toUpperCase()).filter(Boolean) : [];
+        const _pr = ctx.product || {};
+        const _rawSz = (_pr.sizes && _pr.sizes.length) ? _pr.sizes : ((_pr.structuredSizes && _pr.structuredSizes.length) ? _pr.structuredSizes : (((String(_pr.desc || '').match(/Розміри:\s*([^\n]+)/i) || [])[1]) || ''));
+        const szs = ctx.product ? (Array.isArray(_rawSz) ? _rawSz : String(_rawSz).split(/[,;]+/)).map((z) => String(z).trim().toUpperCase().replace(/\s*\(.*$/, '')).filter(Boolean) : [];
         if (big && szs.length && !szs.includes('XXXL') && !ctx.crmOrderId) {
             A.out.push({ text: 'Для цієї моделі розміри: ' + szs.join(', ') + (/до\s*\d+\s*кг/i.test(String(ctx.product.desc || '')) ? ' (' + ((String(ctx.product.desc).match(/до\s*\d+\s*кг/i) || [''])[0]) + ')' : '') + ' — більших, на жаль, немає 🙏 Флісові костюми в нас йдуть до XXXL. Підкажіть зріст і вагу — підберу найкращий розмір з наявних 📏', step: 'size_beyond_range' });
             ctx.agent.lastAsk = 'параметри для розміру';
@@ -814,6 +816,7 @@ async function runPolicyInner(A, u) {
         const runs = String(text).replace(/[\s\-()+.]/g, '').match(/\d{9,13}/g) || [];
         if (runs.length && !runs.some((r) => /^0\d{9}$/.test(r) || /^380\d{9}$/.test(r))) { u.phone = null; __phoneNote = 'Номер телефону виглядає некоректно — напишіть, будь ласка, 10 цифр, наприклад 0501234567 📱 '; }
     }
+    if (__phoneNote) { A.out.push({ text: __phoneNote.trim(), step: 'phone_invalid' }); A._phoneNoteSent = true; } // явне пояснення, що саме не так з номером (далі йде звичайний запит решти даних)
     const __dataThisTurn = !!((u.phone || u.fullName || u.city || u.branch) && !u.homeAddress);
     if (__dataThisTurn) {
         ctx.orderData = { ...(ctx.orderData || {}), ...(u.fullName ? { fullName: u.fullName } : {}), ...(u.phone ? { phone: u.phone } : {}), ...(u.city ? { city: u.city } : {}), ...(u.region ? { region: u.region } : {}), ...(u.branch ? { branch: u.branch } : {}) };
@@ -857,7 +860,7 @@ async function runPolicyInner(A, u) {
         ctx.agent.receiptEarlyAlertAt = Date.now();
         await T.alert(A, 'n_agent_early_payment_admin', { details: '💬 «' + text.slice(0, 200) + '»', photoUrl: A.turnImage || '' });
     }
-    const preNote = __phoneNote + (__dataThisTurn && !addressComplete(ctx.orderData) ? 'Дані доставки записала 📝 ' : '') + (earlyReceipt ? ((u.receiptLink || A.turnImage) ? 'Дякую, оплату бачу — звіримо 🙏 Щоб оформити відправку, лишилось кілька кроків. ' : 'Дякую! Щоб звірити оплату, скиньте, будь ласка, скріншот або посилання на квитанцію 🙏 ') : '') + (u.intent === 'wants_requisites' && !(ctx.paymentInfo && ctx.paymentInfo.method) ? 'Реквізити надішлю одразу після підбору розміру і кольору 🙂 ' : '');
+    const preNote = (A._phoneNoteSent ? '' : __phoneNote) + (__dataThisTurn && !addressComplete(ctx.orderData) ? 'Дані доставки записала 📝 ' : '') + (earlyReceipt ? ((u.receiptLink || A.turnImage) ? 'Дякую, оплату бачу — звіримо 🙏 Щоб оформити відправку, лишилось кілька кроків. ' : 'Дякую! Щоб звірити оплату, скиньте, будь ласка, скріншот або посилання на квитанцію 🙏 ') : '') + (u.intent === 'wants_requisites' && !(ctx.paymentInfo && ctx.paymentInfo.method) ? 'Реквізити надішлю одразу після підбору розміру і кольору 🙂 ' : '');
 
     // 2. Товар
     // 2026-09-15 (живий кейс: у комплекті клієнт написав "чорні джинси"/"Чорний" — понял() LLM
@@ -1469,6 +1472,13 @@ async function runPolicyInner(A, u) {
                 // «Оформляємо?» уже питали, клієнт написав щось без рішення — коротка реакція + те саме питання, без повторного підсумку
                 txt = (await compose(A, { ack: 'відреагуй одним реченням на репліку клієнта (нічого не обіцяй і не змінюй склад замовлення сама)', nextStep: 'і спитай: «' + askLine + '»', maxSentences: 2, fallback: askLine })).text;
                 A.out.push({ text: txt, step: 'order_intent_repeat' }); return;
+            }
+            // Клієнт вагається («подумаю», «спасибо, позже») без питання: м'яко відступаємо, без тиску й без повтору картки з ціною.
+            if (hesitating && !u.questions.length) {
+                ctx.agent.softSummaryCount = (ctx.agent.softSummaryCount || 0) + 1;
+                A.out.push({ text: ['Звісно, без поспіху 🙂 Замовлення я зберегла — напишіть, коли будете готові оформити, і продовжимо 💛', 'Добре, ніяких проблем 🙂 Я на звʼязку: щойно вирішите — просто напишіть.', 'Гаразд 💛 Коли захочете оформити — пишіть, все вже підготовлено.'][ctx.agent.softSummaryCount % 3], step: 'soft_hesitate_summary' });
+                ctx.agent.lastAsk = 'оформляємо?';
+                return;
             }
             if (u.questions.length || hesitating) {
                 A._questionEngaged = true;

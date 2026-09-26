@@ -958,7 +958,9 @@ async function handleCommentReceived(botId, body) {
     // testMode — усе почне створюватись і ротуватись як і раніше, без жодних змін.
     let automationHint = null;
     if (mediaId && postCaption) {
-        if (await isTestModeOn(botId)) {
+        if (await shopAgent.isCommentAgent(botId)) {
+            logger.info('[zernioHandler] ensurePostAutomation пропущено — коментарі веде агент (DM від агента)', { botId, mediaId });
+        } else if (await isTestModeOn(botId)) {
             logger.info('[zernioHandler] ensurePostAutomation пропущено — testMode увімкнено', { botId, mediaId });
         } else {
             automationHint = await ensurePostAutomation(botId, mediaId, postCaption);
@@ -1034,6 +1036,29 @@ async function dedup(botId, id) {
     catch (e) { if (e.code === 'P2002') return false; throw e; }
 }
 
+// Голосові повідомлення: скачуємо аудіо й розшифровуємо через Gemini (ключ GEMINI_API_KEY воронки). Повертає текст або '' (тоді бот попросить написати текстом).
+async function transcribeVoice(botId, url) {
+    try {
+        const gk = await db.funnelKey.findFirst({ where: { botId, key: 'GEMINI_API_KEY' }, select: { value: true } });
+        const key = (gk && gk.value || '').trim();
+        if (!isReal(key) || !url) return '';
+        const headers = {};
+        if (/zernio\.com/i.test(url)) { const zk = await getZernioKeys(botId); if (isReal(zk.ZERNIO_API_TOKEN)) headers.Authorization = 'Bearer ' + zk.ZERNIO_API_TOKEN; }
+        const ac = new AbortController(); const to = setTimeout(() => { try { ac.abort(); } catch (e) { } }, 20000);
+        let buf; let mime;
+        try { const r = await fetch(url, { headers, signal: ac.signal }); if (!r.ok) return ''; mime = (r.headers.get('content-type') || 'audio/mp4').split(';')[0]; buf = Buffer.from(await r.arrayBuffer()); } finally { clearTimeout(to); }
+        if (!buf || !buf.length || buf.length > 9 * 1024 * 1024) return '';
+        if (!/^audio\//i.test(mime)) mime = 'audio/mp4';
+        const gr = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=' + encodeURIComponent(key), {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contents: [{ parts: [{ text: 'Розшифруй це голосове повідомлення клієнта інтернет-магазину дослівно, мовою оригіналу (українська, російська або суржик). Поверни ЛИШЕ текст розшифровки, без коментарів. Якщо мови не чути — поверни порожній рядок.' }, { inline_data: { mime_type: mime, data: buf.toString('base64') } }] }], generationConfig: { temperature: 0, maxOutputTokens: 600 } }),
+        });
+        const gj = await gr.json().catch(() => ({}));
+        const t = String(gj?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join(' ') || '').trim();
+        return t.slice(0, 1500);
+    } catch (e) { logger.warn('[zernioHandler] transcribeVoice: ' + e.message, { botId }); return ''; }
+}
+
 async function handleIncomingMessage(botId, body) {
     const { conv, contact, msg, conversationId, contactId, contactName, contactUsername } = extractCommon(body);
     if (msg.direction && msg.direction === 'outgoing') return { ok: true, skipped: 'outgoing' };
@@ -1071,7 +1096,7 @@ async function handleIncomingMessage(botId, body) {
     // ручний per-сесійний стоп/старт конкретного клієнта.
     const testModeBlocked = await isBlockedByTestMode(botId, [contactUsername, contactName]);
 
-    const text = msg.text || body?.data?.text || '';
+    let text = msg.text || body?.data?.text || '';
     const zMsgId = msg.id || null;
     const platformMessageId = msg.platformMessageId || null;
     const ref = body.metadata?.referral || msg.referral || body.referral || body.conversation?.referral || msg.metadata?.referral || body?.data?.referral || null;
@@ -1141,6 +1166,12 @@ async function handleIncomingMessage(botId, body) {
     } else if (attachment && attachment.refreshUrl) { attachment.url = attachment.refreshUrl; }
     // 2026-09-07 (OsmanoV поділився сторіс «Переглянути світлину» — до нас дійшов лише текст): фіксуємо СИРІ типи
     // вкладень і ключі payload у метаданих, щоб бачити, що саме Zernio (не) передає; вкладення без url → мітка.
+    // Голосове: розшифровуємо й далі ведемо як звичайний текст клієнта (позначка [голосове] лишається в повідомленні).
+    let voiceTranscript = '';
+    if (!text && attachment && attachment.type === 'audio') {
+        voiceTranscript = await transcribeVoice(botId, attachment.refreshUrl || attachment.url);
+        if (voiceTranscript) text = voiceTranscript;
+    }
     const rawAttTypes = rawAtts.map((a) => String((a && (a.type || a.mimeType || a.contentType)) || 'unknown')).slice(0, 10);
     const unknownAtts = rawAtts.filter((a) => !(a && (a.url || (a.payload && a.payload.url) || a.src || a.mediaUrl || a.link)));
     const mediaLabel = !attachment ? (unknownAtts.length ? ('[вкладення без файлу: ' + rawAttTypes.join(', ') + ']') : '[порожнє повідомлення]')
@@ -1264,6 +1295,7 @@ async function handleIncomingMessage(botId, body) {
                 ...(staleInbound ? { stale: true, staleReason: 'older than last bot reply by >90s (channel delay)' } : {}),
                 ...(adId ? { adId } : {}),
                 ...(attachment ? { attachment, attachments: mappedAtts } : {}),
+                ...(voiceTranscript ? { voiceTranscript: true } : {}),
                 ...(sharedPost ? { sharedPost } : {}),
             },
         }),
@@ -1501,7 +1533,9 @@ async function runFlowAndDeliver(sessionId, entry) {
         // 2026-09-13 — новий агент-продавець (shopAgent: одна памʼять + політика замість графа зі 164 нод).
         // Вмикається per-bot (settings.engine='shop_agent_v2' або ключ SHOP_AGENT_V2=1). Коментар-вхід
         // (commentId) лишається на старому шляху (n_comment_entry — публічна відповідь на коментар).
-        if (!commentId && await shopAgent.isAgentBot(botId)) {
+        if ((!commentId && await shopAgent.isAgentBot(botId)) || (commentId && await shopAgent.isCommentAgent(botId))) {
+            // Коментар: спершу детермінована класифікація для публічної відповіді, далі DM веде той самий агент (приватна відповідь на commentId).
+            if (commentId) await shopAgent.classifyComment({ botId, sessionId, commentText: mergedText });
             await shopAgent.handleTurn({ botId, sessionId, text: mergedText, imageUrl: runImageUrl, sharedPost: entry.ctxPatch && entry.ctxPatch.sharedPost, entryAdId: entry.ctxPatch && entry.ctxPatch.entryAdId });
         } else {
             await executeFlowStep({ sessionId, incomingUserMessage: mergedText, incomingImageUrl: runImageUrl });

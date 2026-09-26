@@ -41,6 +41,15 @@ async function shiftSessionTime(sessionId, hours) {
  */
 async function runAgentTurn({ botId, sessionId, step }) {
     let text = step.text || '';
+    if (step.type === 'comment') {
+        // Коментар під постом: клієнт «пише» текст-коментар, пост (підпис) іде як sharedPost, публічну відповідь класифікує агент.
+        const cs = await db.session.findUnique({ where: { id: sessionId }, select: { context: true } });
+        await db.session.update({ where: { id: sessionId }, data: { context: { ...(cs && cs.context ? cs.context : {}), commentText: text, commentId: 'test-comment', ...(step.sharedPost ? { commentMediaId: step.sharedPost.mediaId || 'test-media' } : {}) } } });
+        await db.message.create({ data: { sessionId, role: 'user', content: text || '', metadata: { source: 'test', comment: true, ...(step.sharedPost ? { sharedPost: step.sharedPost } : {}) } } });
+        await shopAgent.classifyComment({ botId, sessionId, commentText: text });
+        await shopAgent.handleTurn({ botId, sessionId, text, sharedPost: step.sharedPost || undefined });
+        return;
+    }
     if (step.sharedPost) {
         const sp = step.sharedPost;
         const shared = '[переслав ' + (sp.kind || 'post') + '] ' + String(sp.caption || '').slice(0, 4000);
@@ -68,7 +77,7 @@ async function runAgentTurn({ botId, sessionId, step }) {
 function normalizeStep(step) {
     return {
         type: step.type || 'text',
-        text: (typeof step.text === 'string' && step.text) ? step.text : (step.type === 'voice' ? '[вкладення]' : (Number(step.mediaCount) > 1 ? '[' + Number(step.mediaCount) + ' медіа]' : '')),
+        text: (typeof step.text === 'string' && step.text) ? step.text : (step.type === 'voice' ? (step.transcript ? String(step.transcript) : '[вкладення]') : (Number(step.mediaCount) > 1 ? '[' + Number(step.mediaCount) + ' медіа]' : '')),
         imageUrl: step.imageUrl || null,
         sharedPost: step.sharedPost || null,
         referral: step.referral || null,
@@ -355,6 +364,7 @@ async function runTest(testId, onProgress = () => {}) {
             orderIntent: c.orderIntent && { addUpsell: c.orderIntent.addUpsell, upsellQty: c.orderIntent.upsellQty, upsellUnits: c.orderIntent.upsellUnits },
             orderUnits: c.orderUnits, orderTotal: c.orderTotal, orderData: c.orderData,
             extraItems: Array.isArray(c.extraItems) && c.extraItems.length ? c.extraItems.map((i) => ({ sku: i.sku, name: i.name, color: i.color, size: i.size, qty: i.qty, price: i.price })) : undefined,
+            commentPublicReply: c.commentReplyText ? { category: c.commentCategory, text: c.commentReplyText } : undefined, // публічна відповідь під коментарем (не в DM)
             managerAlertsSent: c.testAlerts && c.testAlerts.length ? c.testAlerts : undefined,
             supplierOrder: c.supplierHandled ? { placed: true, status: c.supplierOrderStatus, result: c.supplierOrderResult } : undefined, // замовлення постачальнику (у тесті — mock-виклик, рівно один раз на групу)
             handoffPaused: c.funnelPaused || undefined,

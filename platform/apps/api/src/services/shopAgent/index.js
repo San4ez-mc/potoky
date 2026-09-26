@@ -9,7 +9,7 @@
  *      zernioHandler.runFlowAndDeliver так само, як для старого графа).
  * Увімкнення на боті: settings.engine === 'shop_agent_v2' або funnelKey SHOP_AGENT_V2=1.
  */
-const { db, logger, loadAssets, cleanJsonDeep, mergeConsecutiveTextOutputs } = require('./lib');
+const { db, logger, loadAssets, cleanJsonDeep, mergeConsecutiveTextOutputs, runNodeCode, nodeCode } = require('./lib');
 const { understand } = require('./understand');
 const { runPolicy } = require('./policy');
 
@@ -43,6 +43,27 @@ async function loadCustomerMemory(session) {
 async function buildHistory(sessionId, limit = 16) {
     const rows = await db.message.findMany({ where: { sessionId }, orderBy: { createdAt: 'desc' }, take: limit, select: { role: true, content: true, metadata: true, createdAt: true } });
     return rows.reverse().filter((m) => m.role === 'user' || m.role === 'assistant').filter((m) => !(m.metadata && m.metadata.hidden)).map((m) => ({ who: m.role === 'user' ? 'client' : (((m.metadata || {}).source) === 'zernio_inbox' ? 'manager' : 'bot'), text: String(m.content || '').replace(/https?:\/\/(www\.)?instagram\.com\/\S+/gi, '').trim(), at: m.createdAt }));
+}
+
+/** Коментар під постом за керування агента: детермінована класифікація (нода n_comment_entry) → ctx.commentReplyText/commentCategory
+ * для публічної відповіді. Сам DM клієнту далі веде звичайний handleTurn (приватна відповідь на commentId). */
+async function classifyComment({ botId, sessionId, commentText }) {
+    const session = await db.session.findUnique({ where: { id: sessionId }, include: { user: true } });
+    if (!session) return null;
+    const assets = await loadAssets(botId);
+    const ctx = session.context || {};
+    const code = nodeCode(assets, 'n_comment_entry');
+    if (!code) return null;
+    ctx.commentText = String(commentText || ctx.commentText || '');
+    const r = await runNodeCode(code, { ctx, keys: assets.keys, user: session.user || {}, session, input: ctx.commentText, label: 'n_comment_entry' });
+    if (r && r.ok) await db.session.update({ where: { id: sessionId }, data: { context: cleanJsonDeep(ctx) } });
+    return { commentReplyText: ctx.commentReplyText || '', commentCategory: ctx.commentCategory || '' };
+}
+
+/** Чи обробляє агент коментарі (за замовчуванням так для агент-ботів; ключ COMMENT_AGENT=0 повертає старий шлях). */
+async function isCommentAgent(botId) {
+    if (!(await isAgentBot(botId))) return false;
+    try { const k = await db.funnelKey.findFirst({ where: { botId, key: 'COMMENT_AGENT' }, select: { value: true } }); return !(k && /^(0|false|off)$/i.test(String(k.value || '').trim())); } catch (e) { return true; }
 }
 
 async function handleTurn({ botId, sessionId, text, imageUrl, sharedPost, entryAdId, dryRun }) {
@@ -110,4 +131,4 @@ async function handleTurn({ botId, sessionId, text, imageUrl, sharedPost, entryA
     return { replies, understanding: u, trace: A.trace, ctx };
 }
 
-module.exports = { handleTurn, isAgentBot, loadCustomerMemory, buildHistory };
+module.exports = { handleTurn, classifyComment, isCommentAgent, isAgentBot, loadCustomerMemory, buildHistory };

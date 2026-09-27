@@ -216,6 +216,27 @@ function renderTemplate(input, scope) {
     });
 }
 
+// Same substitution as renderTemplate, but for templates whose result gets
+// JSON.parse'd afterward (Claude messagesTemplate, httpRequest JSON bodies).
+// Урок 15.11 (CLAUDE.md): будь-яка «"» / реальний перенос рядка / бекслеш у
+// підставленому тексті (тема поста, повідомлення клієнта, ім'я профілю тощо)
+// ламає JSON.parse і мовчки підмінює завдання моделі на fallback-репліку.
+// Тут рядкові значення йдуть через JSON.stringify().slice(1,-1) — так само,
+// як вони лягли б у валідний JSON-рядок, — а не вставляються сирими.
+function renderJsonTemplate(input, scope) {
+    if (typeof input !== 'string') return input || '';
+    return input.replace(/\{\{\s*([^}]+)\s*\}\}/g, (_m, expr) => {
+        const resolved = getByPath(scope, String(expr).trim());
+        if (resolved === null || resolved === undefined) return '';
+        if (typeof resolved === 'string') return JSON.stringify(resolved).slice(1, -1);
+        if (typeof resolved === 'bigint') return resolved.toString();
+        if (typeof resolved === 'number' || typeof resolved === 'boolean') return String(resolved);
+        // Objects/arrays: embed as escaped JSON text (not raw), so they can't
+        // break out of the surrounding string literal either.
+        return JSON.stringify(safeJsonStringify(resolved)).slice(1, -1);
+    });
+}
+
 function getOutgoingEdges(edges, nodeId) {
     return (Array.isArray(edges) ? edges : []).filter((edge) => edge.source === nodeId);
 }
@@ -236,7 +257,7 @@ function parseClaudeMessages(template, scope, fallbackUserMessage) {
     if (!template || typeof template !== 'string') return fallback;
 
     try {
-        const parsed = JSON.parse(renderTemplate(template, scope));
+        const parsed = JSON.parse(renderJsonTemplate(template, scope));
         if (Array.isArray(parsed)) {
             const items = parsed
                 .filter((item) => item && typeof item === 'object')
@@ -3522,7 +3543,8 @@ ${sourceContent || '(немає даних)'}
                         }
                         bodyPayload = JSON.stringify(rendered);
                     } else if (data.body) {
-                        bodyPayload = typeof data.body === 'string' ? renderTemplate(data.body, scope) : JSON.stringify(data.body);
+                        // JSON-safe substitution (урок 15.11) — data.body тут завжди JSON-шаблон.
+                        bodyPayload = typeof data.body === 'string' ? renderJsonTemplate(data.body, scope) : JSON.stringify(data.body);
                     }
                 }
 

@@ -372,7 +372,8 @@ async function runTest(testId, onProgress = () => {}) {
             orderIntent: c.orderIntent && { addUpsell: c.orderIntent.addUpsell, upsellQty: c.orderIntent.upsellQty, upsellUnits: c.orderIntent.upsellUnits },
             orderUnits: c.orderUnits, orderTotal: c.orderTotal, orderData: c.orderData,
             extraItems: Array.isArray(c.extraItems) && c.extraItems.length ? c.extraItems.map((i) => ({ sku: i.sku, name: i.name, color: i.color, size: i.size, qty: i.qty, price: i.price })) : undefined,
-            commentPublicReply: c.commentReplyText ? { category: c.commentCategory, text: c.commentReplyText } : undefined, // публічна відповідь під коментарем (не в DM)
+            commentPublicReply: c.commentReplyText ? { category: c.commentCategory, text: c.commentReplyText } : undefined, // остання публічна відповідь під коментарем (не в DM)
+            commentPublicRepliesHistory: Array.isArray(c.commentPublicReplies) && c.commentPublicReplies.length > 1 ? c.commentPublicReplies : undefined, // усі коментарі за прогін, якщо їх було кілька
             managerAlertsSent: c.testAlerts && c.testAlerts.length ? c.testAlerts : undefined,
             supplierOrder: c.supplierHandled ? { placed: true, status: c.supplierOrderStatus, result: c.supplierOrderResult } : undefined, // замовлення постачальнику (у тесті — mock-виклик, рівно один раз на групу)
             handoffPaused: c.funnelPaused || undefined,

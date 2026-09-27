@@ -56,6 +56,9 @@ async function classifyComment({ botId, sessionId, commentText }) {
     if (!code) return null;
     ctx.commentText = String(commentText || ctx.commentText || '');
     const r = await runNodeCode(code, { ctx, keys: assets.keys, user: session.user || {}, session, input: ctx.commentText, label: 'n_comment_entry' });
+    // commentReplyText/commentCategory — лише ОСТАННІЙ коментар (те, що реально постить zernioHandler). Клієнт міг лишити кілька коментарів під одним постом —
+    // тримаємо історію окремо (не впливає на продакшн-логіку), інакше знімок стану для тестів/діагностики бачить лише останню публічну відповідь.
+    if (ctx.commentReplyText) ctx.commentPublicReplies = [...(Array.isArray(ctx.commentPublicReplies) ? ctx.commentPublicReplies : []), { text: ctx.commentReplyText, category: ctx.commentCategory || '', commentText: ctx.commentText }].slice(-10);
     if (r && r.ok) await db.session.update({ where: { id: sessionId }, data: { context: cleanJsonDeep(ctx) } });
     return { commentReplyText: ctx.commentReplyText || '', commentCategory: ctx.commentCategory || '' };
 }

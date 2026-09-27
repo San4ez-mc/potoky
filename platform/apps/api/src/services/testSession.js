@@ -225,6 +225,21 @@ function renderTemplate(input, scope) {
 // як вони лягли б у валідний JSON-рядок, — а не вставляються сирими.
 function renderJsonTemplate(input, scope) {
     if (typeof input !== 'string') return input || '';
+    // Pure "{{path}}" template (nothing else around it) — e.g. httpRequest
+    // data.body: '{{context.stImportPayload}}' where the context value is
+    // ALREADY a fully-formed JSON string (built with JSON.stringify upstream).
+    // Escaping it here like an embedded string value would double-encode it
+    // and produce invalid JSON (content2 saw "Expected property name … at
+    // position 1" — a literal `{\"...` instead of `{"...`). Resolve and pass
+    // through as-is instead.
+    const singleRef = input.trim().match(/^\{\{\s*([^}]+)\s*\}\}$/);
+    if (singleRef) {
+        const resolved = getByPath(scope, String(singleRef[1]).trim());
+        if (resolved === null || resolved === undefined) return '';
+        if (typeof resolved === 'string') return resolved;
+        if (typeof resolved === 'bigint') return resolved.toString();
+        return safeJsonStringify(resolved);
+    }
     return input.replace(/\{\{\s*([^}]+)\s*\}\}/g, (_m, expr) => {
         const resolved = getByPath(scope, String(expr).trim());
         if (resolved === null || resolved === undefined) return '';

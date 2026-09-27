@@ -361,7 +361,7 @@ async function present(A) {
 function resetForNewProduct(A, sku) {
     const { ctx } = A;
     if (ctx.agent.presentedSku && ctx.agent.presentedSku !== sku) {
-        for (const k of ['sizeInput', 'recommendedSize', 'sizeSource', 'sizeReplyText', 'sizeColorFollowup', 'sizeOutOfRange', 'sizeOorReason', 'sizeOorAlternative', 'isSetSizeCalc', 'setSizesText', 'colorChoice', 'available', 'availReason', 'orderUnits', 'orderUnitsText', 'orderUnitsTotal', 'orderQty', 'orderIntent', 'setMode', 'setPick', 'setSelection', 'availChecked', 'extraItems', 'extraItemsText', 'extraUnresolved', 'orderExtras']) delete ctx[k];
+        for (const k of ['sizeInput', 'recommendedSize', 'sizeSource', 'sizeReplyText', 'sizeColorFollowup', 'sizeOutOfRange', 'sizeOorReason', 'sizeOorAlternative', 'isSetSizeCalc', 'setSizesText', 'colorChoice', 'available', 'availReason', 'orderUnits', 'orderUnitsText', 'orderUnitsTotal', 'orderQty', 'orderIntent', 'setMode', 'setPick', 'setSelection', 'availChecked', 'extraItems', 'extraItemsText', 'extraUnresolved', 'orderExtras', 'unavailableColors', 'availableColorsNow']) delete ctx[k];
         for (const k of ['setOriginal', 'setPricing', 'setStageSent', 'setEditNote', 'setParams', 'upsellOffered', 'upsellPhotoSent', 'availKey']) delete ctx.agent[k];
         if (!ctx.crmOrderId) for (const k of ['paymentInfo', 'payAmount', 'payLabel', 'orderRef', 'orderRefAt', 'ibanPayUrl', 'ibanInvoiceUid', 'requisitesSentAt']) delete ctx[k];
     }
@@ -1432,7 +1432,10 @@ async function runPolicyInner(A, u) {
         await T.checkAvail(A); ctx.agent.availKey = availKey;
         if (ctx.available === false) {
             if (ctx.availReason === 'no_stock') { A.out.push({ text: messageText(A.assets, 'n_avail_stock_msg', ctx, A.session.id), step: 'no_stock' }); await pause(A, 'no_stock', 'n_avail_stock_admin'); return; }
-            A.out.push({ text: messageText(A.assets, 'n_avail_no', ctx, A.session.id), step: 'color_unavailable' }); ctx.colorChoice = null; ctx.agent.lastAsk = 'інший колір'; return;
+            // Клієнт не має вгадувати, який колір лишився — називаємо реальний список одразу (n_avail рахує availableColorsNow).
+            const nowColors = Array.isArray(ctx.availableColorsNow) ? ctx.availableColorsNow.filter(Boolean) : [];
+            const noColorTxt = messageText(A.assets, 'n_avail_no', ctx, A.session.id) + (nowColors.length ? ' Зараз є: ' + nowColors.join(', ') + '.' : '');
+            A.out.push({ text: noColorTxt, step: 'color_unavailable' }); ctx.colorChoice = null; ctx.agent.lastAsk = 'інший колір'; return;
         }
         await T.funnelStage(A, ...STAGES.color);
     }

@@ -85,7 +85,15 @@ if(colorsList.length){
   if (missing) {
     var _unavail = Array.isArray(context.unavailableColors) ? context.unavailableColors.slice() : [];
     if (_unavail.indexOf(missing) < 0) _unavail.push(missing);
-    return { available: false, availReason: 'color', colorChoice: null, unavailableColors: _unavail, orderUnits: null, orderQty: 0, orderUnitsText: '' };
+    // Клієнт має знати, які кольори РЕАЛЬНО є, а не вгадувати — рахуємо їх тут же (той самий offerOk/sizeOk, що й вище).
+    var _nowOk = distinct.filter(function (cc2) {
+      var cands2 = offers.filter(function (o) { var pr = o.properties || []; return pr.some(function (x) { return String(x.value).toLowerCase() === String(cc2).toLowerCase(); }); });
+      if (!cands2.length) return false;
+      var withSize2 = cands2.filter(sizeOk);
+      var pool2b = withSize2.length ? withSize2 : ((context.product && context.product.stockTracked === true && chosenSize) ? [] : cands2);
+      return pool2b.some(offerOk);
+    });
+    return { available: false, availReason: 'color', colorChoice: null, unavailableColors: _unavail, availableColorsNow: _nowOk, orderUnits: null, orderQty: 0, orderUnitsText: '' };
   }
   var okOut=Object.assign({ available: true, availReason: '' }, unitsOut);
   if(sizeOverride && sizeOverride!==context.recommendedSize){ okOut.recommendedSize=sizeOverride; okOut.sizeSource='client'; }

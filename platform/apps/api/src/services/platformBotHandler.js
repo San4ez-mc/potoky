@@ -1075,6 +1075,9 @@ async function _handlePlatformBotUpdateInner(botId, update) {
     // not something hardcoded here. This file only classifies and routes.
     const chatType = message.chat?.type || 'private';
     let addressed = true;
+    // Розшифровка, яку в групі вже зробили нижче (рання гілка) — щоб Phase 1.5 не викликала
+    // Whisper вдруге і не дописувала ту саму розшифровку в текст ще раз.
+    let preTranscript = '';
     if (chatType === 'group' || chatType === 'supergroup') {
         const groupMode = await getGroupModeConfig(botId);
         if (!groupMode) {
@@ -1094,8 +1097,8 @@ async function _handlePlatformBotUpdateInner(botId, update) {
             if (media && (media.type === 'voice' || media.type === 'audio') && media.fileUrl) {
                 const oaiKey = await resolveOpenAIKey(botId);
                 if (oaiKey) {
-                    const transcript = await transcribeAudio(media.fileUrl, oaiKey, 'uk');
-                    if (transcript) text = transcript;
+                    const transcript = await transcribeAudio(media.fileUrl, oaiKey, 'uk', botId);
+                    if (transcript) { text = transcript; preTranscript = transcript; }
                 }
             }
         }
@@ -1152,8 +1155,11 @@ async function _handlePlatformBotUpdateInner(botId, update) {
     const incomingMedia = await extractIncomingMedia(message, token).catch(() => null);
     if (incomingMedia && (incomingMedia.type === 'voice' || incomingMedia.type === 'audio')
         && incomingMedia.fileUrl && !message.text) {
-        const oaiKey = await resolveOpenAIKey(botId);
-        if (oaiKey) {
+        const oaiKey = preTranscript ? null : await resolveOpenAIKey(botId);
+        if (preTranscript) {
+            // Група: розшифровку вже зроблено вище і вона вже в `text` — лише прив'язуємо до медіа.
+            incomingMedia.transcript = preTranscript;
+        } else if (oaiKey) {
             const transcript = await transcribeAudio(incomingMedia.fileUrl, oaiKey, 'uk', botId);
             if (transcript) {
                 incomingMedia.transcript = transcript;
@@ -1423,9 +1429,14 @@ async function _handlePlatformBotUpdateInner(botId, update) {
     // Content-manager bot uses telegramChatId for deliverTo (sends generated content back here)
     // and lastUserMedia to let the agent reuse a sent photo/video as a background.
     // incomingMedia вже витягнуто у Phase 1.5 (з можливою транскрипцією голосу).
+    // voiceTranscript — розшифровка голосового САМЕ цього повідомлення ('' для решти). Як і addressed/chatType,
+    // це лише класифікація для воронки: що з нею робити (напр. написати «Розшифровка аудіо» в групу) вирішує
+    // нода. Скидається на '' наступним не-голосовим повідомленням, тож нода не спрацює двічі.
+    const voiceTranscript = incomingMedia?.transcript ? String(incomingMedia.transcript) : '';
     if (chatId && (session?.context?.telegramChatId !== chatId || session?.context?.chatType !== chatType
-        || session?.context?.addressed !== addressed || incomingMedia)) {
-        const nextCtx = { ...(session.context || {}), telegramChatId: chatId, chatType, addressed };
+        || session?.context?.addressed !== addressed || incomingMedia
+        || (session?.context?.voiceTranscript || '') !== voiceTranscript)) {
+        const nextCtx = { ...(session.context || {}), telegramChatId: chatId, chatType, addressed, voiceTranscript };
         // Visible/branchable from the funnel itself (condition node on {{context.chatType}}
         // / {{context.addressed}}) instead of being decided invisibly in this file —
         // see fineko-funnel-standard.

@@ -479,7 +479,7 @@ async function sendMetaPhoto(botId, igsid, imageUrl) {
 
 // Альбом: IG приймає до 10 attachment-обʼєктів в ОДНОМУ повідомленні (message.attachments[]).
 // Вантажимо кожне фото у Meta (attachment_id) і шлемо одним повідомленням.
-async function sendMetaPhotoAlbum(botId, igsid, imageUrls) {
+async function sendMetaPhotoAlbum(botId, igsid, imageUrls, report) {
     const urls = (Array.isArray(imageUrls) ? imageUrls : []).filter(Boolean).slice(0, 10);
     if (!urls.length) return null;
     if (urls.length === 1) return sendMetaPhoto(botId, igsid, urls[0]);
@@ -487,22 +487,29 @@ async function sendMetaPhotoAlbum(botId, igsid, imageUrls) {
     const km = await db.funnelKey.findFirst({ where: { botId, key: 'INSTAGRAM_ACCESS_TOKEN' }, select: { value: true } });
     const token = (km?.value || '').trim();
     if (!token || token === 'REPLACE_ME') throw new Error('немає INSTAGRAM_ACCESS_TOKEN для Meta-фото');
-    const ids = [];
+    // 2026-09-28 (Edits fee2f18d/a6f106ac «не надіслало фото світло-сірої кофти»): раніше фото, що не завантажилось,
+    // мовчки випадало з альбому, а в лог писалась кількість ПЛАНОВАНИХ фото. Тепер — повторна спроба і чесна кількість.
+    const ids = []; const failed = [];
     for (const u of urls) {
-        try {
-            const ir = await fetch(String(u));
-            if (!ir.ok) continue;
-            const buf = Buffer.from(await ir.arrayBuffer());
-            const ct = ir.headers.get('content-type') || 'image/jpeg';
-            const fd = new FormData();
-            fd.append('access_token', token);
-            fd.append('message', JSON.stringify({ attachment: { type: 'image', payload: { is_reusable: true } } }));
-            fd.append('filedata', new Blob([buf], { type: ct }), 'photo.jpg');
-            const ur = await fetch('https://graph.instagram.com/v21.0/me/message_attachments', { method: 'POST', body: fd });
-            const ud = await ur.json().catch(() => ({}));
-            if (ur.ok && ud.attachment_id) ids.push(ud.attachment_id);
-        } catch (_e) { /* пропускаємо збійне фото */ }
+        let id = null, lastErr = '';
+        for (let attempt = 0; attempt < 2 && !id; attempt++) {
+            try {
+                const ir = await fetch(String(u));
+                if (!ir.ok) { lastErr = 'image HTTP ' + ir.status; continue; }
+                const buf = Buffer.from(await ir.arrayBuffer());
+                const ct = ir.headers.get('content-type') || 'image/jpeg';
+                const fd = new FormData();
+                fd.append('access_token', token);
+                fd.append('message', JSON.stringify({ attachment: { type: 'image', payload: { is_reusable: true } } }));
+                fd.append('filedata', new Blob([buf], { type: ct }), 'photo.jpg');
+                const ur = await fetch('https://graph.instagram.com/v21.0/me/message_attachments', { method: 'POST', body: fd });
+                const ud = await ur.json().catch(() => ({}));
+                if (ur.ok && ud.attachment_id) id = ud.attachment_id; else lastErr = (ud.error && ud.error.message) || ('upload HTTP ' + ur.status);
+            } catch (e) { lastErr = e.message; }
+        }
+        if (id) ids.push(id); else failed.push({ url: String(u).slice(0, 200), error: lastErr });
     }
+    if (report) Object.assign(report, { planned: urls.length, sent: ids.length, failed });
     if (!ids.length) throw new Error('жодне фото не завантажилось у Meta');
     const sr = await fetch(`https://graph.instagram.com/v21.0/me/messages?access_token=${encodeURIComponent(token)}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1662,8 +1669,10 @@ async function runFlowAndDeliver(sessionId, entry) {
                 // це була розмірна сітка — скидаємо chartSentFor, щоб бот міг спробувати ще раз.
                 let _anyPhotoOk = false;
                 try {
-                    const _albumId = await sendMetaPhotoAlbum(botId, contactId, _list);
-                    await logDelivery(sessionId, botId, 'ig_photo_album', true, null, { nodeId: m.nodeId || null, count: _list.length, messageId: _albumId });
+                    const _ar = { planned: _list.length, sent: _list.length, failed: [] };
+                    const _albumId = await sendMetaPhotoAlbum(botId, contactId, _list, _ar);
+                    await logDelivery(sessionId, botId, 'ig_photo_album', true, _ar.failed.length ? ('не надіслано ' + _ar.failed.length + ' з ' + _ar.planned + ' фото') : null, { nodeId: m.nodeId || null, count: _ar.sent, planned: _ar.planned, failed: _ar.failed, messageId: _albumId });
+                    if (_ar.failed.length) await sendTelegramAlert(botId, '⚠️ Клієнту дійшло ' + _ar.sent + ' з ' + _ar.planned + ' фото (Meta не прийняла: ' + _ar.failed.map((f) => f.error).join('; ').slice(0, 200) + ').\nСесія: https://flows.fineko.space/sessions/' + sessionId, sessionId).catch(() => {});
                     _anyPhotoOk = true;
                 } catch (e) {
                     logger.warn('[zernioHandler] альбом не пройшов, шлемо по одному: ' + e.message);

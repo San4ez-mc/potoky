@@ -148,7 +148,7 @@ description: Загальний стандарт створення й реда�
 
 ### Інтеграції
 
-**`httpRequest`** `{ url, method, headers, body|bodyFields, outputVar, responseField, responseEncoding, label }` — виклик зовнішнього API. **Правило 7a: усі зовнішні HTTP-виклики — через цю ноду**, навіть у складному багатокроковому сценарії (розкладай на послідовність `httpRequest`+`condition`+`js`). `responseEncoding: 'base64'` — для бінарних відповідей (фото/файли); дефолт `'utf8'`. `bodyFields` рендерить шаблони лише на верхньому рівні — для вкладених структур дивись §0.7a.
+**`httpRequest`** `{ url, method, headers, body|bodyFields, outputVar, responseField, responseEncoding, multipart, label }` — виклик зовнішнього API. **Правило 7a: усі зовнішні HTTP-виклики — через цю ноду**, навіть у складному багатокроковому сценарії (розкладай на послідовність `httpRequest`+`condition`+`js`). `responseEncoding: 'base64'` — для бінарних відповідей (фото/файли); дефолт `'utf8'`. `multipart: { fields:{імя:'{{шаблон}}'}, files:[{field,filename,contentType,base64Var}] }` — відправка multipart/form-data (напр. фото в edits.fineko.space); байти беруться з base64-рядка в context (завантаж його попередньою httpRequest-нодою з `responseEncoding:'base64'`). `bodyFields` рендерить шаблони лише на верхньому рівні — для вкладених структур дивись §0.7a.
 Парсинг HTML/cookie-сесія (не REST/JSON API) — виняток, лишається в `js`.
 
 **`httpEncode`** `{ sourceVar, outputVar }` — base64.

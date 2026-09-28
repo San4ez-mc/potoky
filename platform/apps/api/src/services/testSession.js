@@ -3563,6 +3563,42 @@ ${sourceContent || '(немає даних)'}
                     }
                 }
 
+                // multipart/form-data (напр. завантаження фото в edits.fineko.space, POST /api/edits).
+                // data.multipart = { fields: { name: '{{шаблон}}' }, files: [{ field, filename, contentType, base64Var }] }
+                //  - fields: текстові поля (шаблони, без JSON-екранування — це не JSON-тіло);
+                //  - files: байти беруться з context (base64Var — шлях до base64-рядка, напр. результат
+                //    httpRequest з responseEncoding:'base64'); порожній base64 — файл пропускається.
+                // Тіло збирається вручну (Buffer), Content-Type із boundary виставляється тут.
+                let bodyLog = null;
+                if ((method === 'POST' || method === 'PUT' || method === 'PATCH') && data.multipart && typeof data.multipart === 'object') {
+                    const boundary = '----flowsForm' + crypto.randomBytes(12).toString('hex');
+                    const parts = [];
+                    const q = (s) => String(s).replace(/["\r\n]/g, '_');
+                    for (const [k, v] of Object.entries(data.multipart.fields || {})) {
+                        const s = typeof v === 'string' ? v : String(v);
+                        const single = s.trim().match(/^\{\{\s*([^}]+)\s*\}\}$/);
+                        const val = single ? (getByPath(scope, String(single[1]).trim()) ?? '') : renderTemplate(s, scope);
+                        parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${q(k)}"\r\n\r\n${val}\r\n`, 'utf8'));
+                    }
+                    let fileCount = 0;
+                    for (const f of (Array.isArray(data.multipart.files) ? data.multipart.files : [])) {
+                        const b64ref = String(f.base64Var || '').replace(/^context\./, '');
+                        const b64 = b64ref ? getByPath(ctx, b64ref) : '';
+                        if (!b64 || typeof b64 !== 'string') continue;
+                        const bytes = Buffer.from(b64, 'base64');
+                        if (!bytes.length) continue;
+                        parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${q(f.field || 'file')}"; filename="${q(f.filename || 'file')}"\r\nContent-Type: ${q(f.contentType || 'application/octet-stream')}\r\n\r\n`, 'utf8'));
+                        parts.push(bytes);
+                        parts.push(Buffer.from('\r\n', 'utf8'));
+                        fileCount += 1;
+                    }
+                    parts.push(Buffer.from(`--${boundary}--\r\n`, 'utf8'));
+                    bodyPayload = Buffer.concat(parts);
+                    for (const k of Object.keys(customHeaders)) { if (k.toLowerCase() === 'content-type') delete customHeaders[k]; }
+                    customHeaders['Content-Type'] = `multipart/form-data; boundary=${boundary}`;
+                    bodyLog = `[multipart: ${Object.keys(data.multipart.fields || {}).length} полів, ${fileCount} файл(ів), ${bodyPayload.length} байт]`;
+                }
+
                 // Bottleneck checkpoint: repair node-built JSON bodies (sliced
                 // emojis + raw newlines in strings) so a single fragile node can't
                 // 400 the whole flow. No-op for non-JSON / already-valid bodies.
@@ -3622,7 +3658,7 @@ ${sourceContent || '(немає даних)'}
                     sessionId: session.id,
                     service: hostFromUrl(url),
                     method: `${method} ${new URL(url).pathname}`,
-                    requestData: { url, method, headers: customHeaders, body: truncateStr(bodyPayload, 2000) },
+                    requestData: { url, method, headers: customHeaders, body: bodyLog || truncateStr(bodyPayload, 2000) },
                     responseData: { body: truncateStr(responseText, 3000) },
                     statusCode: httpStatus,
                     durationMs: Date.now() - httpStart,

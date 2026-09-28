@@ -1159,7 +1159,8 @@ async function runPolicyInner(A, u) {
         if (isHW && !si.height && !si.weight && mem.height && mem.weight && !u.clothingSize) { si.height = mem.height; si.weight = mem.weight; usedMemory = true; }
         // 2026-09-28 (Edit 7ea6a772, власник): клієнт сам назвав розмір («чорний, XXL») — для одягу за зростом/вагою
         // спершу один раз перепитуємо їх, щоб перевірити розмір. Відмовився дати — приймаємо його розмір.
-        if (isHW && !pp.isSet && si.clothingSize && !(si.height && si.weight) && !ctx.agent.sizeVerifyAsked) {
+        // Числові розміри (джинси «W32», «32») — розмір за талією, зріст/вага його не перевіряють.
+        if (isHW && !pp.isSet && si.clothingSize && !/^\s*[wW]?\d/.test(String(si.clothingSize)) && !(si.height && si.weight) && !ctx.agent.sizeVerifyAsked) {
             ctx.agent.sizeVerifyAsked = true; ctx.agent.sizeClaim = String(si.clothingSize).toUpperCase();
             ctx.sizeInput = si;
             if (A.justPresented) { const card = A.out.find((o) => o.step === 'present'); if (card && card.text) card.text = card.text.replace(/\n*👉[^\n]*(зріст|вага)[^\n]*/i, ''); }
@@ -1172,6 +1173,9 @@ async function runPolicyInner(A, u) {
         ctx.sizeInput = si;
         const complete = (si.height && si.weight) || si.clothingSize || si.footLength || (si.chest && pp.sizeChartData);
         if (complete) {
+            // Клієнт просить сітку в тому ж ході, коли розмір рахується (напр. після прохання перевірити розмір) — надсилаємо саме фото,
+            // інакше compose пише «надсилаю окремим фото» без вкладення (тести 7c022683/6ed22687).
+            if (u.wantsSizeChart && pp.sizeChartUrl && !A._chartSent) { A._chartSent = true; A.out.push({ photoUrls: [pp.sizeChartUrl], caption: messageText(A.assets, 'n_agent_size_chart_caption', ctx, A.session.id), step: 'size_chart' }); ctx.agent.chartSentFor = pp.sku; }
             await T.calcSize(A);
             await T.funnelStage(A, ...STAGES.params);
             if (ctx.sizeOutOfRange) {

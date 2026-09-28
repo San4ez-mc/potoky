@@ -164,26 +164,35 @@ async function dispatchEasydrop(A, nodeId, group, alloc) {
  * result,ttn,id,needsManual,items,total}], multiParcel }.
  */
 async function dispatchOrder(A) {
-    const { ctx } = A;
+    const { ctx, keys } = A;
     const lines = buildLines(ctx);
     if (!lines.length) return { groups: [], multiParcel: false };
     const groups = await groupBySupplier(A, lines);
+    // Тимчасовий вимикач (рішення власника, 2026-09-28): перед увімкненням бойового режиму воронки автоматичне
+    // оформлення постачальникам вимкнено — усе йде менеджеру вручну (n_agent_supplier_manual_admin), доки власник
+    // не прибере ключ SUPPLIER_ORDERS_DISABLED або не виставить його в 0. У тестах (ctx.testMode) не діє — тести
+    // самі мокають виклик постачальника через testMode-гілки нод.
+    const dispatchDisabled = !ctx.testMode && /^(1|true|on)$/i.test(String((keys && keys.SUPPLIER_ORDERS_DISABLED) || '').trim());
     let remainingPrepay = Number(ctx.payAmount) || 0;
     const out = [];
     for (const g of groups) {
         const gTotal = g.lines.reduce((s, l) => s + l.price * l.qty, 0);
         const gPrepay = Math.min(remainingPrepay, gTotal); remainingPrepay -= gPrepay;
-        const meta = await resolveSupplierMeta(A, g.name);
-        const { mechanism, supplierCfg } = await mechanismFor(A, meta);
         let res;
-        try {
-            if (mechanism === 'brewdrop') res = await dispatchBrewdrop(A, g, { total: gTotal, prepay: gPrepay });
-            else if (mechanism === 'easydrop_offline') res = await dispatchEasydrop(A, 'n_supplier_order_ed', g, { supplierCfg });
-            else if (mechanism === 'easydrop_cart') res = await dispatchEasydrop(A, 'n_supplier_order_cart', g, { supplierCfg });
-            else res = { supplier: g.name, mechanism: 'manual', status: 'manual', result: '', needsManual: true };
-        } catch (e) {
-            logger.warn('[shopAgent] supplier dispatch failed: ' + e.message, { sessionId: A.session.id, supplier: g.name });
-            res = { supplier: g.name, mechanism, status: 'error', result: e.message, needsManual: true };
+        if (dispatchDisabled) {
+            res = { supplier: g.name, mechanism: 'manual', status: 'manual_disabled', result: 'Автооформлення постачальнику тимчасово вимкнено власником — оформити вручну.', needsManual: true };
+        } else {
+            const meta = await resolveSupplierMeta(A, g.name);
+            const { mechanism, supplierCfg } = await mechanismFor(A, meta);
+            try {
+                if (mechanism === 'brewdrop') res = await dispatchBrewdrop(A, g, { total: gTotal, prepay: gPrepay });
+                else if (mechanism === 'easydrop_offline') res = await dispatchEasydrop(A, 'n_supplier_order_ed', g, { supplierCfg });
+                else if (mechanism === 'easydrop_cart') res = await dispatchEasydrop(A, 'n_supplier_order_cart', g, { supplierCfg });
+                else res = { supplier: g.name, mechanism: 'manual', status: 'manual', result: '', needsManual: true };
+            } catch (e) {
+                logger.warn('[shopAgent] supplier dispatch failed: ' + e.message, { sessionId: A.session.id, supplier: g.name });
+                res = { supplier: g.name, mechanism, status: 'error', result: e.message, needsManual: true };
+            }
         }
         res.items = g.lines; res.total = gTotal;
         out.push(res);

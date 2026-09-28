@@ -1214,7 +1214,11 @@ async function runPolicyInner(A, u) {
             // проханням виглядало як збій («два рази ціну написав», «два рази питає»). Якщо картку щойно
             // показано і клієнту більше нічого відповісти (нема питання, нема сигналу кольору) — просто
             // чекаємо, не питаємо вдруге.
-            if (A.justPresented && !u.questions.length && !colorNote) { ctx.agent.lastAsk = paramsPrompt || 'зріст і вага'; return; }
+            // 2026-09-28 (Edit 86c32ac7, «двічі питає зріст та вагу»): «Як підібрати розмір?» разом із свіжою карткою — картка вже
+            // закінчується проханням зросту/ваги, тож таке питання вважаємо закритим і не віддаємо в compose (він дописував друге прохання).
+            const qsLeft = A.justPresented ? u.questions.filter((q) => !/розмір|сітк|підібр|підбер|замір|як обрат|який мені|яку мені/i.test(q)) : u.questions;
+            if (A.justPresented && !qsLeft.length && !colorNote) { ctx.agent.lastAsk = paramsPrompt || 'зріст і вага'; return; }
+            if (qsLeft.length !== u.questions.length) u = { ...u, questions: qsLeft };
             const missing = isHW ? (si.height && !si.weight ? 'вагу' : (!si.height && si.weight ? 'зріст' : '')) : '';
             let ask = '';
             if (!A.justPresented) {

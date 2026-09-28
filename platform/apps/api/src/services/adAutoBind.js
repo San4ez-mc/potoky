@@ -110,7 +110,12 @@ async function decide(k, prods, ad, resolve) {
     const adImg = await fetchImage(info.image);
     if (!adImg) return { product: null, note: 'не вдалось дістати обкладинку' };
     // «Футболка продається окремо» — не склад образу, а допродаж: такі рядки не рахуємо.
-    const cats = catsOf(String(info.caption || ad.name || '').split('\n').filter((l) => !/окремо/i.test(l)).join('\n'));
+    // Заголовок (перший рядок з категорією) вирішує: одна річ чи образ. «Костюм складається із кофти та штанів» — опис однієї речі, не склад образу.
+    const capLines = String(info.caption || ad.name || '').split('\n').map((l) => l.trim()).filter(Boolean).filter((l) => !/окремо|складаєт|складаєть/i.test(l));
+    const titleLine = capLines.find((l) => catsOf(l).length) || '';
+    const titleCats = catsOf(titleLine);
+    // «Лляний костюм (сорочка та шорти)» — костюм це одна річ, навіть якщо в дужках перелічено його частини.
+    const cats = titleCats.includes('костюм') ? ['костюм'] : (titleCats.length === 1 ? titleCats : catsOf(capLines.join('\n')));
     const compOf = (c) => prods.find((x) => x.id === (c.productId || c.id)) || prods.find((x) => c.sku && String(x.sku) === String(c.sku)) || null;
     const sets = prods.filter((p) => Array.isArray(p.setComponents) && p.setComponents.length);
     const singles = prods.filter((p) => !(Array.isArray(p.setComponents) && p.setComponents.length));

@@ -966,6 +966,28 @@ setTimeout(() => {
     setInterval(runDigests, DIGEST_INTERVAL_MS);
 }, 2 * 60 * 1000);
 
+// ── Автоприв'язка оголошень/дописів CRM до товарів (2026-09-29) ──
+// Нові оголошення з'являються в CRM щоденним Meta-синком і коли клієнт приходить з нового допису —
+// раз на 3 год прив'язуємо неприв'язані (артикул → фото). По одному прогону на CRM-ключ; ADS_AUTOBIND=0 вимикає.
+const ADS_AUTOBIND_INTERVAL_MS = 3 * 60 * 60 * 1000;
+async function runAdsAutoBind() {
+    try {
+        const { autoBindAds } = require('../../api/src/services/adAutoBind');
+        const rows = await db.funnelKey.findMany({ where: { key: { in: ['CRM_API_KEY', 'GEMINI_API_KEY', 'SHOP_AGENT_V2', 'ADS_AUTOBIND'] } }, select: { botId: true, key: true, value: true } });
+        const byBot = {};
+        for (const r of rows) (byBot[r.botId] = byBot[r.botId] || {})[r.key] = String(r.value || '').trim();
+        const seenCrm = new Set();
+        for (const [botId, k] of Object.entries(byBot)) {
+            if (!k.CRM_API_KEY || !k.GEMINI_API_KEY || !/^(1|true|on)$/i.test(k.SHOP_AGENT_V2 || '') || /^(0|false|off)$/i.test(k.ADS_AUTOBIND || '')) continue;
+            if (seenCrm.has(k.CRM_API_KEY)) continue;
+            seenCrm.add(k.CRM_API_KEY);
+            const r = await autoBindAds(botId, {});
+            logger.info('[worker] ads autobind', { botId, checked: r.checked, bound: r.bound, error: r.error || null });
+        }
+    } catch (e) { logger.warn('[worker] ads autobind failed: ' + e.message); }
+}
+setTimeout(() => { runAdsAutoBind(); setInterval(runAdsAutoBind, ADS_AUTOBIND_INTERVAL_MS); }, 10 * 60 * 1000);
+
 // ── Graceful shutdown ────────────────────────────────────────
 async function shutdown() {
     logger.info('Worker shutting down...');

@@ -82,6 +82,23 @@ router.post('/crm-secrets-sync',
     })
 );
 
+// POST /api/funnels/ads-autobind — CRM після «Отримати дані зараз»: автоприв'язка неприв'язаних оголошень
+// до товарів (артикул у тексті → фото). Працює у фоні (розпізнавання фото — секунди на оголошення), відповідає одразу.
+router.post('/ads-autobind',
+    validateParams({ body: z.object({ crmApiKey: z.string().min(8), dryRun: z.boolean().optional() }) }),
+    asyncHandler(async (req, res) => {
+        const apiSecret = req.headers['x-api-secret'];
+        if (!apiSecret || !process.env.API_SECRET || apiSecret !== process.env.API_SECRET) {
+            return res.status(403).json({ ok: false, error: { code: 'FORBIDDEN', message: 'ads-autobind: лише системний X-Api-Secret' } });
+        }
+        const { autoBindAds, salesBotForCrmKey } = require('../services/adAutoBind');
+        const botId = await salesBotForCrmKey(req.body.crmApiKey);
+        if (!botId) return res.status(404).json({ ok: false, error: { code: 'NOT_FOUND', message: 'Воронку магазину за CRM-ключем не знайдено' } });
+        autoBindAds(botId, { dryRun: !!req.body.dryRun }).catch((e) => logger.warn('[ads-autobind] ' + e.message, { botId }));
+        res.json({ ok: true, data: { started: true, botId } });
+    })
+);
+
 // GET /api/funnels/:botId — get flow definition + keys
 router.get('/:botId',
     validateParams({ params: z.object({ botId: z.string().uuid() }) }),

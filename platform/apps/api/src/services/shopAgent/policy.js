@@ -363,7 +363,7 @@ function resetForNewProduct(A, sku) {
     const { ctx } = A;
     if (ctx.agent.presentedSku && ctx.agent.presentedSku !== sku) {
         for (const k of ['sizeInput', 'recommendedSize', 'sizeSource', 'sizeReplyText', 'sizeColorFollowup', 'sizeOutOfRange', 'sizeOorReason', 'sizeOorAlternative', 'isSetSizeCalc', 'setSizesText', 'colorChoice', 'available', 'availReason', 'orderUnits', 'orderUnitsText', 'orderUnitsTotal', 'orderQty', 'orderIntent', 'setMode', 'setPick', 'setSelection', 'availChecked', 'extraItems', 'extraItemsText', 'extraUnresolved', 'orderExtras', 'unavailableColors', 'availableColorsNow']) delete ctx[k];
-        for (const k of ['setOriginal', 'setPricing', 'setStageSent', 'setEditNote', 'setParams', 'upsellOffered', 'upsellPhotoSent', 'availKey']) delete ctx.agent[k];
+        for (const k of ['setOriginal', 'setPricing', 'setStageSent', 'setEditNote', 'setParams', 'upsellOffered', 'upsellPhotoSent', 'availKey', 'sizeVerifyAsked', 'sizeClaim']) delete ctx.agent[k];
         if (!ctx.crmOrderId) for (const k of ['paymentInfo', 'payAmount', 'payLabel', 'orderRef', 'orderRefAt', 'ibanPayUrl', 'ibanInvoiceUid', 'requisitesSentAt']) delete ctx[k];
     }
 }
@@ -1157,6 +1157,18 @@ async function runPolicyInner(A, u) {
         const mem = ctx.customer || {};
         let usedMemory = false;
         if (isHW && !si.height && !si.weight && mem.height && mem.weight && !u.clothingSize) { si.height = mem.height; si.weight = mem.weight; usedMemory = true; }
+        // 2026-09-28 (Edit 7ea6a772, власник): клієнт сам назвав розмір («чорний, XXL») — для одягу за зростом/вагою
+        // спершу один раз перепитуємо їх, щоб перевірити розмір. Відмовився дати — приймаємо його розмір.
+        if (isHW && !pp.isSet && si.clothingSize && !(si.height && si.weight) && !ctx.agent.sizeVerifyAsked) {
+            ctx.agent.sizeVerifyAsked = true; ctx.agent.sizeClaim = String(si.clothingSize).toUpperCase();
+            ctx.sizeInput = si;
+            if (A.justPresented) { const card = A.out.find((o) => o.step === 'present'); if (card && card.text) card.text = card.text.replace(/\n*👉[^\n]*(зріст|вага)[^\n]*/i, ''); }
+            A.out.push({ text: 'Напишіть, будь ласка, зріст та вагу — перепровірю, чи ' + ctx.agent.sizeClaim + ' розмір добре підійде 🙂', step: 'size_verify_ask' });
+            ctx.agent.lastAsk = 'зріст і вага';
+            return;
+        }
+        // Параметри для перевірки прийшли — рахуємо саме за зростом/вагою, а не за названим розміром.
+        if (isHW && ctx.agent.sizeClaim && si.height && si.weight) delete si.clothingSize;
         ctx.sizeInput = si;
         const complete = (si.height && si.weight) || si.clothingSize || si.footLength || (si.chest && pp.sizeChartData);
         if (complete) {
@@ -1184,7 +1196,15 @@ async function runPolicyInner(A, u) {
             // однорядкового тексту (просто товар) norm() як і раніше прибирає зайві пробіли.
             const sizeText = String(ctx.sizeReplyText || '');
             const sizeTextClean = sizeText.includes('\n') ? sizeText.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim() : norm(sizeText);
-            const reply = (usedMemory ? 'Беру ваші параметри з минулого разу (' + si.height + ' см / ' + si.weight + ' кг) 🙂 ' : '') + sizeTextClean + (ctx.sizeColorFollowup ? ' ' + norm(String(ctx.sizeColorFollowup)) : '');
+            let claimNote = '';
+            if (ctx.agent.sizeClaim && ctx.recommendedSize && si.height && si.weight) {
+                const rec = String(ctx.recommendedSize).toUpperCase();
+                claimNote = rec === ctx.agent.sizeClaim
+                    ? '✅ Так, ' + rec + ' вам добре підійде. '
+                    : 'Ви називали ' + ctx.agent.sizeClaim + ', але за вашим зростом і вагою краще підійде ' + rec + ' 📏 Якщо все ж хочете ' + ctx.agent.sizeClaim + ' — напишіть, оформимо так. ';
+                delete ctx.agent.sizeClaim;
+            } else if (ctx.agent.sizeClaim) delete ctx.agent.sizeClaim; // параметри не дали — приймаємо названий розмір без «перевірено»
+            const reply = (usedMemory ? 'Беру ваші параметри з минулого разу (' + si.height + ' см / ' + si.weight + ' кг) 🙂 ' : '') + claimNote + sizeTextClean + (ctx.sizeColorFollowup ? ' ' + norm(String(ctx.sizeColorFollowup)) : '');
             const hasColorNow = ctx.colorChoice && ctx.colorChoice.color;
             if (!hasColorNow && pp.colors) { A.out.push({ text: u.questions.length ? await answerThenAsk(A, u, reply) : reply, step: 'size_reply' }); ctx.agent.lastAsk = 'колір'; return; }
             A.out.push({ text: u.questions.length ? await answerThenAsk(A, u, reply) : reply, step: 'size_reply' });

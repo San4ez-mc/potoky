@@ -348,6 +348,7 @@ async function present(A) {
         if (szItems.length > 1 && szItems.every((z) => /^\d+$/.test(z))) card = card.replace(/👉[^\n]*/, '👉 Підкажіть, будь ласка, ваш розмір за талією (' + szLine.replace(/\s*\(.*$/, '') + ') 😊');
         else if (ctx.sizeInput && ctx.sizeInput.height && ctx.sizeInput.weight) card = card.replace(/\n*👉[^\n]*(зріст|вага)[^\n]*/i, '');
     } catch (e) { /* best-effort */ }
+    if (!urls.length) card = card + '\n\nНа жаль, фото цього товару зараз відсутнє 🙏';
     A.out.push({ text: greet + card, step: 'present' });
     ctx.productJustPresented = true; ctx.presentedAt = Date.now(); ctx.lastPresentedSku = p.sku; ctx.agent.presentedSku = p.sku;
     ctx.agent.lastAsk = p.followUpQuestion || '';

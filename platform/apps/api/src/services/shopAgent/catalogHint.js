@@ -140,7 +140,7 @@ var lines = top.map(function (p, i) { return (i + 1) + '. ' + (p.sku ? ('Арт�
 // thumbnailUrl у CRM — відносний шлях (/uploads/...), той самий resolveUrl, що й у n_lookup.
 var __publicBase = (keys.CRM_PUBLIC_BASE || 'https://pcrm.fineko.space').replace(/\/$/, '');
 function __resolveUrl(u) { if (!u) return ''; return /^https?:\/\//i.test(u) ? u : (__publicBase + (u.charAt(0) === '/' ? u : '/' + u)); }
-var catalogHintPhotos = top.map(function (p) { return __resolveUrl(p.thumbnailUrl || (Array.isArray(p.images) && p.images[0]) || ''); }).filter(Boolean);
+var catalogHintPhotos = top.map(function (p) { return __resolveUrl((Array.isArray(p.images) && p.images[0]) || ''); }).filter(Boolean);
 return { catalogHint: lines.join('\n'), catalogHintCount: top.length, catalogHintTotal: hits.length, catalogHintSkus: top.map(function (p) { return String(p.sku || ''); }).filter(Boolean).join(','), catalogHintPhotos: catalogHintPhotos, catalogCategories: catList, unknownTurns: unknownTurns };
 
 }

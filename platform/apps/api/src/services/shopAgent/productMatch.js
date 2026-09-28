@@ -719,14 +719,15 @@ try {
     upsell.push(upname(cprod));
     var __cq = {}; (Array.isArray(cprod.bulkPricing) ? cprod.bulkPricing : []).forEach(function (b) { if (b && b.quantity && b.price) __cq[String(b.quantity)] = Number(b.price); });
     upsellItems.push({ id: cprod.id, sku: cprod.sku || '', supplierArticle: cprod.supplierArticle || '', name: upname(cprod).replace(/\s—\s\d+ грн$/, ''), price: Number(cprod.price) || 0, qtyPrices: __cq, offers: cprod.offers || [], colors: [...new Set((cprod.offers || []).flatMap(function (o) { return (o.properties || []).filter(function (q) { return /кол|цвет/i.test(q.name || ''); }).map(function (q) { return q.value; }); }))].join(', ') });
-    if (!__upsellPhoto) { __upsellPhoto = resolveUrl(cprod.thumbnailUrl || (cprod.images || [])[0] || ''); }
+    if (!__upsellPhoto) { __upsellPhoto = resolveUrl((cprod.images || [])[0] || ''); }
   }
   var __upsellPhotoNote = __upsellPhoto
     ? 'Фото товару(-ів) з допродажу Є — якщо клієнт попросить показати, скажи що зараз надішлеш.'
     : 'Фото товару(-ів) з допродажу поки НЕМА під рукою — якщо клієнт попросить, чесно скажи що зараз немає, запропонуй подивитись каталог.';
 
   // ── фото товару ──
-  var imgs = []; if (found.thumbnailUrl) imgs.push(resolveUrl(found.thumbnailUrl));
+  // Мініатюра (thumbnailUrl) — лише для списку товарів у CRM, клієнту її не надсилаємо ніколи (рішення власника 2026-09-28).
+  var imgs = [];
   var rawImgs = found.images || []; for (var x = 0; x < rawImgs.length; x++) { var uu = resolveUrl(rawImgs[x]); if (uu && imgs.indexOf(uu) < 0) imgs.push(uu); }
   var img = imgs[0] || '';
   var price = Number(found.price) || 0;
@@ -778,7 +779,7 @@ try {
     var compFull = null;
     try { var cr = await fetch(base + '/products/' + comp.productId, { headers: hdr() }); if (cr.ok) { var cj = await cr.json(); if (cj && cj.ok) compFull = cj.data; } } catch (e) { }
     var cImgs = [];
-    if (compFull) { if (compFull.thumbnailUrl) cImgs.push(resolveUrl(compFull.thumbnailUrl)); var cRaw = compFull.images || []; for (var cx = 0; cx < cRaw.length; cx++) { var cuu = resolveUrl(cRaw[cx]); if (cuu && cImgs.indexOf(cuu) < 0) cImgs.push(cuu); } }
+    if (compFull) { var cRaw = compFull.images || []; for (var cx = 0; cx < cRaw.length; cx++) { var cuu = resolveUrl(cRaw[cx]); if (cuu && cImgs.indexOf(cuu) < 0) cImgs.push(cuu); } }
     // 2026-09-08 (t_ilich_k, _vlad_838: «які джинси в комплекті, 6 варіантів?», «кофта в графітовому є?» → бот не знав):
     // кольори й розміри компонента з його оферів — у setList, щоб n_set_choice відповідав сам.
     var cColors = [], cSizes = [], cColorPhotos = {};

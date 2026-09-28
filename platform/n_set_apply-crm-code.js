@@ -38,7 +38,7 @@ if (apiKey) {
             if ((nmK.indexOf('колір') >= 0 || nmK.indexOf('цвет') >= 0) && colors.indexOf(propsK[mm].value) < 0) colors.push(propsK[mm].value);
           }
         }
-        if (found.thumbnailUrl) { var tu = resolveUrl(found.thumbnailUrl); if (tu) imgs.push(tu); }
+        // мініатюра (thumbnailUrl) — лише для списку товарів у CRM, клієнту не надсилається
         var rawImgs = found.images || []; for (var x = 0; x < rawImgs.length; x++) { var uu = resolveUrl(rawImgs[x]); if (uu && imgs.indexOf(uu) < 0) imgs.push(uu); }
         img = imgs[0] || '';
         sizeChartData = found.sizeChartData || null;

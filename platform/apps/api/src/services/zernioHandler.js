@@ -432,6 +432,23 @@ async function postZernioCommentReply(botId, commentId, text, mediaId, sessionId
     return data.data?.id || data.id || data.data?.commentId || null;
 }
 
+// Публічна відповідь під коментарем залежить від того, чи дійшов приватний DM: дійшов → варіант «відписали в директ» (без
+// підказки), не дійшов → просимо написати самим (закриті особисті). Не було жодної спроби DM → текст лишається як є.
+const COMMENT_HINT_RE = /\.\s*(Якщо не бачите повідомлення|Якщо директ не прийшов|Не бачите повідомлення\?)[\s\S]*$/;
+const DM_CLOSED_REPLIES = [
+    '{NAME}, не вдалося надіслати вам у директ — схоже, у вас закриті особисті повідомлення. Напишіть нам самі, будь ласка 🙏',
+    '{NAME}, директ до вас не дійшов — можливо, закриті приватні повідомлення. Черкніть нам першими, будь ласка 💛',
+    '{NAME}, ми відповіли, але приватне повідомлення не доставилось (закриті особисті?). Напишіть нам самі в директ, будь ласка 😊',
+    '{NAME}, не бачимо змоги написати вам у приват — у вас, певно, закриті відповіді. Напишіть нам першими, будь ласка 🙏',
+    '{NAME}, повідомлення в директ не пройшло — імовірно, закриті особисті. Напишіть нам самі, і ми одразу допоможемо 💙',
+];
+function pickCommentPublicReply(text, dmSent, dmFailed, name) {
+    const base = String(text || '');
+    if (dmSent > 0) return base.replace(COMMENT_HINT_RE, '');
+    if (dmFailed > 0) return DM_CLOSED_REPLIES[Math.floor(Math.random() * DM_CLOSED_REPLIES.length)].split('{NAME}').join(String(name || 'друже'));
+    return base;
+}
+
 // Фото через Meta-direct: Zernio-send текстовий, тож зображення шлемо напряму в Meta
 // (psid із Zernio-вебхука = реальний Meta IGSID). imageUrl — публічний http-URL.
 async function sendMetaPhoto(botId, igsid, imageUrl) {
@@ -1550,6 +1567,59 @@ async function runFlowAndDeliver(sessionId, entry) {
     }
     catch (e) { logger.error('[zernioHandler] flow step failed', { botId, sessionId, error: e.message }); }
     const outMsgs = await db.message.findMany({ where: { sessionId, role: 'assistant', createdAt: { gt: sinceTime } }, orderBy: { createdAt: 'asc' } });
+    let dmSent = 0, dmFailed = 0;
+    // Клієнт лише лишив коментар (розмови ще нема): Meta дозволяє ОДНУ приватну відповідь (лише текст), фото/друге повідомлення
+    // до відповіді клієнта дають «outside of allowed window» / 500. Тож усі тексти ходу зливаємо в одне повідомлення, а фото
+    // відкладаємо — вони підуть першими, щойно клієнт відповість у директ (див. блок нижче).
+    const commentOnlyDm = !!commentId && !conversationId;
+    if (commentOnlyDm) {
+        const pending = []; const texts = [];
+        for (const om of outMsgs) {
+            const m = om.metadata || {};
+            if (m.hidden || m.source === 'zernio_inbox' || m.status === 'sent') continue;
+            const att = m.attachment;
+            if (att && (att.type === 'photo' || att.type === 'image') && att.url) {
+                const urls = (Array.isArray(att.urls) ? att.urls : [att.url]).filter((u) => u && String(u).startsWith('http'));
+                if (urls.length) pending.push({ urls, caption: att.caption || om.content || '' });
+            } else if (String(om.content || '').trim() && !/^\[повідомлення\]$/.test(String(om.content).trim())) texts.push(String(om.content).trim());
+        }
+        if (texts.length) {
+            const dmText = texts.join('\n\n');
+            let zid = null, err = null;
+            for (let attempt = 0; attempt < 2 && !zid; attempt++) {
+                try { zid = await sendZernioMessage(botId, conversationId, dmText, sendOpts); err = null; }
+                catch (e) { err = e.message; if (attempt === 0) await new Promise((r) => setTimeout(r, 2000)); }
+            }
+            await logDelivery(sessionId, botId, 'zernio', !!zid, zid ? null : (err || 'sendZernioMessage не повернув id'), { commentDm: true, text: dmText.slice(0, 160) });
+            if (zid) dmSent++; else dmFailed++;
+            if (!zid) await sendTelegramAlert(botId, '⚠️ Приватну відповідь на коментар не доставлено (' + String(err || '?').slice(0, 120) + ') — у публічній відповіді попросили написати самим.\nСесія: https://flows.fineko.space/sessions/' + sessionId, sessionId).catch(() => {});
+        }
+        if (pending.length) {
+            try {
+                const _s = await db.session.findUnique({ where: { id: sessionId }, select: { context: true } });
+                const _c = (_s && _s.context) || {};
+                await db.session.update({ where: { id: sessionId }, data: { context: cleanJsonDeep({ ..._c, commentPendingPhotos: pending.slice(0, 5) }) } });
+            } catch (e) { logger.warn('[zernioHandler] commentPendingPhotos: ' + e.message); }
+        }
+        outMsgs.length = 0;
+    } else if (!commentId) {
+        // Клієнт відповів у директ після коментаря — тепер вікно відкрите: спершу надсилаємо відкладені фото.
+        try {
+            const _s = await db.session.findUnique({ where: { id: sessionId }, select: { context: true } });
+            const _c = (_s && _s.context) || {};
+            const pend = Array.isArray(_c.commentPendingPhotos) ? _c.commentPendingPhotos : [];
+            if (pend.length) {
+                await db.session.update({ where: { id: sessionId }, data: { context: cleanJsonDeep({ ..._c, commentPendingPhotos: [] }) } });
+                for (const p of pend) {
+                    try {
+                        await sendMetaPhotoAlbum(botId, contactId, p.urls);
+                        await logDelivery(sessionId, botId, 'ig_photo_album', true, null, { deferredFromComment: true, count: p.urls.length });
+                        if (p.caption) await sendZernioMessage(botId, conversationId, p.caption, sendOpts);
+                    } catch (e) { await logDelivery(sessionId, botId, 'ig_photo_album', false, e.message, { deferredFromComment: true }); }
+                }
+            }
+        } catch (e) { logger.warn('[zernioHandler] deferred photos: ' + e.message); }
+    }
     for (const om of outMsgs) {
         const m = om.metadata || {};
         if (m.hidden) continue;
@@ -1626,9 +1696,10 @@ async function runFlowAndDeliver(sessionId, entry) {
             } else if (om.content) {
                 const zid = await sendZernioMessage(botId, conversationId, om.content, sendOpts);
                 await logDelivery(sessionId, botId, 'zernio', !!zid, zid ? null : 'sendZernioMessage не повернув id', { nodeId: m.nodeId || null, text: String(om.content).slice(0, 160) });
-                if (zid) await db.message.update({ where: { id: om.id }, data: { metadata: { ...m, zernioMessageId: zid, status: 'sent' } } }).catch(() => {});
+                if (zid) { dmSent++; await db.message.update({ where: { id: om.id }, data: { metadata: { ...m, zernioMessageId: zid, status: 'sent' } } }).catch(() => {}); } else dmFailed++;
             }
         } catch (e) {
+            dmFailed++;
             // Фолбек: Meta-фото не пройшло → підпис+URL текстом через Zernio.
             await logDelivery(sessionId, botId, imgUrl ? 'ig_photo' : 'zernio', false, e.message, { nodeId: m.nodeId || null });
             if (imgUrl) { await sendZernioMessage(botId, conversationId, (att.caption || om.content || '') + '\n' + imgUrl, sendOpts).catch(() => {}); }
@@ -1644,9 +1715,12 @@ async function runFlowAndDeliver(sessionId, entry) {
             const _cc2 = (_frc && _frc.context) || {};
             if (_cc2.commentReplyText && !_cc2.commentReplyPosted) {
                 let _rid = null, _rerr = null;
+                const _pubName = String(_cc2.senderName || contactName || '').trim().split(/\s+/)[0] || 'друже';
+                const _pubText = pickCommentPublicReply(_cc2.commentReplyText, dmSent, dmFailed, _pubName);
+                _cc2.commentReplyText = _pubText;
                 try {
-                    _rid = await postZernioCommentReply(botId, commentId, _cc2.commentReplyText, _cc2.commentMediaId, sessionId);
-                    await logDelivery(sessionId, botId, 'zernio_comment_reply', !!_rid, _rid ? null : 'без id відповіді', { commentId, text: String(_cc2.commentReplyText).slice(0, 160) });
+                    _rid = await postZernioCommentReply(botId, commentId, _pubText, _cc2.commentMediaId, sessionId);
+                    await logDelivery(sessionId, botId, 'zernio_comment_reply', !!_rid, _rid ? null : 'без id відповіді', { commentId, dmSent, dmFailed, text: String(_pubText).slice(0, 160) });
                 } catch (e) {
                     _rerr = e.message;
                     await logDelivery(sessionId, botId, 'zernio_comment_reply', false, e.message, { commentId });
@@ -2128,5 +2202,5 @@ setTimeout(() => { retryMissedZernioTurns(); setInterval(retryMissedZernioTurns,
 // живий кейс mediaId без артикулу; Проблема Д — race condition у серіалізації
 // runFlowAndDeliver) і майбутніх регресійних тестів — не викликаються поза
 // handleZernioEvent у нормальному потоці.
-module.exports = { handleZernioEvent, sendZernioMessage, ensurePostAutomation, scheduleFlowRun };
+module.exports = { handleZernioEvent, sendZernioMessage, ensurePostAutomation, scheduleFlowRun, pickCommentPublicReply };
 

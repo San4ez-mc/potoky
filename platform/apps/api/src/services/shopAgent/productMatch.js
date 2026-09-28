@@ -524,6 +524,24 @@ try {
     } catch (e) { /* best-effort */ }
   }
 
+  // Автозвʼязка допис→товар: якщо товар визначено за артикулом З ПІДПИСУ допису (не з тексту клієнта) і в /ads для цього
+  // externalId ще нема товару — записуємо звʼязку раз і назавжди (наступні коментарі йдуть у Пріоритет 0). Ручну звʼязку не чіпаємо.
+  if (context.entryAd && !context.testMode && found && /^(article|offer):/.test(String(via)) && !preFromUser) {
+    try {
+      var __bindArt = String(via).split(':').slice(1).join(':').toUpperCase();
+      var __bindCap = extractArticles((context.sharedPost && context.sharedPost.caption) || '').map(function (x) { return String(x).toUpperCase(); });
+      if (__bindArt && __bindCap.indexOf(__bindArt) >= 0) {
+        var __bindResp = await fetch(base + '/ads?externalId=' + encodeURIComponent(String(context.entryAd)) + '&take=1', { headers: hdr() });
+        var __bindJson = __bindResp.ok ? await __bindResp.json().catch(function () { return {}; }) : {};
+        var __bindRow = Array.isArray(__bindJson.data) ? __bindJson.data[0] : null;
+        if (__bindRow && !__bindRow.productId) {
+          await fetch(base + '/ads', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, hdr()), body: JSON.stringify({ externalId: String(context.entryAd), productId: found.id }) });
+          context.adAutoBound = String(context.entryAd) + '→' + (found.sku || found.id);
+        }
+      }
+    } catch (e) { /* best-effort */ }
+  }
+
   // ── Намір клієнта за категорією (бойовий старт 2026-09-07): Артур з реклами комплекту «кофта, джинси…»
   // (привʼязка → джинси) написав «Цікавить кофта»; Ігор без ad_id/рілса написав «Яка ціна куртки?».
   // Слово-категорія з повідомлення клієнта звіряється з назвою знайденого товару.

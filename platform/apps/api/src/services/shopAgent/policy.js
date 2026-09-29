@@ -945,8 +945,10 @@ async function runPolicyInner(A, u) {
         const r = await T.resolveProduct(A, u);
         // «А штани спортивні?» — категорія, якої в каталозі нема, товар лишився попередній: питання не губимо, на нього відповідає compose
         // з фактів/бази знань (FunnelTest 35: бот мовчки перепитав зріст/вагу замість чесного «окремо нема, є костюми»).
-        if (r.status === 'kept' && categorySignal && !freshSignal && !u.questions.length && /\?|(^|\s)(є|маєте|нема\S*)(\s|$)/i.test(text)) {
-            u.questions = ['Чи є у вас ' + text.replace(/^\s*(а|і|ще|а\s+є|є)\s+/i, '').replace(/[?\s]+$/, '') + '? (окремої такої категорії в каталозі не знайдено)'];
+        // «штани» — синонім категорії джинсів у CRM, тож пошук повертає той самий товар (found, той самий sku) — це теж «нового не знайдено».
+        const sameAgain = r.status === 'found' && __setBeforeProduct && P(ctx) && P(ctx).sku === __setBeforeProduct.sku;
+        if ((r.status === 'kept' || sameAgain) && categorySignal && !freshSignal && !u.questions.length && /\?|(^|\s)(є|маєте|нема\S*)(\s|$)/i.test(text)) {
+            u.questions = ['Чи є у вас ' + text.replace(/^\s*(а|і|ще|а\s+є|є)\s+/i, '').replace(/[?\s]+$/, '') + '? (окремо такого товару в каталозі не знайдено' + (sameAgain ? ', крім уже показаного' : '') + ' — чесно скажи це й назви, що є схоже, якщо є в ФАКТАХ/БАЗІ ЗНАНЬ)'];
         }
         const swappedToOwnSetComponent = r.status === 'found' && __setBeforeProduct && __setBeforeProduct.isSet && Array.isArray(__setBeforeSelection)
             && P(ctx).sku !== __setBeforeProduct.sku && __setBeforeSelection.some((it) => it.article === P(ctx).sku);

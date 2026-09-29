@@ -26,7 +26,7 @@ function extractArticles(txt) {
     const re2 = /\b(set\d{3,6}|[A-Za-z]{1,3}\d{3,6})\b/gi; while ((m = re2.exec(s))) out.add(m[1].toUpperCase());
     return [...out];
 }
-const MATERIALS = [['льон', /лля|льон|льня/i], ['замша', /замш/i], ['вельвет', /вельвет/i], ['фліс', /фліс|полар|плюш/i], ['плащівка', /плащів/i], ['ангора', /ангор/i], ['тринитка', /тринит/i], ['двонитка', /двонит|двухнит/i], ['рубчик', /рубчик/i], ['шкіра', /шкір/i]];
+const MATERIALS = [['льон', /лля|льон|льня/i], ['замша', /замш/i], ['вельвет', /вельвет/i], ['фліс', /фліс|полар|плюш/i], ['плащівка', /плащів/i], ['ангора', /ангор/i], ['тринитка', /тринит|трьохнит|трехнит/i], ['двонитка', /двонит|двухнит/i], ['рубчик', /рубчик/i], ['шкіра', /шкір/i]];
 const PARTS = [['сорочка', /сорочк/i], ['футболка', /футболк/i], ['шорти', /шорт/i], ['штани', /штан|брюк/i], ['піджак', /піджак|жакет/i], ['бомбер', /бомбер/i], ['кофта', /кофт|худі/i], ['поло', /\bполо\b/i]];
 const tagsOf = (list, s) => list.filter(([, re]) => re.test(String(s || ''))).map(([t]) => t);
 /** Суперечність підпису одиночного допису з обраним товаром: інший матеріал або інший склад костюма. '' — суперечності нема. */
@@ -35,7 +35,7 @@ function captionClash(caption, p) {
     const cap = lines.slice(0, 12).join('\n');
     const ptxt = [p.customerName, p.name, p.presentationText, p.aiNotes].filter(Boolean).join('\n');
     const cm = tagsOf(MATERIALS, cap); const pm = tagsOf(MATERIALS, ptxt);
-    if (cm.length && pm.length && !cm.some((m) => pm.includes(m))) return 'матеріал у підписі (' + cm.join(', ') + ') ≠ товару (' + pm.join(', ') + ')';
+    if (cm.length && pm.length && cm.some((m) => !pm.includes(m))) return 'матеріал у підписі (' + cm.join(', ') + ') ≠ товару (' + pm.join(', ') + ')';
     // Склад лише з дужок/«складається з…» — описує саме цю річ.
     const compTxt = [...cap.matchAll(/\(([^)]{3,60})\)/g)].map((m) => m[1]).concat(lines.filter((l) => /склада/i.test(l))).join(' ');
     const cp = tagsOf(PARTS, compTxt); const pp = tagsOf(PARTS, ptxt);

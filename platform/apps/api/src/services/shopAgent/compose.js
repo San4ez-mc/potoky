@@ -86,6 +86,13 @@ function extractJsonLoose(raw) {
     return null;
 }
 
+// Службові назви блоків промпту («ФАКТИ», «БАЗА ЗНАНЬ») не мають потрапляти клієнту (2026-09-29, ed8e3e06: «в ФАКТАХ не маю»).
+function noJargon(t) {
+    return String(t || '')
+        .replace(/\s*,?\s*(?:[Зз]гідно\s+з|[Вв]|[Уу]|[Зз]а|[Зз])\s+(?:ФАКТ(?:АХ|АМИ|ИМИ|ІВ|И)|БАЗ(?:І|ОЮ|И)\s+ЗНАНЬ)/g, '')
+        .replace(/ФАКТ(?:АХ|АМИ|ИМИ|ІВ|И)/g, 'даних')
+        .replace(/\s{2,}/g, ' ').trim();
+}
 async function compose(A, o = {}) {
     const { ctx, keys } = A;
     // Частина викликів (перед підсумком замовлення, оплата) не передавала базу знань — модель тоді вигадувала («відправка наступного дня»). Завжди підвантажуємо.
@@ -125,13 +132,13 @@ async function compose(A, o = {}) {
     try {
         const raw = await callClaude({ sessionId: A.session.id, systemPrompt, messages: [{ role: 'user', content: 'Останнє повідомлення клієнта: «' + lastClient + '»\n\nЗАВДАННЯ: ' + task }], options: { model, maxTokens: 500, extra: { temperature: 0.3 } } });
         A.trace.push({ llm: 'compose', model, ms: Date.now() - t0 });
-        if (!hasQuestions) return { text: String(raw || '').replace(/```[a-z]*\n?|```/g, '').trim(), resolved: true };
+        if (!hasQuestions) return { text: noJargon(String(raw || '').replace(/```[a-z]*\n?|```/g, '').trim()), resolved: true };
         const parsed = extractJsonLoose(raw);
-        if (parsed && typeof parsed.text === 'string' && parsed.text.trim()) return { text: parsed.text.trim(), resolved: parsed.resolved !== false };
+        if (parsed && typeof parsed.text === 'string' && parsed.text.trim()) return { text: noJargon(parsed.text.trim()), resolved: parsed.resolved !== false };
         // LLM не повернула валідний JSON (рідкісний збій формату) — не рвемо хід, беремо сирий текст
         // як відповідь, але resolved:false, щоб питання клієнта все одно пішло на ескалацію, а не загубилось.
         logger.warn('[shopAgent] compose: невалідний JSON, fallback на сирий текст', { sessionId: A.session.id });
-        return { text: String(raw || '').replace(/```[a-z]*\n?|```/g, '').trim() || (o.fallback || ''), resolved: false };
+        return { text: noJargon(String(raw || '').replace(/```[a-z]*\n?|```/g, '').trim()) || (o.fallback || ''), resolved: false };
     } catch (e) {
         logger.warn('[shopAgent] compose failed: ' + e.message, { sessionId: A.session.id });
         return { text: o.fallback || '', resolved: !hasQuestions };

@@ -75,6 +75,12 @@ async function handleTurn({ botId, sessionId, text, imageUrl, sharedPost, entryA
     if (!session) throw new Error('session not found');
     const assets = await loadAssets(botId);
     const ctx = session.context || {};
+    // Пауза від скарги/прохання менеджера, поставлена попереднім ходом, поки це повідомлення чекало в черзі.
+    // 2026-09-29 (ed8e3e06): «Передала менеджеру» — і через 6 с бот знову питав колір, бо гейт у zernioHandler читав контекст ДО черги.
+    if (!dryRun && ctx.funnelPaused && /^(complaint|handoff|post_unknown)$/.test(String(ctx.pausedBy || ''))) {
+        logger.info('[shopAgent] turn skipped — session paused', { botId, sessionId, pausedBy: ctx.pausedBy });
+        return { replies: [], understanding: {}, trace: [], ctx, paused: true };
+    }
     ctx.agent = ctx.agent || { version: 2, turns: 0 };
     ctx.agent.turns = (ctx.agent.turns || 0) + 1;
     if (!ctx.customer) ctx.customer = await loadCustomerMemory(session);
@@ -108,6 +114,8 @@ async function handleTurn({ botId, sessionId, text, imageUrl, sharedPost, entryA
         if (!A.out.length) A.out.push({ text: 'Секунду, перевіряю інформацію 🙂 Якщо не відповім за хвилину — менеджер уже підключається.', step: 'error' });
         await db.appError.create({ data: { sessionId, botId, errorType: 'shop_agent', message: e.message, stack: String(e.stack || '').slice(0, 4000), context: { step: 'policy' } } }).catch(() => {});
     }
+    // Підтвердження зміни вибору («лише кофта») — перед першим текстом цього ходу, щоб клієнт бачив, що його почули.
+    if (A._switchNote) { const firstText = A.out.find((o) => o.text && !o.photoUrls); if (firstText) firstText.text = A._switchNote + firstText.text; else A.out.push({ text: A._switchNote.trim(), step: 'set_switch' }); }
     // одноразові прапорці ходу
     delete ctx.productJustPresented; delete ctx.hasFreshSignalThisTurn; delete ctx.sharedPost;
     ctx.agent.lastTurnAt = new Date().toISOString(); ctx.agent.lastIntent = u.intent; ctx.agent.lastTrace = A.trace.slice(-12);

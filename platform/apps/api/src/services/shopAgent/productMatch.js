@@ -230,7 +230,12 @@ try {
   function __normAdName(s) { return String(s || '').toLowerCase().replace(/_group_\d+/g, '').replace(/^допис в instagram:\s*/i, '').replace(/[.…]+$/g, '').replace(/[^\wа-яіїєґ\s]/gi, ' ').replace(/\s+/g, ' ').trim(); }
   if (!found && context.adTitle && adsList.length) {
     var __adT = __normAdName(context.adTitle);
-    if (__adT.length >= 8) {
+    // 2026-09-29 (правка d39d6e76, _vadim.k1._): обрізана назва «Чоловіча осіння куртка....» — початок назв ДВОХ товарів
+    // (D0005 шкірянка й A0156 пухова), тож «ті самі назви → той самий товар» дало не ту куртку. Обрізану назву, під яку
+    // підходить більше одного товару, не використовуємо.
+    var __adTruncated = /(\.\.\.|…)\s*(_group_\d+)?\s*$/i.test(String(context.adTitle || ''));
+    var __prefixHits = __adTruncated ? all.filter(function (x) { return [x.customerName, x.name, x.displayName].some(function (n) { return n && __normAdName(n).indexOf(__adT) === 0; }); }).length : 0;
+    if (__adT.length >= 8 && !(__adTruncated && __prefixHits > 1)) {
       var __adProds = {};
       adsList.forEach(function (a) { if (a.productId && __normAdName(a.name) === __adT) __adProds[String(a.productId)] = 1; });
       var __adProdIds = Object.keys(__adProds);

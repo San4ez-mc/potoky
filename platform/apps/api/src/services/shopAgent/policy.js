@@ -1035,7 +1035,7 @@ async function runPolicyInner(A, u) {
             ctx.agent.lastAsk = 'який із показаних товарів цікавить';
             return;
         } else if (!P(ctx)) {
-            if (ctx.hasProductSignal && !ctx.unknownNotifiedAt && !ctx.looksLikeReceipt) { ctx.lastCustomerMessage = text; await T.tool(A, 'n_unknown_debug'); await T.alert(A, 'n_unknown_admin', { photoUrl: A.turnImage || '' }); ctx.unknownNotifiedAt = Date.now(); }
+            if (ctx.hasProductSignal && !ctx.unknownNotifiedAt && !ctx.looksLikeReceipt && !((A.turnSharedPost || A.newEntryAd) && !A.turnImage)) { ctx.lastCustomerMessage = text; await T.tool(A, 'n_unknown_debug'); await T.alert(A, 'n_unknown_admin', { photoUrl: A.turnImage || '' }); ctx.unknownNotifiedAt = Date.now(); }
             if (ctx.looksLikeReceipt) {
                 // 2026-09-15 (живий баг, знайдено аудитом реплеїв — ustym_m4): n_lookup СВІДОМО
                 // переносить цей прапор із ходу в хід, поки товар не визначено (щоб не загубити
@@ -1049,6 +1049,17 @@ async function runPolicyInner(A, u) {
                 await T.alert(A, 'n_agent_receipt_no_order_admin', { details: '💬 «' + text.slice(0, 200) + '»', photoUrl: A.turnImage || '' });
                 return;
             }
+            // Пост/реклама, товар яких не знайшли в каталозі (новинка ще не в CRM або товар знято): не вгадуємо схожий
+            // і не питаємо категорію — передаємо менеджеру (рішення Олексія 29.09: «хай менеджеру передає — можливо буде
+            // наявність, якщо ні — менеджер запропонує схожі, щоб не втратити клієнта»).
+            const fromPostOrAd = !!(A.turnSharedPost || A.newEntryAd) && !A.turnImage;
+            if (fromPostOrAd) {
+                A.out.push({ text: (A.botSpokeBefore ? '' : 'Вітаю! 💛 Я ' + (A.keys.PERSONA_NAME || 'Оля') + ' з ' + (A.keys.SHOP_TAG || 'магазину') + '.\n') + 'Дякую за інтерес до цієї моделі! Уточню її наявність у менеджера — він напише вам сюди найближчим часом 🙏', step: 'post_unknown_handoff' });
+                const src = A.turnSharedPost ? ('пост: ' + String((A.turnSharedPost.caption || '').split('\n')[0]).slice(0, 120) + (A.turnSharedPost.url ? ' ' + A.turnSharedPost.url : '')) : ('реклама ' + String(ctx.entryAdId || '') + (ctx.adTitle ? ' «' + String(ctx.adTitle).slice(0, 80) + '»' : ''));
+                await pause(A, 'post_unknown', 'n_unknown_admin', 'Товар із посту/реклами не знайдено в CRM — перевірте наявність і напишіть клієнту (' + src + ')');
+                ctx.unknownNotifiedAt = Date.now();
+                return;
+            }
             // Категорії — з CRM (ctx.catalogCategories); рядок нижче — лише останній фолбек, якщо
             // CRM взагалі не повернула жодної категорії (порожній каталог), не хардкод-заміна CRM.
             ctx.agent.categoriesList = ctx.catalogCategories || 'костюми, куртки, бомбери, кофти, футболки, джинси, взуття';
@@ -1060,7 +1071,30 @@ async function runPolicyInner(A, u) {
             return;
         }
     }
-    const p = P(ctx);
+    let p = P(ctx);
+
+    // 3.0 Уже збираємо ВЕСЬ комплект, а клієнт каже «мені тільки кофта» (setChoice:item) — переходимо на цю позицію.
+    // 2026-09-29 (скарга «Ви знущаєтесь?», сесія ed8e3e06): understand() повернув setChoice:item/A0187, але розділ 3
+    // виконується лише поки setMode не обрано, тож вибір ігнорувався і бот далі питав розмір лоферів.
+    if (p.isSet && ctx.setMode === 'set' && !ctx.crmOrderId && Array.isArray(p.setItems) && p.setItems.length > 1) {
+        let art = (u.setChoice === 'item' && u.setArticle) ? String(u.setArticle) : '';
+        if (!art && /(тільки|лише|только|лиш)\s/i.test(text + ' ')) {
+            const segs0 = text.split(/\s*[,;\n+]\s*|\s+(?:і|та|и|й)\s+/giu).map((s) => s.trim()).filter(Boolean);
+            const hits0 = []; for (const sg of segs0) { const h = matchSetItem(sg, initSetSelection(p), null); if (h && !hits0.some((x) => x.article === h.article)) hits0.push(h); }
+            if (hits0.length === 1) art = hits0[0].article;
+        }
+        const it0 = art && p.setItems.find((it) => String(it.article).toUpperCase() === art.toUpperCase());
+        if (it0) {
+            const prev = (Array.isArray(ctx.setSelection) ? ctx.setSelection : []).find((x) => String(x.article).toUpperCase() === art.toUpperCase());
+            ctx.setPick = { setChoice: 'item', article: it0.article };
+            await T.setApply(A);
+            delete ctx.setSelection; delete ctx.agent.setOriginal; delete ctx.agent.setPricing; delete ctx.agent.setColorsResolved;
+            if (prev && prev.color) ctx.colorChoice = { color: prev.color };
+            ctx.agent.lastAsk = '';
+            A._switchNote = 'Зрозуміла, оформлюємо лише ' + String(it0.name || '').split('.')[0].toLowerCase() + ' 👌 ';
+            p = P(ctx);
+        }
+    }
 
     // 3. Комплект
     if (p.isSet && !ctx.setMode) {
@@ -1087,6 +1121,9 @@ async function runPolicyInner(A, u) {
                 const hit = matchSetItem(seg, allItems, null);
                 if (hit && !matched.some((m) => m.article === hit.article)) matched.push(hit);
             }
+            // 2026-09-29 (скарга, сесія ed8e3e06: «Чи доступна кофта до замовлення?» на пост-образ): клієнт назвав ОДНУ позицію —
+            // запамʼятовуємо; далі параметри/колір без явного вибору означають цю позицію, а не весь комплект.
+            if (matched.length === 1 && !/комплект|весь|всі\b|все\b|образ|цілий|повн/i.test(text)) ctx.agent.setNamedItem = matched[0].article;
             if (matched.length > 1 && matched.length < allItems.length) {
                 const matchedArticles = new Set(matched.map((m) => m.article));
                 ctx.agent.setOriginal = allItems;
@@ -1099,7 +1136,9 @@ async function runPolicyInner(A, u) {
         if (!multiHandled) {
         // Клієнт дав параметри/колір/згоду або просить змінити склад, не обравши окрему річ → хоче весь комплект
         const impliedSet = !u.setChoice && !u.setArticle && (u.height || u.weight || u.clothingSize || u.ready === 'yes' || u.changeRequest || u.colorMatched || u.color);
+        const namedItem = ctx.agent.setNamedItem && Array.isArray(p.setItems) && p.setItems.some((it) => String(it.article).toUpperCase() === String(ctx.agent.setNamedItem).toUpperCase()) ? ctx.agent.setNamedItem : null;
         if (u.setChoice === 'item' && u.setArticle) { ctx.setPick = { setChoice: 'item', article: u.setArticle }; await T.setApply(A); }
+        else if (impliedSet && namedItem) { ctx.setPick = { setChoice: 'item', article: namedItem }; await T.setApply(A); }
         else if (u.setChoice === 'set' || impliedSet) { ctx.setPick = { setChoice: 'set' }; await T.setApply(A); ctx.setMode = 'set'; }
         else if (isSoftDecline(u)) { A.out.push({ text: await answerThenAsk(A, u, messageText(A.assets, 'n_agent_soft_decline_set', ctx, A.session.id)), step: 'set_ask_soft' }); return; }
         // 2026-09-15 (живий кейс, власник: «зразу наш любимий баг, 2 рази відправилось повідомлення»
@@ -1254,8 +1293,10 @@ async function runPolicyInner(A, u) {
             const chartJustSent = !!(u.wantsSizeChart && pp.sizeChartUrl && !A._chartSent);
             if (chartJustSent) { A._chartSent = true; A.out.push({ photoUrls: [pp.sizeChartUrl], caption: messageText(A.assets, 'n_agent_size_chart_caption', ctx, A.session.id), step: 'size_chart' }); ctx.agent.chartSentFor = pp.sku; }
             let colorNote = '';
-            if (u.color && !u.colorMatched && colorsOf(pp)) { ctx.agent.wantColorRaw = u.color; colorNote = messageText(A.assets, 'n_agent_color_note_mismatch', ctx, A.session.id) + ' '; }
-            else if (u.colorMatched) { ctx.agent.colorMatchedNote = u.colorMatched; colorNote = messageText(A.assets, 'n_agent_color_note_matched', ctx, A.session.id) + ' '; }
+            // «Колір записала» — лише для кольору, що справді є в палітрі товару (2026-09-29, ed8e3e06: «Колір Бежевий — записала», а бежевого нема).
+            const cmOk = !!(u.colorMatched && colorsOf(pp) && matchColor(pp, u.colorMatched));
+            if ((u.color || u.colorMatched) && !cmOk && colorsOf(pp)) { ctx.agent.wantColorRaw = u.color || u.colorMatched; colorNote = messageText(A.assets, 'n_agent_color_note_mismatch', ctx, A.session.id) + ' '; }
+            else if (cmOk) { ctx.agent.colorMatchedNote = matchColor(pp, u.colorMatched); colorNote = messageText(A.assets, 'n_agent_color_note_matched', ctx, A.session.id) + ' '; }
             // Живий кейс 2026-09-14 (Устим, Юлія): картка товару (n_welcome) сама ЗАКІНЧУЄТЬСЯ проханням
             // дати зріст/вагу — одразу після свіжої презентації друге, окреме повідомлення з тим самим
             // проханням виглядало як збій («два рази ціну написав», «два рази питає»). Якщо картку щойно

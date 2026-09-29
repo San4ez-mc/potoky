@@ -38,7 +38,9 @@ async function resolveShoppingIntent(A, u, tool) {
     const beforeProduct = ctx.product;
     const text = String(ctx.lastUserMessage || A.turnText || '');
 
-    if (!hasAnySignal(signal)) {
+    // Товару ще нема, клієнт пише коротку назву («Гельсінкі», «мажор петля») — пробуємо знайти за назвою в каталозі (тест 95).
+    const nameTry = !hadProduct && /[a-zа-яіїєґ]{4,}/i.test(text) && text.trim().split(/\s+/).length <= 4 && !/\d{2,}/.test(text);
+    if (!hasAnySignal(signal) && !nameTry) {
         // А6 — немає жодного сигналу про товар цього ходу: не чіпаємо активний товар.
         return { status: hadProduct ? 'kept' : 'none', skipPresentation: true, signal, action: 'NONE' };
     }
@@ -57,6 +59,12 @@ async function resolveShoppingIntent(A, u, tool) {
     // товар насправді лишився активним.
     const ctxSnapshotBefore = Object.assign({}, ctx);
     Object.assign(ctx, await matchProduct(ctx, keys, text));
+    if (!hasAnySignal(signal) && nameTry && !(ctx.product && ctx.product.sku && /^user_name/.test(String(ctx.product._via || '')))) {
+        // Пошук лише за назвою не дав точного збігу — нічого не підставляємо (жодних «найближчих» товарів на «Дякую» тощо).
+        for (const k of Object.keys(ctx)) { if (!(k in ctxSnapshotBefore)) delete ctx[k]; }
+        Object.assign(ctx, ctxSnapshotBefore);
+        return { status: 'none', skipPresentation: true, signal, action: 'NONE' };
+    }
     let status = (ctx.product && ctx.product.sku && !ctx.productUnknown) ? 'found' : 'none';
     let decision = { action: 'SET_MAIN' };
 

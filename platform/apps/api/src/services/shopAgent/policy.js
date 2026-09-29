@@ -1126,10 +1126,7 @@ async function runPolicyInner(A, u) {
     if (!u.wantsSizeChart && ctx.recommendedSize && pp.sizeChartUrl && ctx.agent.chartSentFor !== pp.sku && /мал(уват|оват)|тісн|тісно|великуват|завелик|замал|не\s+буде\s+(малий|великий)/i.test(String(A.turnText || ''))) u.wantsSizeChart = true;
     if (u.wantsSizeChart && (ctx.recommendedSize || ctx.agent.chartSentFor === pp.sku) && pp.sizeChartUrl && !A._chartSent) { // явне повторне прохання сітки — надсилаємо знову (FunnelTest 27: обіцяли «ще раз» без вкладення)
         const _txt = String(A.turnText || '');
-        const _again = /не\s+(бачу|відкрива|завантаж|прийш|дійш)|ще\s+раз|повторн|знову|не\s+видно/i.test(_txt);
-        // Сітку вже надсилали цьому клієнту, і він не каже, що не бачить, — не дублюємо фото (тест 26), коротко нагадуємо.
-        if (ctx.agent.chartSentFor === pp.sku && !_again) A.out.push({ text: 'Розмірну сітку надіслала вище 👆', step: 'size_chart_above' });
-        else A.out.push({ photoUrls: [pp.sizeChartUrl], caption: messageText(A.assets, 'n_agent_size_chart_caption', ctx, A.session.id), step: 'size_chart' });
+        A.out.push({ photoUrls: [pp.sizeChartUrl], caption: messageText(A.assets, 'n_agent_size_chart_caption', ctx, A.session.id), step: 'size_chart' });
         ctx.agent.chartSentFor = pp.sku; A._chartSent = true;
         if (Array.isArray(u.questions)) u.questions = u.questions.filter((q) => !/(сітк|заміри|таблиц)/i.test(String(q))); // відповідь уже пішла фото — compose не має «обіцяти» її вдруге
         // «Сітку кофти і футболки» — про другий товар відповідаємо окремо (тест 27: інакше частина прохання губиться).

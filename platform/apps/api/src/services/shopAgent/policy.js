@@ -12,7 +12,7 @@ const { dispatchOrder } = require('./supplierDispatch');
 const { hasCategoryWord, categoryWordIsUpsell, categoryWordIsSetComponent, categoryWordIsMain } = require('./signal');
 const { resolveColorMention } = require('./cart');
 const { classifyKbQuestion, kbSimilarity, kbSimilar } = require('./kbRules');
-const { catalogFacts } = require('./catalogFacts');
+const { catalogFacts, catalogProducts } = require('./catalogFacts');
 const { kbMatch } = require('./kbMatch');
 
 // 2026-09-14 (власник: "я взагалі проти будь-якого хардкоду... все в ноди перенеси"): TRUST_STEP1/2,
@@ -327,11 +327,30 @@ async function answerThenAsk(A, u, askText, o = {}) {
     } catch (e) { /* best-effort */ }
     // Ціна/кольори/розміри/наявність/«а є …?» — точні дані з CRM, бот відповідає сам; менеджеру й у базу знань такі питання не йдуть.
     const catQs = (u.questions || []).filter((q0) => classifyKbQuestion(q0).kind === 'catalog');
+    // Вид некаталожного питання визначила ШІ (kbMatch.kind): розмір / властивість / порівняння / умови / інше (рішення власника 30.09).
+    const kindOf = (q0) => (A._kbm && A._kbm[String(q0).trim()] && A._kbm[String(q0).trim()].kind) || 'other';
+    const kinds = new Set((u.questions || []).map(kindOf));
+    const pp0 = A.ctx.product || {};
+    let sizeNote = '';
+    if (kinds.has('size')) {
+        // Розмір/посадка: не база знань і не менеджер — розмірна сітка (якщо є) + параметри категорії для підбору.
+        if (pp0.sizeChartUrl && A.ctx.agent.chartSentFor !== pp0.sku && !A._chartSent) { A._chartSent = true; A.out.push({ photoUrls: [pp0.sizeChartUrl], caption: messageText(A.assets, 'n_agent_size_chart_caption', A.ctx, A.session.id), step: 'size_chart' }); A.ctx.agent.chartSentFor = pp0.sku; }
+        sizeNote = 'ПИТАННЯ ПРО РОЗМІР/ПОСАДКУ: не вгадуй посадку й розмір. ' + (A._chartSent ? 'Розмірну сітку система щойно надіслала фото — згадай це одним словом. ' : '') + 'Розмір підбираємо за параметрами категорії' + (pp0.categoryParamsPrompt ? ' (' + String(pp0.categoryParamsPrompt).replace(/\n/g, '; ') + ')' : '') + ' — попроси їх, якщо ще не дано.';
+    }
+    if (kinds.has('compare')) {
+        // «Чим відрізняються?» — фото кожного товару (перше фото, не мініатюра), щоб клієнт сам побачив, + описи у фактах.
+        try {
+            const base0 = (A.keys.CRM_PUBLIC_BASE || 'https://pcrm.fineko.space').replace(/\/$/, '');
+            const prs = (await catalogProducts(A, (u.questions || []).concat([String(A.turnText || '')]))).slice(0, 3);
+            for (const pr of prs) { const im = (pr.images || [])[0]; if (im) A.out.push({ photoUrls: [/^https?:/.test(im) ? im : base0 + (String(im).charAt(0) === '/' ? im : '/' + im)], caption: String(pr.name || pr.customerName || '').split('\n')[0] + ' — ' + Number(pr.price) + ' грн', step: 'compare_photo' }); }
+        } catch (e) { /* best-effort */ }
+    }
     let crmFacts = '';
-    if (catQs.length) { try { crmFacts = await catalogFacts(A, catQs.concat([String(A.turnText || '')])); } catch (e) { /* best-effort */ } }
-    const extraFacts = [directKb, crmFacts ? 'ДАНІ З CRM (точні й актуальні — відповідай саме ними; кольору/розміру/товару, якого тут немає, немає в наявності):\n' + crmFacts : ''].filter(Boolean).join('\n\n');
+    if (catQs.length || kinds.has('feature') || kinds.has('compare')) { try { crmFacts = await catalogFacts(A, (u.questions || []).concat([String(A.turnText || '')]), { withDesc: kinds.has('feature') || kinds.has('compare') }); } catch (e) { /* best-effort */ } }
+    const extraFacts = [directKb, sizeNote, crmFacts ? 'ДАНІ З CRM (точні й актуальні — відповідай саме ними; кольору/розміру/товару, якого тут немає, немає в наявності; властивості — лише з опису/деталей):\n' + crmFacts : ''].filter(Boolean).join('\n\n');
     const { text, resolved } = await compose(A, { questions: u.questions, ack: o.ack, nextStep, kb, availAnswer, extraFacts, fallback: askText });
-    const nonCat = (u.questions || []).filter((q0) => classifyKbQuestion(q0).kind !== 'catalog');
+    // Розмір — не ескалюємо (відповідь — сітка + параметри); каталог — теж; решта — якщо compose не знайшов відповіді.
+    const nonCat = (u.questions || []).filter((q0) => classifyKbQuestion(q0).kind !== 'catalog' && kindOf(q0) !== 'size');
     if (!resolved && nonCat.length) await escalateUnresolved(A, nonCat[0]);
     return text || askText;
 }

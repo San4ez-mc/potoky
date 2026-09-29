@@ -290,8 +290,10 @@ async function answerThenAsk(A, u, askText, o = {}) {
         }
         // Коротке питання повністю збігається за словами з записом бази знань — відповідаємо самим записом (модель інакше вигадує «зазвичай наступного дня»).
         if (best && u.questions.length === 1 && !o.ack && bestN >= 1 && bestN === bestMine && bestMine <= 2 && String(best.a).length <= 500 && (A.ctx.product && A.ctx.product.sku || !/передопл|передплат|\d+\s*грн/i.test(best.a))) {
+            T.kbHit(A, best.id).catch(() => {});
             return String(best.a).trim() + (askText ? '\n\n' + askText : '');
         }
+        if (best && bestN >= Math.min(2, bestMine)) T.kbHit(A, best.id).catch(() => {});
         if (best && bestN >= 1) directKb = 'НАЙБЛИЖЧА ВІДПОВІДЬ З БАЗИ ЗНАНЬ НА ПИТАННЯ КЛІЄНТА (якщо вона по суті відповідає — скажи саме її, без власних термінів чи припущень): ' + best.a;
     } catch (e) { /* best-effort */ }
     const { text, resolved } = await compose(A, { questions: u.questions, ack: o.ack, nextStep, kb, availAnswer, extraFacts: directKb, fallback: askText });

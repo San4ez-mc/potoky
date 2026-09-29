@@ -10,6 +10,7 @@ const { buildAdminAlert } = require('../testSession');
 const { redisClient } = require('../../lib/sessionStore');
 const { getMonoStatement, markConsumed: markMonoConsumed, getConsumedSet: getMonoConsumedSet } = require('@platform/mono-statement');
 const { resolveShoppingIntent } = require('./resolveShoppingIntent');
+const { classifyKbQuestion } = require('./kbRules');
 
 async function tool(A, nodeId, label) {
     const code = nodeCode(A.assets, nodeId);
@@ -90,14 +91,24 @@ async function kbContext(A) {
         const r2 = await crmFetch(A.keys, '/knowledge/context?scope=' + encodeURIComponent('product:' + upId), {}, 4000);
         if (Array.isArray(r2.data)) { const seen = new Set(hits.map((h) => h.id || h.question)); hits = hits.concat(r2.data.filter((h) => !seen.has(h.id || h.question))); }
     }
-    const items = hits.map((h) => ({ q: String(h.question || '').slice(0, 200), a: String(h.answer || '').slice(0, 600) })).filter((h) => h.a);
+    const items = hits.map((h) => ({ id: h.id || null, q: String(h.question || '').slice(0, 200), a: String(h.answer || '').slice(0, 600) })).filter((h) => h.a);
     if (r.ok) _kbCache.set(key, { at: Date.now(), items });
     return items;
 }
-/** Питання, на яке бот не знає відповіді → чернетка в KB (from_dialog) + (алерт робить політика). */
+/** Питання, на яке бот не знає відповіді → чернетка в KB (from_dialog) + (алерт робить політика).
+ * Лише «унікальні» питання (kbRules): дані з CRM (ціна/розміри/кольори/наявність/склад/фото/асортимент) і разові
+ * ситуації конкретного клієнта в базу знань не йдуть. Повторне питання не плодить дубль — CRM збільшує лічильник. */
 async function kbAsk(A, question) {
-    const q = String(question || '').trim(); if (!q || A.ctx.testMode) return;
+    const q = String(question || '').trim(); if (!q || A.ctx.testMode) return { skipped: 'empty_or_test' };
+    const cls = classifyKbQuestion(q);
+    if (cls.kind !== 'unique') return { skipped: cls.kind, reason: cls.reason };
     await crmFetch(A.keys, '/knowledge/from-dialog', { method: 'POST', body: JSON.stringify({ question: q.slice(0, 500), sessionId: A.session.id, productId: (A.ctx.product && A.ctx.product.id) || null, igUsername: A.ctx.igUsername || null }) }, 4000).catch(() => {});
+    return { saved: true };
+}
+/** Бот відповів клієнту записом з бази знань — +1 до лічильника «скільки разів питали». */
+async function kbHit(A, id) {
+    if (!id || A.ctx.testMode) return;
+    await crmFetch(A.keys, '/knowledge/' + encodeURIComponent(id) + '/hit', { method: 'POST', body: '{}' }, 3000).catch(() => {});
 }
 
 // ── Оплата: ibanoplata + monobank (порт із двигуна, без графа) ────────────────────────────────
@@ -233,4 +244,4 @@ async function alert(A, nodeIdOrFields, extra = {}) {
     return !!j.ok;
 }
 
-module.exports = { tool, resolveProduct, setApply, calcSize, checkAvail, availSearch, extraResolve, orderPrefill, intlRoute, payAmount, npCheck, reconcile, crmOrder, supplierRoute, supplierOrder, confirmPrep, ttnSync, returnCrmUpdate, kbContext, kbAsk, createInvoice, deleteInvoice, monoStatement, markConsumed, funnelStage, alert, activeFop };
+module.exports = { tool, resolveProduct, setApply, calcSize, checkAvail, availSearch, extraResolve, orderPrefill, intlRoute, payAmount, npCheck, reconcile, crmOrder, supplierRoute, supplierOrder, confirmPrep, ttnSync, returnCrmUpdate, kbContext, kbAsk, kbHit, createInvoice, deleteInvoice, monoStatement, markConsumed, funnelStage, alert, activeFop };

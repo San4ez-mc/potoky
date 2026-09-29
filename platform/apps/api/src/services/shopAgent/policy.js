@@ -11,7 +11,8 @@ const { messageText, messageTextMultiline, nodeData, norm, loadCategories, loadC
 const { dispatchOrder } = require('./supplierDispatch');
 const { hasCategoryWord, categoryWordIsUpsell, categoryWordIsSetComponent, categoryWordIsMain } = require('./signal');
 const { resolveColorMention } = require('./cart');
-const { classifyKbQuestion } = require('./kbRules');
+const { classifyKbQuestion, kbSimilarity } = require('./kbRules');
+const { catalogFacts } = require('./catalogFacts');
 
 // 2026-09-14 (власник: "я взагалі проти будь-якого хардкоду... все в ноди перенеси"): TRUST_STEP1/2,
 // HANDOFF_TEXT та решта клієнтських/менеджерських текстів цього файлу БУЛИ тут як JS-константи —
@@ -234,6 +235,8 @@ function normQ(q) { return String(q || '').trim().toLowerCase().replace(/\s+/g, 
  * кейс e77af3b9: "Штани звужені?" → "Уточніть покрій" → "Мені треба знати покрій" — 7 разів,
  * жодного буквального повтору), тож лічильник наполегливості не може залежати від дедуп-списку. */
 async function escalateUnresolved(A, question) {
+    // Каталожні питання (є в CRM) ніколи не йдуть менеджеру й у базу знань — бот відповідає з CRM.
+    if (classifyKbQuestion(question).kind === 'catalog') return;
     A._unresolvedThisTurn = true;
     const nq = normQ(question); if (!nq) return;
     const seen = A.ctx.agent.escalatedQuestions || [];
@@ -293,6 +296,16 @@ async function answerThenAsk(A, u, askText, o = {}) {
         }
         // Коротке питання повністю збігається за словами з записом бази знань — відповідаємо самим записом (модель інакше вигадує «зазвичай наступного дня»).
         // …і запис має збігатися з питанням принаймні наполовину своїх слів, інакше одне спільне слово («костюму») дає чужу відповідь.
+        // Схоже питання вже має відповідь у базі знань (спільний критерій kbSimilar, той самий, що й дедуп CRM) — відповідаємо нею,
+        // не кличемо менеджера й не створюємо дубль (рішення власника 29.09).
+        const nonCatQs = (u.questions || []).filter((q0) => classifyKbQuestion(q0).kind !== 'catalog');
+        let simBest = null; let simScore = 0;
+        for (const q of nonCatQs) for (const h of kb) { if (!h.a) continue; const sc = kbSimilarity(q, h.q); if (sc > simScore) { simScore = sc; simBest = h; } }
+        if (simBest && simScore >= 0.5 && nonCatQs.length === 1 && u.questions.length === 1 && !o.ack && String(simBest.a).length <= 500 && (A.ctx.product && A.ctx.product.sku || !/передопл|передплат|\d+\s*грн/i.test(simBest.a))) {
+            T.kbHit(A, simBest.id).catch(() => {});
+            return String(simBest.a).trim() + (askText ? '\n\n' + askText : '');
+        }
+        if (simBest && simScore >= 0.5 && !best) { best = simBest; bestN = 1; }
         if (best && u.questions.length === 1 && !o.ack && bestN >= 1 && bestN === bestMine && bestMine <= 2 && bestN * 2 >= bestKbWords && String(best.a).length <= 500 && (A.ctx.product && A.ctx.product.sku || !/передопл|передплат|\d+\s*грн/i.test(best.a))) {
             T.kbHit(A, best.id).catch(() => {});
             return String(best.a).trim() + (askText ? '\n\n' + askText : '');
@@ -300,8 +313,14 @@ async function answerThenAsk(A, u, askText, o = {}) {
         if (best && bestN >= Math.min(2, bestMine)) T.kbHit(A, best.id).catch(() => {});
         if (best && bestN >= 1) directKb = 'НАЙБЛИЖЧА ВІДПОВІДЬ З БАЗИ ЗНАНЬ НА ПИТАННЯ КЛІЄНТА (якщо вона по суті відповідає — скажи саме її, без власних термінів чи припущень): ' + best.a;
     } catch (e) { /* best-effort */ }
-    const { text, resolved } = await compose(A, { questions: u.questions, ack: o.ack, nextStep, kb, availAnswer, extraFacts: directKb, fallback: askText });
-    if (!resolved && u.questions.length) await escalateUnresolved(A, u.questions[0]);
+    // Ціна/кольори/розміри/наявність/«а є …?» — точні дані з CRM, бот відповідає сам; менеджеру й у базу знань такі питання не йдуть.
+    const catQs = (u.questions || []).filter((q0) => classifyKbQuestion(q0).kind === 'catalog');
+    let crmFacts = '';
+    if (catQs.length) { try { crmFacts = await catalogFacts(A, catQs.concat([String(A.turnText || '')])); } catch (e) { /* best-effort */ } }
+    const extraFacts = [directKb, crmFacts ? 'ДАНІ З CRM (точні й актуальні — відповідай саме ними; кольору/розміру/товару, якого тут немає, немає в наявності):\n' + crmFacts : ''].filter(Boolean).join('\n\n');
+    const { text, resolved } = await compose(A, { questions: u.questions, ack: o.ack, nextStep, kb, availAnswer, extraFacts, fallback: askText });
+    const nonCat = (u.questions || []).filter((q0) => classifyKbQuestion(q0).kind !== 'catalog');
+    if (!resolved && nonCat.length) await escalateUnresolved(A, nonCat[0]);
     return text || askText;
 }
 function colorsOf(p) { return String((p && p.colors) || '').trim(); }

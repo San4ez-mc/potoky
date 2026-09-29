@@ -943,6 +943,11 @@ async function runPolicyInner(A, u) {
         }
         if (u.productHint.article && !/артикул|арт\.|\b[a-z]\d{3,6}\b/i.test(text)) ctx.lastUserMessage = text + ' артикул ' + u.productHint.article;
         const r = await T.resolveProduct(A, u);
+        // «А штани спортивні?» — категорія, якої в каталозі нема, товар лишився попередній: питання не губимо, на нього відповідає compose
+        // з фактів/бази знань (FunnelTest 35: бот мовчки перепитав зріст/вагу замість чесного «окремо нема, є костюми»).
+        if (r.status === 'kept' && categorySignal && !freshSignal && !u.questions.length && /\?|(^|\s)(є|маєте|нема\S*)(\s|$)/i.test(text)) {
+            u.questions = ['Чи є у вас ' + text.replace(/^\s*(а|і|ще|а\s+є|є)\s+/i, '').replace(/[?\s]+$/, '') + '? (окремої такої категорії в каталозі не знайдено)'];
+        }
         const swappedToOwnSetComponent = r.status === 'found' && __setBeforeProduct && __setBeforeProduct.isSet && Array.isArray(__setBeforeSelection)
             && P(ctx).sku !== __setBeforeProduct.sku && __setBeforeSelection.some((it) => it.article === P(ctx).sku);
         // 2026-09-23 (FunnelTest 4, вхід з реклами): реклама щоразу повертає ПОВНИЙ комплект, і він
@@ -968,11 +973,16 @@ async function runPolicyInner(A, u) {
                         const catX = await loadCatalog(A.botId, A.keys);
                         const px = catX.products.find((x) => String(x.sku).toUpperCase() === String(ctx.agent.multiPickExtra).toUpperCase());
                         if (px) {
+                            // Другий вибір теж показуємо з фото, а не лише рядком тексту (FunnelTest 34: «№4 — без фото й деталей»). Мініатюру не беремо — лише images.
+                            const pxBase = (A.keys.CRM_PUBLIC_BASE || 'https://pcrm.fineko.space').replace(/\/$/, '');
+                            const pxPhotos = (Array.isArray(px.images) ? px.images : []).filter(Boolean).slice(0, 2).map((u0) => (/^https?:\/\//i.test(u0) ? u0 : pxBase + (String(u0).charAt(0) === '/' ? u0 : '/' + u0)));
+                            if (pxPhotos.length) A.out.push({ photoUrls: pxPhotos, caption: '', step: 'multi_pick_second_photo' });
                             // Клієнт вибрав ДВА пункти зі списку («2,4») — обидва потрапляють у замовлення; другий — окремою позицією (можна прибрати словами).
                             ctx.extraProductMention = String(px.sku);
                             try { await T.extraResolve(A); } catch (e) { /* best-effort */ }
                             const added = Array.isArray(ctx.extraItems) && ctx.extraItems.some((x) => String(x.sku).toUpperCase() === String(px.sku).toUpperCase());
-                            A.out.push({ text: 'І другий обраний варіант 👌 ' + (px.customerName || px.name).split('\n')[0] + ' — ' + px.price + ' грн.' + (added ? ' Додала його окремою позицією до замовлення (якщо не потрібен — напишіть) 🙂' : ' Додати його до замовлення окремою позицією чи оформляємо тільки перший? 🙂'), step: 'multi_pick_second' });
+                            const pxColors = [...new Set((px.offers || []).flatMap((o) => (o.properties || []).filter((q) => /кол|цвет/i.test(q.name || '')).map((q) => q.value)))].filter(Boolean);
+                            A.out.push({ text: 'І другий обраний варіант 👌 ' + (px.customerName || px.name).split('\n')[0] + ' — ' + px.price + ' грн.' + (pxColors.length ? ' Кольори: ' + pxColors.join(', ') + '.' : '') + (added ? ' Додала його окремою позицією до замовлення (якщо не потрібен — напишіть) 🙂' : ' Додати його до замовлення окремою позицією чи оформляємо тільки перший? 🙂'), step: 'multi_pick_second' });
                             if (added) { ctx.agent.multiPickExtra = null; }
                         }
                     } catch (e) { /* best-effort */ }
@@ -1264,7 +1274,9 @@ async function runPolicyInner(A, u) {
             // Повторне прохання тих самих параметрів (клієнт відповідає про інше) — інакше звучить як збій
             // (інваріант I2: дослівний повтор); перефразовуємо й лишаємо коротко.
             ctx.agent.paramsAskCount = (ctx.agent.paramsAskCount || 0) + 1;
-            if (ask && ctx.agent.paramsAskCount > 1 && ctx.agent.lastAsk === (paramsPrompt || 'зріст і вага')) ask = (ctx.agent.paramsAskCount % 2 ? 'Щоб підібрати розмір, лишилось дізнатись зріст і вагу 🙂 Напишіть, будь ласка, скільки у вас — і одразу рухаємось далі.' : 'Мені ще потрібні зріст і вага для підбору розміру 📏 Напишіть їх, будь ласка 🙂');
+            // Для товарів із власним параметром (джинси — розмір за талією) перефраз не має просити зріст/вагу (FunnelTest 35).
+            if (ask && !isHW && ctx.agent.paramsAskCount > 1 && ctx.agent.lastAsk === (paramsPrompt || 'зріст і вага')) ask = 'Підкажіть, будь ласка, ' + (paramsPrompt || 'ваш розмір') + ' — і одразу рухаємось далі 🙂';
+            else if (ask && ctx.agent.paramsAskCount > 1 && ctx.agent.lastAsk === (paramsPrompt || 'зріст і вага')) ask = (ctx.agent.paramsAskCount % 2 ? 'Щоб підібрати розмір, лишилось дізнатись зріст і вагу 🙂 Напишіть, будь ласка, скільки у вас — і одразу рухаємось далі.' : 'Мені ще потрібні зріст і вага для підбору розміру 📏 Напишіть їх, будь ласка 🙂');
             A.out.push({ text: chartJustSent ? (preNote + colorNote + ask) : await answerThenAsk(A, u, preNote + colorNote + ask), step: 'ask_params' }); ctx.agent.lastAsk = paramsPrompt || 'зріст і вага';
             return;
         }
@@ -1574,10 +1586,18 @@ async function runPolicyInner(A, u) {
             }
             if (u.questions.length || hesitating) {
                 A._questionEngaged = true;
-                const { text: pre, resolved: preResolved } = await compose(A, { questions: u.questions, nextStep: hesitating ? 'клієнт вагається — без тиску наведи ОДИН реальний аргумент оформити сьогодні (раніше отримає, черга на відправку) і заверши питанням «Оформляємо сьогодні?»' : 'заверши коротким переходом до підсумку (без самого підсумку — його додасть система)', maxSentences: 3, fallback: '' });
+                const summaryAlreadyShown = ctx.agent.lastAsk === 'оформляємо?';
+                // Підсумок уже показано: compose лише відповідає, без «переходу до підсумку» (FunnelTest 43: «підтверджуємо ваше замовлення:» — а підсумку далі нема).
+                const { text: pre, resolved: preResolved } = await compose(A, { questions: u.questions, nextStep: hesitating ? 'клієнт вагається — без тиску наведи ОДИН реальний аргумент оформити сьогодні (раніше отримає, черга на відправку) і заверши питанням «Оформляємо сьогодні?»' : (summaryAlreadyShown ? 'лише відповідь на питання; НЕ згадуй підсумок/замовлення, НЕ пиши «підтверджуємо», «підіб’ємо підсумок», «оформлюємо?» — завершальне питання додасть система' : 'заверши коротким переходом до підсумку (без самого підсумку — його додасть система)'), maxSentences: 3, fallback: '' });
                 if (!preResolved && u.questions.length) await escalateUnresolved(A, u.questions[0]);
-                // підсумок уже показано — не повторюємо картку з ціною після кожного питання (FunnelTest 43)
-                txt = (pre ? pre + '\n\n' : '') + (hesitating ? summary : (ctx.agent.lastAsk === 'оформляємо?' && pre ? (isRepeatOfEscalated(A, u) ? '' : messageText(A.assets, 'n_agent_order_ask_plain', ctx, A.session.id)) : txt));
+                // підсумок уже показано — не повторюємо картку з ціною після кожного питання (FunnelTest 43);
+                // і «Оформляємо замовлення?» не дописуємо до КОЖНОЇ відповіді поспіль — лише через раз.
+                let plainAsk = '';
+                if (summaryAlreadyShown && pre && !isRepeatOfEscalated(A, u)) {
+                    ctx.agent.sideQAfterSummary = (ctx.agent.sideQAfterSummary || 0) + 1;
+                    if (ctx.agent.sideQAfterSummary % 2 === 0) plainAsk = messageText(A.assets, 'n_agent_order_ask_plain', ctx, A.session.id);
+                }
+                txt = (pre ? pre + (plainAsk || !summaryAlreadyShown || hesitating ? '\n\n' : '') : '') + (hesitating ? summary : (summaryAlreadyShown && pre ? plainAsk : txt));
                 if (!String(txt).trim()) txt = pre || txt;
             }
             A.out.push({ text: txt, step: 'order_intent' });

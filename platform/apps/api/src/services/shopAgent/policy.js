@@ -13,6 +13,7 @@ const { hasCategoryWord, categoryWordIsUpsell, categoryWordIsSetComponent, categ
 const { resolveColorMention } = require('./cart');
 const { classifyKbQuestion, kbSimilarity, kbSimilar } = require('./kbRules');
 const { catalogFacts } = require('./catalogFacts');
+const { kbMatch } = require('./kbMatch');
 
 // 2026-09-14 (власник: "я взагалі проти будь-якого хардкоду... все в ноди перенеси"): TRUST_STEP1/2,
 // HANDOFF_TEXT та решта клієнтських/менеджерських текстів цього файлу БУЛИ тут як JS-константи —
@@ -298,6 +299,15 @@ async function answerThenAsk(A, u, askText, o = {}) {
         }
         // Коротке питання повністю збігається за словами з записом бази знань — відповідаємо самим записом (модель інакше вигадує «зазвичай наступного дня»).
         // …і запис має збігатися з питанням принаймні наполовину своїх слів, інакше одне спільне слово («костюму») дає чужу відповідь.
+        // ШІ-зіставлення з базою знань (основний шлях; kbMatch.js): те саме питання по суті з відповіддю — відповідаємо ним.
+        const aiQs = (u.questions || []).filter((q0) => classifyKbQuestion(q0).kind !== 'catalog').slice(0, 2);
+        const aiHits = [];
+        for (const q0 of aiQs) { const km = await kbMatch(A, q0); if (km && km.entry && km.entry.a && km.entry.active) aiHits.push(km.entry); }
+        if (aiHits.length && aiQs.length === 1 && u.questions.length === 1 && !o.ack && String(aiHits[0].a).length <= 500 && (A.ctx.product && A.ctx.product.sku || !/передопл|передплат|\d+\s*грн/i.test(aiHits[0].a))) {
+            T.kbHit(A, aiHits[0].id).catch(() => {});
+            return String(aiHits[0].a).trim() + (askText ? '\n\n' + askText : '');
+        }
+        if (aiHits.length) { for (const h of aiHits) T.kbHit(A, h.id).catch(() => {}); directKb = 'ВІДПОВІДІ З БАЗИ ЗНАНЬ НА ПИТАННЯ КЛІЄНТА (скажи саме їх, без власних припущень):\n' + aiHits.map((h) => '• ' + h.q + ' → ' + h.a).join('\n'); }
         // Схоже питання вже має відповідь у базі знань (спільний критерій kbSimilar, той самий, що й дедуп CRM) — відповідаємо нею,
         // не кличемо менеджера й не створюємо дубль (рішення власника 29.09).
         const nonCatQs = (u.questions || []).filter((q0) => classifyKbQuestion(q0).kind !== 'catalog');
@@ -313,7 +323,7 @@ async function answerThenAsk(A, u, askText, o = {}) {
             return String(best.a).trim() + (askText ? '\n\n' + askText : '');
         }
         if (best && bestN >= Math.min(2, bestMine)) T.kbHit(A, best.id).catch(() => {});
-        if (best && bestN >= 1) directKb = 'НАЙБЛИЖЧА ВІДПОВІДЬ З БАЗИ ЗНАНЬ НА ПИТАННЯ КЛІЄНТА (якщо вона по суті відповідає — скажи саме її, без власних термінів чи припущень): ' + best.a;
+        if (best && bestN >= 1 && !directKb) directKb = 'НАЙБЛИЖЧА ВІДПОВІДЬ З БАЗИ ЗНАНЬ НА ПИТАННЯ КЛІЄНТА (якщо вона по суті відповідає — скажи саме її, без власних термінів чи припущень): ' + best.a;
     } catch (e) { /* best-effort */ }
     // Ціна/кольори/розміри/наявність/«а є …?» — точні дані з CRM, бот відповідає сам; менеджеру й у базу знань такі питання не йдуть.
     const catQs = (u.questions || []).filter((q0) => classifyKbQuestion(q0).kind === 'catalog');

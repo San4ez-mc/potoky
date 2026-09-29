@@ -102,7 +102,9 @@ async function kbAsk(A, question) {
     const q = String(question || '').trim(); if (!q || A.ctx.testMode) return { skipped: 'empty_or_test' };
     const cls = classifyKbQuestion(q);
     if (cls.kind !== 'unique') return { skipped: cls.kind, reason: cls.reason };
-    await crmFetch(A.keys, '/knowledge/from-dialog', { method: 'POST', body: JSON.stringify({ question: q.slice(0, 500), sessionId: A.session.id, productId: (A.ctx.product && A.ctx.product.id) || null, igUsername: A.ctx.igUsername || null }) }, 4000).catch(() => {});
+    // ШІ (kbMatch) уже визначив: чи є таке саме питання в базі (matchId → лише лічильник) і чого воно стосується (scope).
+    const km = (A._kbm && A._kbm[q]) || null;
+    await crmFetch(A.keys, '/knowledge/from-dialog', { method: 'POST', body: JSON.stringify({ question: q.slice(0, 500), sessionId: A.session.id, productId: (A.ctx.product && A.ctx.product.id) || null, igUsername: A.ctx.igUsername || null, scope: (km && km.scope) || undefined, matchId: (km && km.entry && km.entry.id) || undefined }) }, 4000).catch(() => {});
     return { saved: true };
 }
 /** Бот відповів клієнту записом з бази знань — +1 до лічильника «скільки разів питали». */

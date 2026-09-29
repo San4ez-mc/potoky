@@ -44,12 +44,21 @@ async function geminiKeys(botId, keys) {
 async function geminiFetch(keyList, body, { model, signal } = {}) {
     const m = model || process.env.GEMINI_FALLBACK_MODEL || 'gemini-flash-latest';
     const list = Array.isArray(keyList) ? keyList.filter(Boolean) : [keyList].filter(Boolean);
+    const payload = typeof body === 'string' ? body : JSON.stringify(body);
     let last = null;
-    for (const k of list) {
-        last = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + m + ':generateContent?key=' + encodeURIComponent(k), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: typeof body === 'string' ? body : JSON.stringify(body), signal });
-        if (last.ok) return last;
-        markBad(k, last.status);
-        if (![401, 402, 403, 429, 500, 503].includes(last.status)) return last;
+    // Друга спроба — лише якщо хтось із ключів упав на тимчасове 500/503 («high demand» у Google буває хвилями).
+    for (let attempt = 0; attempt < 2; attempt++) {
+        let transient = false;
+        for (const k of list) {
+            if (attempt && isBad(k)) continue;
+            last = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + m + ':generateContent?key=' + encodeURIComponent(k), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload, signal });
+            if (last.ok) return last;
+            markBad(k, last.status);
+            if (last.status === 500 || last.status === 503) transient = true;
+            else if (![401, 402, 403, 429].includes(last.status)) return last;
+        }
+        if (!transient) break;
+        await new Promise((r) => setTimeout(r, 1500));
     }
     return last;
 }

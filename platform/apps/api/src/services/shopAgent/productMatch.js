@@ -456,9 +456,19 @@ try {
       var __frameParts = [];
       for (var __fi = 0; __fi < __frameUrls.length; __fi++) {
         try {
-          var __fh = {}; try { if (new URL(__frameUrls[__fi]).hostname.toLowerCase() === 'zernio.com' && keys.ZERNIO_API_TOKEN) __fh.Authorization = 'Bearer ' + keys.ZERNIO_API_TOKEN; } catch (e) { }
-          var __fr = await fetch(__frameUrls[__fi], { signal: acf.signal, headers: __fh });
-          var __fab = await __fr.arrayBuffer();
+          // Кадри рілсу/сторіз лежать на ЦЬОМУ ж сервері (/bot-files/…) — читаємо з диска. Публічний nginx не проксує /bot-files
+          // і віддає замість файлу HTML адмінки (2026-09-30: через це розпізнавання кадрів рілсів з 12.09 фактично не працювало).
+          var __local = String(__frameUrls[__fi]).match(/\/bot-files\/([A-Za-z0-9_.\/-]+)$/);
+          var __fab = null;
+          if (__local && !/\.\./.test(__local[1])) {
+            try { var __bfd = process.env.BOT_FILES_DIR || require('path').join(__dirname, '..', '..', '..', '..', 'uploads', 'bot-files'); var __buf = require('fs').readFileSync(require('path').join(__bfd, __local[1])); __fab = __buf.buffer.slice(__buf.byteOffset, __buf.byteOffset + __buf.byteLength); } catch (e) { __fab = null; }
+          }
+          if (!__fab) {
+            var __fh = {}; try { if (new URL(__frameUrls[__fi]).hostname.toLowerCase() === 'zernio.com' && keys.ZERNIO_API_TOKEN) __fh.Authorization = 'Bearer ' + keys.ZERNIO_API_TOKEN; } catch (e) { }
+            var __fr = await fetch(__frameUrls[__fi], { signal: acf.signal, headers: __fh });
+            if (!/^image\//i.test(__fr.headers.get('content-type') || 'image/')) continue; // HTML замість картинки — пропускаємо, не шлемо сміття в модель
+            __fab = await __fr.arrayBuffer();
+          }
           if (__fab.byteLength > 0 && __fab.byteLength <= 8000000) __frameParts.push({ inline_data: { mime_type: 'image/jpeg', data: Buffer.from(__fab).toString('base64') } });
         } catch (e) { /* один кадр не завантажився — шлемо решту */ }
       }

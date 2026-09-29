@@ -227,8 +227,10 @@ try {
     var __ck = __capKey(__spCap);
     if (__ck.length >= 25) {
       var __capProds = {};
-      adsList.forEach(function (a) { if (a.productId && a.captionText && __capKey(a.captionText) === __ck) __capProds[String(a.productId)] = 1; });
-      var __capIds = Object.keys(__capProds);
+      adsList.forEach(function (a) { if (a.productId && a.captionText && __capKey(a.captionText) === __ck) __capProds[String(a.productId)] = (__capProds[String(a.productId)] || 0) + 1; });
+      // Переважна більшість: «Стриманий мінімалізм…» — 44 дописи на 234286 і 2 (помилкові автопривʼязки) на sh667999.
+      var __capIds = Object.keys(__capProds).sort(function (x, y) { return __capProds[y] - __capProds[x]; });
+      if (__capIds.length > 1 && __capProds[__capIds[0]] >= 3 && __capProds[__capIds[0]] >= 4 * __capProds[__capIds[1]]) __capIds = [__capIds[0]];
       if (__capIds.length === 1) {
         var __byCap = all.filter(function (x) { return String(x.id) === __capIds[0]; })[0];
         if (__byCap) { found = __byCap; via = 'ad_caption_link'; mk = 'adcap_' + __capIds[0]; }

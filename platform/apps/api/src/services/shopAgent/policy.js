@@ -11,6 +11,7 @@ const { messageText, messageTextMultiline, nodeData, norm, loadCategories, loadC
 const { dispatchOrder } = require('./supplierDispatch');
 const { hasCategoryWord, categoryWordIsUpsell, categoryWordIsSetComponent, categoryWordIsMain } = require('./signal');
 const { resolveColorMention } = require('./cart');
+const { classifyKbQuestion } = require('./kbRules');
 
 // 2026-09-14 (власник: "я взагалі проти будь-якого хардкоду... все в ноди перенеси"): TRUST_STEP1/2,
 // HANDOFF_TEXT та решта клієнтських/менеджерських текстів цього файлу БУЛИ тут як JS-константи —
@@ -282,14 +283,17 @@ async function answerThenAsk(A, u, askText, o = {}) {
     let directKb = '';
     try {
         const stq = (t) => String(t).toLowerCase().split(/[^a-zа-яіїєґ0-9]+/i).filter((w) => w.length >= 5).map((w) => w.slice(0, 5));
-        let best = null; let bestN = 0; let bestMine = 0;
-        for (const q of (u.questions || [])) {
+        let best = null; let bestN = 0; let bestMine = 0; let bestKbWords = 0;
+        // Ціна/розміри/кольори/наявність — з картки товару (CRM), не з бази знань (2026-09-29, правка da3916d7: «Яка ціна костюму?»
+        // → запис «Який покрій замшевого костюму?» = «стандартний», бо збіглось одне слово «костюму»).
+        for (const q of (u.questions || []).filter((q0) => classifyKbQuestion(q0).kind !== 'catalog')) {
             const mine = new Set(stq(q));
             const askedMilitary = /військов|зсу|убд|воїн|захисник/i.test(String(q));
-            for (const h of kb) { if (!askedMilitary && /військов|зсу|убд/i.test(String(h.q))) continue; const n = new Set(stq(h.q)); let c = 0; for (const w of n) if (mine.has(w)) c += 1; if (c > bestN) { bestN = c; best = h; bestMine = mine.size; } }
+            for (const h of kb) { if (!askedMilitary && /військов|зсу|убд/i.test(String(h.q))) continue; const n = new Set(stq(h.q)); let c = 0; for (const w of n) if (mine.has(w)) c += 1; if (c > bestN) { bestN = c; best = h; bestMine = mine.size; bestKbWords = n.size; } }
         }
         // Коротке питання повністю збігається за словами з записом бази знань — відповідаємо самим записом (модель інакше вигадує «зазвичай наступного дня»).
-        if (best && u.questions.length === 1 && !o.ack && bestN >= 1 && bestN === bestMine && bestMine <= 2 && String(best.a).length <= 500 && (A.ctx.product && A.ctx.product.sku || !/передопл|передплат|\d+\s*грн/i.test(best.a))) {
+        // …і запис має збігатися з питанням принаймні наполовину своїх слів, інакше одне спільне слово («костюму») дає чужу відповідь.
+        if (best && u.questions.length === 1 && !o.ack && bestN >= 1 && bestN === bestMine && bestMine <= 2 && bestN * 2 >= bestKbWords && String(best.a).length <= 500 && (A.ctx.product && A.ctx.product.sku || !/передопл|передплат|\d+\s*грн/i.test(best.a))) {
             T.kbHit(A, best.id).catch(() => {});
             return String(best.a).trim() + (askText ? '\n\n' + askText : '');
         }
@@ -693,6 +697,9 @@ async function runPolicyInner(A, u) {
     // 2026-09-24 (FunnelTest 16): «Не відкривається посилання» LLM не завжди відносила до wantsManualReq —
     // детермінований страхувальний розбір: скарга на посилання оплати → одразу ручні реквізити.
     if (!u.wantsManualReq && /(не\s+(?:відкрива|відкрит|працю|грузит|вантаж)[^.!?]{0,40}(?:посилан|лінк|ссылк))|((?:посилан|лінк|ссылк)[^.!?]{0,40}не\s+(?:відкрива|відкрит|працю|грузит|вантаж))/i.test(text)) u.wantsManualReq = true;
+    // «Скиньте реквізити в монобанку» — це реквізити ФОП (IBAN, код, назва окремими повідомленнями), а не номер картки: назва банку
+    // лише означає, звідки клієнт платитиме. Картка — лише на явне «номер картки/на карту» (правка d2ce3d13, рішення власника 17.09).
+    if (/реквізит|рекізит|реквизит|iban|айбан/i.test(text) && !/карт(к|у|а|і|очк)|номер\s+карт/i.test(text)) { u.wantsCard = false; u.wantsManualReq = true; }
     // Клієнт стверджує, що він не бот («Я не бот, я людина») — не підігруємо, коротко й чесно.
     if (/я\s+не\s+бот|я\s+(?:жива\s+)?людина/i.test(text) && !/[?]/.test(text)) {
         A.out.push({ text: 'Розумію 🙂 Я віртуальна помічниця магазину, а жива людина — наш менеджер, він підключиться до розмови, щойно буде вільний 💛', step: 'not_bot_reply' });
@@ -996,6 +1003,9 @@ async function runPolicyInner(A, u) {
                 // переслав пост…»). Запитання про ціну, на яке щойно відповіла картка, знімаємо.
                 if (A.justPresented && Array.isArray(u.questions) && u.questions.length) {
                     u.questions = u.questions.filter((q) => !/(ціна|ціну|цін[иі]|скільки\s+кошту|вартіст|почім|прайс)/i.test(String(q)));
+                    // «Які є кольори?» — картка щойно їх перелічила; окремий рядок «Кофта є у трьох кольорах…» — дубль (правки 272c33d0, 0759abcb).
+                    // Питання про конкретний колір, якого нема в палітрі («а беж є?»), лишаємо — на нього треба чесна відповідь.
+                    if (colorsOf(P(ctx))) u.questions = u.questions.filter((q) => !(/(кольор|колір|відтін)/i.test(String(q)) && !(u.color && !matchColor(P(ctx), u.color))));
                     // «Чи є костюм Гельсінкі?» — картка цього товару щойно показана, це і є відповідь (тест 95: бот дописав «такого немає»).
                     const nameStems = String((P(ctx).name || '') + ' ' + (P(ctx).customerName || '')).toLowerCase().split(/[^a-zа-яіїєґ0-9]+/i).filter((w) => w.length >= 5).map((w) => w.slice(0, 5));
                     u.questions = u.questions.filter((q) => !(/(є|наявн|існує|маєте|немає|нема)/i.test(String(q)) && String(q).toLowerCase().split(/[^a-zа-яіїєґ0-9]+/i).some((w) => w.length >= 5 && nameStems.includes(w.slice(0, 5)) && !/^(костю|кофта|кофти|куртк|джинс|футбо|лофер|бомбе|чолов)/.test(w))));
@@ -1276,7 +1286,7 @@ async function runPolicyInner(A, u) {
             const hasColorNow = ctx.colorChoice && ctx.colorChoice.color;
             if (!hasColorNow && pp.colors) { A.out.push({ text: u.questions.length ? await answerThenAsk(A, u, reply) : reply, step: 'size_reply' }); ctx.agent.lastAsk = 'колір'; return; }
             A.out.push({ text: u.questions.length ? await answerThenAsk(A, u, reply) : reply, step: 'size_reply' });
-        } else if (isSoftDecline(u)) {
+        } else if (isSoftDecline(u) || (u.ready === 'no' && !u.questions.length) || /^[\s]*(ні|нє|нет|не\s+треба|не\s+потрібно|ні,?\s+дякую|поки\s+ні)[\s.!🙂]*$/iu.test(String(text))) { // «Ні» на прохання зросту/ваги або нагадування «Бажаєте замовити?» (правка da3916d7: бот учетверте просив зріст/вагу)
             // Живий кейс 2026-09-14 (Володимир): «Но я просто цікавлюсь цінами», «Поки не потрібно» —
             // бот тричі поспіль повторив те саме питання про зріст/вагу. Тут — рівно ОДНЕ мʼяке
             // речення без тиску, без повторення прохання; наступний реальний сигнал (параметри,

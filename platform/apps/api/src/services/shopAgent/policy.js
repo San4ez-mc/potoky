@@ -1337,12 +1337,16 @@ async function runPolicyInner(A, u) {
         if (isHW && !si.height && !si.weight && mem.height && mem.weight && !u.clothingSize) { si.height = mem.height; si.weight = mem.weight; usedMemory = true; }
         // 2026-09-28 (Edit 7ea6a772, власник): клієнт сам назвав розмір («чорний, XXL») — для одягу за зростом/вагою
         // спершу один раз перепитуємо їх, щоб перевірити розмір. Відмовився дати — приймаємо його розмір.
-        // Числові розміри (джинси «W32», «32») — розмір за талією, зріст/вага його не перевіряють.
-        if (isHW && !pp.isSet && si.clothingSize && !/^\s*[wW]?\d/.test(String(si.clothingSize)) && !(si.height && si.weight) && !ctx.agent.sizeVerifyAsked) {
+        // 2026-09-30 (власник, сесія 3cb972d2: «54 размер есть» → бот одразу «такого розміру немає» + менеджер): якщо категорія
+        // в CRM підбирає розмір за параметрами (зріст/вага), БУДЬ-ЯКИЙ названий клієнтом розмір — і літерний, і числовий («54») —
+        // спершу перевіряємо за цими параметрами; питання беремо з параметрів категорії (не хардкод). Наполягає на своєму — беремо його.
+        if (isHW && !pp.isSet && si.clothingSize && !(si.height && si.weight) && !ctx.agent.sizeVerifyAsked) {
             ctx.agent.sizeVerifyAsked = true; ctx.agent.sizeClaim = String(si.clothingSize).toUpperCase();
             ctx.sizeInput = si;
             if (A.justPresented) { const card = A.out.find((o) => o.step === 'present'); if (card && card.text) card.text = card.text.replace(/\n*👉[^\n]*(зріст|вага)[^\n]*/i, ''); }
-            A.out.push({ text: 'Напишіть, будь ласка, зріст та вагу — перепровірю, чи ' + ctx.agent.sizeClaim + ' розмір добре підійде 🙂', step: 'size_verify_ask' });
+            const catParams = String(paramsPrompt || '').trim();
+            const sizesHint = Array.isArray(pp.sizes) && pp.sizes.length ? ' (у цієї моделі розміри ' + pp.sizes.join(', ') + ')' : '';
+            A.out.push({ text: 'Підберу розмір саме під вас' + sizesHint + ' 🙂 Напишіть, будь ласка:\n' + (catParams || messageText(A.assets, 'n_agent_ask_size_both', ctx, A.session.id)) + '\n— і я перевірю, чи ' + ctx.agent.sizeClaim + ' вам підійде.', step: 'size_verify_ask' });
             ctx.agent.lastAsk = 'зріст і вага';
             return;
         }

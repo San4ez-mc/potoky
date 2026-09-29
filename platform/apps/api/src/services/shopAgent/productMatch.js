@@ -619,6 +619,13 @@ try {
         context.setComponentHint = __parentSets.slice(0, 4).map(function (p) { return (p.sku ? ('Артикул ' + p.sku + ' — ') : '') + String(p.customerName || p.name || '').replace(/\.?\s*Артикул:.*$/i, '').trim() + (Number(p.price) ? (' — ' + Number(p.price) + ' грн') : ''); }).join('\n');
       }
     }
+    // Пост/реклама привʼязані до САМОГО комплекту, а клієнт питає про одну його річ («Чи доступна кофта?») — показуємо цю річ,
+    // а не весь образ (2026-09-29, скарга ed8e3e06: бот тричі тягнув у комплект, хоча клієнтка з першого слова питала лише кофту).
+    if (__uStem && found && found.isSet && /^ad_/.test(via) && !__wantsSetWord) {
+      var __own = [];
+      (found.setComponents || found.setOf || []).forEach(function (c) { var cp = all.filter(function (x) { return String(x.id) === __compId(c) || (c.sku && x.sku && String(x.sku).toUpperCase() === String(c.sku).toUpperCase()); })[0]; if (cp && !cp.isSet && __hasStem(cp, __uStem) && __own.indexOf(cp) < 0) __own.push(cp); });
+      if (__own.length === 1) { context.adSetNote = 'пост/реклама комплекту ' + (found.sku || '') + ', клієнт питає лише про «' + __uStem + '» → показано ' + __own[0].sku; found = __own[0]; via = 'ad_set_component'; mk = 'setcomp_' + String(found.sku || found.id); }
+    }
     // «Весь комплект», а компонент входить у кілька наборів — не відкидаємо товар і не шукаємо слово «комплект» серед окремих товарів (тест 36: показувало лляний Q0071).
     if (__uStem && found && /^ad_/.test(via) && !__hasStem(found, __uStem) && !__wantsSetWord) {
       // реклама комплекту/колажу: компоненти наборів, що містять знайдений товар, з категорії, яку назвав клієнт

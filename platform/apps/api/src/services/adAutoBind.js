@@ -3,6 +3,7 @@
 // (для допису-образу з кількома категоріями — спершу головна річ, потім комплект за складом з тексту).
 // Прив'язує лише впевнені збіги і позначає їх productLinkSource='auto_*' — у CRM видно «перевірте».
 const { db } = require('@platform/db');
+const { geminiKeys, geminiFetch } = require('./geminiKey');
 const logger = require('@platform/logger');
 
 const CATS = [
@@ -14,7 +15,9 @@ const catsOf = (s) => CATS.filter(([, re]) => re.test(String(s || ''))).map(([c]
 
 async function keysOf(botId) {
     const rows = await db.funnelKey.findMany({ where: { botId }, select: { key: true, value: true } });
-    return Object.fromEntries(rows.map((r) => [r.key, String(r.value || '').trim()]));
+    const o = Object.fromEntries(rows.map((r) => [r.key, String(r.value || '').trim()]));
+    o.__geminiKeys = await geminiKeys(botId, o); // ключ воронки → ключ конектора (резерв при 402)
+    return o;
 }
 
 function extractArticles(txt) {
@@ -87,10 +90,7 @@ async function geminiPick(k, adImg, caption, cands, resolve, question) {
     }
     if (!used.length) return null;
     parts.push({ text: 'Порівнюй крій, фасон, довжину блискавки, фактуру в\'язки, комір, деталі — не лише колір. Якщо на 100% не впевнений — index null. Поверни ЛИШЕ JSON {"index":число_або_null,"confident":true_або_false,"reason":"коротко"}' });
-    const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=' + encodeURIComponent(k.GEMINI_API_KEY), {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ parts }], generationConfig: { temperature: 0 } }),
-    });
+    const r = await geminiFetch(k.__geminiKeys, { contents: [{ parts }], generationConfig: { temperature: 0 } });
     const j = await r.json().catch(() => ({}));
     if (!r.ok || j.error) { const err = new Error('Gemini ' + r.status + ': ' + String((j.error && (j.error.status || j.error.message)) || '').slice(0, 80)); err.infra = true; throw err; }
     const t = String(((((j.candidates || [])[0] || {}).content || {}).parts || []).map((x) => x.text || '').join(' '));
@@ -107,7 +107,7 @@ async function decide(k, prods, ad, resolve) {
         const p = matchArticle(prods, a);
         if (p) return { product: p, source: 'auto_article', note: 'артикул ' + a + ' у тексті допису' };
     }
-    if (!k.GEMINI_API_KEY) return { product: null, note: 'немає GEMINI_API_KEY' };
+    if (!(k.__geminiKeys || []).length) return { product: null, note: 'немає GEMINI_API_KEY' };
     const adImg = await fetchImage(info.image);
     if (!adImg) return { product: null, note: 'не вдалось дістати обкладинку' };
     // «Футболка продається окремо» — не склад образу, а допродаж: такі рядки не рахуємо.
@@ -200,7 +200,7 @@ async function salesBotForCrmKey(crmApiKey) {
     const rows = await db.funnelKey.findMany({ where: { key: 'CRM_API_KEY', value: crmApiKey }, select: { botId: true } });
     for (const { botId } of rows) {
         const k = await keysOf(botId);
-        if (k.GEMINI_API_KEY && (k.INSTAGRAM_ACCESS_TOKEN || k.ZERNIO_API_TOKEN)) return botId;
+        if ((k.__geminiKeys || []).length && (k.INSTAGRAM_ACCESS_TOKEN || k.ZERNIO_API_TOKEN)) return botId;
     }
     return rows[0] ? rows[0].botId : null;
 }

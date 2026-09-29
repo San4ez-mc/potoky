@@ -1,4 +1,5 @@
 'use strict';
+const { geminiFetch: __geminiFetch } = require('../geminiKey');
 /**
  * productMatch.js — candidate-finding, ported from the DB-stored flow node n_lookup
  * (goverla_shop CRM version). This is intentionally close to a line-for-line port: every
@@ -14,6 +15,8 @@
  * presentation code) needs to change.
  */
 async function matchProduct(context, keys, input) {
+// Ключі Gemini: власний воронки → конектор воронки (index.js кладе keys.__geminiKeys; 2026-09-29, ключ воронки вичерпав кредити).
+var __gKeys = (Array.isArray(keys.__geminiKeys) && keys.__geminiKeys.length) ? keys.__geminiKeys : [keys.GEMINI_API_KEY].filter(Boolean);
 // n_lookup — версія для НОВОЇ Fineko CRM (заміна n_lookup-code.js, який ходив у KeyCRM).
 // Джерело даних: GET {CRM_API_BASE}/products (+ /suppliers, /categories) з Bearer CRM_API_KEY
 // (per-bot funnelKey, tenant.apiKey нової CRM — окремий на goverla_shop і covercar_ua).
@@ -417,7 +420,7 @@ try {
   // й кладе публічні /bot-files/ URL у context.sharedPost.frameUrls — тут просто шлемо ОБИДВА в ОДИН
   // Gemini-запит разом (дешевше й точніше за один статичний thumbnail_url з першого кадру).
   var __frameUrls = (!found && context.sharedPost && Array.isArray(context.sharedPost.frameUrls) && context.sharedPost.frameUrls.length) ? context.sharedPost.frameUrls : null;
-  if (!found && __frameUrls && keys.GEMINI_API_KEY) {
+  if (!found && __frameUrls && __gKeys.length) {
     var acf = new AbortController(); var tof = setTimeout(function () { try { acf.abort(); } catch (e) { } }, 10000);
     try {
       var __frameParts = [];
@@ -431,7 +434,7 @@ try {
       if (__frameParts.length) {
         var catListF = all.map(function (p, i) { return i + ': ' + (p.displayName || p.name || ''); }).join('\n').slice(0, 6000);
         var promptf = 'Це ' + __frameParts.length + ' кадри з одного рілсу/відео клієнта, зняті в РІЗНІ моменти — ймовірно, товар з нашого магазину. Опиши коротко, що на них (тип товару, колір, помітний текст/бренд), враховуючи ВСІ кадри разом. Потім знайди НАЙБЛИЖЧИЙ відповідник у каталозі нижче (формат: індекс: назва). Якщо жодного релевантного немає — bestMatchIndex null. Поверни ЛИШЕ JSON {"description":"...","bestMatchIndex":число_або_null}.\nКаталог:\n' + catListF;
-        var grf = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=' + encodeURIComponent(keys.GEMINI_API_KEY), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: promptf }].concat(__frameParts) }] }) });
+        var grf = await __geminiFetch(__gKeys, { contents: [{ parts: [{ text: promptf }].concat(__frameParts) }] });
         var gjf = await grf.json();
         var tf = ((((gjf.candidates || [])[0] || {}).content || {}).parts || [{}])[0].text || '';
         var mmf = tf.match(/\{[\s\S]*\}/);
@@ -439,7 +442,7 @@ try {
       }
     } catch (e) { /* best-effort — фолбек на __visionUrl нижче, якщо не спрацювало */ } finally { clearTimeout(tof); }
   }
-  if (!found && __visionUrl && keys.GEMINI_API_KEY) {
+  if (!found && __visionUrl && __gKeys.length) {
     // 2026-09-12 (масовий живий баг: raw lookaside.fbsbx.com часто 403 навіть свіже — підписані Meta-посилання,
     // схоже, прив'язані до того, хто їх отримав (Zernio), не до нас) — zernioHandler.js тепер best-effort
     // підміняє attachment.url на Zernio-проксі refreshUrl (домен zernio.com), тому додаємо його у whitelist і
@@ -471,7 +474,7 @@ try {
           // додано КРОК 0 — спершу відрізнити, чи це взагалі одяг/товар, чи документ/квитанція/скрін
           // переказу грошей. isReceipt=true → НЕ шукаємо bestMatchIndex, немає товару на фото.
           var promptp = 'Це фото від клієнта інтернет-магазину одягу. КРОК 0: це фото ОДЯГУ/ТОВАРУ, чи це банківська квитанція/платіжна інструкція/скріншот переказу грошей (IBAN, Monobank, ПриватБанк тощо)? Якщо це квитанція/документ про оплату — поверни ЛИШЕ {"isReceipt":true} і більше нічого, без опису й індексів. Якщо це одяг/товар — переходь до кроків нижче.\nКРОК 1: визнач ЗАГАЛЬНИЙ ТИП товару на фото (напр. кофта/светр, куртка/вітровка, костюм, взуття, джинси/штани, футболка) — лише тип, не конкретну модель. КРОК 2: у каталозі нижче кожен товар має позначку [категорія: ...] — розглядай ЛИШЕ товари з категорією, що відповідає визначеному типу; серед НИХ знайди найближчий за кольором/фасоном/деталями. НІКОЛИ не вибирай товар з ІНШОЇ категорії, навіть якщо він на вигляд чимось схожий. Якщо в потрібній категорії жодного релевантного немає — bestMatchIndex null (не бери товар з іншої категорії як компроміс). Поверни ЛИШЕ JSON {"isReceipt":false,"description":"...","detectedCategory":"...","bestMatchIndex":число_або_null}.\nКаталог:\n' + catList;
-          var grp = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=' + encodeURIComponent(keys.GEMINI_API_KEY), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: promptp }, { inline_data: { mime_type: mimep, data: b64p } }] }] }) });
+          var grp = await __geminiFetch(__gKeys, { contents: [{ parts: [{ text: promptp }, { inline_data: { mime_type: mimep, data: b64p } }] }] });
           var gjp = await grp.json();
           var tp = ((((gjp.candidates || [])[0] || {}).content || {}).parts || [{}])[0].text || '';
           var mmp = tp.match(/\{[\s\S]*\}/);

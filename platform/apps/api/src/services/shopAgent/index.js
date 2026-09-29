@@ -10,6 +10,7 @@
  * Увімкнення на боті: settings.engine === 'shop_agent_v2' або funnelKey SHOP_AGENT_V2=1.
  */
 const { db, logger, loadAssets, cleanJsonDeep, mergeConsecutiveTextOutputs, runNodeCode, nodeCode } = require('./lib');
+const { geminiKeys } = require('../geminiKey');
 const { understand } = require('./understand');
 const { runPolicy } = require('./policy');
 
@@ -93,7 +94,10 @@ async function handleTurn({ botId, sessionId, text, imageUrl, sharedPost, entryA
     if (entryAdId) { ctx.entryAdId = entryAdId; ctx.agent.seenEntryAd = entryAdId; }
     const history = await buildHistory(sessionId);
     const botSpokeBefore = history.some((m) => m.who === 'bot');
-    const A = { botId, session, ctx, keys: assets.keys, assets, user: session.user ? { id: session.user.id, firstName: session.user.firstName, username: session.user.username } : {}, trace: [], out: [], turnText: String(text || ''), turnImage: imageUrl || null, turnSharedPost: sharedPost || (ctx.sharedPost && ctx.hasFreshSignalThisTurn ? ctx.sharedPost : null), newEntryAd, history, botSpokeBefore };
+    // Ключі Gemini по черзі (власний → конектор воронки) — щоб вичерпаний ключ воронки не клав розпізнавання фото (2026-09-29).
+    let turnKeys = assets.keys;
+    try { turnKeys = Object.assign({}, assets.keys, { __geminiKeys: await geminiKeys(botId, assets.keys) }); } catch (e) { /* лишаємо як є */ }
+    const A = { botId, session, ctx, keys: turnKeys, assets, user: session.user ? { id: session.user.id, firstName: session.user.firstName, username: session.user.username } : {}, trace: [], out: [], turnText: String(text || ''), turnImage: imageUrl || null, turnSharedPost: sharedPost || (ctx.sharedPost && ctx.hasFreshSignalThisTurn ? ctx.sharedPost : null), newEntryAd, history, botSpokeBefore };
     if (session.isTest || ctx.testMode) ctx.testMode = true;
     const t0 = Date.now();
     const u = await understand(A);

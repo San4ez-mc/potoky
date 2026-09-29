@@ -12,6 +12,7 @@
 
 const crypto = require('crypto');
 const { db } = require('@platform/db');
+const { geminiKeys, geminiFetch } = require('./geminiKey');
 const logger = require('@platform/logger');
 const { executeFlowStep } = require('./testSession');
 const { isBlockedByTestMode, isTestModeOn } = require('./testModeGate');
@@ -1063,9 +1064,9 @@ async function dedup(botId, id) {
 // Голосові повідомлення: скачуємо аудіо й розшифровуємо через Gemini (ключ GEMINI_API_KEY воронки). Повертає текст або '' (тоді бот попросить написати текстом).
 async function transcribeVoice(botId, url) {
     try {
-        const gk = await db.funnelKey.findFirst({ where: { botId, key: 'GEMINI_API_KEY' }, select: { value: true } });
-        const key = (gk && gk.value || '').trim();
-        if (!isReal(key) || !url) return '';
+        // Ключ воронки → ключ конектора воронки (2026-09-29: власний ключ вичерпав кредити, голосові мовчки не розшифровувались).
+        const gKeys = (await geminiKeys(botId)).filter(isReal);
+        if (!gKeys.length || !url) return '';
         const headers = {};
         if (/zernio\.com/i.test(url)) { const zk = await getZernioKeys(botId); if (isReal(zk.ZERNIO_API_TOKEN)) headers.Authorization = 'Bearer ' + zk.ZERNIO_API_TOKEN; }
         const ac = new AbortController(); const to = setTimeout(() => { try { ac.abort(); } catch (e) { } }, 20000);
@@ -1073,10 +1074,7 @@ async function transcribeVoice(botId, url) {
         try { const r = await fetch(url, { headers, signal: ac.signal }); if (!r.ok) return ''; mime = (r.headers.get('content-type') || 'audio/mp4').split(';')[0]; buf = Buffer.from(await r.arrayBuffer()); } finally { clearTimeout(to); }
         if (!buf || !buf.length || buf.length > 9 * 1024 * 1024) return '';
         if (!/^audio\//i.test(mime)) mime = 'audio/mp4';
-        const gr = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=' + encodeURIComponent(key), {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ contents: [{ parts: [{ text: 'Розшифруй це голосове повідомлення клієнта інтернет-магазину дослівно, мовою оригіналу (українська, російська або суржик). Поверни ЛИШЕ текст розшифровки, без коментарів. Якщо мови не чути — поверни порожній рядок.' }, { inline_data: { mime_type: mime, data: buf.toString('base64') } }] }], generationConfig: { temperature: 0, maxOutputTokens: 600 } }),
-        });
+        const gr = await geminiFetch(gKeys, { contents: [{ parts: [{ text: 'Розшифруй це голосове повідомлення клієнта інтернет-магазину дослівно, мовою оригіналу (українська, російська або суржик). Поверни ЛИШЕ текст розшифровки, без коментарів. Якщо мови не чути — поверни порожній рядок.' }, { inline_data: { mime_type: mime, data: buf.toString('base64') } }] }], generationConfig: { temperature: 0, maxOutputTokens: 600 } });
         const gj = await gr.json().catch(() => ({}));
         const t = String(gj?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join(' ') || '').trim();
         return t.slice(0, 1500);

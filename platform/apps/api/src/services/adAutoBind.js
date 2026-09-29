@@ -172,7 +172,9 @@ async function autoBindAds(botId, { dryRun = false, limit = 60, onlyExternalIds 
         const d = await (await fetch(base + '/ads?status=all&take=1000', { headers: H })).json().catch(() => ({}));
         ads = (d.data || []);
     }
-    ads = ads.filter((a) => (includeBound || !a.productId) && a.externalId).slice(0, limit);
+    // Невдалу спробу (auto_none, дата на початку нотатки) повторюємо не раніше ніж за 7 днів — щоб черга йшла далі, а не крутилась на тих самих.
+    const recentFail = (a) => a.productLinkSource === 'auto_none' && (Date.now() - (Date.parse(String(a.productLinkNote || '').split(' ')[0]) || 0)) < 7 * 24 * 3600 * 1000;
+    ads = ads.filter((a) => (includeBound || !a.productId) && a.externalId && (onlyExternalIds || !recentFail(a))).slice(0, limit);
     const report = [];
     for (const ad of ads) {
         let r;
@@ -181,6 +183,8 @@ async function autoBindAds(botId, { dryRun = false, limit = 60, onlyExternalIds 
         if (r.product && !dryRun) {
             const pr = await fetch(base + '/ads', { method: 'POST', headers: H, body: JSON.stringify({ externalId: ad.externalId, productId: r.product.id, productLinkSource: r.source, productLinkNote: String(r.note || '').slice(0, 300) }) });
             row.saved = pr.ok;
+        } else if (!r.product && !dryRun && !ad.productId) {
+            await fetch(base + '/ads', { method: 'POST', headers: H, body: JSON.stringify({ externalId: ad.externalId, productLinkSource: 'auto_none', productLinkNote: (new Date().toISOString() + ' ' + String(r.note || '')).slice(0, 300) }) }).catch(() => {});
         }
         report.push(row);
     }

@@ -230,4 +230,4 @@ async function salesBotForCrmKey(crmApiKey) {
     return rows[0] ? rows[0].botId : null;
 }
 
-module.exports = { autoBindAds, salesBotForCrmKey, extractArticles, catsOf, captionClash };
+module.exports = { autoBindAds, salesBotForCrmKey, extractArticles, catsOf, captionClash, geminiPick };

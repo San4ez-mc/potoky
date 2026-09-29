@@ -19,7 +19,7 @@ const CAT_WORDS = [
 
 function colorOf(o) { const pr = (o.properties || []).find((q) => /кол|цвет/i.test(q.name || '')); return pr ? String(pr.value) : ''; }
 function sizesFromText(pr) { const m = String(pr.presentationText || '').match(/Розміри[^:]*:\s*([^\n]+)/i); return m ? m[1].replace(/[🍂🍁❄️]/g, '').trim() : ''; }
-function fmtProduct(pr) {
+function fmtProduct(pr, withDesc) {
     const name = String(pr.customerName || pr.name || '').split('\n')[0].replace(/\.?\s*Артикул:?.*$/i, '').trim();
     const offers = Array.isArray(pr.offers) ? pr.offers : [];
     const inStockOffers = offers.filter((o) => o.inStock !== false);
@@ -32,10 +32,17 @@ function fmtProduct(pr) {
     if (colors.length) parts.push('кольори в наявності: ' + colors.join(', '));
     if (perColor.length) parts.push('розміри за кольорами: ' + perColor.map((x) => x.c + ' — ' + x.s.join(', ')).join('; '));
     else if (generalSizes) parts.push('розміри: ' + generalSizes);
+    if (withDesc) {
+        // Опис і нотатки з CRM — для питань про властивості («є капюшон?», «змійка на всю довжину?») і порівнянь.
+        const desc = String(pr.presentationText || '').split('\n').map((l) => l.replace(/^[\s✔️🧶🎨📏🍂⚡️💵👉❄️🍁]+/u, '').trim()).filter((l) => l && !/ціна|₴|грн|Артикул/i.test(l)).join('; ');
+        const notes = String(pr.aiNotes || '').replace(/\s+/g, ' ').trim();
+        if (desc) parts.push('опис: ' + desc.slice(0, 350));
+        if (notes) parts.push('деталі: ' + notes.slice(0, 350));
+    }
     return '• ' + parts.join('; ');
 }
 
-async function catalogFacts(A, texts) {
+async function catalogFacts(A, texts, opts = {}) {
     const { ctx } = A;
     const cat = await loadCatalog(A.botId, A.keys);
     const all = cat.products || [];
@@ -47,6 +54,8 @@ async function catalogFacts(A, texts) {
         add(cur);
         for (const c of (cur.setComponents || [])) add(byId.get(String(c.productId)) || bySku.get(String(c.sku || '').toUpperCase()));
     }
+    // Товари щойно показаного списку («які з показаних кофт…?»).
+    for (const s0 of String(ctx.catalogHintSkus || '').split(',').map((x) => x.trim()).filter(Boolean)) add(bySku.get(s0.toUpperCase()));
     const up = ctx.product && Array.isArray(ctx.product.upsellItems) && ctx.product.upsellItems[0];
     if (up) add(byId.get(String(up.id)) || bySku.get(String(up.sku || '').toUpperCase()));
     const txt = (Array.isArray(texts) ? texts : [texts]).join('\n');
@@ -58,9 +67,21 @@ async function catalogFacts(A, texts) {
         if (!inCat.length) missing.push(w);
         inCat.slice(0, 6).forEach(add);
     }
-    const lines = picked.slice(0, 14).map(fmtProduct);
+    const lines = picked.slice(0, 14).map((pr) => fmtProduct(pr, !!opts.withDesc));
     if (missing.length) lines.push('• У каталозі НЕМАЄ товарів за словом: ' + missing.join(', ') + ' — так і скажи, запропонуй схоже з переліку, якщо доречно.');
     return lines.join('\n');
 }
 
-module.exports = { catalogFacts };
+async function catalogProducts(A, texts) {
+    // Ті самі товари, що й у фактах, — для фото при порівнянні.
+    const cat = await loadCatalog(A.botId, A.keys);
+    const all = cat.products || []; const bySku = new Map(all.map((p) => [String(p.sku || '').toUpperCase(), p]));
+    const out = []; const add = (p) => { if (p && !out.includes(p)) out.push(p); };
+    const txt = (Array.isArray(texts) ? texts : [texts]).join('\n');
+    for (const a of (txt.match(/\b[A-Za-z]{0,4}\d{3,8}\b/g) || [])) add(bySku.get(a.toUpperCase()));
+    for (const s0 of String(A.ctx.catalogHintSkus || '').split(',').map((x) => x.trim()).filter(Boolean)) add(bySku.get(s0.toUpperCase()));
+    if (A.ctx.product && A.ctx.product.sku) add(bySku.get(String(A.ctx.product.sku).toUpperCase()));
+    return out;
+}
+
+module.exports = { catalogFacts, catalogProducts };

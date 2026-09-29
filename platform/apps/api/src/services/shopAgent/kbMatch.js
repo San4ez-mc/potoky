@@ -56,15 +56,17 @@ async function kbMatch(A, question) {
             + '\n\nЗаписи бази знань:\n' + (list || '(порожньо)')
             + '\n\nЗАВДАННЯ:\n1) match — номер запису, що відповідає на ТЕ САМЕ питання по суті (перефразування, синоніми, інший порядок слів — так; схожа, але інша тема — ні: «термін обміну» ≠ «як оформити обмін»). Запис про ІНШИЙ конкретний товар підходить лише тоді, коли відповідь не залежить від товару. Нема такого — null.'
             + '\n2) scope — чого стосується САМЕ ЦЕ питання: "shop" — однаково для будь-якого товару (оплата, доставка, знижки, обмін/повернення, гарантія, терміни, примірка, магазин); "category" — категорії загалом (напр. «як сідають джинси»); "product" — конкретного товару (його посадка, деталі, крій, тканина).'
-            + '\nВідповідь ЛИШЕ JSON: {"match": число або null, "scope": "shop"|"category"|"product"}';
-        const raw = await callClaude({ sessionId: A.session.id, systemPrompt: 'Ти точно зіставляєш питання клієнтів з базою знань магазину. Відповідаєш лише JSON.', messages: [{ role: 'user', content: prompt }], options: { model: A.keys.KB_MATCH_MODEL || 'claude-haiku-4-5', maxTokens: 60, extra: { temperature: 0 } } });
+            + '\n3) kind — вид питання: "size" — підбір розміру/посадка під параметри («як підібрати розмір», «чи підійде на 200 см», «M повномірний?»); "feature" — властивість/деталь товару, яку видно з опису чи фото (капюшон, блискавка, кишені, матеріал, утеплення); "compare" — чим відрізняються кілька товарів; "policy" — умови магазину (оплата, доставка, обмін, знижки); "other" — інше.'
+            + '\nВідповідь ЛИШЕ JSON: {"match": число або null, "scope": "shop"|"category"|"product", "kind": "size"|"feature"|"compare"|"policy"|"other"}';
+        const raw = await callClaude({ sessionId: A.session.id, systemPrompt: 'Ти точно зіставляєш питання клієнтів з базою знань магазину. Відповідаєш лише JSON.', messages: [{ role: 'user', content: prompt }], options: { model: A.keys.KB_MATCH_MODEL || 'claude-haiku-4-5', maxTokens: 80, extra: { temperature: 0 } } });
         const m = String(raw || '').match(/\{[\s\S]*\}/);
         if (m) {
             const j = JSON.parse(m[0]);
             const idx = Number(j.match);
             const entry = Number.isInteger(idx) && idx >= 1 && idx <= items.length ? items[idx - 1] : null;
             const scope = ['shop', 'category', 'product'].includes(j.scope) ? j.scope : 'product';
-            res = { entry, scope };
+            const kind = ['size', 'feature', 'compare', 'policy', 'other'].includes(j.kind) ? j.kind : 'other';
+            res = { entry, scope, kind };
         }
     } catch (e) { logger.warn('[shopAgent] kbMatch failed: ' + e.message, { sessionId: A.session && A.session.id }); res = null; }
     A._kbm[q] = res;

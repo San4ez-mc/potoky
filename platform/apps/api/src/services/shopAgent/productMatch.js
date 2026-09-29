@@ -199,7 +199,16 @@ try {
   // прив'язка для ЦІЄЇ реклами вже доведено не підходить цьому клієнту цього сеансу — не пробуємо
   // її знову, доки клієнт сам не назве інший товар (тоді свіжий сигнал відкриє звичайний матчинг).
   if (__adExternalId && context.adRejectedFor === __adExternalId) { __adExternalId = ''; }
-  if (__adExternalId) {
+  // ПРІОРИТЕТ -1: артикул, який КЛІЄНТ сам написав у повідомленні (зокрема кирилицею «А0187»), точно збігся з CRM —
+  // сильніший за привʼязку реклами. 2026-09-30 (сесія f9c2ae98): клієнт тричі писав «А0187», а привʼязка реклами щоразу
+  // повертала C0043.
+  var __userOnly = String(context.lastUserMessage || input || '').replace(/\[переслав[^\]]*\][^\n]*/gi, ' ').replace(/https?:\/\/\S+/g, ' ');
+  var __userArts = extractArticles(__userOnly);
+  for (var __ui = 0; __ui < __userArts.length && !found; __ui++) {
+    var __up = matchArticle(all, __userArts[__ui]);
+    if (__up) { found = __up; via = 'user_article:' + __userArts[__ui]; mk = 'art_' + __userArts[__ui]; }
+  }
+  if (__adExternalId && !found) {
     var __adHit = null;
     try {
       var __adHitResp = await fetch(base + '/ads?externalId=' + encodeURIComponent(__adExternalId) + '&take=1', { headers: hdr() });
@@ -446,6 +455,7 @@ try {
   // Gemini-запит разом (дешевше й точніше за один статичний thumbnail_url з першого кадру).
   // Кадри рілсу; або кадри сторіз, на яку відповів клієнт; або КІЛЬКА фото одним повідомленням — усе разом в одному запиті
   // (2026-09-30, сесія e5090bb9: два скріни сторіз — розпізнавався лише перший, крупний план худі → «кофта D0050»).
+  var __refImg0 = null; // перше зображення клієнта — для звірки з еталонними фото кандидатів
   var __frameUrls = (!found && context.sharedPost && Array.isArray(context.sharedPost.frameUrls) && context.sharedPost.frameUrls.length) ? context.sharedPost.frameUrls
     : (!found && Array.isArray(context.lastUserImageUrls) && context.lastUserImageUrls.length > 1) ? context.lastUserImageUrls.slice(0, 4)
     : (!found && Array.isArray(context.storyFrames) && context.storyFrames.length && (context.storyRetry || !context.lastUserImageUrl)) ? context.storyFrames.slice(0, 3)
@@ -473,6 +483,7 @@ try {
         } catch (e) { /* один кадр не завантажився — шлемо решту */ }
       }
       if (__frameParts.length) {
+        __refImg0 = { mime: __frameParts[0].inline_data.mime_type, data: __frameParts[0].inline_data.data };
         var catListF = all.map(function (p, i) { return i + ': ' + (p.displayName || p.name || ''); }).join('\n').slice(0, 6000);
         var promptf = 'Це ' + __frameParts.length + ' зображення від клієнта ПРО ОДИН товар (кадри рілсу/сторіз у різні моменти або кілька фото/скрінів — дивись на ВСІ разом: загальний план важливіший за крупний) — ймовірно, товар з нашого магазину. Опиши коротко, що на них (тип товару, колір, помітний текст/бренд), враховуючи ВСІ кадри разом. Потім знайди НАЙБЛИЖЧИЙ відповідник у каталозі нижче (формат: індекс: назва). Якщо жодного релевантного немає — bestMatchIndex null. Якщо на зображенні є НАПИС з артикулом (напр. «Артикул: D0043») — перепиши його в поле "article" дослівно (інакше null). Поверни ЛИШЕ JSON {"description":"...","article":"..." або null,"bestMatchIndex":число_або_null}.\nКаталог:\n' + catListF;
         var grf = await __geminiFetch(__gKeys, { contents: [{ parts: [{ text: promptf }].concat(__frameParts) }] });
@@ -505,6 +516,7 @@ try {
         var abp = await irp.arrayBuffer();
         if (abp.byteLength <= 8000000) {
           var b64p = Buffer.from(abp).toString('base64');
+          __refImg0 = { mime: 'image/jpeg', data: b64p };
           var mimepRaw = (irp.headers.get('content-type') || '').split(';')[0];
           var mimep = (!mimepRaw || mimepRaw === 'application/octet-stream') ? 'image/jpeg' : mimepRaw;
           // 2026-09-13 (власник: "Джимінай кидати фото каталогу — наскільки дорожче?" —
@@ -544,6 +556,22 @@ try {
     }
   }
 
+  // Звірка з ЕТАЛОННИМИ фото кандидатів тієї ж категорії: за назвами модель не розрізняє схожі товари (чорні флісові костюми
+  // A0191/A0189/SH617927 — сторіз e5090bb9 → «Гельсінкі» замість «Космо»). Кандидатів у категорії >1 — порівнюємо фото;
+  // ніхто точно не збігся — не вгадуємо (далі чесна передача менеджеру).
+  if (found && __refImg0 && /^(video_frames|photo)$/.test(via)) {
+    try {
+      var __sameCat = all.filter(function (x) { return !x.isSet && x.categoryId && String(x.categoryId) === String(found.categoryId || ''); });
+      if (__sameCat.length > 1) {
+        var __pubBase = (keys.CRM_PUBLIC_BASE || 'https://pcrm.fineko.space').replace(/\/$/, '');
+        var __resolve = function (u) { u = String(u || ''); if (!u) return ''; return /^https?:/.test(u) ? u : __pubBase + (u.charAt(0) === '/' ? u : '/' + u); };
+        var __pick = await require('../adAutoBind').geminiPick({ __geminiKeys: __gKeys }, __refImg0, '', __sameCat, __resolve, 'Клієнт надіслав зображення товару (кадр сторіз/рілсу або фото). Який із кандидатів — ТОЧНО той самий товар: крій, капюшон/комір, блискавка, манжети, фактура тканини, колірна гама? Кольори в кандидатів можуть відрізнятись — порівнюй модель, не колір.');
+        if (__pick && __pick.product) { found = __pick.product; via = via + '+ref'; mk = 'ref_' + String(found.sku || found.id); }
+        else { context.visionUncertain = String(found.sku || ''); found = null; via = ''; mk = ''; }
+      }
+    } catch (e) { /* best-effort: лишаємо результат за назвами */ }
+  }
+
   // Реєструємо НОВУ рекламу в CRM (ad_id, якого ще нема в /ads): з товаром, якщо визначили, або без —
   // тоді рядок підсвітиться менеджеру на сторінці «Рекламні витрати» для ручної привʼязки. Best-effort.
   // 2026-09-13 (власник, живий баг "реклама приходить по кілька разів"): перевірка "чи вже є"
@@ -560,7 +588,8 @@ try {
       __adAlreadyExists = !!(Array.isArray(__existsJson.data) && __existsJson.data.length);
     } catch (e) { __adAlreadyExists = adsList.some(function (a) { return String(a.externalId || '') === String(context.entryAd); }); }
   }
-  if (context.entryAd && !context.testMode && !__adAlreadyExists) {
+  // Відповідь на сторіз — не реклама: не реєструємо її в CRM /ads (раніше зʼявлялись «Реклама <id сторіз>» без товару).
+  if (context.entryAd && !context.testMode && !__adAlreadyExists && !(context.storyId && String(context.storyId) === String(context.entryAd))) {
     try {
       var __campaign = (context.lastReferral && context.lastReferral.ads_context_data) || {};
       // 2026-09-10 (власник: "чому фото не отримались?"): органічні/реферальні оголошення

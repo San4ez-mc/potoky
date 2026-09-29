@@ -741,6 +741,8 @@ async function runPolicyInner(A, u) {
             }
         } catch (e) { /* best-effort */ }
     }
+    // Клієнт назвав конкретний товар (артикул) — це вибір товару, а не відмова від замовлення («ні, мені потрібна А0187»).
+    if (u.ready === 'no' && u.productHint.article && !(P(ctx) && String(P(ctx).sku).toUpperCase() === String(u.productHint.article).toUpperCase())) u.ready = null;
     // Клієнт по суті вказує на товар зі сторіз, на яку відповідав (аналізатор: u.refersToStory) — повторно розпізнаємо її кадри.
     if (u.refersToStory && !A.turnImage && (ctx.storyId || (Array.isArray(ctx.storyFrames) && ctx.storyFrames.length))) ctx.storyRetry = true; else delete ctx.storyRetry;
     // Відповідь на «замінити, додати чи залишаємо?» (див. ask_replace_or_add нижче).
@@ -997,7 +999,7 @@ async function runPolicyInner(A, u) {
                 const nameHit = listC.some((pr) => stemsOf(pr.customerName || pr.name).some((st) => String(text).toLowerCase().includes(st)));
                 if (named.length > 1 && !nameHit) {
                     ctx.agent.pendingColorRaw = text.trim();
-                    A.out.push({ text: named[0].c + ' є в кількох моделях зі списку 🙂 Яка саме цікавить?\n' + named.map((x) => (skusC.findIndex((s) => s.toUpperCase() === String(x.pr.sku).toUpperCase()) + 1) + '. ' + String(x.pr.customerName || x.pr.name).split('\n')[0].replace(/\.?\s*Артикул:?.*$/i, '').trim() + ' — ' + Number(x.pr.price) + ' грн').join('\n') + '\nМожна відповісти номером 👌', step: 'hint_color_ambiguous' });
+                    A.out.push({ text: named[0].c + ' є в кількох моделях зі списку 🙂 Яка саме цікавить?\n' + named.map((x) => (skusC.findIndex((s) => s.toUpperCase() === String(x.pr.sku).toUpperCase()) + 1) + '. ' + String(x.pr.name || x.pr.customerName).split('\n')[0].replace(/\.?\s*Артикул:?.*$/i, '').trim() + ' — ' + Number(x.pr.price) + ' грн').join('\n') + '\nМожна відповісти номером 👌', step: 'hint_color_ambiguous' });
                     ctx.agent.lastAsk = 'який із показаних товарів цікавить';
                     return;
                 }
@@ -1397,7 +1399,7 @@ async function runPolicyInner(A, u) {
                 const rec = String(ctx.recommendedSize).toUpperCase();
                 claimNote = rec === ctx.agent.sizeClaim
                     ? '✅ Так, ' + rec + ' вам добре підійде. '
-                    : 'Ви називали ' + ctx.agent.sizeClaim + ', але за вашим зростом і вагою краще підійде ' + rec + ' 📏 Якщо все ж хочете ' + ctx.agent.sizeClaim + ' — напишіть, оформимо так. ';
+                    : 'Ви називали ' + ctx.agent.sizeClaim + ', але за вашим зростом і вагою краще підійде ' + rec + ' 📏 ' + ((Array.isArray(pp.sizes) && pp.sizes.map((z) => String(z).toUpperCase()).includes(ctx.agent.sizeClaim)) ? 'Якщо все ж хочете ' + ctx.agent.sizeClaim + ' — напишіть, оформимо так. ' : '');
                 delete ctx.agent.sizeClaim;
             } else if (ctx.agent.sizeClaim) delete ctx.agent.sizeClaim; // параметри не дали — приймаємо названий розмір без «перевірено»
             const reply = (usedMemory ? 'Беру ваші параметри з минулого разу (' + si.height + ' см / ' + si.weight + ' кг) 🙂 ' : '') + claimNote + sizeTextClean + (ctx.sizeColorFollowup ? ' ' + norm(String(ctx.sizeColorFollowup)) : '');

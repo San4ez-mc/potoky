@@ -7,7 +7,7 @@
  * transcript: [{role:'user'|'assistant', content}], де фото бота вже подані як «[бот надіслав фото …]».
  * Повертає масив { id, message } — порожній, якщо все гаразд.
  */
-const LEAK_RE = /\[object Object\]|\bundefined\b|\bnull\b|\{\{|\}\}|ctx\.|Клієнт щойно|клієнт щойно переслав|системн(а|ий) підказк|nextStep|JSON\b/;
+const LEAK_RE = /\[object Object\]|\bundefined\b|\bnull\b|\{\{|\}\}|ctx\.|Клієнт щойно|клієнт щойно переслав|системн(а|ий) підказк|nextStep|JSON\b|ФАКТ(И|АХ|АМИ|ІВ)|БАЗ[АИІ] ЗНАНЬ|НАЙБЛИЖЧА ВІДПОВІДЬ/; // 2026-09-29: назви блоків промпту («в ФАКТАХ не маю»)
 
 function checkInvariants(transcript, ctx = {}) {
     const v = [];
@@ -21,7 +21,8 @@ function checkInvariants(transcript, ctx = {}) {
         if (/^\s*(дякую|спасибо|ок|окей|добре|хорошо|ладно|ясно|зрозуміло|понятно|угу|ага|👍|🙏)[\s.!]*$/i.test(String(t[i].content || '')) && t.slice(0, i).some((m) => m.role === 'assistant')) continue; // «дякую/окей» після відповіді — тиша допустима
         let answered = false;
         for (let j = i + 1; j < t.length && t[j].role !== 'user'; j++) { if (t[j].role === 'assistant') { answered = true; break; } }
-        const isLast = !t.slice(i + 1).some((m) => m.role === 'user');
+        // Після передачі менеджеру (пауза) бот мовчить на ВСІ подальші повідомлення, а не лише на останнє.
+        const isLast = !t.slice(i + 1).some((m) => m.role === 'assistant');
         if (!answered && !(paused && isLast)) v.push({ id: 'I1', message: 'Бот не відповів на повідомлення клієнта: «' + String(t[i].content || '').slice(0, 80) + '»' });
     }
 

@@ -92,6 +92,7 @@ async function geminiPick(k, adImg, caption, cands, resolve, question) {
         body: JSON.stringify({ contents: [{ parts }], generationConfig: { temperature: 0 } }),
     });
     const j = await r.json().catch(() => ({}));
+    if (!r.ok || j.error) { const err = new Error('Gemini ' + r.status + ': ' + String((j.error && (j.error.status || j.error.message)) || '').slice(0, 80)); err.infra = true; throw err; }
     const t = String(((((j.candidates || [])[0] || {}).content || {}).parts || []).map((x) => x.text || '').join(' '));
     const m = t.match(/\{[\s\S]*\}/); if (!m) return null;
     let v; try { v = JSON.parse(m[0]); } catch (e) { return null; }
@@ -175,22 +176,23 @@ async function autoBindAds(botId, { dryRun = false, limit = 60, onlyExternalIds 
     // Невдалу спробу (auto_none, дата на початку нотатки) повторюємо не раніше ніж за 7 днів — щоб черга йшла далі, а не крутилась на тих самих.
     const recentFail = (a) => a.productLinkSource === 'auto_none' && (Date.now() - (Date.parse(String(a.productLinkNote || '').split(' ')[0]) || 0)) < 7 * 24 * 3600 * 1000;
     ads = ads.filter((a) => (includeBound || !a.productId) && a.externalId && (onlyExternalIds || !recentFail(a))).slice(0, limit);
-    const report = [];
+    const report = []; let infraError = null;
     for (const ad of ads) {
         let r;
-        try { r = await decide(k, prods, ad, resolve); } catch (e) { r = { product: null, note: 'помилка: ' + e.message }; }
+        try { r = await decide(k, prods, ad, resolve); } catch (e) { r = { product: null, note: 'помилка: ' + e.message, infra: !!e.infra }; }
+        if (r.infra) { infraError = r.note; report.push({ externalId: ad.externalId, name: ad.name, sku: null, note: r.note }); break; }
         const row = { externalId: ad.externalId, name: ad.name, sku: r.product ? r.product.sku : null, source: r.source || null, note: r.note };
         if (r.product && !dryRun) {
             const pr = await fetch(base + '/ads', { method: 'POST', headers: H, body: JSON.stringify({ externalId: ad.externalId, productId: r.product.id, productLinkSource: r.source, productLinkNote: String(r.note || '').slice(0, 300) }) });
             row.saved = pr.ok;
-        } else if (!r.product && !dryRun && !ad.productId) {
+        } else if (!r.product && !dryRun && !ad.productId && !r.infra) {
             await fetch(base + '/ads', { method: 'POST', headers: H, body: JSON.stringify({ externalId: ad.externalId, productLinkSource: 'auto_none', productLinkNote: (new Date().toISOString() + ' ' + String(r.note || '')).slice(0, 300) }) }).catch(() => {});
         }
         report.push(row);
     }
     const bound = report.filter((x) => x.sku).length;
-    logger.info('[adAutoBind] done', { botId, registered, checked: report.length, bound, dryRun });
-    return { ok: true, registered, checked: report.length, bound, report };
+    logger.info('[adAutoBind] done', { botId, registered, checked: report.length, bound, dryRun, infraError });
+    return { ok: !infraError, error: infraError, registered, checked: report.length, bound, report };
 }
 
 // Воронки продажів магазину за ключем CRM (той самий підхід, що crm-secrets-sync).

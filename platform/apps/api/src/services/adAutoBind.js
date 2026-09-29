@@ -26,6 +26,22 @@ function extractArticles(txt) {
     const re2 = /\b(set\d{3,6}|[A-Za-z]{1,3}\d{3,6})\b/gi; while ((m = re2.exec(s))) out.add(m[1].toUpperCase());
     return [...out];
 }
+const MATERIALS = [['льон', /лля|льон|льня/i], ['замша', /замш/i], ['вельвет', /вельвет/i], ['фліс', /фліс|полар|плюш/i], ['плащівка', /плащів/i], ['ангора', /ангор/i], ['тринитка', /тринит/i], ['двонитка', /двонит|двухнит/i], ['рубчик', /рубчик/i], ['шкіра', /шкір/i]];
+const PARTS = [['сорочка', /сорочк/i], ['футболка', /футболк/i], ['шорти', /шорт/i], ['штани', /штан|брюк/i], ['піджак', /піджак|жакет/i], ['бомбер', /бомбер/i], ['кофта', /кофт|худі/i], ['поло', /\bполо\b/i]];
+const tagsOf = (list, s) => list.filter(([, re]) => re.test(String(s || ''))).map(([t]) => t);
+/** Суперечність підпису одиночного допису з обраним товаром: інший матеріал або інший склад костюма. '' — суперечності нема. */
+function captionClash(caption, p) {
+    const lines = String(caption || '').split('\n').filter((l) => !/окремо/i.test(l)); // «футболка продається окремо» — допродаж, не склад
+    const cap = lines.slice(0, 12).join('\n');
+    const ptxt = [p.customerName, p.name, p.presentationText, p.aiNotes].filter(Boolean).join('\n');
+    const cm = tagsOf(MATERIALS, cap); const pm = tagsOf(MATERIALS, ptxt);
+    if (cm.length && pm.length && !cm.some((m) => pm.includes(m))) return 'матеріал у підписі (' + cm.join(', ') + ') ≠ товару (' + pm.join(', ') + ')';
+    // Склад лише з дужок/«складається з…» — описує саме цю річ.
+    const compTxt = [...cap.matchAll(/\(([^)]{3,60})\)/g)].map((m) => m[1]).concat(lines.filter((l) => /склада/i.test(l))).join(' ');
+    const cp = tagsOf(PARTS, compTxt); const pp = tagsOf(PARTS, ptxt);
+    if (cp.length >= 2 && pp.length && cp.some((x) => !pp.includes(x))) return 'склад у підписі (' + cp.join(', ') + ') ≠ товару (' + pp.join(', ') + ')';
+    return '';
+}
 function matchArticle(prods, art) {
     const a = String(art).toUpperCase();
     const hit = prods.filter((p) => String(p.sku || '').toUpperCase() === a || String(p.supplierArticle || '').toUpperCase() === a
@@ -103,10 +119,14 @@ async function geminiPick(k, adImg, caption, cands, resolve, question) {
 async function decide(k, prods, ad, resolve) {
     const info = await mediaInfo(k, ad);
     const text = [info.caption, ad.name].filter(Boolean).join('\n');
-    for (const a of extractArticles(info.caption || ad.captionText || '')) {
+    const capArts = extractArticles(info.caption || ad.captionText || '');
+    for (const a of capArts) {
         const p = matchArticle(prods, a);
         if (p) return { product: p, source: 'auto_article', note: 'артикул ' + a + ' у тексті допису' };
     }
+    // Артикул у підписі є, але такого товару в CRM нема — за фото «найсхожіший» НЕ шукаємо (2026-09-29: A0084 плащівка → A0189 фліс).
+    const explicitArts = [...String(info.caption || ad.captionText || '').matchAll(/(?:артикул|арт\.)\s*[:#№.\-]?\s*([A-Za-z]{0,5}\d{3,8})/gi)].map((x) => x[1].toUpperCase());
+    if (explicitArts.length) return { product: null, note: 'артикулу ' + [...new Set(explicitArts)].join(', ') + ' немає в CRM — додайте товар або привʼяжіть вручну' };
     if (!(k.__geminiKeys || []).length) return { product: null, note: 'немає GEMINI_API_KEY' };
     const adImg = await fetchImage(info.image);
     if (!adImg) return { product: null, note: 'не вдалось дістати обкладинку' };
@@ -137,7 +157,12 @@ async function decide(k, prods, ad, resolve) {
     let cands = cats.length ? singles.filter((p) => catsOf((p.customerName || '') + ' ' + p.name).some((c) => cats.includes(c))) : [];
     if (!cands.length) return { product: null, note: 'категорію з тексту не визначено' };
     const pick = await geminiPick(k, adImg, info.caption, cands, resolve, 'Який із кандидатів — ТОЧНО той самий товар, що на обкладинці допису?');
-    if (pick && pick.product) return { product: pick.product, source: 'auto_vision', note: 'фото: ' + (pick.reason || 'збіг') };
+    if (pick && pick.product) {
+        // Модель інколи обирає «єдиного схожого» (2026-09-29, резерв Claude: лляний костюм → замшевий/вельветовий) — підпис перевіряє вибір.
+        const clash = captionClash(info.caption || ad.captionText || '', pick.product);
+        if (clash) return { product: null, note: 'фото вказало ' + pick.product.sku + ', але ' + clash };
+        return { product: pick.product, source: 'auto_vision', note: 'фото: ' + (pick.reason || 'збіг') };
+    }
     return { product: null, note: 'фото: не впевнено' + (pick && pick.reason ? ' (' + pick.reason + ')' : '') };
 }
 
@@ -205,4 +230,4 @@ async function salesBotForCrmKey(crmApiKey) {
     return rows[0] ? rows[0].botId : null;
 }
 
-module.exports = { autoBindAds, salesBotForCrmKey, extractArticles, catsOf };
+module.exports = { autoBindAds, salesBotForCrmKey, extractArticles, catsOf, captionClash };

@@ -105,7 +105,10 @@ function categoryWordIsSetComponent(text, ctx) {
     const stems = clean.toLowerCase().match(new RegExp(CATEGORY_STEM_RE.source, 'gi')) || [];
     if (!stems.length) return false;
     const names = p.setItems.map((it) => String(it.name || '').toLowerCase());
-    return stems.every((st) => st === 'комплект' || names.some((n) => n.includes(st)));
+    // Родові слова → конкретні позиції комплекту: «44 розмір взуття» у комплекті з лоферами — це розмір лоферів, а не новий
+    // пошук взуття (правка 8ecadd86, Саня Чаус: список лоферів замість комплекту, потім «Я вище написав!!!»).
+    const GENERIC = { 'взутт': /лофер|туфл|кросів|черевик|кед|мокасин/, 'штан': /джинс|штан|брюк/ };
+    return stems.every((st) => st === 'комплект' || names.some((n) => n.includes(st) || (GENERIC[st] && GENERIC[st].test(n))));
 }
 
 /**

@@ -11,6 +11,7 @@
  */
 const { db, logger, loadAssets, cleanJsonDeep, mergeConsecutiveTextOutputs, runNodeCode, nodeCode } = require('./lib');
 const { geminiKeys } = require('../geminiKey');
+const { resolveIgLink, LINK_RE } = require('./igLink');
 const { understand } = require('./understand');
 const { runPolicy } = require('./policy');
 
@@ -95,6 +96,8 @@ async function handleTurn({ botId, sessionId, text, imageUrl, sharedPost, entryA
     // (живі кейси: Kolya Kolya/set1111→C0043, anastasia.ze7/A0187→C0043). Фото належить лише
     // своєму ходу — якщо ЦЕЙ хід текстовий і без нового фото, чистимо стару позначку.
     else if (text) delete ctx.lastUserImageUrl;
+    // Посилання на допис Instagram текстом — те саме, що пересланий допис (правка f170331d).
+    if (!sharedPost && text && LINK_RE.test(String(text))) { const lp = await resolveIgLink(text); if (lp) sharedPost = lp; }
     if (sharedPost) ctx.sharedPost = sharedPost;
     const newEntryAd = !!(entryAdId && entryAdId !== ctx.agent.seenEntryAd);
     if (entryAdId) { ctx.entryAdId = entryAdId; ctx.agent.seenEntryAd = entryAdId; }

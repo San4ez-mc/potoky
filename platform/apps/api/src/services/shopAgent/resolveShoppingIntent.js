@@ -33,10 +33,23 @@ async function resolveShoppingIntent(A, u, tool) {
     }
 
     const signal = classifySignal(A, u, ctx);
-    ctx.cart.lastSignal = Object.assign({}, signal, { turnAt: Date.now() });
     const hadProduct = !!(ctx.product && ctx.product.sku);
     const beforeProduct = ctx.product;
     const text = String(ctx.lastUserMessage || A.turnText || '');
+    // «234286 мені цей потрібен» — голе число без слова «артикул» (правка 8577bd2d): якщо воно ТОЧНО збігається з артикулом
+    // у CRM — це артикул. Ціни/зріст/телефони не зачіпаємо: лише 4–8 цифр і лише точний збіг зі SKU.
+    if (!signal.article) {
+        const nums = String(A.turnText || text).match(/(?<![\d+])\d{4,8}(?![\d])/g) || [];
+        if (nums.length) {
+            try {
+                const catN = await loadCatalog(A.botId, keys);
+                const skuSet = new Set(); for (const pr of catN.products) { if (pr.sku) skuSet.add(String(pr.sku).toUpperCase()); if (pr.supplierArticle) skuSet.add(String(pr.supplierArticle).toUpperCase()); }
+                const hitN = nums.find((n) => skuSet.has(n));
+                if (hitN) { signal.article = hitN; if (!/артикул/i.test(text)) ctx.lastUserMessage = text + ' артикул ' + hitN; }
+            } catch (e) { /* best-effort */ }
+        }
+    }
+    ctx.cart.lastSignal = Object.assign({}, signal, { turnAt: Date.now() });
 
     // Товару ще нема, клієнт пише коротку назву («Гельсінкі», «мажор петля») — пробуємо знайти за назвою в каталозі (тест 95).
     const nameTry = !hadProduct && /[a-zа-яіїєґ]{4,}/i.test(text) && text.trim().split(/\s+/).length <= 4 && !/\d{2,}/.test(text);

@@ -1003,6 +1003,8 @@ async function runPolicyInner(A, u) {
                 // переслав пост…»). Запитання про ціну, на яке щойно відповіла картка, знімаємо.
                 if (A.justPresented && Array.isArray(u.questions) && u.questions.length) {
                     u.questions = u.questions.filter((q) => !/(ціна|ціну|цін[иі]|скільки\s+кошту|вартіст|почім|прайс)/i.test(String(q)));
+                    // «Клієнт написав 234286 — уточнити, що це» — картка цього артикула щойно показана, питання закрите (правка 8577bd2d).
+                    if (P(ctx).sku) u.questions = u.questions.filter((q) => !String(q).toUpperCase().includes(String(P(ctx).sku).toUpperCase()));
                     // «Які є кольори?» — картка щойно їх перелічила; окремий рядок «Кофта є у трьох кольорах…» — дубль (правки 272c33d0, 0759abcb).
                     // Питання про конкретний колір, якого нема в палітрі («а беж є?»), лишаємо — на нього треба чесна відповідь.
                     if (colorsOf(P(ctx))) u.questions = u.questions.filter((q) => !(/(кольор|колір|відтін)/i.test(String(q)) && !(u.color && !matchColor(P(ctx), u.color))));
@@ -1245,7 +1247,10 @@ async function runPolicyInner(A, u) {
         // Параметри для перевірки прийшли — рахуємо саме за зростом/вагою, а не за названим розміром.
         if (isHW && ctx.agent.sizeClaim && si.height && si.weight) delete si.clothingSize;
         ctx.sizeInput = si;
-        const complete = (si.height && si.weight) || si.clothingSize || si.footLength || (si.chest && pp.sizeChartData);
+        // Для одягу, що підбирається за зростом і вагою, інші заміри («по груди 110») НЕ визначають розмір — лише зріст+вага
+        // (правка 800c1fb5, Олексій: «на 85 кг буде L–XL, S однозначно малий; інші параметри ігнорувати»). Бракує зросту — питаємо його.
+        if (isHW && si.chest && !(si.height && si.weight)) delete si.chest;
+        const complete = (si.height && si.weight) || si.clothingSize || si.footLength || (!isHW && si.chest && pp.sizeChartData);
         if (complete) {
             // Клієнт просить сітку в тому ж ході, коли розмір рахується (напр. після прохання перевірити розмір) — надсилаємо саме фото,
             // інакше compose пише «надсилаю окремим фото» без вкладення (тести 7c022683/6ed22687).

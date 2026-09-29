@@ -218,6 +218,24 @@ try {
     }
   }
 
+  // ПРІОРИТЕТ 0.5 (2026-09-29, правка f170331d): допис без власної звʼязки (рекламний допис, посилання текстом), але його
+  // підпис збігається з підписом дописів, уже привʼязаних у CRM /ads до ОДНОГО товару — беремо цей товар («Стриманий
+  // мінімалізм…» без артикула в підписі = 234286). Кілька різних товарів з тим самим підписом — не вгадуємо.
+  var __spCap = context.sharedPost && context.sharedPost.caption;
+  if (!found && __spCap && adsList.length) {
+    var __capKey = function (s) { return String(s || '').toLowerCase().replace(/[’'`ʼ]/g, '').replace(/[^a-zа-яіїєґ0-9]+/gi, ' ').trim().slice(0, 70); };
+    var __ck = __capKey(__spCap);
+    if (__ck.length >= 25) {
+      var __capProds = {};
+      adsList.forEach(function (a) { if (a.productId && a.captionText && __capKey(a.captionText) === __ck) __capProds[String(a.productId)] = 1; });
+      var __capIds = Object.keys(__capProds);
+      if (__capIds.length === 1) {
+        var __byCap = all.filter(function (x) { return String(x.id) === __capIds[0]; })[0];
+        if (__byCap) { found = __byCap; via = 'ad_caption_link'; mk = 'adcap_' + __capIds[0]; }
+      }
+    }
+  }
+
   // ПРІОРИТЕТ 1: ad_id/post_id — авто-теги на товарі (adMatchTokens), коли ручної прив'язки
   // в Ad (Пріоритет 0) для цього mediaId ще нема.
   if (!found && context.entryAd && context.adRejectedFor !== String(context.entryAd)) { found = matchByAdToken(all, String(context.entryAd)); if (found) { via = 'ad_id'; mk = String(context.entryAd); } }

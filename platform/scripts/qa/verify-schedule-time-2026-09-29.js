@@ -47,7 +47,7 @@ async function main() {
     // 3) чекаємо, поки content2 запише пости (генерація асинхронна)
     const url = 'http://localhost:3002/api/agent-tools?action=list_posts&token=' + encodeURIComponent(secret) + '&projectId=' + encodeURIComponent(projectId) + '&date_from=' + tomorrow + '&date_to=' + tomorrow;
     let posts = [];
-    for (let i = 0; i < 24; i++) {
+    for (let i = 0; i < 40; i++) {
         await new Promise((res) => setTimeout(res, 5000));
         const jr = await fetch(url).then((x) => x.json()).catch(() => null);
         posts = Array.isArray(jr?.posts) ? jr.posts : [];

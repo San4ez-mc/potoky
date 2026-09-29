@@ -444,26 +444,39 @@ try {
   // zernioHandler.js (повний Node-процес, ffmpeg) best-effort витягує 2 кадри рілсу в різні моменти
   // й кладе публічні /bot-files/ URL у context.sharedPost.frameUrls — тут просто шлемо ОБИДВА в ОДИН
   // Gemini-запит разом (дешевше й точніше за один статичний thumbnail_url з першого кадру).
-  var __frameUrls = (!found && context.sharedPost && Array.isArray(context.sharedPost.frameUrls) && context.sharedPost.frameUrls.length) ? context.sharedPost.frameUrls : null;
+  // Кадри рілсу; або кадри сторіз, на яку відповів клієнт; або КІЛЬКА фото одним повідомленням — усе разом в одному запиті
+  // (2026-09-30, сесія e5090bb9: два скріни сторіз — розпізнавався лише перший, крупний план худі → «кофта D0050»).
+  var __frameUrls = (!found && context.sharedPost && Array.isArray(context.sharedPost.frameUrls) && context.sharedPost.frameUrls.length) ? context.sharedPost.frameUrls
+    : (!found && Array.isArray(context.lastUserImageUrls) && context.lastUserImageUrls.length > 1) ? context.lastUserImageUrls.slice(0, 4)
+    : (!found && Array.isArray(context.storyFrames) && context.storyFrames.length && (context.storyRetry || !context.lastUserImageUrl)) ? context.storyFrames.slice(0, 3)
+    : null;
   if (!found && __frameUrls && __gKeys.length) {
     var acf = new AbortController(); var tof = setTimeout(function () { try { acf.abort(); } catch (e) { } }, 10000);
     try {
       var __frameParts = [];
       for (var __fi = 0; __fi < __frameUrls.length; __fi++) {
         try {
-          var __fr = await fetch(__frameUrls[__fi], { signal: acf.signal });
+          var __fh = {}; try { if (new URL(__frameUrls[__fi]).hostname.toLowerCase() === 'zernio.com' && keys.ZERNIO_API_TOKEN) __fh.Authorization = 'Bearer ' + keys.ZERNIO_API_TOKEN; } catch (e) { }
+          var __fr = await fetch(__frameUrls[__fi], { signal: acf.signal, headers: __fh });
           var __fab = await __fr.arrayBuffer();
           if (__fab.byteLength > 0 && __fab.byteLength <= 8000000) __frameParts.push({ inline_data: { mime_type: 'image/jpeg', data: Buffer.from(__fab).toString('base64') } });
         } catch (e) { /* один кадр не завантажився — шлемо решту */ }
       }
       if (__frameParts.length) {
         var catListF = all.map(function (p, i) { return i + ': ' + (p.displayName || p.name || ''); }).join('\n').slice(0, 6000);
-        var promptf = 'Це ' + __frameParts.length + ' кадри з одного рілсу/відео клієнта, зняті в РІЗНІ моменти — ймовірно, товар з нашого магазину. Опиши коротко, що на них (тип товару, колір, помітний текст/бренд), враховуючи ВСІ кадри разом. Потім знайди НАЙБЛИЖЧИЙ відповідник у каталозі нижче (формат: індекс: назва). Якщо жодного релевантного немає — bestMatchIndex null. Поверни ЛИШЕ JSON {"description":"...","bestMatchIndex":число_або_null}.\nКаталог:\n' + catListF;
+        var promptf = 'Це ' + __frameParts.length + ' зображення від клієнта ПРО ОДИН товар (кадри рілсу/сторіз у різні моменти або кілька фото/скрінів — дивись на ВСІ разом: загальний план важливіший за крупний) — ймовірно, товар з нашого магазину. Опиши коротко, що на них (тип товару, колір, помітний текст/бренд), враховуючи ВСІ кадри разом. Потім знайди НАЙБЛИЖЧИЙ відповідник у каталозі нижче (формат: індекс: назва). Якщо жодного релевантного немає — bestMatchIndex null. Якщо на зображенні є НАПИС з артикулом (напр. «Артикул: D0043») — перепиши його в поле "article" дослівно (інакше null). Поверни ЛИШЕ JSON {"description":"...","article":"..." або null,"bestMatchIndex":число_або_null}.\nКаталог:\n' + catListF;
         var grf = await __geminiFetch(__gKeys, { contents: [{ parts: [{ text: promptf }].concat(__frameParts) }] });
         var gjf = await grf.json();
         var tf = ((((gjf.candidates || [])[0] || {}).content || {}).parts || [{}])[0].text || '';
         var mmf = tf.match(/\{[\s\S]*\}/);
-        if (mmf) { var ff = JSON.parse(mmf[0]); if (ff.bestMatchIndex != null && all[ff.bestMatchIndex]) { found = all[ff.bestMatchIndex]; via = 'video_frames'; mk = 'frames_' + ff.bestMatchIndex; } }
+        if (mmf) {
+          var ff = JSON.parse(mmf[0]);
+          // Напис «Артикул: …» на кадрі (сторіз) — точніший за схожість вигляду (2026-09-30, рішення власника позначати артикул у сторіз).
+          var __fa = ff.article ? matchArticle(all, String(ff.article).replace(/^.*?:s*/, '').trim()) : null;
+          if (__fa) { found = __fa; via = 'image_article:' + ff.article; mk = 'art_' + String(ff.article); }
+          else if (ff.article) context.imageArticleMissing = String(ff.article);
+          if (!found && !ff.article && ff.bestMatchIndex != null && all[ff.bestMatchIndex]) { found = all[ff.bestMatchIndex]; via = 'video_frames'; mk = 'frames_' + ff.bestMatchIndex; }
+        }
       }
     } catch (e) { /* best-effort — фолбек на __visionUrl нижче, якщо не спрацювало */ } finally { clearTimeout(tof); }
   }
@@ -498,7 +511,7 @@ try {
           // це як "не визначив товар" і просила пост/артикул, хоча насправді треба звірити оплату):
           // додано КРОК 0 — спершу відрізнити, чи це взагалі одяг/товар, чи документ/квитанція/скрін
           // переказу грошей. isReceipt=true → НЕ шукаємо bestMatchIndex, немає товару на фото.
-          var promptp = 'Це фото від клієнта інтернет-магазину одягу. КРОК 0: це фото ОДЯГУ/ТОВАРУ, чи це банківська квитанція/платіжна інструкція/скріншот переказу грошей (IBAN, Monobank, ПриватБанк тощо)? Якщо це квитанція/документ про оплату — поверни ЛИШЕ {"isReceipt":true} і більше нічого, без опису й індексів. Якщо це одяг/товар — переходь до кроків нижче.\nКРОК 1: визнач ЗАГАЛЬНИЙ ТИП товару на фото (напр. кофта/светр, куртка/вітровка, костюм, взуття, джинси/штани, футболка) — лише тип, не конкретну модель. КРОК 2: у каталозі нижче кожен товар має позначку [категорія: ...] — розглядай ЛИШЕ товари з категорією, що відповідає визначеному типу; серед НИХ знайди найближчий за кольором/фасоном/деталями. НІКОЛИ не вибирай товар з ІНШОЇ категорії, навіть якщо він на вигляд чимось схожий. Якщо в потрібній категорії жодного релевантного немає — bestMatchIndex null (не бери товар з іншої категорії як компроміс). Поверни ЛИШЕ JSON {"isReceipt":false,"description":"...","detectedCategory":"...","bestMatchIndex":число_або_null}.\nКаталог:\n' + catList;
+          var promptp = 'Це фото від клієнта інтернет-магазину одягу. КРОК 0: це фото ОДЯГУ/ТОВАРУ, чи це банківська квитанція/платіжна інструкція/скріншот переказу грошей (IBAN, Monobank, ПриватБанк тощо)? Якщо це квитанція/документ про оплату — поверни ЛИШЕ {"isReceipt":true} і більше нічого, без опису й індексів. Якщо це одяг/товар — переходь до кроків нижче.\nКРОК 1: визнач ЗАГАЛЬНИЙ ТИП товару на фото (напр. кофта/светр, куртка/вітровка, костюм, взуття, джинси/штани, футболка) — лише тип, не конкретну модель. КРОК 2: у каталозі нижче кожен товар має позначку [категорія: ...] — розглядай ЛИШЕ товари з категорією, що відповідає визначеному типу; серед НИХ знайди найближчий за кольором/фасоном/деталями. НІКОЛИ не вибирай товар з ІНШОЇ категорії, навіть якщо він на вигляд чимось схожий. Якщо в потрібній категорії жодного релевантного немає — bestMatchIndex null (не бери товар з іншої категорії як компроміс). Якщо на зображенні є НАПИС з артикулом (напр. «Артикул: D0043») — перепиши його в поле "article" дослівно (інакше null). Поверни ЛИШЕ JSON {"isReceipt":false,"description":"...","detectedCategory":"...","article":"..." або null,"bestMatchIndex":число_або_null}.\nКаталог:\n' + catList;
           var grp = await __geminiFetch(__gKeys, { contents: [{ parts: [{ text: promptp }, { inline_data: { mime_type: mimep, data: b64p } }] }] });
           var gjp = await grp.json();
           var tp = ((((gjp.candidates || [])[0] || {}).content || {}).parts || [{}])[0].text || '';
@@ -506,6 +519,8 @@ try {
           if (mmp) {
             var fp = JSON.parse(mmp[0]);
             if (fp.isReceipt === true) { context.looksLikeReceipt = true; context.lastReceiptImageUrl = __visionUrl; }
+            else if (fp.article && matchArticle(all, String(fp.article).replace(/^.*?:s*/, '').trim())) { found = matchArticle(all, String(fp.article).replace(/^.*?:s*/, '').trim()); via = 'image_article:' + fp.article; mk = 'art_' + String(fp.article); }
+            else if (fp.article) { context.imageArticleMissing = String(fp.article); }
             else if (fp.bestMatchIndex != null && all[fp.bestMatchIndex]) { found = all[fp.bestMatchIndex]; via = 'photo'; mk = 'photo_' + fp.bestMatchIndex; }
           }
           // 2026-09-13 (олексій/olgakovalenko_ok: vision дав неправильний товар — розслідування

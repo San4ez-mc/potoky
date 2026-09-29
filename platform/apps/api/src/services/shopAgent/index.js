@@ -71,7 +71,7 @@ async function isCommentAgent(botId) {
     try { const k = await db.funnelKey.findFirst({ where: { botId, key: 'COMMENT_AGENT' }, select: { value: true } }); return !(k && /^(0|false|off)$/i.test(String(k.value || '').trim())); } catch (e) { return true; }
 }
 
-async function handleTurn({ botId, sessionId, text, imageUrl, sharedPost, entryAdId, dryRun }) {
+async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedPost, entryAdId, dryRun }) {
     const session = await db.session.findUnique({ where: { id: sessionId }, include: { user: true } });
     if (!session) throw new Error('session not found');
     const assets = await loadAssets(botId);
@@ -99,6 +99,8 @@ async function handleTurn({ botId, sessionId, text, imageUrl, sharedPost, entryA
     // Посилання на допис Instagram текстом — те саме, що пересланий допис (правка f170331d).
     if (!sharedPost && text && LINK_RE.test(String(text))) { const lp = await resolveIgLink(text); if (lp) sharedPost = lp; }
     if (sharedPost) ctx.sharedPost = sharedPost;
+    // Кілька фото одним повідомленням — розпізнаються разом (productMatch: lastUserImageUrls).
+    if (Array.isArray(imageUrls) && imageUrls.length > 1) ctx.lastUserImageUrls = imageUrls.slice(0, 4); else delete ctx.lastUserImageUrls;
     const newEntryAd = !!(entryAdId && entryAdId !== ctx.agent.seenEntryAd);
     if (entryAdId) { ctx.entryAdId = entryAdId; ctx.agent.seenEntryAd = entryAdId; }
     const history = await buildHistory(sessionId);

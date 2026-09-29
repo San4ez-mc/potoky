@@ -1225,7 +1225,11 @@ async function handleIncomingMessage(botId, body) {
     else if (ref) { patch.lastReferral = ref; }
     if (sharedPost) patch.sharedPost = sharedPost;
     if (postId) patch.postId = String(postId);
-    if (storyId) patch.storyId = String(storyId);
+    if (storyId) {
+        patch.storyId = String(storyId);
+        // Сторіз — зазвичай відео: 2 кадри в різні моменти для розпізнавання (як для рілсу). Best-effort; нема — лишається обкладинка.
+        try { const sf = await getReelVideoFramesForVision(botId, String(storyId)); if (sf.length) patch.storyFrames = sf; } catch (e) { logger.warn('[zernioHandler] story frames skipped: ' + e.message, { botId }); }
+    }
     if (ref && ref.ads_context_data && ref.ads_context_data.ad_title) patch.adTitle = ref.ads_context_data.ad_title;
     else if (adTitleFromConv) patch.adTitle = adTitleFromConv;
     const user = await findOrCreateZernioUser(contactId, botId, contactName);
@@ -1510,6 +1514,7 @@ async function runFlowAndDeliver(sessionId, entry) {
     const sendOpts = { sessionId, ...(commentId ? { commentId } : {}) };
     let mergedText = entry.texts.filter(Boolean).join('\n').trim();
     let runImageUrl = entry.imageUrl;
+    let runImageUrls = [];
     // 2026-09-13 — ЗВІРКА З РОЗМОВОЮ (джерело істини = Zernio REST, не вебхук). Див. zernioConversationSync.js.
     // Вебхук-потік губить і затримує повідомлення (клієнта — на 2 хв…2 доби, менеджера — на 2–19 хв або
     // назавжди), тому бот «не знав», що розмову вже веде менеджер, і відповідав «Привіт! Я Оля…» посеред
@@ -1565,7 +1570,7 @@ async function runFlowAndDeliver(sessionId, entry) {
         if ((!commentId && await shopAgent.isAgentBot(botId)) || (commentId && await shopAgent.isCommentAgent(botId))) {
             // Коментар: спершу детермінована класифікація для публічної відповіді, далі DM веде той самий агент (приватна відповідь на commentId).
             if (commentId) await shopAgent.classifyComment({ botId, sessionId, commentText: mergedText });
-            await shopAgent.handleTurn({ botId, sessionId, text: mergedText, imageUrl: runImageUrl, sharedPost: entry.ctxPatch && entry.ctxPatch.sharedPost, entryAdId: entry.ctxPatch && entry.ctxPatch.entryAdId });
+            await shopAgent.handleTurn({ botId, sessionId, text: mergedText, imageUrl: runImageUrl, imageUrls: runImageUrls.length > 1 ? runImageUrls : undefined, sharedPost: entry.ctxPatch && entry.ctxPatch.sharedPost, entryAdId: entry.ctxPatch && entry.ctxPatch.entryAdId });
         } else {
             await executeFlowStep({ sessionId, incomingUserMessage: mergedText, incomingImageUrl: runImageUrl });
         }

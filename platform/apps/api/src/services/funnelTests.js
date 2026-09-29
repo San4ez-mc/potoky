@@ -63,7 +63,14 @@ async function runAgentTurn({ botId, sessionId, step }) {
         text = text ? shared + '\n' + text : shared;
     } else if (step.imageUrl && !text) text = '[фото]';
 
-    const adId = step.entryAdId || (step.referral && step.referral.adId) || null;
+    // Відповідь на сторіз: кадри сторіз кладемо в контекст так само, як zernioHandler (storyId + storyFrames); ID сторіз іде як вхід.
+    let storyAd = null;
+    if (step.story && Array.isArray(step.story.imageUrls) && step.story.imageUrls.length) {
+        storyAd = String(step.story.id || 'test-story');
+        const s0 = await db.session.findUnique({ where: { id: sessionId }, select: { context: true } });
+        await db.session.update({ where: { id: sessionId }, data: { context: { ...(s0 && s0.context ? s0.context : {}), storyId: storyAd, storyFrames: step.story.imageUrls.slice(0, 3) } } });
+    }
+    const adId = step.entryAdId || (step.referral && step.referral.adId) || storyAd || null;
     if (step.referral) {
         const s = await db.session.findUnique({ where: { id: sessionId }, select: { context: true } });
         const ctx = { ...(s && s.context ? s.context : {}), lastReferral: { ads_context_data: { ad_title: step.referral.adTitle || '' }, ...step.referral }, adTitle: step.referral.adTitle || '' };
@@ -75,10 +82,11 @@ async function runAgentTurn({ botId, sessionId, step }) {
             sessionId,
             role: 'user',
             content: text || '',
-            metadata: { source: 'test', ...(step.imageUrl ? { imageUrl: step.imageUrl } : {}), ...(step.sharedPost ? { sharedPost: step.sharedPost } : {}), ...(step.referral ? { referral: step.referral } : {}) },
+            metadata: { source: 'test', ...(step.imageUrl ? { imageUrl: step.imageUrl } : {}), ...(step.story ? { storyReply: step.story } : {}), ...(step.imageUrls ? { imageUrls: step.imageUrls } : {}), ...(step.sharedPost ? { sharedPost: step.sharedPost } : {}), ...(step.referral ? { referral: step.referral } : {}) },
         },
     });
-    await shopAgent.handleTurn({ botId, sessionId, text, imageUrl: step.imageUrl || undefined, sharedPost: step.sharedPost || undefined, entryAdId: adId || undefined });
+    const imgs = Array.isArray(step.imageUrls) && step.imageUrls.length ? step.imageUrls : null;
+    await shopAgent.handleTurn({ botId, sessionId, text, imageUrl: step.imageUrl || (imgs && imgs[0]) || undefined, imageUrls: imgs && imgs.length > 1 ? imgs : undefined, sharedPost: step.sharedPost || undefined, entryAdId: adId || undefined });
 }
 
 function normalizeStep(step) {
@@ -87,6 +95,8 @@ function normalizeStep(step) {
         texts: Array.isArray(step.texts) ? step.texts.map(String) : null,
         text: (typeof step.text === 'string' && step.text) ? step.text : (step.type === 'voice' ? (step.transcript ? String(step.transcript) : '[вкладення]') : (Number(step.mediaCount) > 1 ? '[' + Number(step.mediaCount) + ' медіа]' : '')),
         imageUrl: step.imageUrl || null,
+        imageUrls: Array.isArray(step.imageUrls) ? step.imageUrls : null,
+        story: step.story || null,
         sharedPost: step.sharedPost || null,
         referral: step.referral || null,
         entryAdId: step.entryAdId || null,

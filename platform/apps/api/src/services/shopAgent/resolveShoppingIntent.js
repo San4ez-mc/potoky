@@ -49,6 +49,8 @@ async function resolveShoppingIntent(A, u, tool) {
             } catch (e) { /* best-effort */ }
         }
     }
+    // Повторне розпізнавання сторіз (клієнт посилається на «вашу історію») — це свіжий сигнал «ось цей товар», як фото.
+    if (ctx.storyRetry && !signal.photoUrl) { signal.photoUrl = 'story'; if (!signal.connective) signal.connective = 'replace'; }
     ctx.cart.lastSignal = Object.assign({}, signal, { turnAt: Date.now() });
 
     // Товару ще нема, клієнт пише коротку назву («Гельсінкі», «мажор петля») — пробуємо знайти за назвою в каталозі (тест 95).

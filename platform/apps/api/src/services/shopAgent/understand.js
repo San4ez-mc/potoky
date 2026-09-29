@@ -23,6 +23,7 @@ const SCHEMA = `{
  "payMethod": "cod|full"|null, "country": "<країна доставки за кордон>"|null, "prepaymentObjection": true|false, "trustPromise": true|false|null,
  "fullName": "<ПІБ>"|null, "phone": "<10 цифр з 0>"|null, "city": "<місто>"|null, "region": "<область>"|null, "branch": "<№ відділення або 'поштомат N'>"|null, "homeAddress": true|false,
  "wantsManualReq": true|false, "wantsCard": true|false, "paymentMethodChange": "cod|full"|null, "claimsPaid": true|false, "receiptLink": "<url>"|null,
+ "refersToStory": true|false, "replaceOrAdd": "replace|add|keep"|null, "wantsOrderSummary": true|false,
  "wantsSizeChart": true|false, "wantsPhoto": true|false, "wantsUpsellPhoto": true|false, "wantsHuman": true|false, "isComplaint": true|false, "returnRequest": true|false, "statusQuestion": true|false,
  "productHint": {"article": "<A0187 тощо>"|null, "category": "<кофта|костюм|куртка|бомбер|футболка|джинси|лофери|...>"|null, "fromList": "<назва/артикул зі списку, який бот щойно показав>"|null},
  "questions": ["<питання клієнта, на які треба відповісти фактами>"],
@@ -31,6 +32,10 @@ const SCHEMA = `{
 }`;
 
 const RULES = `ПРАВИЛА РОЗБОРУ:
+- refersToStory=true — клієнт ПО СУТІ дає зрозуміти, що його цікавить товар із історії/сторіз/відео магазину, на яку він відповідав (будь-якими словами: «я ж на вашу історію відповів», «те, що в сторіс», «з розповіді» тощо). Інакше false.
+- replaceOrAdd — ЛИШЕ якщо бот щойно спитав «замінити, додати окремою позицією чи залишаємо як було?»: replace — хоче новий товар замість попереднього; add — хоче обидва; keep — лишає як було. Інакше null.
+- wantsOrderSummary=true — хоче ще раз побачити/перевірити, що саме в його замовленні (склад, розмір, колір, сума), будь-якими словами.
+- «Реквізити» (навіть з назвою банку: «скиньте реквізити в монобанку/приват») = wantsManualReq=true, wantsCard=false — назва банку лише означає, звідки клієнт платитиме. wantsCard=true ЛИШЕ коли прямо просить номер картки.
 - Розбираєш ЛИШЕ ОСТАННЄ повідомлення клієнта (може бути кілька рядків/повідомлень підряд); історія — тільки контекст для розуміння посилань («вище», «та сама», «перша»).
 - 2026-09-15 (живий кейс: «Черный и графитовый» → бот сказав «нема такого кольору», хоча обидва в наявності): клієнт МОЖЕ писати українською, суржиком або РОСІЙСЬКОЮ — розумієш зміст незалежно від мови повідомлення. Усі "довідникові" поля (colorMatched і т.п.) ЗАВЖДИ зводь до українських назв з каталогу/схеми, як і при україномовному повідомленні — мова клієнта не привід повернути null там, де переклад однозначний.
 - Зріст 140–220 см (1,78 м = 178), вага 35–200 кг; якщо переплутано місцями — виправ. Діапазон («90-95») → більше значення. Підписані рядки («Вага 78», «Зріст 182») — теж параметри.
@@ -117,7 +122,7 @@ async function understand(A) {
     }
     const u = extractJson(raw) || { intent: 'other' };
     for (const k of ['height', 'weight', 'clothingSize', 'chest', 'footLength', 'waist', 'color', 'colorMatched', 'qty', 'units', 'setChoice', 'setArticle', 'ready', 'addUpsell', 'upsellQty', 'upsellNote', 'upsellUnits', 'extraProducts', 'alsoWants', 'removeItem', 'addItem', 'changeRequest', 'payMethod', 'country', 'trustPromise', 'fullName', 'phone', 'city', 'region', 'branch', 'paymentMethodChange', 'receiptLink']) if (u[k] === undefined) u[k] = null;
-    for (const k of ['belly', 'prepaymentObjection', 'homeAddress', 'wantsManualReq', 'wantsCard', 'claimsPaid', 'wantsSizeChart', 'wantsPhoto', 'wantsUpsellPhoto', 'wantsHuman', 'isComplaint', 'returnRequest', 'statusQuestion']) u[k] = !!u[k];
+    for (const k of ['belly', 'refersToStory', 'wantsOrderSummary', 'prepaymentObjection', 'homeAddress', 'wantsManualReq', 'wantsCard', 'claimsPaid', 'wantsSizeChart', 'wantsPhoto', 'wantsUpsellPhoto', 'wantsHuman', 'isComplaint', 'returnRequest', 'statusQuestion']) u[k] = !!u[k];
     u.intent = u.intent || 'other';
     u.questions = Array.isArray(u.questions) ? u.questions.filter((q) => q && String(q).trim()).map(String) : [];
     u.productHint = u.productHint && typeof u.productHint === 'object' ? u.productHint : { article: null, category: null, fromList: null };

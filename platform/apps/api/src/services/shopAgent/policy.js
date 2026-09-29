@@ -741,14 +741,17 @@ async function runPolicyInner(A, u) {
             }
         } catch (e) { /* best-effort */ }
     }
+    // Клієнт по суті вказує на товар зі сторіз, на яку відповідав (аналізатор: u.refersToStory) — повторно розпізнаємо її кадри.
+    if (u.refersToStory && !A.turnImage && (ctx.storyId || (Array.isArray(ctx.storyFrames) && ctx.storyFrames.length))) ctx.storyRetry = true; else delete ctx.storyRetry;
     // Відповідь на «замінити, додати чи залишаємо?» (див. ask_replace_or_add нижче).
     if (ctx.agent.pendingReplaceAdd && !A.turnImage && !A.turnSharedPost) {
         const pra = ctx.agent.pendingReplaceAdd;
-        if (/(додат|додай|додайте|обидв|разом|окрем|теж|і\s+те\s+і)/i.test(text)) { delete ctx.agent.pendingReplaceAdd; ctx.extraProductMention = pra.sku; }
-        else if (/(замін|замість|міняй|змін|нов[уа]|цю|цей|її|його|так\b)/i.test(text)) { delete ctx.agent.pendingReplaceAdd; u.productHint = { ...u.productHint, article: pra.sku }; }
-        else if (/(залиш|як\s+було|перш|стар|ні\b|не\s+треба)/i.test(text)) { delete ctx.agent.pendingReplaceAdd; }
+        // Зміст відповіді визначає аналізатор (u.replaceOrAdd), а не ключові слова.
+        if (u.replaceOrAdd === 'add') { delete ctx.agent.pendingReplaceAdd; ctx.extraProductMention = pra.sku; }
+        else if (u.replaceOrAdd === 'replace') { delete ctx.agent.pendingReplaceAdd; u.productHint = { ...u.productHint, article: pra.sku }; }
+        else if (u.replaceOrAdd === 'keep') { delete ctx.agent.pendingReplaceAdd; }
     }
-    const freshSignal = !!(A.turnSharedPost || A.newEntryAd || u.productHint.article || u.productHint.fromList || (A.turnImage && !u.claimsPaid && !u.receiptLink && !(ctx.paymentInfo && ctx.paymentInfo.method) ));
+    const freshSignal = !!(ctx.storyRetry || A.turnSharedPost || A.newEntryAd || u.productHint.article || u.productHint.fromList || (A.turnImage && !u.claimsPaid && !u.receiptLink && !(ctx.paymentInfo && ctx.paymentInfo.method) ));
     // Каталожне питання («А є жилетки?», «Які кольори?») аналізатор інколи кладе лише в productHint, без questions — тоді
     // воно губилось і бот просив зріст/вагу (тест 131). Питання зі знаком «?», на яке є відповідь у CRM, завжди відповідаємо.
     if (!u.questions.length && /\?/.test(text) && !A.turnSharedPost && classifyKbQuestion(text).kind === 'catalog') u.questions = [text.trim()];
@@ -756,9 +759,6 @@ async function runPolicyInner(A, u) {
     // 2026-09-24 (FunnelTest 16): «Не відкривається посилання» LLM не завжди відносила до wantsManualReq —
     // детермінований страхувальний розбір: скарга на посилання оплати → одразу ручні реквізити.
     if (!u.wantsManualReq && /(не\s+(?:відкрива|відкрит|працю|грузит|вантаж)[^.!?]{0,40}(?:посилан|лінк|ссылк))|((?:посилан|лінк|ссылк)[^.!?]{0,40}не\s+(?:відкрива|відкрит|працю|грузит|вантаж))/i.test(text)) u.wantsManualReq = true;
-    // «Скиньте реквізити в монобанку» — це реквізити ФОП (IBAN, код, назва окремими повідомленнями), а не номер картки: назва банку
-    // лише означає, звідки клієнт платитиме. Картка — лише на явне «номер картки/на карту» (правка d2ce3d13, рішення власника 17.09).
-    if (/реквізит|рекізит|реквизит|iban|айбан/i.test(text) && !/карт(к|у|а|і|очк)|номер\s+карт/i.test(text)) { u.wantsCard = false; u.wantsManualReq = true; }
     // Клієнт стверджує, що він не бот («Я не бот, я людина») — не підігруємо, коротко й чесно.
     if (/я\s+не\s+бот|я\s+(?:жива\s+)?людина/i.test(text) && !/[?]/.test(text)) {
         A.out.push({ text: 'Розумію 🙂 Я віртуальна помічниця магазину, а жива людина — наш менеджер, він підключиться до розмови, щойно буде вільний 💛', step: 'not_bot_reply' });
@@ -1028,6 +1028,13 @@ async function runPolicyInner(A, u) {
         }
         if (u.productHint.article && !/артикул|арт\.|\b[a-z]\d{3,6}\b/i.test(text)) ctx.lastUserMessage = text + ' артикул ' + u.productHint.article;
         const r = await T.resolveProduct(A, u);
+        // Клієнт вказує на сторіз, а її кадри не впізнано і повторно — не вгадуємо, передаємо менеджеру (сесія e5090bb9).
+        if (ctx.storyRetry && r.status !== 'found') {
+            delete ctx.storyRetry;
+            A.out.push({ text: 'Перепрошую, не можу точно розгледіти товар із вашої історії 🙏 Передала менеджеру — він підкаже саме по ній і напише сюди.', step: 'story_unrecognized' });
+            await pause(A, 'handoff', 'n_unknown_admin', 'Клієнт відповів на сторіз (id ' + String(ctx.storyId || '') + '), товар не розпізнано — перевірте й напишіть клієнту');
+            return;
+        }
         // Фото/назва ІНШОГО товару, коли клієнт уже бачив підсумок замовлення — не підміняємо мовчки, а питаємо (e5090bb9).
         if (ctx.pendingExtraCandidate && ctx.pendingExtraCandidate.decision === 'ASK_REPLACE_OR_ADD' && P(ctx)) {
             const cand = ctx.pendingExtraCandidate; delete ctx.pendingExtraCandidate;
@@ -1180,7 +1187,7 @@ async function runPolicyInner(A, u) {
         if (urlsW.length) A.out.push({ photoUrls: urlsW, caption: '', step: 'photo_on_request' });
     }
     // «Покажіть ще раз замовлення» — показуємо поточний склад, а не «питання вже у менеджера» (сесія f9c2ae98).
-    if (ctx.agent.lastSummaryKey && /(ще\s+раз|знову|повтор)[^.?!]{0,30}(замовленн|підсум)|показ\S*\s+(моє\s+|ще\s+раз\s+)?(замовленн|підсум)|що\s+(я\s+)?(в\s+)?замовл/i.test(text)) {
+    if (ctx.agent.lastSummaryKey && u.wantsOrderSummary) {
         const unitsS = ctx.orderUnitsText || ((ctx.colorChoice && ctx.colorChoice.color ? ctx.colorChoice.color : '') + (ctx.recommendedSize ? ' ' + ctx.recommendedSize : ''));
         const totalS = (p.isSet && ctx.agent.setPricing && ctx.agent.setPricing.total) || ctx.orderUnitsTotal || p.price;
         A.out.push({ text: 'Ваше замовлення 🙌\n' + String(p.customerName || p.name).split('\n')[0] + (unitsS ? ' — ' + unitsS.trim() : '') + ' — ' + totalS + ' грн' + (ctx.extraItemsText ? '\n' + ctx.extraItemsText : ''), step: 'order_reshow' });

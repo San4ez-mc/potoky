@@ -34,6 +34,10 @@ function orderAlreadyStarted(ctx) {
         ctx.crmOrderId
         || (ctx.orderData && (ctx.orderData.phone || ctx.orderData.fullName || ctx.orderData.city || ctx.orderData.branch))
         || (ctx.paymentInfo && ctx.paymentInfo.method)
+        // Клієнт уже бачив підсумок «Ось ваше замовлення… Оформляємо?» — нове фото іншого товару не підміняє його мовчки,
+        // а питає «замінити чи додати» (2026-09-29, e5090bb9: скріни сторіз посеред оформлення → бот мовчки показав кофту D0050).
+        || !!ctx.orderIntent
+        || !!(ctx.agent && (ctx.agent.lastSummaryKey || ctx.agent.lastAsk === 'оформляємо?'))
     );
 }
 

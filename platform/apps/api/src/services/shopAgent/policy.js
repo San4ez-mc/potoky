@@ -11,7 +11,7 @@ const { messageText, messageTextMultiline, nodeData, norm, loadCategories, loadC
 const { dispatchOrder } = require('./supplierDispatch');
 const { hasCategoryWord, categoryWordIsUpsell, categoryWordIsSetComponent, categoryWordIsMain } = require('./signal');
 const { resolveColorMention } = require('./cart');
-const { classifyKbQuestion, kbSimilarity } = require('./kbRules');
+const { classifyKbQuestion, kbSimilarity, kbSimilar } = require('./kbRules');
 const { catalogFacts } = require('./catalogFacts');
 
 // 2026-09-14 (власник: "я взагалі проти будь-якого хардкоду... все в ноди перенеси"): TRUST_STEP1/2,
@@ -244,7 +244,7 @@ async function escalateUnresolved(A, question) {
     // Те саме питання іншими словами («не обтягуватимуть?» / «як сидять?» про той самий крій) — менеджеру вже пішов алерт, вдруге не спамимо.
     const stemsQ = (t) => String(t).toLowerCase().split(/[^a-zа-яіїєґ0-9]+/i).filter((w) => w.length >= 5).map((w) => w.slice(0, 5));
     const mine = stemsQ(nq);
-    if (seen.length && mine.length && seen.some((q) => stemsQ(q).filter((w) => mine.includes(w)).length >= 1)) { A.ctx.agent.escalatedQuestions = seen.concat(nq).slice(-20); return; }
+    if (seen.length && mine.length && seen.some((q) => kbSimilar(q, nq))) { A.ctx.agent.escalatedQuestions = seen.concat(nq).slice(-20); return; }
     A.ctx.agent.escalatedQuestions = seen.concat(nq).slice(-20);
     await T.kbAsk(A, question);
     await T.alert(A, 'n_agent_unknown_question_admin', { details: '💬 «' + String(question).slice(0, 200) + '»' });
@@ -254,7 +254,7 @@ async function escalateUnresolved(A, question) {
 function isRepeatOfEscalated(A, u) {
     const stq = (t) => String(t).toLowerCase().split(/[^a-zа-яіїєґ0-9]+/i).filter((w) => w.length >= 5).map((w) => w.slice(0, 5));
     const prev = (A.ctx.agent && A.ctx.agent.escalatedQuestions) || [];
-    return !!(u.questions && u.questions.length && prev.length && u.questions.some((q) => { const m = stq(q); return m.length && prev.some((e) => stq(e).some((w) => m.includes(w))); }));
+    return !!(u.questions && u.questions.length && prev.length && u.questions.some((q) => prev.some((e) => kbSimilar(q, e))));
 }
 
 async function answerThenAsk(A, u, askText, o = {}) {
@@ -274,7 +274,9 @@ async function answerThenAsk(A, u, askText, o = {}) {
     // Клієнт вдруге наполягає на питанні, про яке менеджеру вже пішов алерт — не тиснемо «дайте зріст/вагу», лише підтверджуємо, що менеджер відповість.
     const _stq = (t) => String(t).toLowerCase().split(/[^a-zа-яіїєґ0-9]+/i).filter((w) => w.length >= 5).map((w) => w.slice(0, 5));
     const _prevEsc = (A.ctx.agent.escalatedQuestions || []);
-    const repeatOfEscalated = u.questions.length && _prevEsc.length && u.questions.some((q) => { const m = _stq(q); return m.length && _prevEsc.some((e) => _stq(e).some((w) => m.includes(w))); });
+    // Повтор уже переданого питання — лише за тим самим критерієм схожості, що й база знань (раніше вистачало ОДНОГО спільного
+    // кореня: «чи є повернення?» і «покажіть замовлення» вважались повтором → «питання вже у менеджера», сесія f9c2ae98).
+    const repeatOfEscalated = u.questions.length && _prevEsc.length && u.questions.some((q) => _prevEsc.some((e) => kbSimilar(q, e)));
     // Клієнт повторює питання, яке вже передано менеджеру: коротко й БЕЗ повторення фрази «передала/уточню» (різні варіанти), без тиску.
     if (repeatOfEscalated && !o.ack) {
         A.ctx.agent.repeatEscCount = (A.ctx.agent.repeatEscCount || 0) + 1;
@@ -711,6 +713,31 @@ async function runPolicyInner(A, u) {
         const pa = u.productHint && (u.productHint.article || u.productHint.fromList);
         if (upS && ctx.agent.upsellOffered && pa && String(pa).toLowerCase() === String(upS.sku || '').toLowerCase()) u.productHint = { ...u.productHint, article: null, fromList: null };
     }
+    // Явний артикул із CRM у тексті — навіть кирилицею («А0187 треба») чи голим числом («234286») — це вибір товару.
+    // 2026-09-29 (сесія f9c2ae98, Timur): «А0187 треба», «ні мені потрібна А0187» — бот тримав C0043 з привʼязки реклами,
+    // а друге повідомлення прочитав як відмову від замовлення («Добре, без тиску»).
+    if (!u.productHint.article && !A.turnSharedPost) {
+        try {
+            const LAT = { 'А': 'A', 'В': 'B', 'С': 'C', 'Е': 'E', 'Н': 'H', 'І': 'I', 'К': 'K', 'М': 'M', 'О': 'O', 'Р': 'P', 'Т': 'T', 'Х': 'X', 'а': 'A', 'в': 'B', 'с': 'C', 'е': 'E', 'н': 'H', 'і': 'I', 'к': 'K', 'м': 'M', 'о': 'O', 'р': 'P', 'т': 'T', 'х': 'X' };
+            const toks = (String(text).match(/(?<![A-Za-zА-Яа-яІіЇїЄєҐґ\d])[A-Za-zАВСЕНІКМОРТХавсенікмортх]{0,4}\d{3,8}(?!\d)/g) || []).map((t) => t.replace(/[А-Яа-яІі]/g, (ch) => LAT[ch] || ch).toUpperCase());
+            if (toks.length) {
+                const catA = await loadCatalog(A.botId, A.keys);
+                const skuA = new Map(); for (const pr of catA.products) { if (pr.sku) skuA.set(String(pr.sku).toUpperCase(), String(pr.sku)); if (pr.supplierArticle) skuA.set(String(pr.supplierArticle).toUpperCase(), String(pr.sku)); }
+                const hitA = toks.map((t) => skuA.get(t)).find(Boolean);
+                if (hitA && !(P(ctx) && String(P(ctx).sku).toUpperCase() === hitA.toUpperCase())) {
+                    u.productHint = { ...u.productHint, article: hitA };
+                    if (u.ready === 'no') u.ready = null; // «ні, мені потрібна А0187» — це заміна товару, не відмова
+                }
+            }
+        } catch (e) { /* best-effort */ }
+    }
+    // Відповідь на «замінити, додати чи залишаємо?» (див. ask_replace_or_add нижче).
+    if (ctx.agent.pendingReplaceAdd && !A.turnImage && !A.turnSharedPost) {
+        const pra = ctx.agent.pendingReplaceAdd;
+        if (/(додат|додай|додайте|обидв|разом|окрем|теж|і\s+те\s+і)/i.test(text)) { delete ctx.agent.pendingReplaceAdd; ctx.extraProductMention = pra.sku; }
+        else if (/(замін|замість|міняй|змін|нов[уа]|цю|цей|її|його|так\b)/i.test(text)) { delete ctx.agent.pendingReplaceAdd; u.productHint = { ...u.productHint, article: pra.sku }; }
+        else if (/(залиш|як\s+було|перш|стар|ні\b|не\s+треба)/i.test(text)) { delete ctx.agent.pendingReplaceAdd; }
+    }
     const freshSignal = !!(A.turnSharedPost || A.newEntryAd || u.productHint.article || u.productHint.fromList || (A.turnImage && !u.claimsPaid && !u.receiptLink && !(ctx.paymentInfo && ctx.paymentInfo.method) ));
     // Каталожне питання («А є жилетки?», «Які кольори?») аналізатор інколи кладе лише в productHint, без questions — тоді
     // воно губилось і бот просив зріст/вагу (тест 131). Питання зі знаком «?», на яке є відповідь у CRM, завжди відповідаємо.
@@ -948,6 +975,25 @@ async function runPolicyInner(A, u) {
     // зачепити вже перевірену поведінку "після оформлення — лише хендофф менеджеру" (розділ 1).
     const categorySignal = !ctx.crmOrderId && hasCategoryWord(text) && !categoryWordIsUpsell(text, ctx) && !categoryWordIsSetComponent(text, ctx) && !categoryWordIsMain(text, ctx) && !u.wantsSizeChart;
     if (!P(ctx) || freshSignal || categorySignal) {
+        // Вибір зі списку КОЛЬОРОМ («Чорний»): якщо цей колір мають кілька позицій списку — перепитуємо, яку саме, а не беремо
+        // першу (2026-09-29, сесія e5090bb9: «Чорний» → SH617927, хоча чорний був у 3 з 4 костюмів). Одна позиція — беремо її.
+        if (!P(ctx) && ctx.catalogHintSkus && !/\d/.test(text) && text.trim().split(/\s+/).length <= 3) {
+            try {
+                const skusC = String(ctx.catalogHintSkus).split(',').map((s) => s.trim()).filter(Boolean);
+                const catC = await loadCatalog(A.botId, A.keys);
+                const listC = skusC.map((s) => catC.products.find((x) => String(x.sku).toUpperCase() === s.toUpperCase())).filter(Boolean);
+                const colsOf = (pr) => [...new Set((pr.offers || []).filter((o) => o.inStock !== false).flatMap((o) => (o.properties || []).filter((q) => /кол|цвет/i.test(q.name || '')).map((q) => q.value)))];
+                const named = listC.map((pr) => ({ pr, c: matchColor({ colors: colsOf(pr).join(',') }, text) })).filter((x) => x.c);
+                const nameHit = listC.some((pr) => stemsOf(pr.customerName || pr.name).some((st) => String(text).toLowerCase().includes(st)));
+                if (named.length > 1 && !nameHit) {
+                    ctx.agent.pendingColorRaw = text.trim();
+                    A.out.push({ text: named[0].c + ' є в кількох моделях зі списку 🙂 Яка саме цікавить?\n' + named.map((x) => (skusC.findIndex((s) => s.toUpperCase() === String(x.pr.sku).toUpperCase()) + 1) + '. ' + String(x.pr.customerName || x.pr.name).split('\n')[0].replace(/\.?\s*Артикул:?.*$/i, '').trim() + ' — ' + Number(x.pr.price) + ' грн').join('\n') + '\nМожна відповісти номером 👌', step: 'hint_color_ambiguous' });
+                    ctx.agent.lastAsk = 'який із показаних товарів цікавить';
+                    return;
+                }
+                if (named.length === 1 && !nameHit) { ctx.catalogHintPick = String(named[0].pr.sku); u.productHint = { ...u.productHint, fromList: ctx.catalogHintPick }; ctx.agent.pendingColorRaw = text.trim(); }
+            } catch (e) { /* best-effort */ }
+        }
         if (u.productHint.fromList && ctx.catalogHintSkus) {
             const skus = String(ctx.catalogHintSkus).split(',').map((s) => s.trim()).filter(Boolean);
             const hit = skus.find((s) => s.toLowerCase() === String(u.productHint.fromList).toLowerCase()) || skus.find((s) => String(u.productHint.fromList).toLowerCase().includes(s.toLowerCase()));
@@ -972,6 +1018,14 @@ async function runPolicyInner(A, u) {
         }
         if (u.productHint.article && !/артикул|арт\.|\b[a-z]\d{3,6}\b/i.test(text)) ctx.lastUserMessage = text + ' артикул ' + u.productHint.article;
         const r = await T.resolveProduct(A, u);
+        // Фото/назва ІНШОГО товару, коли клієнт уже бачив підсумок замовлення — не підміняємо мовчки, а питаємо (e5090bb9).
+        if (ctx.pendingExtraCandidate && ctx.pendingExtraCandidate.decision === 'ASK_REPLACE_OR_ADD' && P(ctx)) {
+            const cand = ctx.pendingExtraCandidate; delete ctx.pendingExtraCandidate;
+            ctx.agent.pendingReplaceAdd = { sku: cand.sku, name: String(cand.name || '').split('\n')[0] };
+            A.out.push({ text: 'Бачу: ' + ctx.agent.pendingReplaceAdd.name.replace(/\.?\s*Артикул:?.*$/i, '').trim() + ' (арт. ' + cand.sku + ') 🙂 Замінити нею ' + String(P(ctx).customerName || P(ctx).name).split('\n')[0].replace(/\.?\s*Артикул:?.*$/i, '').trim().toLowerCase() + ' у замовленні, додати окремою позицією чи залишаємо як було?', step: 'ask_replace_or_add' });
+            ctx.agent.lastAsk = 'замінити чи додати';
+            return;
+        }
         // «А штани спортивні?» — категорія, якої в каталозі нема, товар лишився попередній: питання не губимо, на нього відповідає compose
         // з фактів/бази знань (FunnelTest 35: бот мовчки перепитав зріст/вагу замість чесного «окремо нема, є костюми»).
         // «штани» — синонім категорії джинсів у CRM, тож пошук повертає той самий товар (found, той самий sku) — це теж «нового не знайдено».
@@ -1109,6 +1163,19 @@ async function runPolicyInner(A, u) {
         }
     }
     let p = P(ctx);
+
+    // «Дайте фото цієї кофти» на будь-якому етапі (навіть під час вибору оплати) — надсилаємо фото товару (сесія f9c2ae98: ігнорувалось).
+    if (u.wantsPhoto && !A.turnImage && !A.out.some((o) => o.photoUrls) && !p.isSet) {
+        const urlsW = firstPhotoUrls(p);
+        if (urlsW.length) A.out.push({ photoUrls: urlsW, caption: '', step: 'photo_on_request' });
+    }
+    // «Покажіть ще раз замовлення» — показуємо поточний склад, а не «питання вже у менеджера» (сесія f9c2ae98).
+    if (ctx.agent.lastSummaryKey && /(ще\s+раз|знову|повтор)[^.?!]{0,30}(замовленн|підсум)|показ\S*\s+(моє\s+|ще\s+раз\s+)?(замовленн|підсум)|що\s+(я\s+)?(в\s+)?замовл/i.test(text)) {
+        const unitsS = ctx.orderUnitsText || ((ctx.colorChoice && ctx.colorChoice.color ? ctx.colorChoice.color : '') + (ctx.recommendedSize ? ' ' + ctx.recommendedSize : ''));
+        const totalS = (p.isSet && ctx.agent.setPricing && ctx.agent.setPricing.total) || ctx.orderUnitsTotal || p.price;
+        A.out.push({ text: 'Ваше замовлення 🙌\n' + String(p.customerName || p.name).split('\n')[0] + (unitsS ? ' — ' + unitsS.trim() : '') + ' — ' + totalS + ' грн' + (ctx.extraItemsText ? '\n' + ctx.extraItemsText : ''), step: 'order_reshow' });
+        u.questions = (u.questions || []).filter((q) => !/(замовленн|підсум)/i.test(String(q)));
+    }
 
     // 3.0 Уже збираємо ВЕСЬ комплект, а клієнт каже «мені тільки кофта» (setChoice:item) — переходимо на цю позицію.
     // 2026-09-29 (скарга «Ви знущаєтесь?», сесія ed8e3e06): understand() повернув setChoice:item/A0187, але розділ 3

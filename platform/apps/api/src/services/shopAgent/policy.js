@@ -984,6 +984,9 @@ async function runPolicyInner(A, u) {
                 // переслав пост…»). Запитання про ціну, на яке щойно відповіла картка, знімаємо.
                 if (A.justPresented && Array.isArray(u.questions) && u.questions.length) {
                     u.questions = u.questions.filter((q) => !/(ціна|ціну|цін[иі]|скільки\s+кошту|вартіст|почім|прайс)/i.test(String(q)));
+                    // «Чи є костюм Гельсінкі?» — картка цього товару щойно показана, це і є відповідь (тест 95: бот дописав «такого немає»).
+                    const nameStems = String((P(ctx).name || '') + ' ' + (P(ctx).customerName || '')).toLowerCase().split(/[^a-zа-яіїєґ0-9]+/i).filter((w) => w.length >= 5).map((w) => w.slice(0, 5));
+                    u.questions = u.questions.filter((q) => !(/(є|наявн|існує|маєте|немає|нема)/i.test(String(q)) && String(q).toLowerCase().split(/[^a-zа-яіїєґ0-9]+/i).some((w) => w.length >= 5 && nameStems.includes(w.slice(0, 5)) && !/^(костю|кофта|кофти|куртк|джинс|футбо|лофер|бомбе|чолов)/.test(w))));
                 }
             }
             else if (u.wantsPhoto && !A.turnImage && (Date.now() - Number(ctx.presentedAt)) > 2 * 60 * 1000) { const urls = firstPhotoUrls(P(ctx)); if (urls.length) A.out.push({ photoUrls: urls, caption: '', step: 'photo_again' }); }

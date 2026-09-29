@@ -593,15 +593,22 @@ try {
     });
     ['комплект', 'набір', 'набор'].forEach(function (w) { __setWords[w] = 1; });
     var __wantsSetWord = new RegExp('(' + Object.keys(__setWords).join('|') + ')', 'i').test(__uTxt);
-    if (__wantsSetWord && found && !found.isSet && /^ad_/.test(via)) {
+    // Основа для «весь комплект»: знайдений через рекламу компонент АБО вже показаний клієнту товар (тест 36: пост кофти
+    // A0187 → «Весь комплект» наступним ходом, коли поста в контексті вже нема).
+    var __setBase = (found && !found.isSet && /^ad_/.test(via)) ? found
+      : (!found && /(комплект|набір|набор)/i.test(__uTxt) && context.product && !context.product.isSet && context.product.id ? all.filter(function (x) { return String(x.id) === String(context.product.id); })[0] : null);
+    if (__wantsSetWord && __setBase) {
       var __parentSets = all.filter(function (s) {
         if (!s.isSet) return false;
         var cs = s.setComponents || s.setOf || [];
-        return cs.some(function (c) { return __compId(c) === String(found.id) || (c.sku && found.sku && String(c.sku).toUpperCase() === String(found.sku).toUpperCase()); });
+        return cs.some(function (c) { return __compId(c) === String(__setBase.id) || (c.sku && __setBase.sku && String(c.sku).toUpperCase() === String(__setBase.sku).toUpperCase()); });
       });
       if (__parentSets.length === 1) {
-        context.adSetNote = 'клієнт явно просить комплект — реклама привʼязана до компонента ' + (found.sku || '') + ', піднято до набору ' + __parentSets[0].sku;
-        found = __parentSets[0]; via = 'ad_set_parent'; mk = 'setparent_' + String(found.sku || found.id);
+        context.adSetNote = 'клієнт явно просить комплект — товар ' + (__setBase.sku || '') + ' входить у набір ' + __parentSets[0].sku;
+        found = __parentSets[0]; via = 'set_parent'; mk = 'setparent_' + String(found.sku || found.id);
+      } else if (__parentSets.length > 1 && !found) {
+        // Кілька комплектів з цим товаром — показуємо саме їх на вибір (а не шукаємо слово «комплект» серед окремих товарів).
+        context.setComponentHint = __parentSets.slice(0, 4).map(function (p) { return (p.sku ? ('Артикул ' + p.sku + ' — ') : '') + String(p.customerName || p.name || '').replace(/\.?\s*Артикул:.*$/i, '').trim() + (Number(p.price) ? (' — ' + Number(p.price) + ' грн') : ''); }).join('\n');
       }
     }
     // «Весь комплект», а компонент входить у кілька наборів — не відкидаємо товар і не шукаємо слово «комплект» серед окремих товарів (тест 36: показувало лляний Q0071).

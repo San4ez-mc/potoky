@@ -621,7 +621,7 @@ try {
     }
     // Пост/реклама привʼязані до САМОГО комплекту, а клієнт питає про одну його річ («Чи доступна кофта?») — показуємо цю річ,
     // а не весь образ (2026-09-29, скарга ed8e3e06: бот тричі тягнув у комплект, хоча клієнтка з першого слова питала лише кофту).
-    if (__uStem && found && found.isSet && /^ad_/.test(via) && !__wantsSetWord) {
+    if (__uStem && found && found.isSet && /^ad_/.test(via) && !__wantsSetWord && !context.setMode && !(context.product && context.product.sku)) { // лише перше визначення товару: у вже обраному комплекті «взуття 44» — це розмір, не новий вибір (тест 37)
       var __own = [];
       (found.setComponents || found.setOf || []).forEach(function (c) { var cp = all.filter(function (x) { return String(x.id) === __compId(c) || (c.sku && x.sku && String(x.sku).toUpperCase() === String(c.sku).toUpperCase()); })[0]; if (cp && !cp.isSet && __hasStem(cp, __uStem) && __own.indexOf(cp) < 0) __own.push(cp); });
       if (__own.length === 1) { context.adSetNote = 'пост/реклама комплекту ' + (found.sku || '') + ', клієнт питає лише про «' + __uStem + '» → показано ' + __own[0].sku; found = __own[0]; via = 'ad_set_component'; mk = 'setcomp_' + String(found.sku || found.id); }

@@ -933,7 +933,7 @@ async function runPolicyInner(A, u) {
                 // 2026-09-23 (FunnelTest 2: «так, першу» після списку футболок — LLM віддала fromList зі
                 // СТАРОГО списку костюмів → куртка D0005). Вибір не з поточного списку: порядковий
                 // числівник/«так» звужуємо до поточного списку, а сміттєвий fromList відкидаємо.
-                const ORD = [/перш|^\s*1/i, /друг|^\s*2/i, /трет|^\s*3/i, /четверт|^\s*4/i, /п[’']ят|^\s*5/i];
+                const ORD = [/перш|^\s*1\b/i, /друг|^\s*2\b/i, /трет|^\s*3\b/i, /четверт|^\s*4\b/i, /п[’']ят|^\s*5\b/i];
                 const oi = ORD.findIndex((re) => re.test(text));
                 if (oi >= 0 && skus[oi]) ctx.catalogHintPick = skus[oi];
                 else if (skus.length === 1 && /^\s*(так|да|ага|ок|давайте|це|її|його)/i.test(text)) ctx.catalogHintPick = skus[0];
@@ -1077,8 +1077,10 @@ async function runPolicyInner(A, u) {
     // 2026-09-29 (скарга «Ви знущаєтесь?», сесія ed8e3e06): understand() повернув setChoice:item/A0187, але розділ 3
     // виконується лише поки setMode не обрано, тож вибір ігнорувався і бот далі питав розмір лоферів.
     if (p.isSet && ctx.setMode === 'set' && !ctx.crmOrderId && Array.isArray(p.setItems) && p.setItems.length > 1) {
-        let art = (u.setChoice === 'item' && u.setArticle) ? String(u.setArticle) : '';
-        if (!art && /(тільки|лише|только|лиш)\s/i.test(text + ' ')) {
+        // Лише на явне «тільки/лише X» — «джинси хочу чорні» у звуженому комплекті це зміна кольору, не вибір однієї речі (тест 4).
+        const onlyWord = /(тільки|лише|только|лиш)\s/i.test(text + ' ');
+        let art = (onlyWord && u.setChoice === 'item' && u.setArticle) ? String(u.setArticle) : '';
+        if (!art && onlyWord) {
             const segs0 = text.split(/\s*[,;\n+]\s*|\s+(?:і|та|и|й)\s+/giu).map((s) => s.trim()).filter(Boolean);
             const hits0 = []; for (const sg of segs0) { const h = matchSetItem(sg, initSetSelection(p), null); if (h && !hits0.some((x) => x.article === h.article)) hits0.push(h); }
             if (hits0.length === 1) art = hits0[0].article;

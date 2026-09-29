@@ -375,33 +375,13 @@ function KeyRow({ k, onEdit, onDelete, onReveal, onSaveAsConnector, isRequired =
 
     return (
         <div className={`rounded-lg p-3 border ${isMissing ? 'bg-red-900/10 border-red-900/40' : 'bg-gray-900 border-gray-800'}`}>
-            <div className="flex items-start justify-between gap-2 flex-wrap">
-                <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                        <code className={`text-sm font-mono break-all ${isMissing ? 'text-red-400' : 'text-brand-light'}`} title={k.key}>{k.key}</code>
-                        {k.isSecret && <span className="text-[10px] bg-yellow-900/40 text-yellow-400 border border-yellow-800 rounded px-1.5 py-0.5 shrink-0">SECRET</span>}
-                        {isMissing && <span className="text-[10px] bg-red-900/40 text-red-400 border border-red-800 rounded px-1.5 py-0.5 shrink-0">⚠ БРАКУЄ</span>}
-                    </div>
-                    {k.label && <div className="text-xs text-gray-400 mt-0.5 break-words">{k.label}</div>}
-                    {KEY_HINTS[k.key] && (
-                        <div className="text-[11px] text-gray-500 mt-0.5 flex items-start gap-1">
-                            <span className="break-words">💡 {KEY_HINTS[k.key].hint}</span>
-                            {KEY_HINTS[k.key].url && (
-                                <a
-                                    href={KEY_HINTS[k.key].url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-brand-light hover:text-brand underline shrink-0"
-                                    onClick={e => e.stopPropagation()}
-                                >
-                                    →
-                                </a>
-                            )}
-                        </div>
-                    )}
-                    <div className={`text-sm mt-1 font-mono break-all ${isMissing ? 'text-red-300' : 'text-gray-300'}`}>
-                        {revealed ? revealedValue : (k.isSecret ? '••••••••' : k.value)}
-                    </div>
+            {/* Ряд 1: назва — завжди своїм рядком, на всю ширину, нічого праворуч не забирає місце */}
+            <code className={`block text-sm font-mono break-all ${isMissing ? 'text-red-400' : 'text-brand-light'}`} title={k.key}>{k.key}</code>
+            {/* Ряд 2: бейджі + іконки-дії */}
+            <div className="flex items-center justify-between gap-2 flex-wrap mt-1.5">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                    {k.isSecret && <span className="text-[10px] bg-yellow-900/40 text-yellow-400 border border-yellow-800 rounded px-1.5 py-0.5 shrink-0">SECRET</span>}
+                    {isMissing && <span className="text-[10px] bg-red-900/40 text-red-400 border border-red-800 rounded px-1.5 py-0.5 shrink-0">⚠ БРАКУЄ</span>}
                 </div>
                 <div className="flex gap-1 shrink-0 flex-wrap justify-end">
                     {k.isSecret && (
@@ -435,6 +415,27 @@ function KeyRow({ k, onEdit, onDelete, onReveal, onSaveAsConnector, isRequired =
                         🗑
                     </button>
                 </div>
+            </div>
+            {/* Ряд 3+: все решта — мітка, підказка, значення */}
+            {k.label && <div className="text-xs text-gray-400 mt-1 break-words">{k.label}</div>}
+            {KEY_HINTS[k.key] && (
+                <div className="text-[11px] text-gray-500 mt-0.5 flex items-start gap-1">
+                    <span className="break-words">💡 {KEY_HINTS[k.key].hint}</span>
+                    {KEY_HINTS[k.key].url && (
+                        <a
+                            href={KEY_HINTS[k.key].url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-brand-light hover:text-brand underline shrink-0"
+                            onClick={e => e.stopPropagation()}
+                        >
+                            →
+                        </a>
+                    )}
+                </div>
+            )}
+            <div className={`text-sm mt-1 font-mono break-all ${isMissing ? 'text-red-300' : 'text-gray-300'}`}>
+                {revealed ? revealedValue : (k.isSecret ? '••••••••' : k.value)}
             </div>
         </div>
     );

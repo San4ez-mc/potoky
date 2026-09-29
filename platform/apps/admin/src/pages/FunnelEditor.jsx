@@ -270,7 +270,14 @@ export function FunnelEditor() {
 
         const required = [];
         if (channels.includes('telegram')) {
-            required.push('TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_USERNAME');
+            // Токен телеграм-бота приходить або напряму (TELEGRAM_BOT_TOKEN), або
+            // через збережений конектор (TELEGRAM_CONNECTOR_ID) — саме так живуть
+            // усі бойові боти (CLAUDE.md §3). Вимагати саме TELEGRAM_BOT_TOKEN тут
+            // означало хибну помилку «бракує ключів» для робочих ботів на конекторі.
+            if (!keyMap.TELEGRAM_BOT_TOKEN && !keyMap.TELEGRAM_CONNECTOR_ID) {
+                required.push('TELEGRAM_BOT_TOKEN');
+            }
+            required.push('TELEGRAM_BOT_USERNAME');
         }
         if (channels.includes('instagram')) {
             required.push('INSTAGRAM_ACCESS_TOKEN', 'INSTAGRAM_APP_SECRET', 'INSTAGRAM_VERIFY_TOKEN', 'INSTAGRAM_BUSINESS_ID', 'INSTAGRAM_USERNAME');
@@ -385,7 +392,7 @@ export function FunnelEditor() {
                     )}
 
                     {isLeftPanelOpen && (
-                        <div className="absolute inset-y-0 left-0 z-20 w-[264px] max-w-[92vw] bg-gray-950 border-r border-gray-800 flex flex-col overflow-hidden shadow-2xl shadow-black/40 xl:static xl:z-auto xl:w-[264px] xl:max-w-none xl:shadow-none">
+                        <div className="absolute inset-y-0 left-0 z-20 w-[302px] max-w-[92vw] bg-gray-950 border-r border-gray-800 flex flex-col overflow-hidden shadow-2xl shadow-black/40 xl:static xl:z-auto xl:w-[302px] xl:max-w-none xl:shadow-none">
                             <div className="px-4 py-3 border-b border-gray-800 flex items-start justify-between gap-3">
                                 <div>
                                     <div className="text-sm font-semibold text-white">Панель</div>

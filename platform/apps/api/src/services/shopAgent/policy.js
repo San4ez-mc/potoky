@@ -712,6 +712,9 @@ async function runPolicyInner(A, u) {
         if (upS && ctx.agent.upsellOffered && pa && String(pa).toLowerCase() === String(upS.sku || '').toLowerCase()) u.productHint = { ...u.productHint, article: null, fromList: null };
     }
     const freshSignal = !!(A.turnSharedPost || A.newEntryAd || u.productHint.article || u.productHint.fromList || (A.turnImage && !u.claimsPaid && !u.receiptLink && !(ctx.paymentInfo && ctx.paymentInfo.method) ));
+    // Каталожне питання («А є жилетки?», «Які кольори?») аналізатор інколи кладе лише в productHint, без questions — тоді
+    // воно губилось і бот просив зріст/вагу (тест 131). Питання зі знаком «?», на яке є відповідь у CRM, завжди відповідаємо.
+    if (!u.questions.length && /\?/.test(text) && !A.turnSharedPost && classifyKbQuestion(text).kind === 'catalog') u.questions = [text.trim()];
 
     // 2026-09-24 (FunnelTest 16): «Не відкривається посилання» LLM не завжди відносила до wantsManualReq —
     // детермінований страхувальний розбір: скарга на посилання оплати → одразу ручні реквізити.
@@ -1024,6 +1027,9 @@ async function runPolicyInner(A, u) {
                     u.questions = u.questions.filter((q) => !/(ціна|ціну|цін[иі]|скільки\s+кошту|вартіст|почім|прайс)/i.test(String(q)));
                     // «Клієнт написав 234286 — уточнити, що це» — картка цього артикула щойно показана, питання закрите (правка 8577bd2d).
                     if (P(ctx).sku) u.questions = u.questions.filter((q) => !String(q).toUpperCase().includes(String(P(ctx).sku).toUpperCase()));
+                    // «А є джинси?» — щойно показана картка джинсів і є відповіддю.
+                    const pn = String((P(ctx).name || '') + ' ' + (P(ctx).customerName || '')).toLowerCase();
+                    u.questions = u.questions.filter((q) => !(/(^|\s)(а\s+)?(у\s+вас\s+)?(чи\s+)?(є|маєте)\s/i.test(String(q)) && String(q).toLowerCase().split(/[^a-zа-яіїєґ]+/).some((w) => w.length >= 4 && pn.includes(w.slice(0, 5)))));
                     // «Які є кольори?» — картка щойно їх перелічила; окремий рядок «Кофта є у трьох кольорах…» — дубль (правки 272c33d0, 0759abcb).
                     // Питання про конкретний колір, якого нема в палітрі («а беж є?»), лишаємо — на нього треба чесна відповідь.
                     if (colorsOf(P(ctx))) u.questions = u.questions.filter((q) => !(/(кольор|колір|відтін)/i.test(String(q)) && !(u.color && !matchColor(P(ctx), u.color))));

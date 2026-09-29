@@ -1122,10 +1122,19 @@ async function runPolicyInner(A, u) {
     // спрацьовував і після того, як розмір уже відомий.
     // «Не бачу фото» одразу після надісланої сітки — клієнт не отримав зображення: шлемо ще раз (LLM не завжди ставить wantsSizeChart).
     if (!u.wantsSizeChart && pp.sizeChartUrl && ctx.agent.chartSentFor === pp.sku && /не\s+(бачу|відкрива\S*|завантаж\S*)\s+(фото|сітк\S*|картинк\S*|зображенн\S*)/i.test(String(A.turnText || ''))) u.wantsSizeChart = true;
+    // Сумнів у порахованому розмірі («не маловат?», «не буде тісно?») — показуємо сітку, а не «підібрала за зростом і вагою» (тест 24).
+    if (!u.wantsSizeChart && ctx.recommendedSize && pp.sizeChartUrl && ctx.agent.chartSentFor !== pp.sku && /мал(уват|оват)|тісн|тісно|великуват|завелик|замал|не\s+буде\s+(малий|великий)/i.test(String(A.turnText || ''))) u.wantsSizeChart = true;
     if (u.wantsSizeChart && (ctx.recommendedSize || ctx.agent.chartSentFor === pp.sku) && pp.sizeChartUrl && !A._chartSent) { // явне повторне прохання сітки — надсилаємо знову (FunnelTest 27: обіцяли «ще раз» без вкладення)
-        A.out.push({ photoUrls: [pp.sizeChartUrl], caption: messageText(A.assets, 'n_agent_size_chart_caption', ctx, A.session.id), step: 'size_chart' });
+        const _txt = String(A.turnText || '');
+        const _again = /не\s+(бачу|відкрива|завантаж|прийш|дійш)|ще\s+раз|повторн|знову|не\s+видно/i.test(_txt);
+        // Сітку вже надсилали цьому клієнту, і він не каже, що не бачить, — не дублюємо фото (тест 26), коротко нагадуємо.
+        if (ctx.agent.chartSentFor === pp.sku && !_again) A.out.push({ text: 'Розмірну сітку надіслала вище 👆', step: 'size_chart_above' });
+        else A.out.push({ photoUrls: [pp.sizeChartUrl], caption: messageText(A.assets, 'n_agent_size_chart_caption', ctx, A.session.id), step: 'size_chart' });
         ctx.agent.chartSentFor = pp.sku; A._chartSent = true;
         if (Array.isArray(u.questions)) u.questions = u.questions.filter((q) => !/(сітк|заміри|таблиц)/i.test(String(q))); // відповідь уже пішла фото — compose не має «обіцяти» її вдруге
+        // «Сітку кофти і футболки» — про другий товар відповідаємо окремо (тест 27: інакше частина прохання губиться).
+        const _other = (_txt.match(/футболк\S*|джинс\S*|лофер\S*|взутт\S*|штан\S*|костюм\S*|кофт\S*|бомбер\S*|куртк\S*/gi) || []).filter((w) => !new RegExp(w.slice(0, 5), 'i').test(String(pp.name || '') + ' ' + String(pp.customerName || '')));
+        if (_other.length) u.questions = (u.questions || []).concat(['Чи є окрема розмірна сітка для «' + _other[0] + '»? (сітку поточного товару вже надіслано фото)']);
     }
 
     // 2026-09-18 (живий кейс, LaT1K/C0043: клієнт явно написав "мені потрібен M розмір
@@ -1243,8 +1252,9 @@ async function runPolicyInner(A, u) {
             // 2026-09-28 (Edit 86c32ac7, «двічі питає зріст та вагу»): «Як підібрати розмір?» разом із свіжою карткою — картка вже
             // закінчується проханням зросту/ваги, тож таке питання вважаємо закритим і не віддаємо в compose (він дописував друге прохання).
             const qsLeft = A.justPresented ? u.questions.filter((q) => !/розмір|сітк|підібр|підбер|замір|як обрат|який мені|яку мені/i.test(q)) : u.questions;
+            // u.questions змінюємо в тому ж обʼєкті — universalQuestionFallback наприкінці ходу читає саме його (інакше «доповідає» знятe питання).
+            if (qsLeft.length !== u.questions.length) u.questions = qsLeft;
             if (A.justPresented && !qsLeft.length && !colorNote) { ctx.agent.lastAsk = paramsPrompt || 'зріст і вага'; return; }
-            if (qsLeft.length !== u.questions.length) u = { ...u, questions: qsLeft };
             const missing = isHW ? (si.height && !si.weight ? 'вагу' : (!si.height && si.weight ? 'зріст' : '')) : '';
             let ask = '';
             if (!A.justPresented) {

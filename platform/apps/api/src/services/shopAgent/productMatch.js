@@ -604,7 +604,8 @@ try {
         found = __parentSets[0]; via = 'ad_set_parent'; mk = 'setparent_' + String(found.sku || found.id);
       }
     }
-    if (__uStem && found && /^ad_/.test(via) && !__hasStem(found, __uStem)) {
+    // «Весь комплект», а компонент входить у кілька наборів — не відкидаємо товар і не шукаємо слово «комплект» серед окремих товарів (тест 36: показувало лляний Q0071).
+    if (__uStem && found && /^ad_/.test(via) && !__hasStem(found, __uStem) && !__wantsSetWord) {
       // реклама комплекту/колажу: компоненти наборів, що містять знайдений товар, з категорії, яку назвав клієнт
       var __comp = [];
       all.forEach(function (s) {
@@ -624,7 +625,7 @@ try {
         context.adRejectedFor = String(context.entryAd || __adExternalId || '');
         found = null; via = ''; mk = '';
       }
-    } else if (__uStem && !found) {
+    } else if (__uStem && !found && !__wantsSetWord) {
       var __byStem = all.filter(function (p) { return !p.isSet && __hasStem(p, __uStem); });
       if (__byStem.length === 1) { found = __byStem[0]; via = 'user_keyword:' + __uStem; mk = 'kw_' + String(found.sku || found.id); }
     }

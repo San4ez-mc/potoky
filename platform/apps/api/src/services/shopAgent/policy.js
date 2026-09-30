@@ -1570,7 +1570,10 @@ async function runPolicyInner(A, u) {
         }
         else {
             ctx.agent.wantColor = u.color || '';
-            const ask = u.color ? messageText(A.assets, 'n_agent_ask_color_specific', ctx, A.session.id) : messageText(A.assets, 'n_agent_ask_color_generic', ctx, A.session.id);
+            // «Бажано темний колір» — відтінок, а не назва: пропонуємо темні (світлі) з палітри, а не «кольору «темний» нема» (тест 34).
+            const shadeWish = u.color && /^(темн|світл)/i.test(String(u.color).trim()) && !/-/.test(String(u.color)) && String(u.color).trim().split(/\s+/).length <= 2 && !/(син|сір|зел|корич|беж|черв|блак)/i.test(String(u.color));
+            const shadeList = shadeWish ? String(pp.colors || '').split(',').map((c) => c.trim()).filter((c) => (/^темн/i.test(String(u.color)) ? /(темн|чорн|графіт|бордов|хакі|коричн)/i : /(світл|біл|беж|блакит|сір)/i).test(c)) : [];
+            const ask = (shadeWish && shadeList.length) ? ('З ' + (/^темн/i.test(String(u.color)) ? 'темних' : 'світлих') + ' є: ' + shadeList.join(', ') + ' 🎨 Який обираєте?') : u.color ? messageText(A.assets, 'n_agent_ask_color_specific', ctx, A.session.id) : messageText(A.assets, 'n_agent_ask_color_generic', ctx, A.session.id);
             ctx.agent.colorAskCount = (ctx.agent.colorAskCount || 0) + 1;
             const askVar = (ctx.agent.colorAskCount > 1 && ctx.agent.lastAsk === 'колір') ? (['Нагадаю: лишилось обрати колір 🎨 ', 'Ще раз про колір 🎨 ', 'Лишилось лише обрати колір 🎨 '][ctx.agent.colorAskCount % 3] + ask) : ask;
             // Клієнт ставить уточнювальні питання про колір (зразок, відтінок) — після 2-го підряд питання лише відповідаємо, не тиснемо повтором.

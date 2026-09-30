@@ -780,7 +780,8 @@ async function runPolicyInner(A, u) {
         else if (!pa0 && u.questions.length) ctx.agent.setGeneralQ = true;
     }
     // Порівняння («чим відрізняється від D0050?») — питання, а не вибір іншого товару (2026-09-30, тест 332fe985: бот показував картку D0050).
-    if (u.compare && /^[\d\s,;.+іта-]+$/iu.test(String(text).trim())) u.compare = false; // «2,4» — вибір зі списку, а не порівняння (тест 34)
+    // «2,4» — вибір зі списку, а не порівняння і не питання (тест 34): аналізатор інколи додавав «чим відрізняються 2 і 4?».
+    if (/^[\d\s,;.+іта-]+$/iu.test(String(text).trim()) && /\d/.test(text)) { u.compare = false; u.questions = []; }
     if (u.compare) { u.productHint = { ...u.productHint, article: null, fromList: null }; if (!u.questions.length) u.questions = [String(text).trim()]; }
     if (!u.productHint.article && !A.turnSharedPost && !u.compare) {
         try {
@@ -857,6 +858,8 @@ async function runPolicyInner(A, u) {
         return;
     }
     // Клієнт роздратований самою розмовою («Ви знущаєтесь?») — одне вибачення, менеджер, пауза; далі не тиснемо скриптом (2026-09-30, тест 121 / сесія ed8e3e06).
+    // Зміст у повідомленні (колір/розмір/число/питання/сторіз) або коротка нетерплячка — це не «роздратування», відповідаємо по суті (фінальний прогін 30.09: «Ау», «Я написав вам один»).
+    if (u.annoyedAtBot && (u.color || u.colorMatched || u.clothingSize || u.height || u.weight || u.qty || (u.units && u.units.length) || u.questions.length || u.refersToStory || u.productHint.article || /^[\s?!.аАуУ]{1,6}$/.test(text.trim()) || /(написав|написала|казав|казала|відповів|відповіла|писав|писала)/i.test(text))) u.annoyedAtBot = false;
     if (u.annoyedAtBot && !u.isComplaint) {
         A.out.push({ text: messageText(A.assets, 'n_agent_complaint_ack', ctx, A.session.id), step: 'annoyed_handoff' });
         await pause(A, 'annoyed', 'n_agent_complaint_admin', '😤 Клієнт роздратований розмовою з ботом: «' + text.slice(0, 300) + '»');
@@ -1103,6 +1106,12 @@ async function runPolicyInner(A, u) {
         if (ctx.pendingExtraCandidate && ctx.pendingExtraCandidate.decision === 'ASK_REPLACE_OR_ADD' && P(ctx)) {
             const cand = ctx.pendingExtraCandidate; delete ctx.pendingExtraCandidate;
             ctx.agent.pendingReplaceAdd = { sku: cand.sku, name: String(cand.name || '').split('\n')[0] };
+            // Фото цього товару — разом із питанням, щоб клієнт бачив, про що мова (тест 147: «Джинси у вас є?» — без фото).
+            try {
+                const catR = await loadCatalog(A.botId, A.keys); const prR = catR.products.find((x) => String(x.sku).toUpperCase() === String(cand.sku).toUpperCase());
+                const imR = prR && (prR.images || [])[0];
+                if (imR) { const baseR = (A.keys.CRM_PUBLIC_BASE || 'https://pcrm.fineko.space').replace(/\/$/, ''); A.out.push({ photoUrls: [/^https?:/.test(imR) ? imR : baseR + (String(imR).charAt(0) === '/' ? imR : '/' + imR)], caption: '', step: 'replace_add_photo' }); }
+            } catch (e) { /* best-effort */ }
             A.out.push({ text: 'Бачу: ' + ctx.agent.pendingReplaceAdd.name.replace(/\.?\s*Артикул:?.*$/i, '').trim() + ' (арт. ' + cand.sku + ') 🙂 Замінити нею ' + String(P(ctx).customerName || P(ctx).name).split('\n')[0].replace(/\.?\s*Артикул:?.*$/i, '').trim().toLowerCase() + ' у замовленні, додати окремою позицією чи залишаємо як було?', step: 'ask_replace_or_add' });
             ctx.agent.lastAsk = 'замінити чи додати';
             return;
@@ -2008,7 +2017,9 @@ async function runPolicyInner(A, u) {
         if (u.homeAddress && !od.branch) { ctx.agent.cityNote = od.city ? ' у м. ' + od.city : ''; A.out.push({ text: await answerThenAsk(A, u, messageText(A.assets, 'n_agent_home_address_reject', ctx, A.session.id)), step: 'home_address' }); ctx.agent.lastAsk = 'номер відділення'; return; }
         if (!addressComplete(od)) {
             const missing = [!od.fullName && 'ПІБ', !od.phone && 'телефон', !od.city && 'місто', !od.branch && '№ відділення або поштомата'].filter(Boolean);
-            ctx.agent.ackLine = ctx.payStatus === 'confirmed' ? 'Оплату отримали ✅ ' : (u.claimsPaid || u.receiptLink || (A.turnImage && Number(ctx.payAmount) > 0 && ctx.paymentInfo && ctx.paymentInfo.method) ? 'Дякую! Оплату звіримо, щойно надійде 🙏 ' : '');
+            // Фото без слів «оплатив» — спершу перевіряємо, що це справді квитанція (не зразок кольору, тест 14).
+            const imgIsReceipt = (A.turnImage && !u.claimsPaid && !u.receiptLink && ctx.payStatus !== 'confirmed') ? await require('./receiptCheck').imageIsReceipt(A, A.turnImage) : null;
+            ctx.agent.ackLine = ctx.payStatus === 'confirmed' ? 'Оплату отримали ✅ ' : (u.claimsPaid || u.receiptLink || (A.turnImage && imgIsReceipt !== false && Number(ctx.payAmount) > 0 && ctx.paymentInfo && ctx.paymentInfo.method) ? 'Дякую! Оплату звіримо, щойно надійде 🙏 ' : (A.turnImage && imgIsReceipt === false ? 'Дякую за фото 🙂 ' : ''));
             ctx.agent.missingFields = missing.join(', ');
             A.out.push({ text: await answerThenAsk(A, u, messageText(A.assets, 'n_agent_ask_address', ctx, A.session.id)), step: 'ask_address' }); ctx.agent.lastAsk = 'дані доставки: ' + missing.join(', '); return;
         }

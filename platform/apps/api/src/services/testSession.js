@@ -5412,7 +5412,7 @@ async function sendTestTurn({ sessionId, text = '', imageUrl = null, sharedPost 
     if (sharedPost || referral || entryAdId) {
         const ctxPatch = { ...(session.context || {}) };
         if (sharedPost) ctxPatch.sharedPost = sharedPost;
-        if (referral) { ctxPatch.lastReferral = referral; ctxPatch.entryAdId = referral.adId || entryAdId || ctxPatch.entryAdId; }
+        if (referral) { ctxPatch.lastReferral = referral; ctxPatch.entryAdId = referral.adId || referral.ad_id || entryAdId || ctxPatch.entryAdId; }
         if (entryAdId && !ctxPatch.entryAdId) ctxPatch.entryAdId = entryAdId;
         await db.session.update({ where: { id: sessionId }, data: { context: ctxPatch } });
     }

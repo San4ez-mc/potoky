@@ -748,6 +748,15 @@ async function runPolicyInner(A, u) {
     // Явний артикул із CRM у тексті — навіть кирилицею («А0187 треба») чи голим числом («234286») — це вибір товару.
     // 2026-09-29 (сесія f9c2ae98, Timur): «А0187 треба», «ні мені потрібна А0187» — бот тримав C0043 з привʼязки реклами,
     // а друге повідомлення прочитав як відмову від замовлення («Добре, без тиску»).
+    // Показано комплект, клієнт згадує його позицію («кофти в мене розмір s/m») — це не перемикання на окремий товар: рішення
+    // «весь комплект чи окрема річ» приймає блок комплекту (розділ 3). Загальне питання до комплекту («Яка ціна товарів?»)
+    // запамʼятовуємо — після нього згадка однієї позиції вже не означає «лише її» (2026-09-30, тест 145 / сесія 7204375c).
+    if (P(ctx) && P(ctx).isSet && !ctx.setMode && Array.isArray(P(ctx).setItems)) {
+        const comps = P(ctx).setItems.map((it) => String(it.article || '').toUpperCase());
+        const pa0 = u.productHint && u.productHint.article;
+        if (pa0 && comps.includes(String(pa0).toUpperCase())) u.productHint = { ...u.productHint, article: null };
+        else if (!pa0 && u.questions.length) ctx.agent.setGeneralQ = true;
+    }
     // Порівняння («чим відрізняється від D0050?») — питання, а не вибір іншого товару (2026-09-30, тест 332fe985: бот показував картку D0050).
     if (u.compare) { u.productHint = { ...u.productHint, article: null, fromList: null }; if (!u.questions.length) u.questions = [String(text).trim()]; }
     if (!u.productHint.article && !A.turnSharedPost && !u.compare) {

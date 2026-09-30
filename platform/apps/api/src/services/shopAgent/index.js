@@ -79,7 +79,7 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
     const ctx = session.context || {};
     // Пауза від скарги/прохання менеджера, поставлена попереднім ходом, поки це повідомлення чекало в черзі.
     // 2026-09-29 (ed8e3e06): «Передала менеджеру» — і через 6 с бот знову питав колір, бо гейт у zernioHandler читав контекст ДО черги.
-    if (!dryRun && ctx.funnelPaused && /^(complaint|handoff|post_unknown)$/.test(String(ctx.pausedBy || ''))) {
+    if (!dryRun && ctx.funnelPaused && /^(complaint|handoff|post_unknown|annoyed)$/.test(String(ctx.pausedBy || ''))) {
         logger.info('[shopAgent] turn skipped — session paused', { botId, sessionId, pausedBy: ctx.pausedBy });
         return { replies: [], understanding: {}, trace: [], ctx, paused: true };
     }

@@ -780,6 +780,11 @@ async function runPolicyInner(A, u) {
         else if (!pa0 && u.questions.length) ctx.agent.setGeneralQ = true;
     }
     // Порівняння («чим відрізняється від D0050?») — питання, а не вибір іншого товару (2026-09-30, тест 332fe985: бот показував картку D0050).
+    // Друга думка щодо порівняння: аналізатор не завжди ставить compare («Чим вона відрізняється від D0050?» → картка D0050, тест 142);
+    // ШІ-класифікація питання (kbMatch.kind, кешується й однаково потрібна далі) — той самий зміст, інший виклик.
+    if (!u.compare && P(ctx) && u.questions.length && !/^[\d\s,;.+іта-]+$/iu.test(String(text).trim())) {
+        for (const q0 of u.questions.slice(0, 2)) { try { const km = await kbMatch(A, q0); if (km && km.kind === 'compare') { u.compare = true; break; } } catch (e) { /* best-effort */ } }
+    }
     // «2,4» — вибір зі списку, а не порівняння і не питання (тест 34): аналізатор інколи додавав «чим відрізняються 2 і 4?».
     if (/^[\d\s,;.+іта-]+$/iu.test(String(text).trim()) && /\d/.test(text)) { u.compare = false; u.questions = []; }
     if (u.compare) { u.productHint = { ...u.productHint, article: null, fromList: null }; if (!u.questions.length) u.questions = [String(text).trim()]; }

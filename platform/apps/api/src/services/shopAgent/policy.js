@@ -1307,6 +1307,8 @@ async function runPolicyInner(A, u) {
         if (u.setChoice === 'item' && u.setArticle) { ctx.setPick = { setChoice: 'item', article: u.setArticle }; await T.setApply(A); }
         else if (impliedSet && namedItem) { ctx.setPick = { setChoice: 'item', article: namedItem }; await T.setApply(A); }
         else if (u.setChoice === 'set' || impliedSet) { ctx.setPick = { setChoice: 'set' }; await T.setApply(A); ctx.setMode = 'set'; }
+        // Пряма відмова («дякую, не цікавить») — мʼяко закриваємо, а не питаємо вдруге «весь комплект чи окремі речі?» (2026-09-30, правка 87bfcfad «Наполегливий»).
+        else if ((u.ready === 'no' || u.intent === 'order_no') && !u.questions.length) { A.out.push({ text: messageText(A.assets, 'n_declined_msg', ctx, A.session.id), step: 'declined' }); ctx.declinedAt = Date.now(); ctx.agent.lastAsk = ''; return; }
         else if (isSoftDecline(u)) { A.out.push({ text: await answerThenAsk(A, u, messageText(A.assets, 'n_agent_soft_decline_set', ctx, A.session.id)), step: 'set_ask_soft' }); return; }
         // 2026-09-15 (живий кейс, власник: «зразу наш любимий баг, 2 рази відправилось повідомлення»
         // — set1113 через хвилини після деплою): картка товару (n_welcome) для set-товарів САМА вже

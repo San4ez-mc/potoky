@@ -419,7 +419,7 @@ function resetForNewProduct(A, sku) {
     const { ctx } = A;
     if (ctx.agent.presentedSku && ctx.agent.presentedSku !== sku) {
         for (const k of ['sizeInput', 'recommendedSize', 'sizeSource', 'sizeReplyText', 'sizeColorFollowup', 'sizeOutOfRange', 'sizeOorReason', 'sizeOorAlternative', 'isSetSizeCalc', 'setSizesText', 'colorChoice', 'available', 'availReason', 'orderUnits', 'orderUnitsText', 'orderUnitsTotal', 'orderQty', 'orderIntent', 'setMode', 'setPick', 'setSelection', 'availChecked', 'extraItems', 'extraItemsText', 'extraUnresolved', 'orderExtras', 'unavailableColors', 'availableColorsNow']) delete ctx[k];
-        for (const k of ['setOriginal', 'setPricing', 'setStageSent', 'setEditNote', 'setParams', 'upsellOffered', 'upsellPhotoSent', 'availKey', 'sizeVerifyAsked', 'sizeClaim']) delete ctx.agent[k];
+        for (const k of ['setOriginal', 'setPricing', 'setStageSent', 'setEditNote', 'setParams', 'upsellOffered', 'upsellDeclined', 'upsellPhotoSent', 'availKey', 'sizeVerifyAsked', 'sizeClaim']) delete ctx.agent[k];
         if (!ctx.crmOrderId) for (const k of ['paymentInfo', 'payAmount', 'payLabel', 'orderRef', 'orderRefAt', 'ibanPayUrl', 'ibanInvoiceUid', 'requisitesSentAt']) delete ctx[k];
     }
 }
@@ -1600,7 +1600,14 @@ async function runPolicyInner(A, u) {
         }
         if (!ctx.agent.setColorsResolved) {
             const catNamesSet = ctx.agent.setParams && ctx.agent.setParams.categoryNames;
-            const segments = [...(ctx.agent.setColorHints || []), text].flatMap((tx) => String(tx).split(/[,;\n]|\s+(?:і|та|и|й)\s+/iu)).map((s) => s.trim()).filter(Boolean);
+            // Хто якого кольору — спершу за змістом (аналізатор, u.itemColors): «кофта чорна джинси 👖 темно сині» без ком
+            // регулярка читала як ОДНУ позицію, і джинси ставали чорними (2026-09-30, правка 8292a6c8). Нарізка тексту — лише запас.
+            for (const ic of (Array.isArray(u.itemColors) ? u.itemColors : [])) {
+                const item = ic && ic.item && matchSetItem(String(ic.item), ctx.setSelection, catNamesSet);
+                const c = item && Array.isArray(item.colors) && item.colors.length && ic.color ? matchColor({ colors: item.colors.join(',') }, String(ic.color)) : null;
+                if (c) item.color = c;
+            }
+            const segments = (Array.isArray(u.itemColors) && u.itemColors.length) ? [] : [...(ctx.agent.setColorHints || []), text].flatMap((tx) => String(tx).split(/[,;\n]|\s+(?:і|та|и|й)\s+/iu)).map((s) => s.trim()).filter(Boolean);
             for (const seg of segments) {
                 const item = matchSetItem(seg, ctx.setSelection, catNamesSet);
                 if (item && !item.color && Array.isArray(item.colors) && item.colors.length) {
@@ -1736,12 +1743,10 @@ async function runPolicyInner(A, u) {
             ctx.orderIntent = { ready: 'yes', addUpsell: addUpsellFinal, upsellQty: u.upsellQty || upsellQtyFallback || undefined, upsellNote: u.upsellNote || (answeringUpsellClarify && addUpsellFinal ? text : undefined), upsellUnits: u.upsellUnits || undefined, units: u.units || undefined, qty: u.qty || undefined, extras: undefined, extraProducts: undefined };
             fillUpsellSize(ctx);
             if (gaveAddress) { ctx.orderIntent.prefill = { fullName: u.fullName || undefined, phone: u.phone || undefined, city: u.city || undefined, branch: u.branch || undefined, region: u.region || undefined }; await T.orderPrefill(A); }
-            if (pp.upsell && u.addUpsell == null && u.ready === 'yes' && ctx.agent.upsellOffered && !u.upsellNote && !gaveAddress && !u.payMethod && !answeringUpsellClarify) {
-                // згода без відповіді на допродаж — одне уточнення
-                ctx.orderIntent = null;
-                ctx.agent.productDisplayName = pp.customerName || pp.name;
-                A.out.push({ text: messageText(A.assets, 'n_agent_upsell_clarify', ctx, A.session.id), step: 'upsell_clarify' }); ctx.agent.lastAsk = 'з допродажем чи без'; return;
-            }
+            // 2026-09-30 (правки ea8bcaf5, ea18a400): «Оформляємо» без слова про футболку — це «без неї». Допродаж уже
+            // запропоновано в підсумку; окреме «з футболкою чи без?» клієнти сприймали як нав'язування (і воно наздоганяло
+            // їхнє ж «без футболки», надіслане слідом). Питання n_agent_upsell_clarify більше не ставимо.
+            if (pp.upsell && ctx.agent.upsellOffered && !addUpsellFinal) ctx.agent.upsellDeclined = true;
         } else {
             // підсумок + «Оформляємо?»
             const isSetFull = pp.isSet && ctx.setMode === 'set';
@@ -1759,8 +1764,12 @@ async function runPolicyInner(A, u) {
             // Допродаж уже доданий клієнтом як додатковий товар («і ще футболку») — не пропонуємо його вдруге.
             const upItem = Array.isArray(pp.upsellItems) && pp.upsellItems[0];
             const upsellAlreadyExtra = !!(pp.upsell && upItem && Array.isArray(ctx.extraItems) && ctx.extraItems.some((x) => x && ((x.id && x.id === upItem.id) || (x.sku && upItem.sku && x.sku === upItem.sku))));
-            const askLine = (!isSetFull && pp.upsell && !upsellAlreadyExtra && !(ctx.agent.pendingSecondPick && !ctx.agent.secondPickAsked)) ? messageText(A.assets, 'n_agent_order_ask_upsell', ctx, A.session.id) : messageText(A.assets, 'n_agent_order_ask_plain', ctx, A.session.id);
-            if (!isSetFull && pp.upsell && !upsellAlreadyExtra && !(ctx.agent.pendingSecondPick && !ctx.agent.secondPickAsked)) ctx.agent.upsellOffered = true;
+            // Клієнт відмовився від допродажу («футболку не треба») без рішення про саме замовлення — запамʼятовуємо
+            // й більше не пропонуємо: далі лише «Оформляємо?» (2026-09-30, правка ea18a400 — бот писав «не додаємо» і тут же пропонував знову).
+            if (pp.upsell && ctx.agent.upsellOffered && u.addUpsell === false) ctx.agent.upsellDeclined = true;
+            const offerUpsell = !isSetFull && pp.upsell && !upsellAlreadyExtra && !ctx.agent.upsellDeclined && !(ctx.agent.pendingSecondPick && !ctx.agent.secondPickAsked);
+            const askLine = offerUpsell ? messageText(A.assets, 'n_agent_order_ask_upsell', ctx, A.session.id) : messageText(A.assets, 'n_agent_order_ask_plain', ctx, A.session.id);
+            if (offerUpsell) ctx.agent.upsellOffered = true;
             const hesitating = (u.intent === 'hesitate' || u.intent === 'postpone');
             // «2,4»: другий обраний варіант нагадуємо один раз у підсумку (відповідь ловить блок перед extraResolve).
             let secondPickLine = '';

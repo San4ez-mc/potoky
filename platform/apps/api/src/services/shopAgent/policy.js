@@ -262,7 +262,11 @@ async function escalateUnresolved(A, question) {
     // Той самий зміст зовсім іншими словами — питаємо ШІ (правило власника: суть, а не ключові слова).
     // Дослівні слова клієнта теж: аналізатор міг переписати «Уточніть покрій, чи звужений» як питання про КОФТУ, хоча клієнт продовжує про штани.
     if (seen.length && await sameAsEscalated(A, question + ' (дослівно клієнт: «' + String(A.turnText || '').slice(0, 200) + '»)', seen) === true) { A.ctx.agent.escalatedQuestions = seen.concat(nq).slice(-20); return; }
+    // Попередній хід уже закінчився передачею менеджеру, і цей знову без відповіді — клієнт наполягає на тому самому
+    // (тест 39: «Штани звужені?» → «Уточніть покрій» — ШІ-порівняння бачило «штани» vs «кофта»). Другий алерт не шлемо.
+    if (seen.length && A.ctx.agent.lastEscalatedTurn && A.ctx.agent.turns - A.ctx.agent.lastEscalatedTurn <= 1) { A.ctx.agent.escalatedQuestions = seen.concat(nq).slice(-20); A.ctx.agent.lastEscalatedTurn = A.ctx.agent.turns; return; }
     A.ctx.agent.escalatedQuestions = seen.concat(nq).slice(-20);
+    A.ctx.agent.lastEscalatedTurn = A.ctx.agent.turns;
     await T.kbAsk(A, question);
     await T.alert(A, 'n_agent_unknown_question_admin', { details: '💬 «' + String(question).slice(0, 200) + '»' });
 }
@@ -1595,7 +1599,19 @@ async function runPolicyInner(A, u) {
             // «Бажано темний колір» — відтінок, а не назва: пропонуємо темні (світлі) з палітри, а не «кольору «темний» нема» (тест 34).
             const shadeWish = u.color && /^(темн|світл)/i.test(String(u.color).trim()) && !/-/.test(String(u.color)) && String(u.color).trim().split(/\s+/).length <= 2 && !/(син|сір|зел|корич|беж|черв|блак)/i.test(String(u.color));
             const shadeList = shadeWish ? String(pp.colors || '').split(',').map((c) => c.trim()).filter((c) => (/^темн/i.test(String(u.color)) ? /(темн|чорн|графіт|бордов|хакі|коричн)/i : /(світл|біл|беж|блакит|сір)/i).test(c)) : [];
-            const ask = (shadeWish && shadeList.length) ? ('З ' + (/^темн/i.test(String(u.color)) ? 'темних' : 'світлих') + ' є: ' + shadeList.join(', ') + ' 🎨 Який обираєте?') : u.color ? messageText(A.assets, 'n_agent_ask_color_specific', ctx, A.session.id) : messageText(A.assets, 'n_agent_ask_color_generic', ctx, A.session.id);
+            // Друга позиція замовлення без кольору («2,4») — теж її темні/світлі варіанти, щоб не змішувати палітри (тест 34).
+            let shadeExtra = '';
+            if (shadeWish && Array.isArray(ctx.extraItems) && ctx.extraItems.length) {
+                try {
+                    const catS = await loadCatalog(A.botId, A.keys); const reS = /^темн/i.test(String(u.color)) ? /(темн|чорн|графіт|бордов|хакі|коричн)/i : /(світл|біл|беж|блакит|сір)/i;
+                    for (const x of ctx.extraItems.filter((y) => y && !y.color)) {
+                        const prX = catS.products.find((q) => String(q.sku).toUpperCase() === String(x.sku || '').toUpperCase()); if (!prX) continue;
+                        const colsX = [...new Set((prX.offers || []).flatMap((o) => (o.properties || []).filter((q) => /кол|цвет/i.test(q.name || '')).map((q) => q.value)))].filter((c) => reS.test(c));
+                        if (colsX.length) shadeExtra += '\nДля ' + String(prX.customerName || prX.name || '').split('\n')[0].replace(/\.?\s*Артикул:?.*$/i, '').trim() + ' (' + prX.sku + '): ' + colsX.join(', ');
+                    }
+                } catch (e) { /* best-effort */ }
+            }
+            const ask = (shadeWish && shadeList.length) ? ('З ' + (/^темн/i.test(String(u.color)) ? 'темних' : 'світлих') + ' є' + (shadeExtra ? ' для ' + String(pp.customerName || pp.name || '').split('\n')[0].replace(/\.?\s*Артикул:?.*$/i, '').trim() + ' (' + pp.sku + ')' : '') + ': ' + shadeList.join(', ') + shadeExtra + ' 🎨 Які обираєте?') : u.color ? messageText(A.assets, 'n_agent_ask_color_specific', ctx, A.session.id) : messageText(A.assets, 'n_agent_ask_color_generic', ctx, A.session.id);
             ctx.agent.colorAskCount = (ctx.agent.colorAskCount || 0) + 1;
             const askVar = (ctx.agent.colorAskCount > 1 && ctx.agent.lastAsk === 'колір') ? (['Нагадаю: лишилось обрати колір 🎨 ', 'Ще раз про колір 🎨 ', 'Лишилось лише обрати колір 🎨 '][ctx.agent.colorAskCount % 3] + ask) : ask;
             // Клієнт ставить уточнювальні питання про колір (зразок, відтінок) — після 2-го підряд питання лише відповідаємо, не тиснемо повтором.

@@ -54,6 +54,16 @@ function matchColor(p, want) {
     const CONJ = { та: 1, і: 1, й: 1, чи: 1, або: 1, и: 1 };
     const parts = w.split(/[\s,/]+/u).filter((t) => t && !CONJ[t]);
     const words = parts.length > 1 ? parts : [w];
+    // «темно сині», «світло сірий» — відтінок + колір окремими словами: шукаємо колір, що містить обидва корені (Темно-синій).
+    const SHADE = /^(темн|світл)/;
+    const pw = words.flatMap((x) => x.split('-')).filter(Boolean);
+    for (let i = 0; i < pw.length - 1; i++) {
+        if (!SHADE.test(pw[i])) continue;
+        const a = pw[i].slice(0, 4); const b = ruToUaColorWord(pw[i + 1]).replace(/(ий|а|е|у|ого|им|ому|ої|ою|их|і)$/u, '').slice(0, 4);
+        if (b.length < 3) continue;
+        const both = list.filter((c) => c.toLowerCase().includes(a) && c.toLowerCase().includes(b));
+        if (both.length === 1) return both[0];
+    }
     for (const rawOne of words) {
         // 2026-09-15: клієнт міг написати колір російською («черный», «серый») — корінь відрізняється
         // від українського каталогу (чорний, сірий), тож звичайний стемінг нижче (розрахований на
@@ -67,6 +77,8 @@ function matchColor(p, want) {
         const stem = one.replace(/(ий|а|е|у|ого|им|ому|ої|ою|их|і)$/u, '').slice(0, 5);
         // Корінь з 1–2 літер («Ау» → «а») знаходився всередині будь-якої назви («Графітовий») — це не колір (2026-09-30, тест 1c5dee4b).
         if (!stem || stem.length < 3) continue;
+        // Лише відтінок без кольору («темний», «світлий») — це побажання, не колір: інакше «темний» = єдиний «Темно-синій» (тест 34).
+        if (/^(темн|світл|яскр|блід|насич)/.test(stem)) continue;
         let cand = list.filter((c) => c.toLowerCase().includes(stem) || one.includes(c.toLowerCase().slice(0, 5)));
         // 2026-09-15 (живий кейс, власник: «джинси сині» не матчилось): «сині» — узгоджена форма
         // прикметника з «джинси» (множина), не «синій» як у каталозі. Стем-пошук підрядком тому

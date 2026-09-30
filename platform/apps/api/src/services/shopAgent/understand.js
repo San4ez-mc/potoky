@@ -121,18 +121,21 @@ async function understand(A) {
     const user = summarizeState(ctx) + '\n\nІСТОРІЯ (старіше → новіше):\n' + (hist || '(порожньо)') + '\n\nОСТАННЄ ПОВІДОМЛЕННЯ КЛІЄНТА (розбирай саме його):\n' + stripLoneSurrogates(String(A.turnText || '[фото]')).slice(0, 1500) + (A.turnImage ? '\n[до повідомлення прикріплено фото]' : '') + (A.turnSharedPost ? '\n[клієнт переслав пост/рілс магазину' + (A.turnSharedPost.caption ? ': «' + String(A.turnSharedPost.caption).slice(0, 200) + '»' : '') + ']' : '');
     const t0 = Date.now();
     let raw = '';
-    let failed = null;
+    let failed = null; let noCredit = false;
     try {
-        raw = await callClaude({ sessionId: A.session.id, systemPrompt, messages: [{ role: 'user', content: user }], options: { model, maxTokens: 900, extra: { temperature: 0 } } });
+        raw = await callClaude({ sessionId: A.session.id, systemPrompt, messages: [{ role: 'user', content: user }], options: { model, maxTokens: 900, extra: { temperature: 0 }, noFallbackOnBilling: true } });
     } catch (e) {
         logger.warn('[shopAgent] understand failed: ' + e.message, { sessionId: A.session.id });
         failed = e.message;
+        if (e && e.code === 'CLAUDE_NO_CREDIT') noCredit = true;
     }
     // Навіть якщо модель не відповіла — повертаємо ПОВНИЙ обʼєкт (усі поля, productHint), а не урізаний:
     // з 24.09 урізаний обʼєкт валив увесь хід («reading 'article'», 254 рази) → клієнт бачив «Секунду, перевіряю…».
     const u = (!failed && extractJson(raw)) || { intent: 'other' };
     if (failed) {
         u._error = failed;
+        // Закінчились кредити Claude — рішення власника: бот нічого не відповідає й кличе менеджера (без розбору навіть чисел).
+        if (noCredit) { u._noCredit = true; return u; }
         // ШІ недоступний (30.09 20:21–20:24: Claude без кредитів, OpenAI 429, Gemini 402) — бот не бачив «Зріст 169 Вага 101»
         // і перепитував зріст і вагу знову й знову. Числа (ДАНІ, не зміст) витягуємо детерміновано, щоб підбір розміру працював.
         const hw = extractHeightWeight(String(A.turnText || ''));

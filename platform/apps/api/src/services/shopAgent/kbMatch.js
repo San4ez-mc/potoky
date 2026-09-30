@@ -60,7 +60,7 @@ async function kbMatch(A, question) {
             + '\n2) scope — чого стосується САМЕ ЦЕ питання: "shop" — однаково для будь-якого товару (оплата, доставка, знижки, обмін/повернення, гарантія, терміни, примірка, магазин); "category" — категорії загалом (напр. «як сідають джинси»); "product" — конкретного товару (його посадка, деталі, крій, тканина).'
             + '\n3) kind — вид питання: "size" — підбір розміру/посадка під параметри («як підібрати розмір», «чи підійде на 200 см», «M повномірний?»); "feature" — властивість/деталь товару, яку видно з опису чи фото (капюшон, блискавка, кишені, матеріал, утеплення); "compare" — чим відрізняються кілька товарів; "policy" — умови магазину (оплата, доставка, обмін, знижки); "other" — інше.'
             + '\nВідповідь ЛИШЕ JSON: {"match": число або null, "scope": "shop"|"category"|"product", "kind": "size"|"feature"|"compare"|"policy"|"other"}';
-        const raw = await callClaude({ sessionId: A.session.id, systemPrompt: 'Ти точно зіставляєш питання клієнтів з базою знань магазину. Відповідаєш лише JSON.', messages: [{ role: 'user', content: prompt }], options: { model: A.keys.KB_MATCH_MODEL || 'claude-haiku-4-5', maxTokens: 80, extra: { temperature: 0 } } });
+        const raw = await callClaude({ sessionId: A.session.id, systemPrompt: 'Ти точно зіставляєш питання клієнтів з базою знань магазину. Відповідаєш лише JSON.', messages: [{ role: 'user', content: prompt }], options: { model: A.keys.KB_MATCH_MODEL || 'claude-haiku-4-5', maxTokens: 80, extra: { temperature: 0 }, noFallbackOnBilling: true } });
         const m = String(raw || '').match(/\{[\s\S]*\}/);
         if (m) {
             const j = JSON.parse(m[0]);
@@ -86,7 +86,7 @@ async function sameAsEscalated(A, question, prev) {
     try {
         const prompt = 'Нове питання клієнта: «' + q.slice(0, 300) + '»\nПитання, які вже передано менеджеру в цій розмові:\n' + list.map((x, i) => (i + 1) + '. ' + String(x).slice(0, 200)).join('\n')
             + '\n\nЧи нове питання — те саме по суті, що одне з переданих (клієнт перепитує/наполягає іншими словами, уточнює те саме: «уточніть покрій», «мені треба знати» після питання про крій)? Орієнтуйся на дослівні слова клієнта, а не на переформулювання. Відповідь ЛИШЕ JSON: {"same": true|false}';
-        const raw = await callClaude({ sessionId: A.session.id, systemPrompt: 'Ти порівнюєш питання клієнтів за змістом. Відповідаєш лише JSON.', messages: [{ role: 'user', content: prompt }], options: { model: A.keys.KB_MATCH_MODEL || 'claude-haiku-4-5', maxTokens: 20, extra: { temperature: 0 } } });
+        const raw = await callClaude({ sessionId: A.session.id, systemPrompt: 'Ти порівнюєш питання клієнтів за змістом. Відповідаєш лише JSON.', messages: [{ role: 'user', content: prompt }], options: { model: A.keys.KB_MATCH_MODEL || 'claude-haiku-4-5', maxTokens: 20, extra: { temperature: 0 }, noFallbackOnBilling: true } });
         const m = String(raw || '').match(/\{[\s\S]*\}/);
         return m ? JSON.parse(m[0]).same === true : null;
     } catch (e) { return null; }

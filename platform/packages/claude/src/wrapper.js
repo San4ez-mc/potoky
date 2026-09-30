@@ -621,6 +621,13 @@ async function callClaude({ sessionId, systemPrompt, messages, options = {} }) {
             provider: 'claude',
         });
 
+        // 2026-09-30 (рішення власника goverla): закінчились КРЕДИТИ Claude — не переходимо на резервні моделі (вони давали
+        // обірваний JSON і «скрипт наосліп»), а кидаємо помилку з кодом CLAUDE_NO_CREDIT: викликач сам вирішує (бот мовчить і кличе менеджера).
+        if (options.noFallbackOnBilling && (statusCode === 402 || /credit balance|billing|payment required|insufficient.{0,20}(credit|fund|balance)/i.test(String(errorMessage || '')))) {
+            const e = new Error('CLAUDE_NO_CREDIT: ' + String(errorMessage || '').slice(0, 200));
+            e.code = 'CLAUDE_NO_CREDIT'; e.status = statusCode;
+            throw e;
+        }
         // ── Fallback to OpenAI or Gemini on transient errors ─────────────
         if (isTransientClaudeError(error)) {
             logger.warn('Claude unavailable — trying fallback providers', {

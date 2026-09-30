@@ -154,7 +154,7 @@ async function compose(A, o = {}) {
     const lastClient = stripLoneSurrogates(String(A.turnText || '[фото]')).slice(0, 800);
     const t0 = Date.now();
     try {
-        const raw = await callClaude({ sessionId: A.session.id, systemPrompt, messages: [{ role: 'user', content: 'Останнє повідомлення клієнта: «' + lastClient + '»\n\nЗАВДАННЯ: ' + task }], options: { model, maxTokens: 500, extra: { temperature: 0.3 } } });
+        const raw = await callClaude({ sessionId: A.session.id, systemPrompt, messages: [{ role: 'user', content: 'Останнє повідомлення клієнта: «' + lastClient + '»\n\nЗАВДАННЯ: ' + task }], options: { model, maxTokens: 500, extra: { temperature: 0.3 }, noFallbackOnBilling: true } });
         A.trace.push({ llm: 'compose', model, ms: Date.now() - t0 });
         if (!hasQuestions) {
             const t = textFromJsonLike(raw);
@@ -170,6 +170,7 @@ async function compose(A, o = {}) {
         return { text: noJargon(t || '') || (o.fallback || ''), resolved: false };
     } catch (e) {
         logger.warn('[shopAgent] compose failed: ' + e.message, { sessionId: A.session.id });
+        if (e && e.code === 'CLAUDE_NO_CREDIT') A._noCredit = true; // index.js не відправить нічого з цього ходу
         return { text: o.fallback || '', resolved: !hasQuestions };
     }
 }

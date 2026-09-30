@@ -15,6 +15,7 @@ const { resolveIgLink, LINK_RE } = require('./igLink');
 const { understand } = require('./understand');
 const { runPolicy } = require('./policy');
 const { textFromJsonLike } = require('./compose');
+const _noCreditBotAlertAt = new Map(); // botId -> ts загального сигналу «кредити Claude закінчились»
 
 const _engineCache = new Map();
 async function isAgentBot(botId) {
@@ -118,9 +119,15 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
     // retryMissedZernioTurns повторить хід, щойно ШІ повернеться; менеджеру — один сигнал на сесію за 30 хв.
     if (u._error && !u._offlineParse && !dryRun) {
         logger.warn('[shopAgent] AI unavailable — turn skipped (will retry)', { botId, sessionId, error: String(u._error).slice(0, 160) });
+        // Закінчились кредити Claude (рішення власника 30.09): бот нічого не відповідає, кличе менеджера — загальний сигнал раз на годину
+        // на весь бот + сигнал про КОЖНОГО клієнта, що чекає. Щойно баланс поповнять, бот працює далі сам.
+        if (u._noCredit && (!_noCreditBotAlertAt.get(botId) || Date.now() - _noCreditBotAlertAt.get(botId) > 60 * 60 * 1000)) {
+            _noCreditBotAlertAt.set(botId, Date.now());
+            try { await require('./tools').alert(A, { title: '💸 Закінчились кредити Claude — бот НЕ відповідає клієнтам', main: 'Поповніть баланс Anthropic. Поки баланс порожній, бот мовчить і шле сюди сигнал про кожного клієнта — відповідайте вручну.', details: String(u._error).slice(0, 200) }); } catch (e) { /* best-effort */ }
+        }
         if (!ctx.agent.aiDownAlertAt || Date.now() - ctx.agent.aiDownAlertAt > 30 * 60 * 1000) {
             ctx.agent.aiDownAlertAt = Date.now();
-            try { await require('./tools').alert(A, { title: '⚠️ ШІ недоступний — бот не може відповісти', main: 'Клієнт чекає відповіді: «' + String(text || '').slice(0, 200) + '»', details: 'Причина: ' + String(u._error).slice(0, 200) + '\nБот повторить відповідь сам, щойно ШІ відновиться; якщо терміново — відпишіть вручну.' }); } catch (e) { /* best-effort */ }
+            try { await require('./tools').alert(A, { title: u._noCredit ? '💸 Кредити Claude закінчились — клієнт чекає, відповідайте вручну' : '⚠️ ШІ недоступний — бот не може відповісти', main: 'Клієнт чекає відповіді: «' + String(text || '').slice(0, 200) + '»', details: (u._noCredit ? 'Бот мовчить, поки не поповнять баланс Anthropic.' : 'Причина: ' + String(u._error).slice(0, 200) + '\nБот повторить відповідь сам, щойно ШІ відновиться; якщо терміново — відпишіть вручну.') }); } catch (e) { /* best-effort */ }
         }
         await db.session.update({ where: { id: sessionId }, data: { context: cleanJsonDeep(ctx) } }).catch(() => {});
         return { replies: [], understanding: u, trace: A.trace, ctx, aiDown: true };
@@ -132,8 +139,17 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
         if (!A.out.length) A.out.push({ text: 'Секунду, перевіряю інформацію 🙂 Якщо не відповім за хвилину — менеджер уже підключається.', step: 'error' });
         await db.appError.create({ data: { sessionId, botId, errorType: 'shop_agent', message: e.message, stack: String(e.stack || '').slice(0, 4000), context: { step: 'policy' } } }).catch(() => {});
     }
+    // Кредити Claude закінчились посеред ходу (аналізатор встиг, складання відповіді — ні): нічого не відправляємо, кличемо менеджера.
+    if (A._noCredit && !dryRun) {
+        A.out = [];
+        logger.warn('[shopAgent] Claude credit ran out mid-turn — no reply', { botId, sessionId });
+        if (!ctx.agent.aiDownAlertAt || Date.now() - ctx.agent.aiDownAlertAt > 30 * 60 * 1000) {
+            ctx.agent.aiDownAlertAt = Date.now();
+            try { await require('./tools').alert(A, { title: '💸 Кредити Claude закінчились — клієнт чекає, відповідайте вручну', main: 'Клієнт чекає відповіді: «' + String(text || '').slice(0, 200) + '»', details: 'Бот мовчить, поки не поповнять баланс Anthropic.' }); } catch (e) { /* best-effort */ }
+        }
+    }
     // Підтвердження зміни вибору («лише кофта») — перед першим текстом цього ходу, щоб клієнт бачив, що його почули.
-    if (A._switchNote) { const firstText = A.out.find((o) => o.text && !o.photoUrls); if (firstText) firstText.text = A._switchNote + firstText.text; else A.out.push({ text: A._switchNote.trim(), step: 'set_switch' }); }
+    if (A._switchNote && !A._noCredit) { const firstText = A.out.find((o) => o.text && !o.photoUrls); if (firstText) firstText.text = A._switchNote + firstText.text; else A.out.push({ text: A._switchNote.trim(), step: 'set_switch' }); }
     // одноразові прапорці ходу
     delete ctx.productJustPresented; delete ctx.hasFreshSignalThisTurn; delete ctx.sharedPost;
     ctx.agent.lastTurnAt = new Date().toISOString(); ctx.agent.lastIntent = u.intent; ctx.agent.lastTrace = A.trace.slice(-12);

@@ -1227,7 +1227,7 @@ async function runPolicyInner(A, u) {
                     sizeFact = '\nРозміри показаних товарів у наявності: ' + lo + '–' + hi + '. Якщо клієнт назвав розмір поза цим діапазоном — ОДРАЗУ, у цьому ж повідомленні, чесно скажи, що такого розміру немає (є ' + lo + '–' + hi + '), і ОБОВʼЯЗКОВО запропонуй оформити замовлення без цього товару, а також підібрати інший варіант або покликати менеджера.';
                 }
             } catch (e) { /* best-effort */ }
-            const { text: txt, resolved: hintResolved } = await compose(A, { questions: u.questions, noGreeting: A.botSpokeBefore, extraFacts: 'СПИСОК ТОВАРІВ, ЯКІ ПІДХОДЯТЬ ПІД ЗАПИТ (вже пронумеровано, кожен товар — своя позиція):\n' + list + sizeFact, nextStep: 'наведи ЦЕЙ список рівно так, як він є — кожен номер на своєму рядку, з порожнім рядком між позиціями, без артикулів у дужках, ціни лишити — і спитай, який сподобався (можна відповісти номером, фото чи кольором; артикул просити не треба, фото вже надіслано)' + (((u.height || (ctx.sizeInput && ctx.sizeInput.height)) && !(u.weight || (ctx.sizeInput && ctx.sizeInput.weight))) ? '; і додай, що зріст уже є, а для підбору розміру лишилось написати вагу' : ''), fallback: messageTextMultiline(A.assets, 'n_agent_catalog_hint_fallback', ctx, A.session.id) });
+            const { text: txt, resolved: hintResolved } = await compose(A, { questions: u.questions, noGreeting: A.botSpokeBefore, extraFacts: 'СПИСОК ТОВАРІВ, ЯКІ ПІДХОДЯТЬ ПІД ЗАПИТ (вже пронумеровано, кожен товар — своя позиція):\n' + list + sizeFact, nextStep: 'НЕ називай розмір (його порахує система після вибору товару за сіткою цього товару). Наведи ЦЕЙ список рівно так, як він є — кожен номер на своєму рядку, з порожнім рядком між позиціями, без артикулів у дужках, ціни лишити — і спитай, який сподобався (можна відповісти номером, фото чи кольором; артикул просити не треба, фото вже надіслано)' + (((u.height || (ctx.sizeInput && ctx.sizeInput.height)) && !(u.weight || (ctx.sizeInput && ctx.sizeInput.weight))) ? '; і додай, що зріст уже є, а для підбору розміру лишилось написати вагу' : ''), fallback: messageTextMultiline(A.assets, 'n_agent_catalog_hint_fallback', ctx, A.session.id) });
             if (!hintResolved && u.questions.length) await escalateUnresolved(A, u.questions[0]);
             A.out.push({ text: txt, step: 'hint' }); ctx.agent.lastAsk = 'який із показаних товарів цікавить';
             return;
@@ -1616,6 +1616,8 @@ async function runPolicyInner(A, u) {
             const askVar = (ctx.agent.colorAskCount > 1 && ctx.agent.lastAsk === 'колір') ? (['Нагадаю: лишилось обрати колір 🎨 ', 'Ще раз про колір 🎨 ', 'Лишилось лише обрати колір 🎨 '][ctx.agent.colorAskCount % 3] + ask) : ask;
             // Клієнт ставить уточнювальні питання про колір (зразок, відтінок) — після 2-го підряд питання лише відповідаємо, не тиснемо повтором.
             const answerOnly = u.questions.length && ctx.agent.colorAskCount > 2 && ctx.agent.lastAsk === 'колір';
+            // Варіанти відтінку для кількох товарів — точний текст, без переписування моделлю (вона губила рядок другого товару, тест 34).
+            if (shadeWish && shadeList.length && !u.questions.length) { A.out.push({ text: preNote + askVar, step: 'ask_color' }); ctx.agent.lastAsk = 'колір'; return; }
             A.out.push({ text: await answerThenAsk(A, u, answerOnly ? '' : preNote + askVar), step: 'ask_color' }); ctx.agent.lastAsk = 'колір'; return;
         }
     }

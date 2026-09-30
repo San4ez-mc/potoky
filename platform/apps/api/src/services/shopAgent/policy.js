@@ -14,6 +14,7 @@ const { resolveColorMention } = require('./cart');
 const { classifyKbQuestion, kbSimilarity, kbSimilar } = require('./kbRules');
 const { catalogFacts, catalogProducts, otherCategoryProducts } = require('./catalogFacts');
 const { kbMatch, sameAsEscalated } = require('./kbMatch');
+const { extractHeightWeight } = require('./understand');
 
 // 2026-09-14 (власник: "я взагалі проти будь-якого хардкоду... все в ноди перенеси"): TRUST_STEP1/2,
 // HANDOFF_TEXT та решта клієнтських/менеджерських текстів цього файлу БУЛИ тут як JS-константи —
@@ -449,10 +450,21 @@ async function present(A) {
 function resetForNewProduct(A, sku) {
     const { ctx } = A;
     if (ctx.agent.presentedSku && ctx.agent.presentedSku !== sku) {
-        for (const k of ['sizeInput', 'recommendedSize', 'sizeSource', 'sizeReplyText', 'sizeColorFollowup', 'sizeOutOfRange', 'sizeOorReason', 'sizeOorAlternative', 'isSetSizeCalc', 'setSizesText', 'colorChoice', 'available', 'availReason', 'orderUnits', 'orderUnitsText', 'orderUnitsTotal', 'orderQty', 'orderIntent', 'setMode', 'setPick', 'setSelection', 'availChecked', 'extraItems', 'extraItemsText', 'extraUnresolved', 'orderExtras', 'unavailableColors', 'availableColorsNow']) delete ctx[k];
+        // Зріст/вага/живіт — це параметри ЛЮДИНИ, а не товару: при переході на інший товар їх не стираємо (аналіз 59 випадків
+        // «бот знову питає зріст і вагу», 01.10: 38 — картка нового товару просила їх заново). Скидаємо лише розмір/заміри під товар.
+        const body = ctx.sizeInput && ctx.sizeInput.height && ctx.sizeInput.weight ? { height: ctx.sizeInput.height, weight: ctx.sizeInput.weight, ...(ctx.sizeInput.belly ? { belly: true } : {}) } : null;
+        for (const k of ['sizeInput','recommendedSize', 'sizeSource', 'sizeReplyText', 'sizeColorFollowup', 'sizeOutOfRange', 'sizeOorReason', 'sizeOorAlternative', 'isSetSizeCalc', 'setSizesText', 'colorChoice', 'available', 'availReason', 'orderUnits', 'orderUnitsText', 'orderUnitsTotal', 'orderQty', 'orderIntent', 'setMode', 'setPick', 'setSelection', 'availChecked', 'extraItems', 'extraItemsText', 'extraUnresolved', 'orderExtras', 'unavailableColors', 'availableColorsNow']) delete ctx[k];
         for (const k of ['setOriginal', 'setPricing', 'setStageSent', 'setEditNote', 'setParams', 'upsellOffered', 'upsellDeclined', 'setGeneralQ', 'setNamedItem', 'payRepeatCount', 'upsellPhotoSent', 'availKey', 'sizeVerifyAsked', 'sizeClaim']) delete ctx.agent[k];
         if (!ctx.crmOrderId) for (const k of ['paymentInfo', 'payAmount', 'payLabel', 'orderRef', 'orderRefAt', 'ibanPayUrl', 'ibanInvoiceUid', 'requisitesSentAt']) delete ctx[k];
+        if (body) { ctx.sizeInput = body; if (!A.hwThisTurn) ctx.agent.hwCarried = true; }
     }
+}
+
+/** Зріст і вага, які клієнт уже писав у цій розмові (зокрема менеджеру, поки бот стояв на паузі), — детерміновано з тексту. */
+function hwFromHistory(A) {
+    const msgs = (A.history || []).filter((m) => m.who === 'client' && m.at && Date.now() - new Date(m.at).getTime() < 7 * 24 * 3600 * 1000);
+    for (let i = msgs.length - 1; i >= 0; i--) { const hw = extractHeightWeight(String(msgs[i].text || '')); if (hw) return hw; }
+    return null;
 }
 
 async function sendRequisites(A, u) {
@@ -1017,6 +1029,13 @@ async function runPolicyInner(A, u) {
         if (u.height) si.height = u.height; if (u.weight) si.weight = u.weight; if (u.clothingSize) si.clothingSize = u.clothingSize; if (u.chest) si.chest = u.chest; if (u.footLength) si.footLength = u.footLength; if (u.waist) si.waist = u.waist; if (u.belly) si.belly = true;
         ctx.sizeInput = si;
     }
+    if (u.height && u.weight) { A.hwThisTurn = true; delete ctx.agent.hwCarried; }
+    // Клієнт уже писав зріст і вагу в цій розмові, а в памʼяті їх нема (писав менеджеру, поки бот мовчав; збій ШІ; сесія d506e4ef) —
+    // беремо з його ж повідомлень, а не просимо вдруге. У відповіді про розмір озвучуємо, які саме параметри взяли.
+    if (!(ctx.sizeInput && ctx.sizeInput.height && ctx.sizeInput.weight)) {
+        const hw = hwFromHistory(A);
+        if (hw) { ctx.sizeInput = { ...(ctx.sizeInput || {}), height: (ctx.sizeInput || {}).height || hw.height, weight: (ctx.sizeInput || {}).weight || hw.weight }; ctx.agent.hwCarried = true; }
+    }
     // 2026-09-24 (FunnelTest 23): два одержувачі в одному повідомленні («185/58 темно-сіру, 187/100 чорну») — рахуємо розмір
     // для кожної пари окремо й збираємо дві одиниці, а не питаємо зріст/вагу заново.
     {
@@ -1508,7 +1527,10 @@ async function runPolicyInner(A, u) {
                     : 'Ви називали ' + ctx.agent.sizeClaim + ', але за вашим зростом і вагою краще підійде ' + rec + ' 📏 ' + ((Array.isArray(pp.sizes) && pp.sizes.map((z) => String(z).toUpperCase()).includes(ctx.agent.sizeClaim)) ? 'Якщо все ж хочете ' + ctx.agent.sizeClaim + ' — напишіть, оформимо так. ' : '');
                 delete ctx.agent.sizeClaim;
             } else if (ctx.agent.sizeClaim) delete ctx.agent.sizeClaim; // параметри не дали — приймаємо названий розмір без «перевірено»
-            const reply = (usedMemory ? 'Беру ваші параметри з минулого разу (' + si.height + ' см / ' + si.weight + ' кг) 🙂 ' : '') + claimNote + sizeTextClean + (ctx.sizeColorFollowup ? ' ' + norm(String(ctx.sizeColorFollowup)) : '');
+            // Параметри взято з попереднього товару / з раніших повідомлень — називаємо їх, щоб клієнт міг поправити (напр. якщо цей товар для іншої людини).
+            const carriedNote = !usedMemory && ctx.agent.hwCarried && si.height && si.weight && !sizeTextClean.includes(String(si.weight)) ? 'Беру ваші параметри ' + si.height + ' см / ' + si.weight + ' кг 🙂 ' : '';
+            delete ctx.agent.hwCarried;
+            const reply = (usedMemory ? 'Беру ваші параметри з минулого разу (' + si.height + ' см / ' + si.weight + ' кг) 🙂 ' : '') + carriedNote + claimNote + sizeTextClean + (ctx.sizeColorFollowup ? ' ' + norm(String(ctx.sizeColorFollowup)) : '');
             const hasColorNow = ctx.colorChoice && ctx.colorChoice.color;
             if (!hasColorNow && pp.colors) { A.out.push({ text: u.questions.length ? await answerThenAsk(A, u, reply) : reply, step: 'size_reply' }); ctx.agent.lastAsk = 'колір'; return; }
             A.out.push({ text: u.questions.length ? await answerThenAsk(A, u, reply) : reply, step: 'size_reply' });

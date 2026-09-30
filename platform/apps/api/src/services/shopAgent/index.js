@@ -17,6 +17,25 @@ const { runPolicy } = require('./policy');
 const { textFromJsonLike } = require('./compose');
 const _noCreditBotAlertAt = new Map(); // botId -> ts загального сигналу «кредити Claude закінчились»
 
+/** Прибрати з ВЛАСНОГО тексту бота речення, що просять зріст і вагу (викликається, лише коли вони вже відомі). */
+const HW_ASK = { h: /(зріст|зросту|ріст|рост)/i, w: /(ваг|вес)/i, verb: /(підкажіть|напишіть|вкажіть|скажіть|надішліть|дайте|уточніть|потрібн|лишилось\s+дізнатись)/i, keep: /(підібрал|рекоменд|за вашими|беру ваш|для\s+(сина|доньк|дружин|чолові|другої|іншої|другого|іншого))/i };
+function stripKnownHwAsk(text) {
+    const lines = String(text).split('\n').map((line) => {
+        const parts = line.split(/(?<=[.!?…])\s+|(?<=\p{Extended_Pictographic}️?)\s+(?=[А-ЯІЇЄҐA-Z👉])/u);
+        let dropped = false;
+        let kept = parts.filter((s) => {
+            if (HW_ASK.h.test(s) && HW_ASK.w.test(s) && HW_ASK.verb.test(s) && !HW_ASK.keep.test(s)) { dropped = true; return false; }
+            // «Напишіть їх, будь ласка» одразу після прибраного прохання — теж прохання.
+            if (dropped && /^(напишіть|підкажіть|вкажіть|надішліть)\s+(їх|це)/i.test(s.trim())) return false;
+            return true;
+        });
+        if (!dropped) return line;
+        kept = kept.filter((s) => s.replace(/[\p{Extended_Pictographic}️\s.,!?—-]/gu, '')); // «👉» без тексту — залишок рядка
+        return kept.join(' ').trim();
+    });
+    return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 const _engineCache = new Map();
 async function isAgentBot(botId) {
     const c = _engineCache.get(botId); if (c && Date.now() - c.at < 30 * 1000) return c.v;
@@ -166,6 +185,17 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
         return t ? Object.assign({}, o, { text: t }) : (o.photoUrls ? Object.assign({}, o, { text: undefined }) : null);
     }).filter(Boolean);
     if (outBefore && !A.out.length) A.out.push({ text: 'Секунду, перевіряю інформацію 🙂 Якщо не відповім за хвилину — менеджер уже підключається.', step: 'error' });
+    // Інваріант (01.10, 59 випадків з 08.09): зріст і вага вже відомі — жодне повідомлення цього ходу їх не просить, хоч би звідки
+    // прийшов текст (картка з CRM, шаблон ноди, compose). Прибираємо лише речення-прохання, решту повідомлення лишаємо.
+    if (ctx.sizeInput && ctx.sizeInput.height && ctx.sizeInput.weight) {
+        A.out = A.out.map((o) => {
+            if (!o.text) return o;
+            const t = stripKnownHwAsk(o.text);
+            if (t === o.text) return o;
+            logger.info('[shopAgent] прохання зросту/ваги прибрано — вже відомі', { sessionId, step: o.step });
+            return t ? Object.assign({}, o, { text: t }) : (o.photoUrls ? Object.assign({}, o, { text: undefined }) : null);
+        }).filter(Boolean);
+    }
     // Одне й те саме фото (картка товару + прев'ю зі списку, обкладинка й фото кольору) не надсилаємо двічі за один хід.
     {
         const seenPhotos = new Set();
@@ -199,4 +229,4 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
     return { replies, understanding: u, trace: A.trace, ctx };
 }
 
-module.exports = { handleTurn, classifyComment, isCommentAgent, isAgentBot, loadCustomerMemory, buildHistory };
+module.exports = { handleTurn, classifyComment, isCommentAgent, isAgentBot, loadCustomerMemory, buildHistory, stripKnownHwAsk };

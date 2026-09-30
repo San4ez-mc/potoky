@@ -646,6 +646,23 @@ async function main() {
         check('19.5 Одна названа позиція НЕ потрапляє в нову гілку мультивибору (нема хибних 2-позиційних вибірок)', !(A.ctx.setMode === 'set' && Array.isArray(A.ctx.setSelection) && A.ctx.setSelection.length > 1), 'setMode: ' + A.ctx.setMode + ', setSelection: ' + JSON.stringify(A.ctx.setSelection));
     }
 
+    // ── 20. Аналіз 59 випадків «бот знову питає зріст і вагу» (01.10): параметри людини не губляться, а відомі — не просяться.
+    {
+        const { stripKnownHwAsk } = require('../index');
+        const card = 'Чоловіча вʼязана кофта. Артикул: A0187\n💵 Ціна: 1279 ₴\n\n👉 Підкажіть, будь ласка, зріст і вага — підберу ідеальний розмір 😊';
+        check('20.1 Картка без рядка-прохання, коли зріст і вага відомі', !/зріст/i.test(stripKnownHwAsk(card)) && stripKnownHwAsk(card).includes('1279'), JSON.stringify(stripKnownHwAsk(card)));
+        const keep = 'Для вашого зросту та ваги система підібрала розмір XXL 👌 Скажіть, який колір вам до вподоби?';
+        check('20.2 Відповідь із підібраним розміром не чіпається', stripKnownHwAsk(keep) === keep, JSON.stringify(stripKnownHwAsk(keep)));
+        check('20.3 «Мені ще потрібні зріст і вага… Напишіть їх» прибирається повністю', stripKnownHwAsk('Мені ще потрібні зріст і вага для підбору розміру 📏 Напишіть їх, будь ласка 🙂') === '', '');
+        // Зріст/вага, написані раніше (напр. менеджеру, поки бот мовчав), — беруться з історії розмови.
+        const A = freshA({ turnText: 'Яка ціна кофти?' });
+        A.history = [{ who: 'client', text: '190/115', at: new Date() }, { who: 'manager', text: 'ХХЛ буде малий', at: new Date() }];
+        A.ctx.product = { sku: 'A0187', price: 1279, isClothing: true, customerName: 'Кофта' };
+        A.ctx.agent.presentedSku = 'A0187';
+        await runPolicy(A, freshU({ intent: 'question', questions: ['Яка ціна кофти?'] }));
+        check('20.4 Зріст і вага з історії розмови потрапляють у sizeInput', A.ctx.sizeInput && A.ctx.sizeInput.height === 190 && A.ctx.sizeInput.weight === 115, JSON.stringify(A.ctx.sizeInput));
+    }
+
     console.log('');
     const failed = results.filter((r) => !r.ok);
     console.log(results.length + ' тестів, ' + failed.length + ' провалено.');

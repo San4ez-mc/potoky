@@ -458,8 +458,13 @@ async function sendMetaPhoto(botId, igsid, imageUrl) {
     const token = (km?.value || '').trim();
     if (!token || token === 'REPLACE_ME') throw new Error('немає INSTAGRAM_ACCESS_TOKEN для Meta-фото');
     // Завантажуємо байти й вантажимо у Meta → attachment_id (URL-метод у Meta нестабільний — «Upload failed»).
-    const ir = await fetch(String(imageUrl));
-    if (!ir.ok) throw new Error('не завантажилось зображення: HTTP ' + ir.status);
+    let ir = null;
+    for (let attempt = 0; attempt < 3; attempt++) { // сховище фото буває віддає 500 на кілька секунд — повтор з паузою
+        if (attempt) await new Promise((r) => setTimeout(r, 1000 * attempt));
+        ir = await fetch(String(imageUrl)).catch(() => null);
+        if (ir && ir.ok) break;
+    }
+    if (!ir || !ir.ok) throw new Error('не завантажилось зображення: HTTP ' + (ir ? ir.status : 'network'));
     const buf = Buffer.from(await ir.arrayBuffer());
     const ct = ir.headers.get('content-type') || 'image/jpeg';
     const fd = new FormData();
@@ -493,7 +498,9 @@ async function sendMetaPhotoAlbum(botId, igsid, imageUrls, report) {
     const ids = []; const failed = [];
     for (const u of urls) {
         let id = null, lastErr = '';
-        for (let attempt = 0; attempt < 2 && !id; attempt++) {
+        // 3 спроби з паузою: сховище фото (KeyCRM) буває віддає 500 на кілька секунд (2026-09-30, правки ca8cbd8e/740a86bf).
+        for (let attempt = 0; attempt < 3 && !id; attempt++) {
+            if (attempt) await new Promise((r) => setTimeout(r, 1000 * attempt));
             try {
                 const ir = await fetch(String(u));
                 if (!ir.ok) { lastErr = 'image HTTP ' + ir.status; continue; }
@@ -2074,6 +2081,13 @@ async function resumeAfterManagerSilence() {
                 const lastClientAt = after[after.length - 1].createdAt.getTime();
                 const lastManagerAt = msgs[lastManagerIdx].createdAt.getTime();
                 if (Date.now() - Math.max(lastClientAt, lastManagerAt) < MANAGER_SILENCE_RESUME_MS) continue;
+                // 2026-09-30 (правки 8673e986/23a61451/cb5d9aeb, Олексій увімкнув бота о 19:38 — «Не треба було відписувати»): бот
+                // підхопив 7-годинне «Узнать цену» (клієнт відповідав на «Випадково на рекламу натиснули?») і «дякую!!» на ТТН від менеджера.
+                // Відновлюємось лише (1) на свіже повідомлення (≤30 хв), (2) не коли клієнт відповідає на ПИТАННЯ менеджера,
+                // (3) не на саме «дякую/ок/емодзі».
+                if (Date.now() - lastClientAt > 30 * 60 * 1000) continue;
+                if (/\?\s*[\p{Extended_Pictographic}\s]*$/u.test(String(msgs[lastManagerIdx].content || '').trim())) continue;
+                if (unanswered.every((m) => /^[\s\p{Extended_Pictographic}!.,)]*(дякую|дякуємо|спасибі|спасибо|ок|окей|ok|добре|гаразд|супер|чудово|👍|❤️?)?[\s\p{Extended_Pictographic}!.,)]*$/iu.test(String(m.content || '').trim()))) continue;
                 const fresh = await db.session.findUnique({ where: { id: s.id }, select: { context: true } });
                 const fc = (fresh && fresh.context) || {};
                 await db.session.update({ where: { id: s.id }, data: { context: { ...fc, funnelPaused: false, pausedBy: null, resumedBy: 'manager_silence', resumedAt: new Date().toISOString() } } });

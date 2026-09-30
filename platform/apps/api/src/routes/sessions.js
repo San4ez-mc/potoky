@@ -498,7 +498,10 @@ router.patch('/:id/flags',
                 try {
                     const { syncConversationTruth } = require('../services/zernioConversationSync');
                     const preSync = await syncConversationTruth(session.botId, session.id, ctx.conversationId);
-                    var __pendingUnanswered = (preSync.ok && !preSync.empty && Array.isArray(preSync.unanswered)) ? preSync.unanswered : [];
+                    // 2026-09-30 (правки 8673e986/23a61451, Олексій: «Включив бота — він на деякі попередні повідомлення відписав… Не треба
+                    // було»): клієнт відповідав МЕНЕДЖЕРУ («Випадково на рекламу натиснули?» → «Так»), а бот після ручного запуску видав
+                    // «Підкажіть зріст і вагу». Якщо останнім клієнту писав менеджер — накопичене не чіпаємо, бот чекає нового повідомлення.
+                    var __pendingUnanswered = (preSync.ok && !preSync.empty && !preSync.managerLed && Array.isArray(preSync.unanswered)) ? preSync.unanswered : [];
                 } catch (e) { var __pendingUnanswered = []; }
             }
             await db.message.create({

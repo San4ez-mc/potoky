@@ -1141,7 +1141,9 @@ async function handleIncomingMessage(botId, body) {
             if (_pc.product || ((_pc.flowRuntime || {}).currentNodeId)) throw new Error('skip: session already has product/flow');
             const zk = await getZernioKeys(botId);
             if (isReal(zk.ZERNIO_API_TOKEN)) {
-                const cr = await fetch('https://zernio.com/api/v1/inbox/conversations/' + encodeURIComponent(conversationId), { headers: { Authorization: 'Bearer ' + zk.ZERNIO_API_TOKEN } });
+                // accountId обовʼязковий: без нього Zernio відповідає 400, і цей запасний шлях з 08.09 мовчки не працював (перевірено 2026-09-30).
+                const cr = await fetch('https://zernio.com/api/v1/inbox/conversations/' + encodeURIComponent(conversationId) + (isReal(zk.ZERNIO_ACCOUNT_ID) ? '?accountId=' + encodeURIComponent(zk.ZERNIO_ACCOUNT_ID) : ''), { headers: { Authorization: 'Bearer ' + zk.ZERNIO_API_TOKEN } });
+                if (!cr.ok) logger.warn('[zernioHandler] conversation metadata HTTP ' + cr.status, { botId, conversationId });
                 const cj = await cr.json().catch(() => ({})); const md = ((cj && cj.data) || {}).metadata || {};
                 if (md.meta_ad_id) { adId = String(md.meta_ad_id); adTitleFromConv = md.meta_ad_title || null; logger.info('[zernioHandler] ad resolved from conversation metadata', { botId, conversationId, adId }); }
             }
@@ -1805,7 +1807,8 @@ async function handleSideEvent(botId, event, body) {
         try {
             const zk = await getZernioKeys(botId);
             if (isReal(zk.ZERNIO_API_TOKEN)) {
-                const cr = await fetch('https://zernio.com/api/v1/inbox/conversations/' + encodeURIComponent(conversationId), { headers: { Authorization: 'Bearer ' + zk.ZERNIO_API_TOKEN } });
+                const cr = await fetch('https://zernio.com/api/v1/inbox/conversations/' + encodeURIComponent(conversationId) + (isReal(zk.ZERNIO_ACCOUNT_ID) ? '?accountId=' + encodeURIComponent(zk.ZERNIO_ACCOUNT_ID) : ''), { headers: { Authorization: 'Bearer ' + zk.ZERNIO_API_TOKEN } });
+                if (!cr.ok) logger.warn('[zernioHandler] conversation lookup HTTP ' + cr.status, { botId, conversationId });
                 const cj = await cr.json().catch(() => ({}));
                 const cd = (cj && cj.data) || {};
                 const pid = cd.participantId || ((cd.participants || []).find((p) => p && p.id && !selfIds.has(String(p.id))) || {}).id || null;

@@ -13,7 +13,7 @@ const { hasCategoryWord, categoryWordIsUpsell, categoryWordIsSetComponent, categ
 const { resolveColorMention } = require('./cart');
 const { classifyKbQuestion, kbSimilarity, kbSimilar } = require('./kbRules');
 const { catalogFacts, catalogProducts } = require('./catalogFacts');
-const { kbMatch } = require('./kbMatch');
+const { kbMatch, sameAsEscalated } = require('./kbMatch');
 
 // 2026-09-14 (власник: "я взагалі проти будь-якого хардкоду... все в ноди перенеси"): TRUST_STEP1/2,
 // HANDOFF_TEXT та решта клієнтських/менеджерських текстів цього файлу БУЛИ тут як JS-константи —
@@ -247,6 +247,8 @@ async function escalateUnresolved(A, question) {
     const stemsQ = (t) => String(t).toLowerCase().split(/[^a-zа-яіїєґ0-9]+/i).filter((w) => w.length >= 5).map((w) => w.slice(0, 5));
     const mine = stemsQ(nq);
     if (seen.length && mine.length && seen.some((q) => kbSimilar(q, nq))) { A.ctx.agent.escalatedQuestions = seen.concat(nq).slice(-20); return; }
+    // Той самий зміст зовсім іншими словами — питаємо ШІ (правило власника: суть, а не ключові слова).
+    if (seen.length && await sameAsEscalated(A, question, seen) === true) { A.ctx.agent.escalatedQuestions = seen.concat(nq).slice(-20); return; }
     A.ctx.agent.escalatedQuestions = seen.concat(nq).slice(-20);
     await T.kbAsk(A, question);
     await T.alert(A, 'n_agent_unknown_question_admin', { details: '💬 «' + String(question).slice(0, 200) + '»' });
@@ -278,7 +280,8 @@ async function answerThenAsk(A, u, askText, o = {}) {
     const _prevEsc = (A.ctx.agent.escalatedQuestions || []);
     // Повтор уже переданого питання — лише за тим самим критерієм схожості, що й база знань (раніше вистачало ОДНОГО спільного
     // кореня: «чи є повернення?» і «покажіть замовлення» вважались повтором → «питання вже у менеджера», сесія f9c2ae98).
-    const repeatOfEscalated = u.questions.length && _prevEsc.length && u.questions.some((q) => _prevEsc.some((e) => kbSimilar(q, e)));
+    let repeatOfEscalated = u.questions.length && _prevEsc.length && u.questions.some((q) => _prevEsc.some((e) => kbSimilar(q, e)));
+    if (!repeatOfEscalated && u.questions.length === 1 && _prevEsc.length) repeatOfEscalated = (await sameAsEscalated(A, u.questions[0], _prevEsc)) === true;
     // Клієнт повторює питання, яке вже передано менеджеру: коротко й БЕЗ повторення фрази «передала/уточню» (різні варіанти), без тиску.
     if (repeatOfEscalated && !o.ack) {
         A.ctx.agent.repeatEscCount = (A.ctx.agent.repeatEscCount || 0) + 1;
@@ -324,6 +327,7 @@ async function answerThenAsk(A, u, askText, o = {}) {
     // Вид некаталожного питання визначила ШІ (kbMatch.kind): розмір / властивість / порівняння / умови / інше (рішення власника 30.09).
     const kindOf = (q0) => (A._kbm && A._kbm[String(q0).trim()] && A._kbm[String(q0).trim()].kind) || 'other';
     const kinds = new Set((u.questions || []).map(kindOf));
+    if (u.compare) kinds.add('compare');
     const pp0 = A.ctx.product || {};
     let sizeNote = '';
     if (kinds.has('size')) {
@@ -341,7 +345,12 @@ async function answerThenAsk(A, u, askText, o = {}) {
     }
     let crmFacts = '';
     if (catQs.length || kinds.has('feature') || kinds.has('compare')) { try { crmFacts = await catalogFacts(A, (u.questions || []).concat([String(A.turnText || '')]), { withDesc: kinds.has('feature') || kinds.has('compare') }); } catch (e) { /* best-effort */ } }
-    const extraFacts = [directKb, sizeNote, crmFacts ? 'ДАНІ З CRM (точні й актуальні — відповідай саме ними; кольору/розміру/товару, якого тут немає, немає в наявності; властивості — лише з опису/деталей):\n' + crmFacts : ''].filter(Boolean).join('\n\n');
+    // Каталожне питання відповідає CRM, але база знань може мати ДОДАТКОВУ пораду для цього випадку («більших нема → флісові
+    // костюми до XXXL», 2026-09-30, тест fa44835c) — додаємо її як доповнення, не як джерело розмірів/цін.
+    let catKb = '';
+    if (catQs.length === 1) { try { const km = await kbMatch(A, catQs[0]); if (km && km.entry && km.entry.a && km.entry.active) { catKb = 'ДОПОВНЕННЯ З БАЗИ ЗНАНЬ (розміри/ціни/кольори — лише з CRM; звідси бери пораду чи альтернативу, якщо вона доречна): ' + km.entry.q + ' → ' + km.entry.a; T.kbHit(A, km.entry.id).catch(() => {}); } } catch (e) { /* best-effort */ } }
+    const catRule = catQs.length ? 'Якщо запитаного розміру/кольору/товару в CRM немає — скажи це прямо на початку («такого розміру немає»), не починай із «так, є» про інший; назви найближче наявне.' : '';
+    const extraFacts = [directKb, sizeNote, catRule, crmFacts ? 'ДАНІ З CRM (точні й актуальні — відповідай саме ними; кольору/розміру/товару, якого тут немає, немає в наявності; властивості — лише з опису/деталей):\n' + crmFacts : '', catKb].filter(Boolean).join('\n\n');
     const { text, resolved } = await compose(A, { questions: u.questions, ack: o.ack, nextStep, kb, availAnswer, extraFacts, fallback: askText });
     // Розмір — не ескалюємо (відповідь — сітка + параметри); каталог — теж; решта — якщо compose не знайшов відповіді.
     const nonCat = (u.questions || []).filter((q0) => classifyKbQuestion(q0).kind !== 'catalog' && kindOf(q0) !== 'size');
@@ -413,7 +422,7 @@ function resetForNewProduct(A, sku) {
     const { ctx } = A;
     if (ctx.agent.presentedSku && ctx.agent.presentedSku !== sku) {
         for (const k of ['sizeInput', 'recommendedSize', 'sizeSource', 'sizeReplyText', 'sizeColorFollowup', 'sizeOutOfRange', 'sizeOorReason', 'sizeOorAlternative', 'isSetSizeCalc', 'setSizesText', 'colorChoice', 'available', 'availReason', 'orderUnits', 'orderUnitsText', 'orderUnitsTotal', 'orderQty', 'orderIntent', 'setMode', 'setPick', 'setSelection', 'availChecked', 'extraItems', 'extraItemsText', 'extraUnresolved', 'orderExtras', 'unavailableColors', 'availableColorsNow']) delete ctx[k];
-        for (const k of ['setOriginal', 'setPricing', 'setStageSent', 'setEditNote', 'setParams', 'upsellOffered', 'upsellDeclined', 'upsellPhotoSent', 'availKey', 'sizeVerifyAsked', 'sizeClaim']) delete ctx.agent[k];
+        for (const k of ['setOriginal', 'setPricing', 'setStageSent', 'setEditNote', 'setParams', 'upsellOffered', 'upsellDeclined', 'setGeneralQ', 'setNamedItem', 'payRepeatCount', 'upsellPhotoSent', 'availKey', 'sizeVerifyAsked', 'sizeClaim']) delete ctx.agent[k];
         if (!ctx.crmOrderId) for (const k of ['paymentInfo', 'payAmount', 'payLabel', 'orderRef', 'orderRefAt', 'ibanPayUrl', 'ibanInvoiceUid', 'requisitesSentAt']) delete ctx[k];
     }
 }
@@ -739,7 +748,9 @@ async function runPolicyInner(A, u) {
     // Явний артикул із CRM у тексті — навіть кирилицею («А0187 треба») чи голим числом («234286») — це вибір товару.
     // 2026-09-29 (сесія f9c2ae98, Timur): «А0187 треба», «ні мені потрібна А0187» — бот тримав C0043 з привʼязки реклами,
     // а друге повідомлення прочитав як відмову від замовлення («Добре, без тиску»).
-    if (!u.productHint.article && !A.turnSharedPost) {
+    // Порівняння («чим відрізняється від D0050?») — питання, а не вибір іншого товару (2026-09-30, тест 332fe985: бот показував картку D0050).
+    if (u.compare) { u.productHint = { ...u.productHint, article: null, fromList: null }; if (!u.questions.length) u.questions = [String(text).trim()]; }
+    if (!u.productHint.article && !A.turnSharedPost && !u.compare) {
         try {
             const LAT = { 'А': 'A', 'В': 'B', 'С': 'C', 'Е': 'E', 'Н': 'H', 'І': 'I', 'К': 'K', 'М': 'M', 'О': 'O', 'Р': 'P', 'Т': 'T', 'Х': 'X', 'а': 'A', 'в': 'B', 'с': 'C', 'е': 'E', 'н': 'H', 'і': 'I', 'к': 'K', 'м': 'M', 'о': 'O', 'р': 'P', 'т': 'T', 'х': 'X' };
             const toks = (String(text).match(/(?<![A-Za-zА-Яа-яІіЇїЄєҐґ\d])[A-Za-zАВСЕНІКМОРТХавсенікмортх]{0,4}\d{3,8}(?!\d)/g) || []).map((t) => t.replace(/[А-Яа-яІі]/g, (ch) => LAT[ch] || ch).toUpperCase());
@@ -1261,7 +1272,10 @@ async function runPolicyInner(A, u) {
             }
             // 2026-09-29 (скарга, сесія ed8e3e06: «Чи доступна кофта до замовлення?» на пост-образ): клієнт назвав ОДНУ позицію —
             // запамʼятовуємо; далі параметри/колір без явного вибору означають цю позицію, а не весь комплект.
-            if (matched.length === 1 && !/комплект|весь|всі\b|все\b|образ|цілий|повн/i.test(text)) ctx.agent.setNamedItem = matched[0].article;
+            // …але лише доки клієнт не показав інтересу до всього комплекту: якщо раніше вже питав загально («Яка ціна товарів?»),
+            // «кофти в мене розмір s/m» — це розмір позиції КОМПЛЕКТУ, а не відмова від нього (2026-09-30, тест 145 / сесія 7204375c).
+            if (!matched.length && u.questions && u.questions.length) ctx.agent.setGeneralQ = true;
+            if (matched.length === 1 && !ctx.agent.setGeneralQ && !/комплект|весь|всі\b|все\b|образ|цілий|повн/i.test(text)) ctx.agent.setNamedItem = matched[0].article;
             if (matched.length > 1 && matched.length < allItems.length) {
                 const matchedArticles = new Set(matched.map((m) => m.article));
                 ctx.agent.setOriginal = allItems;

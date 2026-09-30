@@ -75,4 +75,21 @@ async function kbMatch(A, question) {
     return res;
 }
 
-module.exports = { kbMatch, loadKbAll };
+/**
+ * Чи це питання — те саме по суті, що одне з уже переданих менеджеру в цій розмові (2026-09-30, тест 0b3c3b12:
+ * «Штани будуть звужені донизу?» і «Уточніть покрій, чи звужений» — два алерти менеджеру, бо за коренями слів різні).
+ * null — ШІ недоступний (тоді працює словниковий kbSimilar).
+ */
+async function sameAsEscalated(A, question, prev) {
+    const q = String(question || '').trim(); const list = (prev || []).filter(Boolean).slice(-8);
+    if (!q || !list.length) return false;
+    try {
+        const prompt = 'Нове питання клієнта: «' + q.slice(0, 300) + '»\nПитання, які вже передано менеджеру в цій розмові:\n' + list.map((x, i) => (i + 1) + '. ' + String(x).slice(0, 200)).join('\n')
+            + '\n\nЧи нове питання — те саме по суті, що одне з переданих (клієнт перепитує/наполягає іншими словами)? Відповідь ЛИШЕ JSON: {"same": true|false}';
+        const raw = await callClaude({ sessionId: A.session.id, systemPrompt: 'Ти порівнюєш питання клієнтів за змістом. Відповідаєш лише JSON.', messages: [{ role: 'user', content: prompt }], options: { model: A.keys.KB_MATCH_MODEL || 'claude-haiku-4-5', maxTokens: 20, extra: { temperature: 0 } } });
+        const m = String(raw || '').match(/\{[\s\S]*\}/);
+        return m ? JSON.parse(m[0]).same === true : null;
+    } catch (e) { return null; }
+}
+
+module.exports = { kbMatch, loadKbAll, sameAsEscalated };

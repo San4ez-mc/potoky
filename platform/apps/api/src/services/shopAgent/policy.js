@@ -419,6 +419,7 @@ async function present(A) {
     if (!urls.length) card = card + '\n\nНа жаль, фото цього товару зараз відсутнє 🙏';
     A.out.push({ text: greet + card, step: 'present' });
     ctx.productJustPresented = true; ctx.presentedAt = Date.now(); ctx.lastPresentedSku = p.sku; ctx.agent.presentedSku = p.sku;
+    ctx.agent.presentedSkus = Object.assign({}, ctx.agent.presentedSkus || {}, { [String(p.sku)]: Date.now() });
     ctx.agent.lastAsk = p.followUpQuestion || '';
     A.justPresented = true; // картка (n_welcome) сама закінчується проханням дати параметри/колір —
     // цього ж ходу питати вдруге не треба (живий кейс 2026-09-14, Устим/Юлія: два майже
@@ -1116,7 +1117,11 @@ async function runPolicyInner(A, u) {
             ctx.setSelection = __setBeforeSelection;
         } else if (r.status === 'found') {
             resetForNewProduct(A, P(ctx).sku);
-            const samePresented = ctx.agent.presentedSku === P(ctx).sku && ctx.presentedAt && (Date.now() - Number(ctx.presentedAt)) < 6 * 3600 * 1000;
+            // Картку цього товару вже показували (не обовʼязково останньою): «Чи колеться кофта?» після картки джинсів повертає
+            // розмову до кофти, але не шле її картку вдруге — відповідаємо на питання (2026-09-30, тест 131).
+            const shownAt = Number(((ctx.agent.presentedSkus || {})[String(P(ctx).sku)]) || 0);
+            const samePresented = (ctx.agent.presentedSku === P(ctx).sku && ctx.presentedAt && (Date.now() - Number(ctx.presentedAt)) < 6 * 3600 * 1000) || (shownAt && Date.now() - shownAt < 6 * 3600 * 1000);
+            if (samePresented && ctx.agent.presentedSku !== P(ctx).sku) { ctx.agent.presentedSku = P(ctx).sku; ctx.presentedAt = shownAt; }
             if (!samePresented) {
                 await present(A);
                 // «2,4»: після картки першого варіанту коротко показуємо й другий, обраний одночасно (FunnelTest 34).

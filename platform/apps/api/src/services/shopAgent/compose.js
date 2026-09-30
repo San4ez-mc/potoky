@@ -111,6 +111,18 @@ async function compose(A, o = {}) {
     if (o.kb === undefined && Array.isArray(o.questions) && o.questions.length) {
         try { o = { ...o, kb: await require('./tools').kbContext(A) }; } catch (e) { /* best-effort */ }
     }
+    // Каталожне питання (ціна/кольори/розміри/наявність) — дані CRM додаємо ЗАВЖДИ, хоч би яка гілка policy викликала compose
+    // (2026-09-30, тест 147: «А яка ціна?» про джинси в гілці підсумку → «точної відповіді по J0032 нема, передала менеджеру»).
+    if (Array.isArray(o.questions) && o.questions.length && !/ДАНІ З CRM/.test(String(o.extraFacts || ''))) {
+        try {
+            const { classifyKbQuestion } = require('./kbRules');
+            const catQs = o.questions.filter((q) => classifyKbQuestion(q).kind === 'catalog');
+            if (catQs.length) {
+                const crm = await require('./catalogFacts').catalogFacts(A, catQs.concat([String(A.turnText || '')]));
+                if (crm) o = { ...o, extraFacts: [o.extraFacts || '', 'ДАНІ З CRM (точні й актуальні — відповідай саме ними; чого тут немає, того немає в наявності):\n' + crm].filter(Boolean).join('\n\n') };
+            }
+        } catch (e) { /* best-effort */ }
+    }
     const model = keys.AGENT_COMPOSE_MODEL || 'claude-sonnet-4-6';
     const persona = keys.PERSONA_NAME || 'Оля'; const shop = keys.SHOP_TAG || 'магазин';
     // 2026-09-24 (FunnelTest 38): питання про допродаж («з чого футболка?») — факти про нього лежать у картці товару допродажу,

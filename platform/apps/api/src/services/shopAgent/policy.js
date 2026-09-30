@@ -260,7 +260,8 @@ async function escalateUnresolved(A, question) {
     const mine = stemsQ(nq);
     if (seen.length && mine.length && seen.some((q) => kbSimilar(q, nq))) { A.ctx.agent.escalatedQuestions = seen.concat(nq).slice(-20); return; }
     // Той самий зміст зовсім іншими словами — питаємо ШІ (правило власника: суть, а не ключові слова).
-    if (seen.length && await sameAsEscalated(A, question, seen) === true) { A.ctx.agent.escalatedQuestions = seen.concat(nq).slice(-20); return; }
+    // Дослівні слова клієнта теж: аналізатор міг переписати «Уточніть покрій, чи звужений» як питання про КОФТУ, хоча клієнт продовжує про штани.
+    if (seen.length && await sameAsEscalated(A, question + ' (дослівно клієнт: «' + String(A.turnText || '').slice(0, 200) + '»)', seen) === true) { A.ctx.agent.escalatedQuestions = seen.concat(nq).slice(-20); return; }
     A.ctx.agent.escalatedQuestions = seen.concat(nq).slice(-20);
     await T.kbAsk(A, question);
     await T.alert(A, 'n_agent_unknown_question_admin', { details: '💬 «' + String(question).slice(0, 200) + '»' });
@@ -293,7 +294,7 @@ async function answerThenAsk(A, u, askText, o = {}) {
     // Повтор уже переданого питання — лише за тим самим критерієм схожості, що й база знань (раніше вистачало ОДНОГО спільного
     // кореня: «чи є повернення?» і «покажіть замовлення» вважались повтором → «питання вже у менеджера», сесія f9c2ae98).
     let repeatOfEscalated = u.questions.length && _prevEsc.length && u.questions.some((q) => _prevEsc.some((e) => kbSimilar(q, e)));
-    if (!repeatOfEscalated && u.questions.length === 1 && _prevEsc.length) repeatOfEscalated = (await sameAsEscalated(A, u.questions[0], _prevEsc)) === true;
+    if (!repeatOfEscalated && u.questions.length === 1 && _prevEsc.length) repeatOfEscalated = (await sameAsEscalated(A, u.questions[0] + ' (дослівно клієнт: «' + String(A.turnText || '').slice(0, 200) + '»)', _prevEsc)) === true;
     // Клієнт повторює питання, яке вже передано менеджеру: коротко й БЕЗ повторення фрази «передала/уточню» (різні варіанти), без тиску.
     if (repeatOfEscalated && !o.ack) {
         A.ctx.agent.repeatEscCount = (A.ctx.agent.repeatEscCount || 0) + 1;
@@ -787,7 +788,13 @@ async function runPolicyInner(A, u) {
         for (const q0 of u.questions.slice(0, 2)) { try { const km = await kbMatch(A, q0); if (km && km.kind === 'compare') { u.compare = true; break; } } catch (e) { /* best-effort */ } }
     }
     // «2,4» — вибір зі списку, а не порівняння і не питання (тест 34): аналізатор інколи додавав «чим відрізняються 2 і 4?».
-    if (/^[\d\s,;.+іта-]+$/iu.test(String(text).trim()) && /\d/.test(text)) { u.compare = false; u.questions = []; }
+    if (/^[\d\s,;.+іта-]+$/iu.test(String(text).trim()) && /\d/.test(text)) {
+        u.compare = false; u.questions = [];
+        // Аналізатор міг не заповнити fromList (прочитав «2,4» як порівняння) — номер зі щойно показаного списку і є вибором.
+        const skusN = String(ctx.catalogHintSkus || '').split(',').map((s) => s.trim()).filter(Boolean);
+        const firstN = Number((String(text).match(/\d+/) || [])[0]);
+        if (!u.productHint.fromList && ctx.agent.lastAsk === 'який із показаних товарів цікавить' && skusN.length && firstN >= 1 && skusN[firstN - 1]) u.productHint = { ...u.productHint, fromList: skusN[firstN - 1] };
+    }
     if (u.compare) { u.productHint = { ...u.productHint, article: null, fromList: null }; if (!u.questions.length) u.questions = [String(text).trim()]; }
     if (!u.productHint.article && !A.turnSharedPost && !u.compare) {
         try {

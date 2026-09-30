@@ -85,7 +85,7 @@ async function sameAsEscalated(A, question, prev) {
     if (!q || !list.length) return false;
     try {
         const prompt = 'Нове питання клієнта: «' + q.slice(0, 300) + '»\nПитання, які вже передано менеджеру в цій розмові:\n' + list.map((x, i) => (i + 1) + '. ' + String(x).slice(0, 200)).join('\n')
-            + '\n\nЧи нове питання — те саме по суті, що одне з переданих (клієнт перепитує/наполягає іншими словами)? Відповідь ЛИШЕ JSON: {"same": true|false}';
+            + '\n\nЧи нове питання — те саме по суті, що одне з переданих (клієнт перепитує/наполягає іншими словами, уточнює те саме: «уточніть покрій», «мені треба знати» після питання про крій)? Орієнтуйся на дослівні слова клієнта, а не на переформулювання. Відповідь ЛИШЕ JSON: {"same": true|false}';
         const raw = await callClaude({ sessionId: A.session.id, systemPrompt: 'Ти порівнюєш питання клієнтів за змістом. Відповідаєш лише JSON.', messages: [{ role: 'user', content: prompt }], options: { model: A.keys.KB_MATCH_MODEL || 'claude-haiku-4-5', maxTokens: 20, extra: { temperature: 0 } } });
         const m = String(raw || '').match(/\{[\s\S]*\}/);
         return m ? JSON.parse(m[0]).same === true : null;

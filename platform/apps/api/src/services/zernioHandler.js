@@ -1589,6 +1589,19 @@ async function runFlowAndDeliver(sessionId, entry) {
     }
     catch (e) { logger.error('[zernioHandler] flow step failed', { botId, sessionId, error: e.message }); }
     const outMsgs = await db.message.findMany({ where: { sessionId, role: 'assistant', createdAt: { gt: sinceTime } }, orderBy: { createdAt: 'asc' } });
+    // Клієнт написав ще, поки бот готував відповідь (сесії 72cf065f, a56b1c17: «Зріст 186 Вага 109» прийшло в ту ж секунду, що й
+    // «Підкажіть зріст і вагу») — прохання параметрів уже застаріле: прибираємо саме його (відповідь на питання лишається); якщо в новому
+    // повідомленні параметрів нема, наступний хід попросить їх сам.
+    if (_pendingFlowRuns.has(sessionId)) {
+        for (const om of outMsgs) {
+            if (!/agent:ask_params$/.test(String((om.metadata || {}).nodeId || ''))) continue;
+            const rest = shopAgent.stripKnownHwAsk(String(om.content || ''));
+            if (rest === String(om.content || '')) continue;
+            if (rest) { om.content = rest; await db.message.update({ where: { id: om.id }, data: { content: rest } }).catch(() => {}); }
+            else { om.metadata = { ...(om.metadata || {}), hidden: true, supersededBy: 'newer_client_message' }; await db.message.update({ where: { id: om.id }, data: { metadata: om.metadata } }).catch(() => {}); }
+            logger.info('[zernioHandler] застаріле прохання зросту/ваги не надіслано — клієнт уже пише далі', { sessionId });
+        }
+    }
     let dmSent = 0, dmFailed = 0;
     // Клієнт лише лишив коментар (розмови ще нема): Meta дозволяє ОДНУ приватну відповідь (лише текст), фото/друге повідомлення
     // до відповіді клієнта дають «outside of allowed window» / 500. Тож усі тексти ходу зливаємо в одне повідомлення, а фото

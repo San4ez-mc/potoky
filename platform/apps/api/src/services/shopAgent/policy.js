@@ -768,6 +768,7 @@ async function runPolicyInner(A, u) {
         else if (!pa0 && u.questions.length) ctx.agent.setGeneralQ = true;
     }
     // Порівняння («чим відрізняється від D0050?») — питання, а не вибір іншого товару (2026-09-30, тест 332fe985: бот показував картку D0050).
+    if (u.compare && /^[\d\s,;.+іта-]+$/iu.test(String(text).trim())) u.compare = false; // «2,4» — вибір зі списку, а не порівняння (тест 34)
     if (u.compare) { u.productHint = { ...u.productHint, article: null, fromList: null }; if (!u.questions.length) u.questions = [String(text).trim()]; }
     if (!u.productHint.article && !A.turnSharedPost && !u.compare) {
         try {

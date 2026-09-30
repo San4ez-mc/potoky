@@ -14,6 +14,7 @@ const { geminiKeys } = require('../geminiKey');
 const { resolveIgLink, LINK_RE } = require('./igLink');
 const { understand } = require('./understand');
 const { runPolicy } = require('./policy');
+const { textFromJsonLike } = require('./compose');
 
 const _engineCache = new Map();
 async function isAgentBot(botId) {
@@ -128,6 +129,15 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
     // між ними» — зливаємо ПОСПІЛЬ ідучі чисто текстові виходи одного ходу в одне повідомлення тут,
     // в ОДНОМУ місці для всієї policy.js, а не точково в кожній секції окремо. Див. lib.js.
     A.out = mergeConsecutiveTextOutputs(A.out);
+    // Остання лінія захисту (2026-09-30): сирий/обірваний JSON моделі клієнту не йде ніколи — хоч би з якого місця policy він прийшов.
+    const outBefore = A.out.length;
+    A.out = A.out.map((o) => {
+        if (!o.text || !/^\s*[{[]|"text"\s*:/.test(o.text)) return o;
+        const t = textFromJsonLike(o.text);
+        logger.warn('[shopAgent] JSON у тексті відповіді — очищено', { sessionId, step: o.step, broken: t === null });
+        return t ? Object.assign({}, o, { text: t }) : (o.photoUrls ? Object.assign({}, o, { text: undefined }) : null);
+    }).filter(Boolean);
+    if (outBefore && !A.out.length) A.out.push({ text: 'Секунду, перевіряю інформацію 🙂 Якщо не відповім за хвилину — менеджер уже підключається.', step: 'error' });
     // Одне й те саме фото (картка товару + прев'ю зі списку, обкладинка й фото кольору) не надсилаємо двічі за один хід.
     {
         const seenPhotos = new Set();

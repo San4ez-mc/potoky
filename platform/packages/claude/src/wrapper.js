@@ -278,20 +278,26 @@ async function callGemini({ apiKey, systemPrompt, messages, options = {} }) {
         parts: [{ text: m.content }],
     }));
 
-    const body = JSON.stringify({
+    // 2026-09-30 (goverla, 20 відповідей клієнтам на кшталт «{"text": "Так, у нас є джинси! Бачу:»):
+    // gemini-flash-latest — «думаюча» модель, і токени роздумів ідуть у той самий maxOutputTokens.
+    // На ліміті 500 відповідь обривалась після кількох слів. Роздуми вимикаємо (thinkingBudget 0);
+    // якщо модель цього параметра не приймає — повтор без нього.
+    const maxOut = options.maxTokens || MAX_TOKENS;
+    const makeBody = (noThinking) => JSON.stringify({
         system_instruction: {
             parts: [{ text: systemPrompt }],
         },
         contents,
         generationConfig: {
-            maxOutputTokens: options.maxTokens || MAX_TOKENS,
+            maxOutputTokens: maxOut,
             temperature: 0.7,
+            ...(noThinking ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
         },
     });
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
-    const res = await Promise.race([
+    const post = (body) => Promise.race([
         fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -302,6 +308,12 @@ async function callGemini({ apiKey, systemPrompt, messages, options = {} }) {
         ),
     ]);
 
+    let res = await post(makeBody(true));
+    if (res.status === 400) {
+        const err400 = await res.clone().text().catch(() => '');
+        if (/thinking/i.test(err400)) res = await post(makeBody(false));
+    }
+
     if (!res.ok) {
         const err = await res.text().catch(() => '');
         throw new Error(`Gemini API error ${res.status}: ${err.slice(0, 300)}`);
@@ -310,6 +322,11 @@ async function callGemini({ apiKey, systemPrompt, messages, options = {} }) {
     const data = await res.json();
     const text = data.candidates?.[0]?.content?.parts?.map(p => p.text).join('') || '';
     const usage = data.usageMetadata || {};
+    // Обрізана відповідь — це збій, а не відповідь: клієнту не можна слати півречення.
+    // Короткий текст при MAX_TOKENS = ліміт з'їли роздуми → кидаємо помилку (далі — наступний резерв / запасний текст).
+    if (data.candidates?.[0]?.finishReason === 'MAX_TOKENS' && (usage.candidatesTokenCount || 0) < maxOut * 0.6) {
+        throw new Error(`Gemini truncated output (MAX_TOKENS, ${usage.candidatesTokenCount || 0}/${maxOut} tokens, thoughts ${usage.thoughtsTokenCount || 0})`);
+    }
 
     return {
         text,

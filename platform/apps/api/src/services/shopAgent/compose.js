@@ -86,6 +86,18 @@ function extractJsonLoose(raw) {
     return null;
 }
 
+// 2026-09-30: резервна модель віддавала обрізаний JSON («{"text": "Так, у нас є джинси! Бачу:») — і він ішов клієнту як є.
+// Витягуємо лише ЗАВЕРШЕНЕ значення "text"; якщо JSON обірваний — вважаємо відповідь збоєм (null), а не текстом.
+function textFromJsonLike(raw) {
+    const s = String(raw || '').replace(/```[a-z]*\n?|```/gi, '').trim();
+    if (!/^[{[]|"text"\s*:/.test(s)) return s;
+    const p = extractJsonLoose(s);
+    if (p && typeof p.text === 'string') return p.text.trim();
+    const m = s.match(/"text"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+    if (m) { try { return JSON.parse('"' + m[1] + '"').trim(); } catch (e) { /* нижче */ } }
+    return null;
+}
+
 // Службові назви блоків промпту («ФАКТИ», «БАЗА ЗНАНЬ») не мають потрапляти клієнту (2026-09-29, ed8e3e06: «в ФАКТАХ не маю»).
 function noJargon(t) {
     return String(t || '')
@@ -132,17 +144,22 @@ async function compose(A, o = {}) {
     try {
         const raw = await callClaude({ sessionId: A.session.id, systemPrompt, messages: [{ role: 'user', content: 'Останнє повідомлення клієнта: «' + lastClient + '»\n\nЗАВДАННЯ: ' + task }], options: { model, maxTokens: 500, extra: { temperature: 0.3 } } });
         A.trace.push({ llm: 'compose', model, ms: Date.now() - t0 });
-        if (!hasQuestions) return { text: noJargon(String(raw || '').replace(/```[a-z]*\n?|```/g, '').trim()), resolved: true };
+        if (!hasQuestions) {
+            const t = textFromJsonLike(raw);
+            if (t === null) logger.warn('[shopAgent] compose: обірваний JSON замість тексту — запасний текст', { sessionId: A.session.id });
+            return { text: noJargon(t === null ? (o.fallback || '') : t), resolved: true };
+        }
         const parsed = extractJsonLoose(raw);
         if (parsed && typeof parsed.text === 'string' && parsed.text.trim()) return { text: noJargon(parsed.text.trim()), resolved: parsed.resolved !== false };
         // LLM не повернула валідний JSON (рідкісний збій формату) — не рвемо хід, беремо сирий текст
         // як відповідь, але resolved:false, щоб питання клієнта все одно пішло на ескалацію, а не загубилось.
         logger.warn('[shopAgent] compose: невалідний JSON, fallback на сирий текст', { sessionId: A.session.id });
-        return { text: noJargon(String(raw || '').replace(/```[a-z]*\n?|```/g, '').trim()) || (o.fallback || ''), resolved: false };
+        const t = textFromJsonLike(raw);
+        return { text: noJargon(t || '') || (o.fallback || ''), resolved: false };
     } catch (e) {
         logger.warn('[shopAgent] compose failed: ' + e.message, { sessionId: A.session.id });
         return { text: o.fallback || '', resolved: !hasQuestions };
     }
 }
 
-module.exports = { compose, productFacts, shopFacts, sizeChartRuleFor, extractJsonLoose };
+module.exports = { compose, productFacts, shopFacts, sizeChartRuleFor, extractJsonLoose, textFromJsonLike };

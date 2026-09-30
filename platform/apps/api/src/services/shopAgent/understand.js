@@ -114,13 +114,17 @@ async function understand(A) {
     const user = summarizeState(ctx) + '\n\nІСТОРІЯ (старіше → новіше):\n' + (hist || '(порожньо)') + '\n\nОСТАННЄ ПОВІДОМЛЕННЯ КЛІЄНТА (розбирай саме його):\n' + stripLoneSurrogates(String(A.turnText || '[фото]')).slice(0, 1500) + (A.turnImage ? '\n[до повідомлення прикріплено фото]' : '') + (A.turnSharedPost ? '\n[клієнт переслав пост/рілс магазину' + (A.turnSharedPost.caption ? ': «' + String(A.turnSharedPost.caption).slice(0, 200) + '»' : '') + ']' : '');
     const t0 = Date.now();
     let raw = '';
+    let failed = null;
     try {
         raw = await callClaude({ sessionId: A.session.id, systemPrompt, messages: [{ role: 'user', content: user }], options: { model, maxTokens: 900, extra: { temperature: 0 } } });
     } catch (e) {
         logger.warn('[shopAgent] understand failed: ' + e.message, { sessionId: A.session.id });
-        return { intent: 'other', questions: [], _error: e.message };
+        failed = e.message;
     }
-    const u = extractJson(raw) || { intent: 'other' };
+    // Навіть якщо модель не відповіла — повертаємо ПОВНИЙ обʼєкт (усі поля, productHint), а не урізаний:
+    // з 24.09 урізаний обʼєкт валив увесь хід («reading 'article'», 254 рази) → клієнт бачив «Секунду, перевіряю…».
+    const u = (!failed && extractJson(raw)) || { intent: 'other' };
+    if (failed) u._error = failed;
     for (const k of ['height', 'weight', 'clothingSize', 'chest', 'footLength', 'waist', 'color', 'colorMatched', 'qty', 'units', 'setChoice', 'setArticle', 'ready', 'addUpsell', 'upsellQty', 'upsellNote', 'upsellUnits', 'extraProducts', 'alsoWants', 'removeItem', 'addItem', 'changeRequest', 'payMethod', 'country', 'trustPromise', 'fullName', 'phone', 'city', 'region', 'branch', 'paymentMethodChange', 'receiptLink']) if (u[k] === undefined) u[k] = null;
     for (const k of ['belly', 'refersToStory', 'wantsOrderSummary', 'prepaymentObjection', 'homeAddress', 'wantsManualReq', 'wantsCard', 'claimsPaid', 'wantsSizeChart', 'wantsPhoto', 'wantsUpsellPhoto', 'wantsHuman', 'isComplaint', 'returnRequest', 'statusQuestion']) u[k] = !!u[k];
     u.intent = u.intent || 'other';

@@ -369,7 +369,8 @@ async function answerThenAsk(A, u, askText, o = {}) {
     let catKb = '';
     if (catQs.length === 1) { try { const km = await kbMatch(A, catQs[0]); if (km && km.entry && km.entry.a && km.entry.active) { catKb = 'ДОПОВНЕННЯ З БАЗИ ЗНАНЬ (розміри/ціни/кольори — лише з CRM; звідси бери пораду чи альтернативу, якщо вона доречна): ' + km.entry.q + ' → ' + km.entry.a; T.kbHit(A, km.entry.id).catch(() => {}); } } catch (e) { /* best-effort */ } }
     const catRule = catQs.length ? 'Якщо запитаного розміру/кольору/товару в CRM немає — скажи це прямо на початку («такого розміру немає»), не починай із «так, є» про інший; назви найближче наявне.' : '';
-    const extraFacts = [directKb, sizeNote, catRule, crmFacts ? 'ДАНІ З CRM (точні й актуальні — відповідай саме ними; кольору/розміру/товару, якого тут немає, немає в наявності; властивості — лише з опису/деталей):\n' + crmFacts : '', catKb].filter(Boolean).join('\n\n');
+    const compareNote = kinds.has('compare') ? 'ПИТАННЯ-ПОРІВНЯННЯ: фото обох товарів система вже надіслала. Коротко порівняй їх між собою (2–4 пункти: матеріал/склад, застібка, кольори, ціна — лише з ДАНИХ CRM нижче) і скажи, чим саме відрізняються. НЕ переписуй картку жодного з товарів, не перелічуй усі характеристики одного товару.' : '';
+    const extraFacts = [directKb, sizeNote, compareNote, catRule, crmFacts ? 'ДАНІ З CRM (точні й актуальні — відповідай саме ними; кольору/розміру/товару, якого тут немає, немає в наявності; властивості — лише з опису/деталей):\n' + crmFacts : '', catKb].filter(Boolean).join('\n\n');
     const { text, resolved } = await compose(A, { questions: u.questions, ack: o.ack, nextStep, kb, availAnswer, extraFacts, fallback: askText });
     // Розмір — не ескалюємо (відповідь — сітка + параметри); каталог — теж; решта — якщо compose не знайшов відповіді.
     const nonCat = (u.questions || []).filter((q0) => classifyKbQuestion(q0).kind !== 'catalog' && kindOf(q0) !== 'size');

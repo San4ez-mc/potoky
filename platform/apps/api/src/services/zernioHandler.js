@@ -1312,7 +1312,7 @@ async function handleIncomingMessage(botId, body) {
 
     await db.message.create({
         data: cleanJsonDeep({
-            sessionId: session.id, role: 'user', content: text || (sharedPost && sharedPost.caption ? ('[переслав ' + sharedPost.kind + '] ' + sharedPost.caption.slice(0, 80)) : mediaLabel),
+            sessionId: session.id, role: 'user', content: text || (sharedPost && sharedPost.caption ? ('[переслав ' + sharedPost.kind + '] ' + sharedPost.caption.slice(0, 80).replace(/\s+/g, ' ')) : mediaLabel),
             metadata: {
                 source: 'zernio', zernioMessageId: zMsgId, platformMessageId, messageId: zMsgId,
                 ...(msgCreatedAt ? { channelCreatedAt: msgCreatedAt.toISOString(), channelLatencyMs } : {}),

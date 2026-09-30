@@ -59,7 +59,10 @@ async function runAgentTurn({ botId, sessionId, step }) {
     }
     if (step.sharedPost) {
         const sp = step.sharedPost;
-        const shared = '[переслав ' + (sp.kind || 'post') + '] ' + String(sp.caption || '').slice(0, 4000);
+        // Як у бойовому zernioHandler: у текст ходу йде лише однорядкова позначка (80 симв.), а підпис — окремо в sharedPost.
+        // Раніше тут вклеювався весь багаторядковий підпис, і «Кофта: 🧶 Матеріал кофти…» з нього читалось як слова клієнта
+        // (тест 145: пост комплекту → бот показав лише кофту; наживо так не буває).
+        const shared = '[переслав ' + (sp.kind || 'post') + '] ' + String(sp.caption || '').slice(0, 80).replace(/\s+/g, ' ');
         text = text ? shared + '\n' + text : shared;
     } else if (step.imageUrl && !text) text = '[фото]';
 

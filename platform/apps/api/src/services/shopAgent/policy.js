@@ -65,7 +65,8 @@ function matchColor(p, want) {
         // стем лишався 5-символьним «чорні» й не збігався підрядком із каталожним «чорний»
         // (5-та літера и/і різна). Додано «і» до відсічуваних закінчень.
         const stem = one.replace(/(ий|а|е|у|ого|им|ому|ої|ою|их|і)$/u, '').slice(0, 5);
-        if (!stem) continue;
+        // Корінь з 1–2 літер («Ау» → «а») знаходився всередині будь-якої назви («Графітовий») — це не колір (2026-09-30, тест 1c5dee4b).
+        if (!stem || stem.length < 3) continue;
         let cand = list.filter((c) => c.toLowerCase().includes(stem) || one.includes(c.toLowerCase().slice(0, 5)));
         // 2026-09-15 (живий кейс, власник: «джинси сині» не матчилось): «сині» — узгоджена форма
         // прикметника з «джинси» (множина), не «синій» як у каталозі. Стем-пошук підрядком тому
@@ -303,25 +304,18 @@ async function answerThenAsk(A, u, askText, o = {}) {
         const aiQs = (u.questions || []).filter((q0) => classifyKbQuestion(q0).kind !== 'catalog').slice(0, 2);
         const aiHits = [];
         for (const q0 of aiQs) { const km = await kbMatch(A, q0); if (km && km.entry && km.entry.a && km.entry.active) aiHits.push(km.entry); }
-        if (aiHits.length && aiQs.length === 1 && u.questions.length === 1 && !o.ack && String(aiHits[0].a).length <= 500 && (A.ctx.product && A.ctx.product.sku || !/передопл|передплат|\d+\s*грн/i.test(aiHits[0].a))) {
-            T.kbHit(A, aiHits[0].id).catch(() => {});
-            return String(aiHits[0].a).trim() + (askText ? '\n\n' + askText : '');
-        }
-        if (aiHits.length) { for (const h of aiHits) T.kbHit(A, h.id).catch(() => {}); directKb = 'ВІДПОВІДІ З БАЗИ ЗНАНЬ НА ПИТАННЯ КЛІЄНТА (скажи саме їх, без власних припущень):\n' + aiHits.map((h) => '• ' + h.q + ' → ' + h.a).join('\n'); }
+        // Запис бази знань — ФАКТ для відповіді, а не готовий текст: менеджери пишуть коротко («ні», «стандартний», «A0187»),
+        // і сирий запис ішов клієнту як відповідь (2026-09-30, тести 864f4149/0b3c3b12/332fe985). Відповідь складає compose.
+        if (aiHits.length) { for (const h of aiHits) T.kbHit(A, h.id).catch(() => {}); directKb = 'ВІДПОВІДІ З БАЗИ ЗНАНЬ НА ПИТАННЯ КЛІЄНТА (зміст — саме цей, без власних припущень; скажи повним ввічливим реченням, а не одним словом; якщо відповідь «ні» — поясни, як можна натомість, якщо це є у фактах):\n' + aiHits.map((h) => '• ' + h.q + ' → ' + h.a).join('\n'); }
         // Схоже питання вже має відповідь у базі знань (спільний критерій kbSimilar, той самий, що й дедуп CRM) — відповідаємо нею,
         // не кличемо менеджера й не створюємо дубль (рішення власника 29.09).
         const nonCatQs = (u.questions || []).filter((q0) => classifyKbQuestion(q0).kind !== 'catalog');
         let simBest = null; let simScore = 0;
         for (const q of nonCatQs) for (const h of kb) { if (!h.a) continue; const sc = kbSimilarity(q, h.q); if (sc > simScore) { simScore = sc; simBest = h; } }
-        if (simBest && simScore >= 0.5 && nonCatQs.length === 1 && u.questions.length === 1 && !o.ack && String(simBest.a).length <= 500 && (A.ctx.product && A.ctx.product.sku || !/передопл|передплат|\d+\s*грн/i.test(simBest.a))) {
-            T.kbHit(A, simBest.id).catch(() => {});
-            return String(simBest.a).trim() + (askText ? '\n\n' + askText : '');
-        }
+        // Словниковий збіг — лише запас, коли ШІ-зіставлення недоступне (kbMatch повернув null); інакше ШІ вже вирішив «не те саме».
+        const aiAvailable = aiQs.length > 0 && aiQs.every((q0) => A._kbm && A._kbm[String(q0).trim()] != null);
+        if (aiAvailable) { simBest = null; best = null; }
         if (simBest && simScore >= 0.5 && !best) { best = simBest; bestN = 1; }
-        if (best && u.questions.length === 1 && !o.ack && bestN >= 1 && bestN === bestMine && bestMine <= 2 && bestN * 2 >= bestKbWords && String(best.a).length <= 500 && (A.ctx.product && A.ctx.product.sku || !/передопл|передплат|\d+\s*грн/i.test(best.a))) {
-            T.kbHit(A, best.id).catch(() => {});
-            return String(best.a).trim() + (askText ? '\n\n' + askText : '');
-        }
         if (best && bestN >= Math.min(2, bestMine)) T.kbHit(A, best.id).catch(() => {});
         if (best && bestN >= 1 && !directKb) directKb = 'НАЙБЛИЖЧА ВІДПОВІДЬ З БАЗИ ЗНАНЬ НА ПИТАННЯ КЛІЄНТА (якщо вона по суті відповідає — скажи саме її, без власних термінів чи припущень): ' + best.a;
     } catch (e) { /* best-effort */ }
@@ -335,7 +329,7 @@ async function answerThenAsk(A, u, askText, o = {}) {
     if (kinds.has('size')) {
         // Розмір/посадка: не база знань і не менеджер — розмірна сітка (якщо є) + параметри категорії для підбору.
         if (pp0.sizeChartUrl && A.ctx.agent.chartSentFor !== pp0.sku && !A._chartSent) { A._chartSent = true; A.out.push({ photoUrls: [pp0.sizeChartUrl], caption: messageText(A.assets, 'n_agent_size_chart_caption', A.ctx, A.session.id), step: 'size_chart' }); A.ctx.agent.chartSentFor = pp0.sku; }
-        sizeNote = 'ПИТАННЯ ПРО РОЗМІР/ПОСАДКУ: не вгадуй посадку й розмір. ' + (A._chartSent ? 'Розмірну сітку система щойно надіслала фото — згадай це одним словом. ' : '') + 'Розмір підбираємо за параметрами категорії' + (pp0.categoryParamsPrompt ? ' (' + String(pp0.categoryParamsPrompt).replace(/\n/g, '; ') + ')' : '') + ' — попроси їх, якщо ще не дано.';
+        sizeNote = 'ПИТАННЯ ПРО РОЗМІР/ПОСАДКУ — його вирішуємо самі (resolved:true), НЕ кажи «передала менеджеру/уточню»: не вгадуй посадку й розмір. ' + (A._chartSent ? 'Розмірну сітку система щойно надіслала фото — згадай це одним словом. ' : '') + 'Розмір підбираємо за параметрами категорії' + (pp0.categoryParamsPrompt ? ' (' + String(pp0.categoryParamsPrompt).replace(/\n/g, '; ') + ')' : '') + ' — попроси їх, якщо ще не дано.';
     }
     if (kinds.has('compare')) {
         // «Чим відрізняються?» — фото кожного товару (перше фото, не мініатюра), щоб клієнт сам побачив, + описи у фактах.
@@ -1487,7 +1481,10 @@ async function runPolicyInner(A, u) {
     const colorResolved = !!(ctx.colorChoice && (ctx.colorChoice.color || (Array.isArray(ctx.colorChoice.colors) && ctx.colorChoice.colors.length)));
     if (pp.colors && !colorResolved && u.units && u.units.length > 1) {
         const matchedColors = u.units.map((x) => matchColor(pp, x.color) || matchColor(pp, x.colorMatched)).filter(Boolean);
-        if (matchedColors.length === u.units.length) ctx.colorChoice = { colors: matchedColors, qty: u.qty || u.units.length };
+        // Відтінок не перевертаємо: клієнт писав «темно-сіру», а модель дала «Світло-сірий» (2026-09-30, тест a4421e30) — такий колір не приймаємо, спитаємо.
+        const tt = String(A.turnText || '').toLowerCase();
+        const flipped = matchedColors.some((c) => { const cl = c.toLowerCase(); return (/світл/.test(cl) && /темн/.test(tt) && !/світл/.test(tt)) || (/темн/.test(cl) && /світл/.test(tt) && !/темн/.test(tt)); });
+        if (matchedColors.length === u.units.length && !flipped) ctx.colorChoice = { colors: matchedColors, qty: u.qty || u.units.length };
     }
     if (pp.colors && !(ctx.colorChoice && (ctx.colorChoice.color || (Array.isArray(ctx.colorChoice.colors) && ctx.colorChoice.colors.length)))) {
         const c = u.colorMatched || matchColor(pp, u.color) || (ctx.sizeInput && ctx.sizeInput.color) || matchColor(pp, ctx.agent.pendingColor) || matchColor(pp, ctx.agent.pendingColorRaw) || null;
@@ -1682,7 +1679,11 @@ async function runPolicyInner(A, u) {
     // 6. Наявність
     const availKey = (ctx.colorChoice && ctx.colorChoice.color) + '|' + ctx.recommendedSize + '|' + (u.units ? JSON.stringify(u.units) : '');
     if (ctx.agent.availKey !== availKey && !(pp.isSet && ctx.setMode === 'set')) {
-        if (u.units && u.units.length) ctx.colorChoice = { ...(ctx.colorChoice || {}), colors: u.units.map((x) => x.color).filter(Boolean), qty: u.qty || u.units.length };
+        // Кольори одиниць — лише звірені з палітрою товару (вище), а не сирі слова моделі; уже звірений вибір не перетираємо.
+        if (u.units && u.units.length && !(ctx.colorChoice && Array.isArray(ctx.colorChoice.colors) && ctx.colorChoice.colors.length)) {
+            const cols = u.units.map((x) => matchColor(pp, x.color) || matchColor(pp, x.colorMatched)).filter(Boolean);
+            if (cols.length) ctx.colorChoice = { ...(ctx.colorChoice || {}), colors: cols, qty: u.qty || u.units.length };
+        }
         await T.checkAvail(A); ctx.agent.availKey = availKey;
         if (ctx.available === false) {
             if (ctx.availReason === 'no_stock') { A.out.push({ text: messageText(A.assets, 'n_avail_stock_msg', ctx, A.session.id), step: 'no_stock' }); await pause(A, 'no_stock', 'n_avail_stock_admin'); return; }
@@ -1881,7 +1882,11 @@ async function runPolicyInner(A, u) {
             // ліпив payAck + ПОВНИЙ payTpl знову, тож два ходи поспіль показували клієнту однаковий
             // список. Той самий принцип, що вже є для «оформляємо?» (lastAsk==='оформляємо?' вище):
             // якщо список уже показували й нового питання нема — лише коротко нагадуємо, без повтору.
-            const ack = (u.claimsPaid || u.receiptLink || A.turnImage) ? 'Дякую, бачу квитанцію 🙏 ' : ((u.phone || u.fullName || u.city || u.branch) ? 'Дані записала 📝 ' : '');
+            // 2026-09-30 (тести 143, f9076cb0): «+», «Так оформляємо кофту», «Без футболки!» отримували дослівно те саме нагадування
+            // двічі поспіль. Згоду/відмову від допродажу — коротко визнаємо; вдруге поспіль — показуємо сам список (n_pay), а не те саме.
+            const ack = (u.claimsPaid || u.receiptLink || A.turnImage) ? 'Дякую, бачу квитанцію 🙏 ' : ((u.phone || u.fullName || u.city || u.branch) ? 'Дані записала 📝 ' : (u.addUpsell === false ? 'Добре, лише основний товар 👌 ' : (u.ready === 'yes' || /^\s*\+\s*$/.test(text) ? 'Так, оформлюємо 👌 ' : '')));
+            ctx.agent.payRepeatCount = (ctx.agent.payRepeatCount || 0) + 1;
+            if (ctx.agent.payRepeatCount % 2 === 0) { A.out.push({ text: ack + messageTextMultiline(A.assets, 'n_pay', ctx, A.session.id + ':pay'), step: 'pay_options_reshow' }); return; }
             A.out.push({ text: ack + messageText(A.assets, 'n_agent_pay_options_repeat', ctx, A.session.id), step: 'pay_options_repeat' });
             return;
         }

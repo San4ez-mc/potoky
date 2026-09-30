@@ -43,18 +43,20 @@ async function kbMatch(A, question) {
     if (A._kbm[q] !== undefined) return A._kbm[q];
     let res = null;
     try {
-        const items = (await loadKbAll(A)).slice(0, 220);
         const p = A.ctx.product;
         let prodLine = 'немає';
+        let prodId = null;
         if (p && p.sku) {
             let catName = '';
-            try { const cat = await loadCatalog(A.botId, A.keys); const raw = cat.products.find((x) => String(x.sku) === String(p.sku)); catName = (raw && raw.category && raw.category.name) || ''; } catch (e) { /* best-effort */ }
+            try { const cat = await loadCatalog(A.botId, A.keys); const raw = cat.products.find((x) => String(x.sku) === String(p.sku)); catName = (raw && raw.category && raw.category.name) || ''; prodId = raw && raw.id; } catch (e) { /* best-effort */ }
             prodLine = String(p.customerName || p.name || '').split('\n')[0] + (catName ? ' (категорія ' + catName + ')' : '');
         }
+        // Запис про ІНШИЙ конкретний товар — не кандидат (2026-09-30: «чи звужені джинси?» → запис про замшевий костюм 234286 «стандартний»).
+        const items = (await loadKbAll(A)).filter((e) => e.scope !== 'product' || !e.productId || (prodId && e.productId === prodId)).slice(0, 220);
         const list = items.map((e, i) => (i + 1) + '. [' + scopeLabel(e) + '] ' + e.q + (e.a ? '' : ' (ще без відповіді)')).join('\n');
         const prompt = 'Питання клієнта інтернет-магазину одягу: «' + q.slice(0, 400) + '»\nТовар у розмові: ' + prodLine
             + '\n\nЗаписи бази знань:\n' + (list || '(порожньо)')
-            + '\n\nЗАВДАННЯ:\n1) match — номер запису, що відповідає на ТЕ САМЕ питання по суті (перефразування, синоніми, інший порядок слів — так; схожа, але інша тема — ні: «термін обміну» ≠ «як оформити обмін»). Запис про ІНШИЙ конкретний товар підходить лише тоді, коли відповідь не залежить від товару. Нема такого — null.'
+            + '\n\nЗАВДАННЯ:\n1) match — номер запису, що відповідає на ТЕ САМЕ питання по суті (перефразування, синоніми, інший порядок слів — так; схожа, але інша тема — ні: «термін обміну» ≠ «як оформити обмін»). Предмет питання має збігатися: ЗВІДКИ відправляєте (місто) ≠ КОЛИ відправка (термін) ≠ СКІЛЬКИ коштує доставка (ціна) ≠ ЯКОЮ службою; «блискавка металева?» ≠ «яка кофта має блискавку на всю довжину?». Сумніваєшся — null (краще без запису, ніж чужа відповідь).'
             + '\n2) scope — чого стосується САМЕ ЦЕ питання: "shop" — однаково для будь-якого товару (оплата, доставка, знижки, обмін/повернення, гарантія, терміни, примірка, магазин); "category" — категорії загалом (напр. «як сідають джинси»); "product" — конкретного товару (його посадка, деталі, крій, тканина).'
             + '\n3) kind — вид питання: "size" — підбір розміру/посадка під параметри («як підібрати розмір», «чи підійде на 200 см», «M повномірний?»); "feature" — властивість/деталь товару, яку видно з опису чи фото (капюшон, блискавка, кишені, матеріал, утеплення); "compare" — чим відрізняються кілька товарів; "policy" — умови магазину (оплата, доставка, обмін, знижки); "other" — інше.'
             + '\nВідповідь ЛИШЕ JSON: {"match": число або null, "scope": "shop"|"category"|"product", "kind": "size"|"feature"|"compare"|"policy"|"other"}';

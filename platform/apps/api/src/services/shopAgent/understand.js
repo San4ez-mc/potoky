@@ -25,7 +25,7 @@ const SCHEMA = `{
  "fullName": "<ПІБ>"|null, "phone": "<10 цифр з 0>"|null, "city": "<місто>"|null, "region": "<область>"|null, "branch": "<№ відділення або 'поштомат N'>"|null, "homeAddress": true|false,
  "wantsManualReq": true|false, "wantsCard": true|false, "paymentMethodChange": "cod|full"|null, "claimsPaid": true|false, "receiptLink": "<url>"|null,
  "refersToStory": true|false, "replaceOrAdd": "replace|add|keep"|null, "wantsOrderSummary": true|false, "compare": true|false,
- "wantsSizeChart": true|false, "wantsPhoto": true|false, "wantsUpsellPhoto": true|false, "wantsHuman": true|false, "isComplaint": true|false, "returnRequest": true|false, "statusQuestion": true|false,
+ "wantsSizeChart": true|false, "wantsPhoto": true|false, "wantsUpsellPhoto": true|false, "wantsHuman": true|false, "isComplaint": true|false, "annoyedAtBot": true|false, "returnRequest": true|false, "statusQuestion": true|false,
  "productHint": {"article": "<A0187 тощо>"|null, "category": "<кофта|костюм|куртка|бомбер|футболка|джинси|лофери|...>"|null, "fromList": "<назва/артикул зі списку, який бот щойно показав>"|null},
  "questions": ["<питання клієнта, на які треба відповісти фактами>"],
  "sentiment": "neutral|positive|annoyed|angry",
@@ -64,6 +64,7 @@ const RULES = `ПРАВИЛА РОЗБОРУ:
 - homeAddress=true СТАВ ЛИШЕ коли номера відділення/поштомата НЕМА В ЖОДНІЙ формі вище — саме
   вулиця/будинок/квартира/«додому»/«таксі» БЕЗ жодного посилання на Нову Пошту чи номера.
 - wantsPhoto/wantsSizeChart: ЛИШЕ коли клієнт явно просить надіслати фото/сітку («скиньте фото», «є розмірна сітка?»); прикріплене клієнтом фото — це НЕ прохання фото.
+- annoyedAtBot=true — клієнт роздратований САМОЮ РОЗМОВОЮ з нами (бот не чує, повторює, тисне): «ви знущаєтесь?», «ви на приколі?», «я ж уже написала!», «скільки можна», «ви мене не чуєте». Не про товар і не про ціну. Звичайне уточнення чи жарт — false.
 - wantsHuman: явно просить людину/менеджера, «ви бот?», «дайте живу людину». isComplaint: претензія (не той товар, брак, не прийшло). returnRequest: хоче повернути/обміняти ВЖЕ ОТРИМАНИЙ товар (є замовлення/посилка на руках). Загальне запитання про політику («чи можна обміняти/повернути, якщо не підійде?», «які умови повернення?») ДО покупки — це НЕ returnRequest, а звичайне питання в questions (відповідь є в базі знань).
 - statusQuestion: питає, де посилка/коли відправлять/ТТН уже оформленого замовлення.
 - clothingSize: розмір, як назвав клієнт, без «округлення» вниз: 2XL = XXL; 2XXL, 3XL, XXXL = XXXL; 4XL = 4XL. У questions теж пиши саме цей розмір.
@@ -130,7 +131,7 @@ async function understand(A) {
     const u = (!failed && extractJson(raw)) || { intent: 'other' };
     if (failed) u._error = failed;
     for (const k of ['height', 'weight', 'clothingSize', 'chest', 'footLength', 'waist', 'color', 'colorMatched', 'qty', 'units', 'setChoice', 'setArticle', 'ready', 'addUpsell', 'upsellQty', 'upsellNote', 'upsellUnits', 'extraProducts', 'alsoWants', 'removeItem', 'addItem', 'itemColors', 'changeRequest', 'payMethod', 'country', 'trustPromise', 'fullName', 'phone', 'city', 'region', 'branch', 'paymentMethodChange', 'receiptLink']) if (u[k] === undefined) u[k] = null;
-    for (const k of ['belly', 'refersToStory', 'wantsOrderSummary', 'compare', 'prepaymentObjection', 'homeAddress', 'wantsManualReq', 'wantsCard', 'claimsPaid', 'wantsSizeChart', 'wantsPhoto', 'wantsUpsellPhoto', 'wantsHuman', 'isComplaint', 'returnRequest', 'statusQuestion']) u[k] = !!u[k];
+    for (const k of ['belly', 'refersToStory', 'wantsOrderSummary', 'compare', 'prepaymentObjection', 'homeAddress', 'wantsManualReq', 'wantsCard', 'claimsPaid', 'wantsSizeChart', 'wantsPhoto', 'wantsUpsellPhoto', 'wantsHuman', 'isComplaint', 'annoyedAtBot', 'returnRequest', 'statusQuestion']) u[k] = !!u[k];
     u.intent = u.intent || 'other';
     u.questions = Array.isArray(u.questions) ? u.questions.filter((q) => q && String(q).trim()).map(String) : [];
     u.productHint = u.productHint && typeof u.productHint === 'object' ? u.productHint : { article: null, category: null, fromList: null };

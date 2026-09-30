@@ -824,6 +824,12 @@ async function runPolicyInner(A, u) {
         await pause(A, 'handoff', 'n_agent_handoff_admin', '💬 «' + text.slice(0, 200) + '»');
         return;
     }
+    // Клієнт роздратований самою розмовою («Ви знущаєтесь?») — одне вибачення, менеджер, пауза; далі не тиснемо скриптом (2026-09-30, тест 121 / сесія ed8e3e06).
+    if (u.annoyedAtBot && !u.isComplaint) {
+        A.out.push({ text: messageText(A.assets, 'n_agent_complaint_ack', ctx, A.session.id), step: 'annoyed_handoff' });
+        await pause(A, 'annoyed', 'n_agent_complaint_admin', '😤 Клієнт роздратований розмовою з ботом: «' + text.slice(0, 300) + '»');
+        return;
+    }
     if (u.isComplaint && !u.returnRequest) {
         A.out.push({ text: messageText(A.assets, 'n_agent_complaint_ack', ctx, A.session.id), step: 'complaint' });
         await pause(A, 'complaint', 'n_agent_complaint_admin', '💬 «' + text.slice(0, 300) + '»');

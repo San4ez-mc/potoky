@@ -2004,7 +2004,18 @@ async function handleSideEvent(botId, event, body) {
                     }
                 } catch (_ttnErr) { logger.warn('[zernioHandler] TTN capture from manager message failed: ' + _ttnErr.message); }
             }
+            // 2026-09-30 (правки 0392dffb, c84eb872 та ін. «Бот не відписав»): менеджер ПЕРШИМ пише клієнту промо («Фінальний розпродаж
+            // бомберів🔥» + фото), клієнт відповідає «Яка ціна бомбера?» — бот мовчав, бо розмова вважалась «менеджерською», а
+            // resumeAfterManagerSilence такі розмови свідомо не відновлює. Розсилка першим — не ведення діалогу: якщо клієнт за добу
+            // нічого не писав, бота на паузу не ставимо (відповідає на відповідь клієнта). Далі менеджер у живій розмові — пауза як завжди.
+            let _outreach = false;
             if (!_pc.funnelPaused) {
+                try { _outreach = !(await db.message.findFirst({ where: { sessionId: session.id, role: 'user', createdAt: { gte: new Date(Date.now() - 24 * 3600 * 1000) } }, select: { id: true } })); } catch (e) { _outreach = false; }
+            }
+            if (_outreach) {
+                await db.session.update({ where: { id: session.id }, data: { context: { ..._pc, managerOutreachAt: new Date().toISOString() } } }).catch(() => {});
+                logger.info('[zernioHandler] manager outreach (client silent 24h) — bot NOT paused', { botId, sessionId: session.id });
+            } else if (!_pc.funnelPaused) {
                 await db.session.update({ where: { id: session.id }, data: { context: { ..._pc, funnelPaused: true, pausedBy: 'manager_message', pausedAt: new Date().toISOString() } } });
                 await logDelivery(session.id, botId, 'zernio_inbound', true, null, { reason: 'manager_message → funnelPaused (бот на паузі, зняти можна в адмінці)' });
                 logger.info('[zernioHandler] manager wrote — session paused', { botId, sessionId: session.id });

@@ -1056,7 +1056,9 @@ async function runPolicyInner(A, u) {
     // n_lookup навіть не викликався для таких повідомлень. Дозволяємо категорійне слово теж
     // відкрити повторний матчинг — АЛЕ тільки до оформлення замовлення (crmOrderId), щоб не
     // зачепити вже перевірену поведінку "після оформлення — лише хендофф менеджеру" (розділ 1).
-    const categorySignal = !ctx.crmOrderId && hasCategoryWord(text) && !categoryWordIsUpsell(text, ctx) && !categoryWordIsSetComponent(text, ctx) && !categoryWordIsMain(text, ctx) && !u.wantsSizeChart;
+    // Слово категорії само по собі не перемикає товар: аналізатор має теж бачити запит ІНШОГО товару (productHint.category).
+    // «Мені подобаються штани зі стрілкою, а верх не дуже» про вельветовий костюм — це частина костюма, а не «покажіть джинси» (правки 3b41319f/edff4306).
+    const categorySignal = !ctx.crmOrderId && hasCategoryWord(text) && !!(u.productHint && u.productHint.category) && !categoryWordIsUpsell(text, ctx) && !categoryWordIsSetComponent(text, ctx) && !categoryWordIsMain(text, ctx) && !u.wantsSizeChart;
     if (!P(ctx) || freshSignal || categorySignal) {
         // Вибір зі списку КОЛЬОРОМ («Чорний»): якщо цей колір мають кілька позицій списку — перепитуємо, яку саме, а не беремо
         // першу (2026-09-29, сесія e5090bb9: «Чорний» → SH617927, хоча чорний був у 3 з 4 костюмів). Одна позиція — беремо її.
@@ -1412,6 +1414,12 @@ async function runPolicyInner(A, u) {
         ctx.sizeInput = { ...(ctx.sizeInput || {}), clothingSize: u.clothingSize };
     }
 
+    // Живіт або нові зріст/вага ПІСЛЯ рекомендації — перераховуємо розмір, а не відповідаємо «XL підійде» (2026-09-30, правка 9412b11f:
+    // «Вага 98 Зріст 188» → XL, окремим повідомленням «Є животик» → бот лишив XL; мало бути XXL). Ключ — для яких даних рахували.
+    const sizeKeyOf = (x) => [Number((x || {}).height) || 0, Number((x || {}).weight) || 0, (x || {}).belly ? 1 : 0].join('/');
+    if (ctx.recommendedSize && !ctx.crmOrderId && ctx.agent.sizeCalcKey && sizeKeyOf(ctx.sizeInput) !== ctx.agent.sizeCalcKey) {
+        ctx.recommendedSize = null; ctx.isSetSizeCalc = false; ctx.setSizesText = ''; ctx.sizeOutOfRange = false;
+    }
     // 4. Розмір
     const needSize = (pp.isClothing || pp.isSet) && !ctx.recommendedSize && !ctx.isSetSizeCalc && !ctx.sizeOutOfRange;
     if (needSize) {
@@ -1457,6 +1465,7 @@ async function runPolicyInner(A, u) {
             // інакше compose пише «надсилаю окремим фото» без вкладення (тести 7c022683/6ed22687).
             if (u.wantsSizeChart && pp.sizeChartUrl && !A._chartSent) { A._chartSent = true; A.out.push({ photoUrls: [pp.sizeChartUrl], caption: messageText(A.assets, 'n_agent_size_chart_caption', ctx, A.session.id), step: 'size_chart' }); ctx.agent.chartSentFor = pp.sku; }
             await T.calcSize(A);
+            ctx.agent.sizeCalcKey = sizeKeyOf(ctx.sizeInput);
             await T.funnelStage(A, ...STAGES.params);
             if (ctx.sizeOutOfRange) {
                 // 2026-09-18 (власник): якщо n_calc не знайшов жодної альтернативи (sizeOorAlternative

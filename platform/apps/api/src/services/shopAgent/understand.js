@@ -67,8 +67,10 @@ const RULES = `ПРАВИЛА РОЗБОРУ:
 - annoyedAtBot=true — ЛИШЕ явне обурення самою розмовою, образа чи насмішка над нами: «ви знущаєтесь?», «ви на приколі?», «ви мене дістали», лайка на адресу магазину. НЕ annoyedAtBot: нетерплячка («?», «Ау», «???», «ви тут?»), уточнення чи повтор свого вибору («я ж написав один», «я відповів на вашу історію», «я вже казав розмір») — це звичайні повідомлення зі змістом, на них відповідаємо по суті.
 - wantsHuman: явно просить людину/менеджера, «ви бот?», «дайте живу людину». isComplaint: претензія (не той товар, брак, не прийшло). returnRequest: хоче повернути/обміняти ВЖЕ ОТРИМАНИЙ товар (є замовлення/посилка на руках). Загальне запитання про політику («чи можна обміняти/повернути, якщо не підійде?», «які умови повернення?») ДО покупки — це НЕ returnRequest, а звичайне питання в questions (відповідь є в базі знань).
 - statusQuestion: питає, де посилка/коли відправлять/ТТН уже оформленого замовлення.
+- productHint.category — лише коли клієнт хоче ІНШИЙ товар цієї категорії («а джинси є?», «покажіть куртки»). Якщо він говорить про ЧАСТИНУ товару в розмові (штани чи верх костюма, рукав кофти: «штани подобаються, а верх ні», «штани звужені?») — category = null, це розмова про поточний товар.
+- belly=true — клієнт згадує живіт/животик/пузо/«повний у талії» (навіть окремим коротким повідомленням після підбору розміру) — це параметр для підбору (розмір більше), а не питання.
 - clothingSize: розмір, як назвав клієнт, без «округлення» вниз: 2XL = XXL; 2XXL, 3XL, XXXL = XXXL; 4XL = 4XL. У questions теж пиши саме цей розмір.
-- questions: усі питання не про слоти (ціна, склад, доставка за кордон, чи є в наявності інший розмір/колір, гарантія…). Питання «яка ціна?» коли товар ЩЕ не показано — це product_query, не question. Кожне питання — словами клієнта; НЕ приписуй його товару в розмові, якщо клієнт питає про іншу річ (у розмові кофта, а клієнт питає «штани будуть звужені?» — питання про штани, не про кофту; артикул додавай лише той, що клієнт сам назвав або що очевидно стосується саме цієї речі).
+- questions: усі питання не про слоти (ціна, склад, доставка за кордон, чи є в наявності інший розмір/колір, гарантія…). Питання «яка ціна?» коли товар ЩЕ не показано — це product_query, не question. «Як замовити?», «хочу замовити», «як оформити?» — це НАМІР замовити (intent product_query/order_yes), НЕ questions: відповідь на нього — наступний крок оформлення (параметри/колір), а не окреме пояснення. Кожне питання — словами клієнта; НЕ приписуй його товару в розмові, якщо клієнт питає про іншу річ (у розмові кофта, а клієнт питає «штани будуть звужені?» — питання про штани, не про кофту; артикул додавай лише той, що клієнт сам назвав або що очевидно стосується саме цієї речі).
 - 2026-09-18 (живий кейс, Kolya Kolya: «Зі змійкою не під шию треба» — це ВИМОГА до товару, не граматичне питання, тож questions лишився порожнім, і бот жодного разу не відповів на неї — картка мала б чесно сказати "лише один варіант виконання", ця відповідь ВЖЕ була в CRM, просто ніхто не спитав): questions — це НЕ лише речення зі знаком питання. Якщо клієнт СТВЕРДЖУЄ вимогу, побажання чи заперечення щодо конкретної характеристики товару (фасон, деталь, матеріал, комплектація тощо — НЕ розмір/колір/кількість, для них є свої слоти), яку неможливо визначити з наявних дій бота — теж додай це до questions, сформулювавши як питання-факт («Зі змійкою не під шию треба» → «Чи є варіант без високої змійки на комірі?»). Порожнє нарікання без конкретики («не подобається», «якесь дивне») сюди НЕ йде.
 - productHint.fromList: якщо бот щойно показував список товарів, а клієнт відповів словом/кольором/номером, що вказує на один із них — назви його артикул зі списку.
 - Порожнє/тільки емодзі/«[фото]» без тексту → intent other, усе null; «[фото]» разом із «є така?» → product_query.
@@ -129,7 +131,13 @@ async function understand(A) {
     // Навіть якщо модель не відповіла — повертаємо ПОВНИЙ обʼєкт (усі поля, productHint), а не урізаний:
     // з 24.09 урізаний обʼєкт валив увесь хід («reading 'article'», 254 рази) → клієнт бачив «Секунду, перевіряю…».
     const u = (!failed && extractJson(raw)) || { intent: 'other' };
-    if (failed) u._error = failed;
+    if (failed) {
+        u._error = failed;
+        // ШІ недоступний (30.09 20:21–20:24: Claude без кредитів, OpenAI 429, Gemini 402) — бот не бачив «Зріст 169 Вага 101»
+        // і перепитував зріст і вагу знову й знову. Числа (ДАНІ, не зміст) витягуємо детерміновано, щоб підбір розміру працював.
+        const hw = extractHeightWeight(String(A.turnText || ''));
+        if (hw) { u.height = hw.height; u.weight = hw.weight; u.intent = 'give_params'; u._offlineParse = true; }
+    }
     for (const k of ['height', 'weight', 'clothingSize', 'chest', 'footLength', 'waist', 'color', 'colorMatched', 'qty', 'units', 'setChoice', 'setArticle', 'ready', 'addUpsell', 'upsellQty', 'upsellNote', 'upsellUnits', 'extraProducts', 'alsoWants', 'removeItem', 'addItem', 'itemColors', 'changeRequest', 'payMethod', 'country', 'trustPromise', 'fullName', 'phone', 'city', 'region', 'branch', 'paymentMethodChange', 'receiptLink']) if (u[k] === undefined) u[k] = null;
     for (const k of ['belly', 'refersToStory', 'wantsOrderSummary', 'compare', 'prepaymentObjection', 'homeAddress', 'wantsManualReq', 'wantsCard', 'claimsPaid', 'wantsSizeChart', 'wantsPhoto', 'wantsUpsellPhoto', 'wantsHuman', 'isComplaint', 'annoyedAtBot', 'returnRequest', 'statusQuestion']) u[k] = !!u[k];
     u.intent = u.intent || 'other';
@@ -143,4 +151,21 @@ async function understand(A) {
     return u;
 }
 
-module.exports = { understand, summarizeState, extractJson };
+/** Зріст і вага з тексту без ШІ: «Зріст 169 Вага 101», «176, 90кг», «183\nВага 84», «1.87 86», «рост 180 вес 85». null — не впевнені. */
+function extractHeightWeight(text) {
+    const t = String(text || '').toLowerCase().replace(/,(?=\d)/g, '.');
+    const nums = [...t.matchAll(/\d+(?:\.\d+)?/g)].map((m) => ({ v: Number(m[0]), i: m.index, raw: m[0] }));
+    if (nums.length !== 2) return null; // без ШІ — лише однозначний випадок «зріст + вага»
+    const before = (n) => t.slice(Math.max(0, n.i - 10), n.i); const after = (n) => t.slice(n.i + n.raw.length, n.i + n.raw.length + 3);
+    const isW = (n) => /(вага|вес)\D*$/.test(before(n)) || /^\s?кг/.test(after(n));
+    const isH = (n) => /(зріст|зрост|рост)\D*$/.test(before(n)) || /^\s?(см|cm)/.test(after(n));
+    let height = null; let weight = null;
+    for (const n of nums) {
+        let v = n.v; if (v >= 1.4 && v <= 2.3 && /\./.test(n.raw)) v = Math.round(v * 100);
+        if (!height && v >= 140 && v <= 220 && !isW(n)) { height = v; continue; }
+        if (!weight && v >= 35 && v <= 200 && Number.isInteger(n.v) && !isH(n)) weight = v;
+    }
+    return height && weight && height !== weight ? { height, weight } : null;
+}
+
+module.exports = { understand, summarizeState, extractJson, extractHeightWeight };

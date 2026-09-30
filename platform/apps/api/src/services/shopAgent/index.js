@@ -113,6 +113,18 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
     if (session.isTest || ctx.testMode) ctx.testMode = true;
     const t0 = Date.now();
     const u = await understand(A);
+    // ШІ недоступний і повідомлення без однозначних даних (30.09 20:21–20:24 — усі провайдери без балансу): відповідати навмання
+    // гірше, ніж мовчати («Мені ще потрібні зріст і вага» тричі поспіль). Не відповідаємо — повідомлення лишається невідповіданим, і
+    // retryMissedZernioTurns повторить хід, щойно ШІ повернеться; менеджеру — один сигнал на сесію за 30 хв.
+    if (u._error && !u._offlineParse && !dryRun) {
+        logger.warn('[shopAgent] AI unavailable — turn skipped (will retry)', { botId, sessionId, error: String(u._error).slice(0, 160) });
+        if (!ctx.agent.aiDownAlertAt || Date.now() - ctx.agent.aiDownAlertAt > 30 * 60 * 1000) {
+            ctx.agent.aiDownAlertAt = Date.now();
+            try { await require('./tools').alert(A, { title: '⚠️ ШІ недоступний — бот не може відповісти', main: 'Клієнт чекає відповіді: «' + String(text || '').slice(0, 200) + '»', details: 'Причина: ' + String(u._error).slice(0, 200) + '\nБот повторить відповідь сам, щойно ШІ відновиться; якщо терміново — відпишіть вручну.' }); } catch (e) { /* best-effort */ }
+        }
+        await db.session.update({ where: { id: sessionId }, data: { context: cleanJsonDeep(ctx) } }).catch(() => {});
+        return { replies: [], understanding: u, trace: A.trace, ctx, aiDown: true };
+    }
     try { await runPolicy(A, u); }
     catch (e) {
         logger.error('[shopAgent] policy failed: ' + e.message, { sessionId, stack: e.stack });

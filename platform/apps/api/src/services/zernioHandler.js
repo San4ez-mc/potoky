@@ -1434,7 +1434,10 @@ async function handleIncomingMessage(botId, body) {
     if (!testModeBlocked && !ctxNow.funnelPaused && !hasProductSignal) {
         try {
             const _lastOut = await db.message.findFirst({ where: { sessionId: session.id, role: 'assistant' }, orderBy: { createdAt: 'desc' }, select: { metadata: true, createdAt: true } });
-            if (_lastOut && ((_lastOut.metadata || {}).source) === 'zernio_inbox') {
+            // 2026-09-30 (правка 894bd45e): менеджер писав 28.09 («Випадково на рекламу натиснули?»), клієнтка 30.09 прийшла з нової
+            // реклами «Яка ціна куртки?» — бот мовчав через дводенну репліку менеджера. Менеджерською розмова лишається лише, якщо
+            // менеджер писав за останню добу; старша репліка — це вже нове звернення, його веде бот.
+            if (_lastOut && ((_lastOut.metadata || {}).source) === 'zernio_inbox' && Date.now() - _lastOut.createdAt.getTime() < 24 * 3600 * 1000) {
                 ctxNow = { ...ctxNow, funnelPaused: true, pausedBy: 'manager_message', pausedAt: _lastOut.createdAt.toISOString() };
                 await db.session.update({ where: { id: session.id }, data: { context: ctxNow } });
                 await logDelivery(session.id, botId, 'zernio_inbound', true, null, { reason: 'manager_last: останнє вихідне від менеджера, сигналу товару нема — пауза, бот мовчить', text: String(text || '').slice(0, 80) });

@@ -12,7 +12,7 @@ const { dispatchOrder } = require('./supplierDispatch');
 const { hasCategoryWord, categoryWordIsUpsell, categoryWordIsSetComponent, categoryWordIsMain } = require('./signal');
 const { resolveColorMention } = require('./cart');
 const { classifyKbQuestion, kbSimilarity, kbSimilar } = require('./kbRules');
-const { catalogFacts, catalogProducts } = require('./catalogFacts');
+const { catalogFacts, catalogProducts, otherCategoryProducts } = require('./catalogFacts');
 const { kbMatch, sameAsEscalated } = require('./kbMatch');
 
 // 2026-09-14 (власник: "я взагалі проти будь-якого хардкоду... все в ноди перенеси"): TRUST_STEP1/2,
@@ -343,6 +343,13 @@ async function answerThenAsk(A, u, askText, o = {}) {
             for (const pr of prs) { const im = (pr.images || [])[0]; if (im) A.out.push({ photoUrls: [/^https?:/.test(im) ? im : base0 + (String(im).charAt(0) === '/' ? im : '/' + im)], caption: String(pr.name || pr.customerName || '').split('\n')[0] + ' — ' + Number(pr.price) + ' грн', step: 'compare_photo' }); }
         } catch (e) { /* best-effort */ }
     }
+    // «А джинси у вас є?» посеред розмови про інший товар — разом із відповіддю показуємо фото цих товарів (перше фото, не мініатюра).
+    if (catQs.length) {
+        try {
+            const base1 = (A.keys.CRM_PUBLIC_BASE || 'https://pcrm.fineko.space').replace(/\/$/, '');
+            for (const pr of await otherCategoryProducts(A, catQs.concat([String(A.turnText || '')]))) { const im = (pr.images || [])[0]; if (im) A.out.push({ photoUrls: [/^https?:/.test(im) ? im : base1 + (String(im).charAt(0) === '/' ? im : '/' + im)], caption: String(pr.customerName || pr.name || '').split('\n')[0].replace(/\.?\s*Артикул:?.*$/i, '').trim() + ' — ' + Number(pr.price) + ' грн', step: 'category_photo' }); }
+        } catch (e) { /* best-effort */ }
+    }
     let crmFacts = '';
     if (catQs.length || kinds.has('feature') || kinds.has('compare')) { try { crmFacts = await catalogFacts(A, (u.questions || []).concat([String(A.turnText || '')]), { withDesc: kinds.has('feature') || kinds.has('compare') }); } catch (e) { /* best-effort */ } }
     // Каталожне питання відповідає CRM, але база знань може мати ДОДАТКОВУ пораду для цього випадку («більших нема → флісові
@@ -404,7 +411,9 @@ async function present(A) {
     try {
         const szLine = ((String(p.desc || '').match(/Розміри:\s*([^\n]+)/i) || [])[1] || '').trim();
         const szItems = szLine.split(/[,;]+/).map((z) => z.trim().replace(/\s*\(.*$/, '')).filter(Boolean);
-        if (szItems.length > 1 && szItems.every((z) => /^\d+$/.test(z))) card = card.replace(/👉[^\n]*/, '👉 Підкажіть, будь ласка, ваш розмір за талією (' + szLine.replace(/\s*\(.*$/, '') + ') 😊');
+        // …лише коли категорія в CRM не задає своїх параметрів: якщо задає (джинси — зріст і вага, рішення Олексія 27.09/30.09,
+        // правка f9a5b98b) — питаємо саме їх, а не хардкод «розмір за талією».
+        if (szItems.length > 1 && szItems.every((z) => /^\d+$/.test(z)) && !(Array.isArray(p.categoryParams) && p.categoryParams.length)) card = card.replace(/👉[^\n]*/, '👉 Підкажіть, будь ласка, ваш розмір за талією (' + szLine.replace(/\s*\(.*$/, '') + ') 😊');
         else if (ctx.sizeInput && ctx.sizeInput.height && ctx.sizeInput.weight) card = card.replace(/\n*👉[^\n]*(зріст|вага)[^\n]*/i, '');
     } catch (e) { /* best-effort */ }
     if (!urls.length) card = card + '\n\nНа жаль, фото цього товару зараз відсутнє 🙏';

@@ -84,4 +84,26 @@ async function catalogProducts(A, texts) {
     return out;
 }
 
-module.exports = { catalogFacts, catalogProducts };
+/**
+ * Товари ІНШОЇ категорії, про яку клієнт питає посеред розмови («А джинси у вас є?» під час оформлення кофти) — щоб
+ * разом із відповіддю показати їх фото (2026-09-30, правка 0a8d38b5: «Не надіслав фото джинсів»). Поточний товар,
+ * позиції його комплекту й допродаж не повертаються — їх клієнт уже бачив.
+ */
+async function otherCategoryProducts(A, texts) {
+    const { ctx } = A;
+    const cat = await loadCatalog(A.botId, A.keys);
+    const all = cat.products || [];
+    const cur = ctx.product || {};
+    const skip = new Set([String(cur.sku || '').toUpperCase()].concat((cur.setItems || []).map((it) => String(it.article || '').toUpperCase())).concat(((cur.upsellItems || [])[0] ? [String(cur.upsellItems[0].sku || '').toUpperCase()] : [])));
+    const low = (Array.isArray(texts) ? texts : [texts]).join(' ').toLowerCase();
+    const curCat = String(((all.find((p) => String(p.sku).toUpperCase() === String(cur.sku || '').toUpperCase()) || {}).category || {}).name || '').toLowerCase();
+    const out = [];
+    for (const [w, re] of CAT_WORDS) {
+        if (!low.includes(w) || (curCat && re.test(curCat))) continue;
+        all.filter((p) => !p.isSet && !skip.has(String(p.sku || '').toUpperCase()) && re.test(String((p.customerName || '') + ' ' + (p.name || '') + ' ' + ((p.category && p.category.name) || '')).toLowerCase()))
+            .forEach((p) => { if (!out.includes(p)) out.push(p); });
+    }
+    return out.slice(0, 3);
+}
+
+module.exports = { catalogFacts, catalogProducts, otherCategoryProducts };

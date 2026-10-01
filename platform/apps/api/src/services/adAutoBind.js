@@ -100,7 +100,9 @@ async function geminiPick(k, adImg, caption, cands, resolve, question) {
     for (const p of cands.slice(0, 10)) {
         const img = await fetchImage(refPhoto(p, resolve));
         if (!img) continue;
-        parts.push({ text: 'Кандидат ' + used.length + ': ' + (p.customerName || p.name) + ' (' + p.sku + ')' });
+        // + «Інформація для ШІ» з CRM — там відмінності схожих товарів (2026-10-01, правка e985f636: кофти A0187/C0043 і їхні комплекти
+        // set1112/set1111 відрізняються лише довжиною блискавки; без цього реклама з півзамком привʼязалась до комплекту з повною блискавкою).
+        parts.push({ text: 'Кандидат ' + used.length + ': ' + (p.customerName || p.name) + ' (' + p.sku + ')' + (p.aiNotes ? ' — ' + String(p.aiNotes).replace(/\s+/g, ' ').slice(0, 300) : '') });
         parts.push({ inline_data: { mime_type: img.mime, data: img.data } });
         used.push(p);
     }

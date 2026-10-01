@@ -1527,10 +1527,17 @@ async function runPolicyInner(A, u) {
                     : 'Ви називали ' + ctx.agent.sizeClaim + ', але за вашим зростом і вагою краще підійде ' + rec + ' 📏 ' + ((Array.isArray(pp.sizes) && pp.sizes.map((z) => String(z).toUpperCase()).includes(ctx.agent.sizeClaim)) ? 'Якщо все ж хочете ' + ctx.agent.sizeClaim + ' — напишіть, оформимо так. ' : '');
                 delete ctx.agent.sizeClaim;
             } else if (ctx.agent.sizeClaim) delete ctx.agent.sizeClaim; // параметри не дали — приймаємо названий розмір без «перевірено»
+            // Примітка про названий клієнтом розмір уже каже підібраний розмір — стандартне «За ними найкраще підійде розмір XL» після неї
+            // дублює те саме (правка 89b80358, 01.10: «…краще підійде XL 📏 Дякую за параметри! За ними найкраще підійде розмір XL 📏»).
+            let sizeBody = sizeTextClean;
+            if (claimNote && !sizeTextClean.includes('\n') && ctx.recommendedSize) {
+                const recRe = new RegExp('(^|[^A-Za-zА-Яа-яІіЇїЄєҐґ])' + String(ctx.recommendedSize).toUpperCase() + '([^A-Za-zА-Яа-яІіЇїЄєҐґ]|$)');
+                sizeBody = sizeTextClean.split(/(?<=[.!?…👌📏])\s+/u).filter((s) => !recRe.test(s.toUpperCase()) && !/^[\s—–-]*(сяде|перевірено)/i.test(s)).join(' ').trim();
+            }
             // Параметри взято з попереднього товару / з раніших повідомлень — називаємо їх, щоб клієнт міг поправити (напр. якщо цей товар для іншої людини).
             const carriedNote = !usedMemory && ctx.agent.hwCarried && si.height && si.weight && !sizeTextClean.includes(String(si.weight)) ? 'Беру ваші параметри ' + si.height + ' см / ' + si.weight + ' кг 🙂 ' : '';
             delete ctx.agent.hwCarried;
-            const reply = (usedMemory ? 'Беру ваші параметри з минулого разу (' + si.height + ' см / ' + si.weight + ' кг) 🙂 ' : '') + carriedNote + claimNote + sizeTextClean + (ctx.sizeColorFollowup ? ' ' + norm(String(ctx.sizeColorFollowup)) : '');
+            const reply = (usedMemory ? 'Беру ваші параметри з минулого разу (' + si.height + ' см / ' + si.weight + ' кг) 🙂 ' : '') + carriedNote + claimNote + sizeBody + (ctx.sizeColorFollowup ? ' ' + norm(String(ctx.sizeColorFollowup)) : '');
             const hasColorNow = ctx.colorChoice && ctx.colorChoice.color;
             if (!hasColorNow && pp.colors) { A.out.push({ text: u.questions.length ? await answerThenAsk(A, u, reply) : reply, step: 'size_reply' }); ctx.agent.lastAsk = 'колір'; return; }
             A.out.push({ text: u.questions.length ? await answerThenAsk(A, u, reply) : reply, step: 'size_reply' });

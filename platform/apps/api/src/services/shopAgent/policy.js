@@ -232,6 +232,22 @@ async function applySetEdit(A, u, pp) {
             if (c && c !== hit.color) { hit.color = c; notes.push(hit.name + ' — колір ' + c); changed = true; }
             const qtyM = String(u.changeRequest).match(/(\d+)\s*(шт|штук|пар)/i);
             if (qtyM && Number(qtyM[1]) !== hit.qty) { hit.qty = Number(qtyM[1]) || 1; notes.push(hit.name + ' — ' + hit.qty + ' шт'); changed = true; }
+            // Розмір позиції: конкретний («кофту XL») або на крок («на розмір більше/менше» — аналізатор sizeShift). Тест 163, 02.10.
+            const SZ = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL', '4XL'];
+            const nz = (x) => String(x || '').toUpperCase().trim().replace(/^2XL$/, 'XXL').replace(/^3XL$/, 'XXXL');
+            const avail = (Array.isArray(hit.sizes) ? hit.sizes : []).map((x) => String((x && (x.name || x.size || x.value)) || x || '').trim()).filter(Boolean);
+            const cur = hit.size || (ctx.setSizeMap || {})[hit.article] || '';
+            let target = '';
+            if (u.clothingSize) target = nz(u.clothingSize);
+            else if (u.sizeShift && cur) {
+                if (/^\d+$/.test(String(cur))) target = String(Number(cur) + Number(u.sizeShift));
+                else { const i = SZ.indexOf(nz(cur)); if (i >= 0 && SZ[i + Number(u.sizeShift)]) target = SZ[i + Number(u.sizeShift)]; }
+            }
+            if (target && target !== nz(cur)) {
+                const label = avail.find((a) => nz(a) === target);
+                if (avail.length && !label) notes.push(hit.name + ' — розміру ' + target + ' немає (є ' + avail.join(', ') + ')');
+                else { hit.size = label || target; ctx.setSizeMap = { ...(ctx.setSizeMap || {}), [hit.article]: hit.size }; notes.push(hit.name + ' — розмір ' + hit.size); changed = true; }
+            }
         } else notes.push(u.changeRequest);
     }
     ctx.agent.setEditNote = notes.join('; ');
@@ -1764,15 +1780,31 @@ async function runPolicyInner(A, u) {
             // Позиції, для яких на ці параметри розміру НЕМАЄ (більші за сітку, постачальник не шиє — рішення власника 01.10), не просимо
             // «оберіть розмір» — відповідь «немає» клієнт уже отримав у рядку розміру (тест cfddd671, 120 кг).
             const oorArts = Array.isArray(ctx.setSizeOor) ? ctx.setSizeOor : [];
-            const needSz = ctx.setSelection.filter((it) => !it.size && Array.isArray(it.sizes) && it.sizes.length > 1 && !(ctx.setSizeMap && ctx.setSizeMap[it.article]) && !oorArts.includes(it.article));
+            const pendingSz = () => ctx.setSelection.filter((it) => !it.size && Array.isArray(it.sizes) && it.sizes.length > 1 && !(ctx.setSizeMap && ctx.setSizeMap[it.article]) && !oorArts.includes(it.article));
+            // Розміру чекає рівно ОДНА позиція, а клієнт написав голий розмір («43») — це її розмір (тест 160, 02.10: бот перепитував).
+            { const pend = pendingSz(); if (pend.length === 1) { const hit = pend[0].sizes.map(sizeName).find((sz) => sz && new RegExp('(^|[^0-9A-Za-z])' + escRe(sz) + '($|[^0-9A-Za-z])', 'i').test(text)); if (hit) { pend[0].size = hit; ctx.setSizeMap = { ...(ctx.setSizeMap || {}), [pend[0].article]: hit }; } } }
+            const needSz = pendingSz();
             if (needSz.length) {
                 ctx.agent.setSizeAskCount = (ctx.agent.setSizeAskCount || 0) + 1;
+                // Рядок розміру щойно показав, що для цієї позиції треба обрати розмір (і які є) — окремий блок у тому ж ході був би
+                // дослівним дублем (тест 161, 02.10). Просто чекаємо відповіді.
+                if (A.out.some((o) => /size_reply/.test(String(o.step || '')))) { ctx.agent.lastAsk = 'розміри позицій комплекту'; applySetPricing(ctx, pp); return; }
                 if (ctx.agent.setSizeAskCount <= 2) {
                     const lines = needSz.map((it) => '📏 ' + it.name + '\nДоступні розміри: ' + it.sizes.map(sizeName).join(', ')).join('\n\n');
                     A.out.push({ text: (ctx.agent.setSizeAskCount > 1 ? 'Нагадаю: лишилось обрати розмір 🙂\n\n' : 'Підкажіть, будь ласка, розмір для решти позицій 🙂\n\n') + lines, step: 'set_size_ask' });
                     ctx.agent.lastAsk = 'розміри позицій комплекту'; applySetPricing(ctx, pp); return;
                 }
                 ctx.agent.setSizesAsked2 = true;
+            }
+        }
+        // Зміни складу («кофту на розмір більше», «без взуття», «джинси чорні замість синіх») — одразу, а не лише після вибору
+        // кольорів (тест 163, 02.10: бот відповів «можна XL», але розмір лишився L, бо зміна чекала кінця кольорів).
+        if (!ctx.crmOrderId && !ctx.agent.setColorsResolved && (u.removeItem || u.addItem || u.changeRequest)) {
+            const editedEarly = await applySetEdit(A, u, pp);
+            A._setEditDone = true;
+            if (editedEarly && ctx.agent.setEditNote) {
+                A.out.push({ text: 'Записала: ' + ctx.agent.setEditNote + ' ✅', step: 'set_edit' });
+                u.questions = u.questions.filter((q) => !/(розмір|більш|менш|замість|колір)/i.test(String(q)));
             }
         }
         if (!ctx.agent.setColorsResolved) {
@@ -1813,7 +1845,9 @@ async function runPolicyInner(A, u) {
                 const c = matchColor({ colors: askingItem.colors.join(',') }, text) || matchColorByPosition(askingItem, text);
                 if (c) askingItem.color = c;
             }
-            const ambiguous = ctx.setSelection.filter((it) => !it.color && Array.isArray(it.colors) && it.colors.length > 1);
+            // Позиція, для якої на ці параметри розміру немає, — колір не питаємо (cfddd671, 02.10).
+            const _oorC = Array.isArray(ctx.setSizeOor) ? ctx.setSizeOor : [];
+            const ambiguous = ctx.setSelection.filter((it) => !it.color && Array.isArray(it.colors) && it.colors.length > 1 && !_oorC.includes(it.article));
             if (ambiguous.length) {
                 const askItem = ambiguous[0];
                 ctx.agent.setColorAskingArticle = askItem.article;
@@ -1837,10 +1871,10 @@ async function runPolicyInner(A, u) {
             }
             ctx.agent.setColorsResolved = true; applySetPricing(ctx, pp); // кольори позицій вже відомі — переносимо їх у extraItems (для CRM і постачальника)
         }
-        if (!ctx.crmOrderId && (u.removeItem || u.addItem || u.changeRequest)) {
+        if (!ctx.crmOrderId && !A._setEditDone && (u.removeItem || u.addItem || u.changeRequest)) {
             const edited = await applySetEdit(A, u, pp);
             if (edited) {
-                const lines = ctx.setSelection.map((it) => it.name + (it.color ? ' (' + it.color + ')' : '') + (it.qty > 1 ? ' ×' + it.qty : '') + ' — ' + (it.price * it.qty) + ' грн').join('\n');
+                const lines = ctx.setSelection.map((it) => it.name + ((it.color || it.size) ? ' (' + [it.color, it.size].filter(Boolean).join(', ') + ')' : '') + (it.qty > 1 ? ' ×' + it.qty : '') + ' — ' + (it.price * it.qty) + ' грн').join('\n');
                 const total = ctx.agent.setPricing.total;
                 const wasReady = ctx.orderIntent && ctx.orderIntent.ready === 'yes';
                 if (wasReady) ctx.orderIntent.ready = null; // змінений склад — підтверджуємо ще раз
@@ -1940,7 +1974,7 @@ async function runPolicyInner(A, u) {
             // (set_edit_confirm, humanSetList), кожна позиція на своєму рядку з буллетом.
             ctx.agent.lastSummaryKey = String(ctx.orderUnitsText || '') + '|' + total; // що саме показали клієнту в підсумку (щоб помітити зміну складу перед оплатою)
             const summary = isSetFull
-                ? messageText(A.assets, 'n_agent_order_summary_header', ctx, A.session.id) + '\n' + (pp.customerName || pp.name) + '\n\n' + ctx.setSelection.map((it) => '• ' + it.name + (it.color ? ' (' + it.color + ')' : '') + (it.qty > 1 ? ' ×' + it.qty : '') + ' — ' + (it.price * it.qty) + ' грн').join('\n') + '\n\nРазом: ' + total + ' грн' + '\n' + shipTerms(ctx)
+                ? messageText(A.assets, 'n_agent_order_summary_header', ctx, A.session.id) + '\n' + (pp.customerName || pp.name) + '\n\n' + ctx.setSelection.map((it) => '• ' + it.name + ((it.color || it.size) ? ' (' + [it.color, it.size].filter(Boolean).join(', ') + ')' : '') + (it.qty > 1 ? ' ×' + it.qty : '') + ' — ' + (it.price * it.qty) + ' грн').join('\n') + '\n\nРазом: ' + total + ' грн' + '\n' + shipTerms(ctx)
                 : (() => { const units = ctx.orderUnitsText || ((ctx.colorChoice && ctx.colorChoice.color ? ctx.colorChoice.color : '') + (ctx.recommendedSize ? ' ' + ctx.recommendedSize : '')); return messageText(A.assets, 'n_agent_order_summary_header', ctx, A.session.id) + '\n' + (pp.customerName || pp.name) + (units ? ' — ' + units : '') + ' — ' + total + ' грн' + (ctx.extraItemsText ? '\n' + ctx.extraItemsText : '') + '\n' + shipTerms(ctx); })();
             // Допродаж уже доданий клієнтом як додатковий товар («і ще футболку») — не пропонуємо його вдруге.
             const upItem = Array.isArray(pp.upsellItems) && pp.upsellItems[0];

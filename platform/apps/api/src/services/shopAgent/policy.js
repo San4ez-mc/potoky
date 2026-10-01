@@ -461,7 +461,7 @@ function resetForNewProduct(A, sku) {
         // Зріст/вага/живіт — це параметри ЛЮДИНИ, а не товару: при переході на інший товар їх не стираємо (аналіз 59 випадків
         // «бот знову питає зріст і вагу», 01.10: 38 — картка нового товару просила їх заново). Скидаємо лише розмір/заміри під товар.
         const body = ctx.sizeInput && ctx.sizeInput.height && ctx.sizeInput.weight ? { height: ctx.sizeInput.height, weight: ctx.sizeInput.weight, ...(ctx.sizeInput.belly ? { belly: true } : {}) } : null;
-        for (const k of ['sizeInput','recommendedSize', 'sizeSource', 'sizeReplyText', 'sizeColorFollowup', 'sizeOutOfRange', 'sizeOorReason', 'sizeOorAlternative', 'isSetSizeCalc', 'setSizesText', 'colorChoice', 'available', 'availReason', 'orderUnits', 'orderUnitsText', 'orderUnitsTotal', 'orderQty', 'orderIntent', 'setMode', 'setPick', 'setSelection', 'availChecked', 'extraItems', 'extraItemsText', 'extraUnresolved', 'orderExtras', 'unavailableColors', 'availableColorsNow']) delete ctx[k];
+        for (const k of ['sizeInput','recommendedSize', 'sizeSource', 'sizeReplyText', 'sizeColorFollowup', 'sizeOutOfRange', 'sizeOorReason', 'sizeOorAlternative', 'isSetSizeCalc', 'setSizesText', 'setSizeMap', 'setSizeOor', 'colorChoice', 'available', 'availReason', 'orderUnits', 'orderUnitsText', 'orderUnitsTotal', 'orderQty', 'orderIntent', 'setMode', 'setPick', 'setSelection', 'availChecked', 'extraItems', 'extraItemsText', 'extraUnresolved', 'orderExtras', 'unavailableColors', 'availableColorsNow']) delete ctx[k];
         for (const k of ['setOriginal', 'setPricing', 'setStageSent', 'setEditNote', 'setParams', 'upsellOffered', 'upsellDeclined', 'setGeneralQ', 'setNamedItem', 'payRepeatCount', 'upsellPhotoSent', 'availKey', 'sizeVerifyAsked', 'sizeClaim']) delete ctx.agent[k];
         if (!ctx.crmOrderId) for (const k of ['paymentInfo', 'payAmount', 'payLabel', 'orderRef', 'orderRefAt', 'ibanPayUrl', 'ibanInvoiceUid', 'requisitesSentAt']) delete ctx[k];
         if (body) { ctx.sizeInput = body; if (!A.hwThisTurn) ctx.agent.hwCarried = true; }
@@ -1761,7 +1761,10 @@ async function runPolicyInner(A, u) {
                     }
                 } catch (e) { /* best-effort */ }
             }
-            const needSz = ctx.setSelection.filter((it) => !it.size && Array.isArray(it.sizes) && it.sizes.length > 1 && !(ctx.setSizeMap && ctx.setSizeMap[it.article]));
+            // Позиції, для яких на ці параметри розміру НЕМАЄ (більші за сітку, постачальник не шиє — рішення власника 01.10), не просимо
+            // «оберіть розмір» — відповідь «немає» клієнт уже отримав у рядку розміру (тест cfddd671, 120 кг).
+            const oorArts = Array.isArray(ctx.setSizeOor) ? ctx.setSizeOor : [];
+            const needSz = ctx.setSelection.filter((it) => !it.size && Array.isArray(it.sizes) && it.sizes.length > 1 && !(ctx.setSizeMap && ctx.setSizeMap[it.article]) && !oorArts.includes(it.article));
             if (needSz.length) {
                 ctx.agent.setSizeAskCount = (ctx.agent.setSizeAskCount || 0) + 1;
                 if (ctx.agent.setSizeAskCount <= 2) {

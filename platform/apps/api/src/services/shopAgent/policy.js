@@ -1927,6 +1927,24 @@ async function runPolicyInner(A, u) {
         if ((u.extraProducts || u.alsoWants || ctx.extraProductMention) && !(pp.isSet && ctx.setMode === 'set')) {
             if (!ctx.extraProductMention) ctx.extraProductMention = u.extraProducts || u.alsoWants;
             await T.extraResolve(A);
+            // Додатковий товар має кілька моделей («і ще лофери 44» — їх 4) — спершу питаємо яку, а не йдемо мовчки до оплати
+            // (тест 162, 02.10). Вибір номером іде звичайним шляхом «вибір зі списку» і додається окремою позицією з названим розміром.
+            const amb = !ctx.crmOrderId && String(ctx.extraUnresolved || '').match(/\(є кілька: ([^)]*)\)/);
+            if (amb) {
+                const skusX = [...amb[1].matchAll(/арт\.\s*([A-Za-z0-9_-]+)/g)].map((m) => m[1]);
+                try {
+                    const catX = await loadCatalog(A.botId, A.keys);
+                    const prodsX = skusX.map((s) => catX.products.find((x) => String(x.sku).toUpperCase() === String(s).toUpperCase())).filter(Boolean);
+                    if (prodsX.length > 1) {
+                        const baseX = (A.keys.CRM_PUBLIC_BASE || 'https://pcrm.fineko.space').replace(/\/$/, '');
+                        const photosX = prodsX.map((x) => (Array.isArray(x.images) ? x.images : [])[0]).filter(Boolean).map((u0) => (/^https?:\/\//i.test(u0) ? u0 : baseX + (String(u0).charAt(0) === '/' ? u0 : '/' + u0)));
+                        if (photosX.length) A.out.push({ photoUrls: photosX.slice(0, 10), caption: '', step: 'extra_choice_photos' });
+                        A.out.push({ text: 'Яку модель додати? 🙂\n' + prodsX.map((x, i) => (i + 1) + '. ' + String(x.customerName || x.name).split('\n')[0] + ' — ' + Number(x.price) + ' грн').join('\n') + '\nМожна відповісти номером 👌', step: 'extra_choice' });
+                        ctx.catalogHintSkus = prodsX.map((x) => x.sku).join(','); ctx.agent.lastAsk = 'який із показаних товарів цікавить'; ctx.extraUnresolved = '';
+                        return;
+                    }
+                } catch (e) { /* best-effort: далі як було */ }
+            }
         }
         // 7a (перенесено вище підсумку, щоб колір потрапляв у нього). Колір ДОДАТКОВОГО товару («і ще футболку» → extraItems), названий пізніше: «футболка біла».
         if (!ctx.crmOrderId && Array.isArray(ctx.extraItems) && ctx.extraItems.length) {

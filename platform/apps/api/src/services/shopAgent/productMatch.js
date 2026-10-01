@@ -410,11 +410,17 @@ try {
     if (!found) { for (var b = 0; b < cc.length && !found; b++) { var pm = matchArticle(all, cc[b]); if (pm) { found = pm; via = 'article:' + cc[b]; mk = 'art_' + cc[b]; } } }
   }
 
+  // Підпис поста/реклами НАЗИВАЄ артикул, а в CRM його нема (новинка чи знятий) — товар визначено однозначно, просто його нема.
+  // Схожі слова чи фото тут лише вгадують: «Чоловічий зимовий жилет Z9901» ставав пуховиком D0043 за «чоловічий»+«зимовий»
+  // (тест 123, 01.10; правило власника 29.09 — не підставляти схожий товар, чесно передати менеджеру).
+  // (Нове фото клієнта цього ходу — окремий сигнал, його розпізнаємо як завжди.)
+  var __capArtUnknown = !found && !context.lastUserImageUrl && extractArticles(((context.sharedPost && context.sharedPost.caption) || '') + '\n' + (__adCaption || '')).length > 0;
+
   // ПРІОРИТЕТ 2.5: keyword-overlap підпису проти displayName, тай-брейк за ціною
   // Джерело слів: підпис пересланого поста, а якщо його нема — назва реклами (відповідь на рекламу
   // без синхронізованого ad_id, 2026-09-04).
   var __kwSource = (context.sharedPost && context.sharedPost.caption) || __adCaption || (context.adTitle ? __normAdName(context.adTitle) : '');
-  if (!found && __kwSource) {
+  if (!found && __kwSource && !__capArtUnknown) {
     var STOPWORDS_KW = { 'та': 1, 'і': 1, 'й': 1, 'на': 1, 'до': 1, 'за': 1, 'від': 1, 'для': 1, 'або': 1, 'це': 1, 'вже': 1, 'ще': 1, 'як': 1, 'що': 1, 'по': 1, 'при': 1, 'без': 1, 'між': 1 };
     // 2026-09-08: слова порівнюємо за 5-літерним коренем («замшевий»≈«замш», «вʼязана»≈«вязан»); джерело назв — name + customerName + displayName
     // (mykola: підпис поста комплекту «кофта, джинси, футболка, лофери» не збігався з displayName «Комплект 4 в 1»).
@@ -501,7 +507,7 @@ try {
       }
     } catch (e) { /* best-effort — фолбек на __visionUrl нижче, якщо не спрацювало */ } finally { clearTimeout(tof); }
   }
-  if (!found && __visionUrl && __gKeys.length) {
+  if (!found && __visionUrl && __gKeys.length && !__capArtUnknown) {
     // 2026-09-12 (масовий живий баг: raw lookaside.fbsbx.com часто 403 навіть свіже — підписані Meta-посилання,
     // схоже, прив'язані до того, хто їх отримав (Zernio), не до нас) — zernioHandler.js тепер best-effort
     // підміняє attachment.url на Zernio-проксі refreshUrl (домен zernio.com), тому додаємо його у whitelist і

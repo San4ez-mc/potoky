@@ -51,6 +51,10 @@ async function resolveShoppingIntent(A, u, tool) {
     }
     // Повторне розпізнавання сторіз (клієнт посилається на «вашу історію») — це свіжий сигнал «ось цей товар», як фото.
     if (ctx.storyRetry && !signal.photoUrl) { signal.photoUrl = 'story'; if (!signal.connective) signal.connective = 'replace'; }
+    // Вибір зі списку, який бот показав у відповідь на «і ще лофери 44» (недавня згадка додаткового товару), — це ДОДАТИ, а не
+    // «замінити чи додати?»: клієнт уже сказав «і ще» (тест 162, 02.10).
+    const _lx = ctx.agent && ctx.agent.lastExtraAsk;
+    if (!signal.connective && hadProduct && (signal.catalogListPick || ctx.catalogHintPick) && _lx && Date.now() - Number(_lx.at || 0) < 30 * 60 * 1000 && _lx.text !== String(A.turnText || text)) signal.connective = 'add';
     ctx.cart.lastSignal = Object.assign({}, signal, { turnAt: Date.now() });
 
     // Товару ще нема, клієнт пише коротку назву («Гельсінкі», «мажор петля») — пробуємо знайти за назвою в каталозі (тест 95).

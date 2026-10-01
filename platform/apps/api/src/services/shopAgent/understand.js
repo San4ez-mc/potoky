@@ -10,7 +10,7 @@ const { logger, stripLoneSurrogates } = require('./lib');
 
 const SCHEMA = `{
  "intent": "greeting|product_query|give_params|give_color|choose_set|order_yes|order_no|hesitate|pay_method|give_address|paid|wants_requisites|question|wants_human|complaint|return_exchange|postpone|thanks|other",
- "height": number|null, "weight": number|null, "clothingSize": "S|M|L|XL|XXL|XXXL|<число>"|null, "chest": number|null, "footLength": number|null, "waist": number|null, "belly": true|false,
+ "height": number|null, "weight": number|null, "clothingSize": "S|M|L|XL|XXL|XXXL|<число>"|null, "chest": number|null, "footLength": number|null, "shoeSize": number|null, "waist": number|null, "belly": true|false,
  "color": "<колір словами клієнта>"|null, "colorMatched": "<точна назва зі СПИСКУ КОЛЬОРІВ товару або null>", "qty": number|null,
  "units": [{"color":"...","size":"..."}]|null,
  "setChoice": "set|item"|null, "setArticle": "<артикул компонента зі списку>"|null,
@@ -42,6 +42,7 @@ const RULES = `ПРАВИЛА РОЗБОРУ:
 - Розбираєш ЛИШЕ ОСТАННЄ повідомлення клієнта (може бути кілька рядків/повідомлень підряд); історія — тільки контекст для розуміння посилань («вище», «та сама», «перша»).
 - 2026-09-15 (живий кейс: «Черный и графитовый» → бот сказав «нема такого кольору», хоча обидва в наявності): клієнт МОЖЕ писати українською, суржиком або РОСІЙСЬКОЮ — розумієш зміст незалежно від мови повідомлення. Усі "довідникові" поля (colorMatched і т.п.) ЗАВЖДИ зводь до українських назв з каталогу/схеми, як і при україномовному повідомленні — мова клієнта не привід повернути null там, де переклад однозначний.
 - Зріст 140–220 см (1,78 м = 178), вага 35–200 кг; якщо переплутано місцями — виправ. Діапазон («90-95») → більше значення. Підписані рядки («Вага 78», «Зріст 182») — теж параметри.
+- Розмір ВЗУТТЯ (EU, 35–50: «44 розмір взуття», «взуття 43», «лофери 44») → shoeSize. footLength — ЛИШЕ довжина стопи в см (22–32: «стопа 27,5 см»). Розмір взуття НЕ йде в clothingSize.
 - Розміри: хс/с/м/л/хл/ххл/хххл → XS/S/M/L/XL/XXL/XXXL; «розмір 31/42» → clothingSize "31"/"42".
 - color: як сказав клієнт (мовою оригіналу); colorMatched — ЛИШЕ назва зі СПИСКУ КОЛЬОРІВ, українською, незалежно від мови клієнта (сірий/серый → «Сірий» або «Світло-сірий» лише якщо такий один; темно-сірий/темно-серый → «Графітовий», якщо він є у списку; відтінок «темно-»/«світло-» НІКОЛИ не міняй на протилежний (темно-сірий ≠ «Світло-сірий»); графіт/графит → «Графітовий»; чорн/черн(ый) → «Чорний»; синь/син(ий) → «Синій/Темно-синій» лише якщо один; білий/белый→«Білий»; червоний/красный→«Червоний»; зелений/зелёный→«Зелений»; жовтий/жёлтый→«Жовтий»; коричневий/коричневый→«Коричневий»; рожевий/розовый→«Рожевий»; фіолетовий/фиолетовый→«Фіолетовий»; блакитний/голубой→«Блакитний»; бежевий/бежевый→«Бежевий»; бордовий/бордовый→«Бордовий»; хакі/хаки→«Хакі»). Хоче ОБИДВА кольори одразу («черный и графитовый», «2 шт — чорний і графітовий») — це НЕ один colorMatched, а units: [{"color":"Чорний"},{"color":"Графітовий"}]. units[].color — теж назва зі СПИСКУ КОЛЬОРІВ за тими самими правилами. «Темний»/«світлий»/«якийсь темніший» без назви кольору — це побажання, не вибір: colorMatched null (бот перепитає, запропонувавши темні варіанти). Нема однозначного збігу → null.
 - wantsManualReq=true: просить реквізити/рахунок/«на карту», АБО скаржиться, що посилання на оплату не відкривається / не працює / банк не підтягується / «не можу оплатити за посиланням» (тоді бот одразу шле ручні реквізити, а не перепитує «яке посилання»).
@@ -154,7 +155,8 @@ async function understand(A) {
     u.questions = Array.isArray(u.questions) ? u.questions.filter((q) => q && String(q).trim()).map(String) : [];
     u.productHint = u.productHint && typeof u.productHint === 'object' ? u.productHint : { article: null, category: null, fromList: null };
     if (u.sizeShift !== 1 && u.sizeShift !== -1) u.sizeShift = Number(u.sizeShift) === 1 ? 1 : (Number(u.sizeShift) === -1 ? -1 : null);
-    for (const k of ['height', 'weight', 'chest', 'footLength', 'waist', 'qty', 'upsellQty']) { const v = Number(u[k]); u[k] = Number.isFinite(v) && v > 0 ? v : null; }
+    if (u.footLength != null && Number(u.footLength) >= 34 && Number(u.footLength) <= 50 && !u.shoeSize) { u.shoeSize = Number(u.footLength); u.footLength = null; } // EU-розмір, не см стопи
+    for (const k of ['height', 'weight', 'chest', 'footLength', 'shoeSize', 'waist', 'qty', 'upsellQty']) { const v = Number(u[k]); u[k] = Number.isFinite(v) && v > 0 ? v : null; }
     if (u.height && u.weight && u.height < u.weight && u.weight >= 140 && u.height <= 200) { const t = u.height; u.height = u.weight; u.weight = t; }
     if (u.clothingSize) u.clothingSize = String(u.clothingSize).toUpperCase().replace(/ХС/g, 'XS').replace(/ХХХЛ/g, 'XXXL').replace(/ХХЛ/g, 'XXL').replace(/ХЛ/g, 'XL').replace(/^Л$/, 'L').replace(/^М$/, 'M').replace(/^С$/, 'S').trim();
     if (u.phone) u.phone = String(u.phone).replace(/\D/g, '').replace(/^38/, '').replace(/^8(?=0\d{9})/, ''); if (u.phone && !/^0\d{9}$/.test(u.phone)) u.phone = null;

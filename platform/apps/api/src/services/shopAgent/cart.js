@@ -49,10 +49,11 @@ function reconcile(current, candidate, signal, ctx) {
     if (!current || !current.sku) return { action: 'SET_MAIN' };
     if (String(candidate.sku).toUpperCase() === String(current.sku).toUpperCase()) return { action: 'CONFIRM' };
 
-    // Явний артикул — найвища довіра, завжди перемагає будь-яку евристику (А7).
-    if (signal.article) return { action: 'REPLACE_MAIN' };
+    // Слова-звʼязки клієнта («і ще», «замість») — головні: «і ще лофери 44» → вибір «2» зі списку дає артикул, але це ДОДАТИ,
+    // а не замінити кофту (тест 162, 02.10). Явний артикул без звʼязки — найвища довіра, заміна (А7).
     if (signal.connective === 'replace') return { action: 'REPLACE_MAIN' };   // "замість", "натомість" (А8а)
     if (signal.connective === 'add') return { action: 'ADD_EXTRA' };          // "і ще", "також" (А8б)
+    if (signal.article) return { action: 'REPLACE_MAIN' };
 
     // Голе фото/назва без слів-звʼязок (А8в): низька ціна помилки, поки збір замовлення
     // ще не почався — безпечно замінити. Якщо клієнт уже дав адресу/оплату — не мовчати.

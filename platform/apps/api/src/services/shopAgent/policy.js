@@ -476,7 +476,7 @@ function resetForNewProduct(A, sku) {
     if (ctx.agent.presentedSku && ctx.agent.presentedSku !== sku) {
         // Зріст/вага/живіт — це параметри ЛЮДИНИ, а не товару: при переході на інший товар їх не стираємо (аналіз 59 випадків
         // «бот знову питає зріст і вагу», 01.10: 38 — картка нового товару просила їх заново). Скидаємо лише розмір/заміри під товар.
-        const body = ctx.sizeInput && ctx.sizeInput.height && ctx.sizeInput.weight ? { height: ctx.sizeInput.height, weight: ctx.sizeInput.weight, ...(ctx.sizeInput.belly ? { belly: true } : {}) } : null;
+        const body = ctx.sizeInput && ctx.sizeInput.height && ctx.sizeInput.weight ? { height: ctx.sizeInput.height, weight: ctx.sizeInput.weight, ...(ctx.sizeInput.belly ? { belly: true } : {}), ...(ctx.sizeInput.shoeSize ? { shoeSize: ctx.sizeInput.shoeSize } : {}) } : null;
         for (const k of ['sizeInput','recommendedSize', 'sizeSource', 'sizeReplyText', 'sizeColorFollowup', 'sizeOutOfRange', 'sizeOorReason', 'sizeOorAlternative', 'isSetSizeCalc', 'setSizesText', 'setSizeMap', 'setSizeOor', 'colorChoice', 'available', 'availReason', 'orderUnits', 'orderUnitsText', 'orderUnitsTotal', 'orderQty', 'orderIntent', 'setMode', 'setPick', 'setSelection', 'availChecked', 'extraItems', 'extraItemsText', 'extraUnresolved', 'orderExtras', 'unavailableColors', 'availableColorsNow']) delete ctx[k];
         for (const k of ['setOriginal', 'setPricing', 'setStageSent', 'setEditNote', 'setParams', 'upsellOffered', 'upsellDeclined', 'setGeneralQ', 'setNamedItem', 'payRepeatCount', 'upsellPhotoSent', 'availKey', 'sizeVerifyAsked', 'sizeClaim']) delete ctx.agent[k];
         if (!ctx.crmOrderId) for (const k of ['paymentInfo', 'payAmount', 'payLabel', 'orderRef', 'orderRefAt', 'ibanPayUrl', 'ibanInvoiceUid', 'requisitesSentAt']) delete ctx[k];
@@ -1072,9 +1072,9 @@ async function runPolicyInner(A, u) {
     }
     // 1c. Раннє захоплення параметрів розміру і кольору — теж незалежно від стадії (клієнт міг назвати
     //     зріст/вагу, поки бот ще питав про комплект чи колір): нічого не губиться, потім не перепитується.
-    if (u.height || u.weight || u.clothingSize || u.chest || u.footLength || u.waist || u.belly) {
+    if (u.height || u.weight || u.clothingSize || u.chest || u.footLength || u.shoeSize || u.waist || u.belly) {
         const si = { ...(ctx.sizeInput || {}) };
-        if (u.height) si.height = u.height; if (u.weight) si.weight = u.weight; if (u.clothingSize) si.clothingSize = u.clothingSize; if (u.chest) si.chest = u.chest; if (u.footLength) si.footLength = u.footLength; if (u.waist) si.waist = u.waist; if (u.belly) si.belly = true;
+        if (u.height) si.height = u.height; if (u.weight) si.weight = u.weight; if (u.clothingSize) si.clothingSize = u.clothingSize; if (u.chest) si.chest = u.chest; if (u.footLength) si.footLength = u.footLength; if (u.shoeSize) si.shoeSize = u.shoeSize; if (u.waist) si.waist = u.waist; if (u.belly) si.belly = true;
         ctx.sizeInput = si;
     }
     if (u.height && u.weight) { A.hwThisTurn = true; delete ctx.agent.hwCarried; }
@@ -1518,7 +1518,7 @@ async function runPolicyInner(A, u) {
         const paramsPrompt = setParams ? setParams.prompt : pp.categoryParamsPrompt;
         const si = { ...(ctx.sizeInput || {}) };
         if (u.height) si.height = u.height; if (u.weight) si.weight = u.weight;
-        if (u.clothingSize) si.clothingSize = u.clothingSize; if (u.chest) si.chest = u.chest; if (u.footLength) si.footLength = u.footLength; if (u.waist) si.waist = u.waist; if (u.belly) si.belly = true;
+        if (u.clothingSize) si.clothingSize = u.clothingSize; if (u.chest) si.chest = u.chest; if (u.footLength) si.footLength = u.footLength; if (u.shoeSize) si.shoeSize = u.shoeSize; if (u.waist) si.waist = u.waist; if (u.belly) si.belly = true;
         if (u.colorMatched && !(ctx.colorChoice && ctx.colorChoice.color)) si.color = u.colorMatched;
         if (u.alsoWants) si.alsoWants = u.alsoWants;
         const mem = ctx.customer || {};
@@ -1545,7 +1545,9 @@ async function runPolicyInner(A, u) {
         // Для одягу, що підбирається за зростом і вагою, інші заміри («по груди 110») НЕ визначають розмір — лише зріст+вага
         // (правка 800c1fb5, Олексій: «на 85 кг буде L–XL, S однозначно малий; інші параметри ігнорувати»). Бракує зросту — питаємо його.
         if (isHW && si.chest && !(si.height && si.weight)) delete si.chest;
-        const complete = (si.height && si.weight) || si.clothingSize || si.footLength || (!isHW && si.chest && pp.sizeChartData);
+        // Товар із числовими розмірами (взуття) — розмір за розміром взуття, не за зростом/вагою (зріст і вага тепер переживають зміну товару).
+        const numericSizes = Array.isArray(pp.sizes) && pp.sizes.length > 0 && pp.sizes.every((z) => /^\d/.test(String((z && (z.name || z.size || z.value)) || z)));
+        const complete = (si.height && si.weight && !numericSizes) || si.clothingSize || si.footLength || (si.shoeSize && (numericSizes || !isHW)) || (!isHW && si.chest && pp.sizeChartData);
         if (complete) {
             // Клієнт просить сітку в тому ж ході, коли розмір рахується (напр. після прохання перевірити розмір) — надсилаємо саме фото,
             // інакше compose пише «надсилаю окремим фото» без вкладення (тести 7c022683/6ed22687).

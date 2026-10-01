@@ -51,7 +51,17 @@ async function checkAvail(A) {
     return r;
 }
 async function availSearch(A) { return tool(A, 'n_avail_search'); }
-async function extraResolve(A) { return tool(A, 'n_extra_resolve'); }
+async function extraResolve(A) {
+    // Розмір, який клієнт назвав разом із додатковим товаром («і ще лофери 44»), а модель обрав наступним ходом («2») — інакше
+    // позиція йшла без розміру, бо згадка вже була голим артикулом (тест 162, 02.10). Розмір — ДАНІ з тексту клієнта (число/літера).
+    const c = A.ctx; const pend = c.agent && c.agent.lastExtraAsk;
+    const SIZE_RE = /(^|[^0-9a-zа-яіїєґ])(xs|s|m|l|xl|xxl|xxxl|2xl|3xl|\d{2})(?=$|[^0-9a-zа-яіїєґ.,])/i;
+    if (c.extraProductMention && pend && Date.now() - Number(pend.at || 0) < 30 * 60 * 1000 && !SIZE_RE.test(String(c.extraProductMention).replace(/\d{3,}/g, ' '))) {
+        const m = String(pend.text || '').replace(/\d{3,}/g, ' ').match(SIZE_RE);
+        if (m) c.extraProductMention = String(c.extraProductMention) + ' розмір ' + m[2];
+    }
+    return tool(A, 'n_extra_resolve');
+}
 async function orderPrefill(A) { return tool(A, 'n_order_prefill'); }
 async function intlRoute(A) { return tool(A, 'n_intl_route'); }
 async function payAmount(A) { return tool(A, 'n_pay_amount'); }

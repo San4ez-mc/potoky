@@ -83,7 +83,8 @@ function mergeConsecutiveTextOutputs(out) {
         // цього наміру. noMerge:true — явний прапорець "це поле для копіювання, не приклеюй".
         const isPlainText = item && item.text && !item.photoUrls && !item.noMerge;
         const lastIsPlainText = last && last.text && !last.photoUrls && !last.noMerge;
-        if (isPlainText && lastIsPlainText) {
+        // Не склеюємо понад ліміт Instagram (1000 симв.; 01.10 сесія 0146ec01 — склеєне повідомлення з посиланням на оплату 1041 симв. не дійшло).
+        if (isPlainText && lastIsPlainText && String(last.text).length + String(item.text).length + 2 <= 950) {
             const tail = stripRedundantGreeting(item.text) || String(item.text).trim();
             last.text = String(last.text).trim() + '\n\n' + tail.trim();
             last.step = last.step + '+' + item.step;

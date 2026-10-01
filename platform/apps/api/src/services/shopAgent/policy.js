@@ -283,7 +283,11 @@ async function answerThenAsk(A, u, askText, o = {}) {
     // askText — ГОТОВИЙ текст для клієнта (не інструкція). Без питань клієнта він іде як є;
     // з питаннями → факти (KB, наявність) → одна відповідь + той самий крок своїми словами.
     if (u.intent === 'greeting' && !o.ack) o = { ...o, ack: 'коротко привітайся у відповідь (тим самим часом доби, якщо клієнт його назвав)' };
+    // Питання клієнта вже отримали відповідь цього ходу (напр. у відповіді про розмір) — вдруге не відповідаємо
+    // (01.10, сесія 0146ec01: «Так, накладений платіж доступний…» двічі в одному повідомленні).
+    if (A._qAnswered && !o.ack) return askText;
     if (!u.questions.length && !o.ack) return askText;
+    if (u.questions.length) A._qAnswered = true;
     A._questionEngaged = true;
     let kb = []; let availAnswer = '';
     try { kb = await T.kbContext(A); } catch (e) { /* best-effort */ }
@@ -2031,8 +2035,8 @@ async function runPolicyInner(A, u) {
         }
         else {
             const payTpl = messageTextMultiline(A.assets, 'n_pay', ctx, A.session.id + ':pay');
-            if (u.questions.length) {
-                A._questionEngaged = true;
+            if (u.questions.length && !A._qAnswered) {
+                A._questionEngaged = true; A._qAnswered = true;
                 const { text: payQTxt, resolved: payQResolved } = await compose(A, { questions: u.questions, nextStep: 'потім скажи, що лишилось обрати спосіб оплати (сам список дасть система)', maxSentences: 3, fallback: '' });
                 if (!payQResolved) await escalateUnresolved(A, u.questions[0]);
                 A.out.push({ text: payQTxt, step: 'pay_q' });
@@ -2053,7 +2057,7 @@ async function runPolicyInner(A, u) {
         await T.payAmount(A);
         if (ctx.paymentInfo.country) { await T.intlRoute(A); if (ctx.intlStatus === 'unsupported') { A.out.push({ text: messageText(A.assets, 'n_intl_unsupported_msg', ctx, A.session.id), step: 'intl' }); await pause(A, 'intl_unsupported', 'n_agent_intl_admin'); return; } }
         await T.funnelStage(A, ...STAGES.awaiting);
-        if (u.questions.length) A.out.push({ text: await answerThenAsk(A, u, ''), step: 'pay_q' });
+        if (u.questions.length && !A._qAnswered) A.out.push({ text: await answerThenAsk(A, u, ''), step: 'pay_q' });
         await sendRequisites(A, u);
         if (!addressComplete(ctx.orderData)) return;
     }

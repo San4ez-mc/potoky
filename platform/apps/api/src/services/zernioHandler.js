@@ -346,7 +346,42 @@ async function logZernioApiCall(sessionId, method, requestData, responseData, st
     } catch (e) { logger.warn('[zernioHandler] logZernioApiCall failed: ' + e.message); }
 }
 
+/** Instagram приймає текст до 1000 символів — довше Meta мовчки відкидає (01.10, сесія 0146ec01: повідомлення з посиланням на оплату
+ * 1041 симв. не дійшло, а бот потім писав «оплата за посиланням вище»). Ділимо по абзацах/рядках/реченнях на частини ≤ 950. */
+const IG_TEXT_LIMIT = 950;
+function splitForInstagram(text) {
+    const s = String(text || '');
+    if (s.length <= IG_TEXT_LIMIT) return [s];
+    const parts = []; let cur = '';
+    const pieces = s.split(/(\n\n)/).reduce((acc, x) => { if (x === '\n\n' && acc.length) acc[acc.length - 1] += x; else acc.push(x); return acc; }, []);
+    const flush = () => { if (cur.trim()) parts.push(cur.trim()); cur = ''; };
+    for (let p of pieces) {
+        if ((cur + p).length <= IG_TEXT_LIMIT) { cur += p; continue; }
+        flush();
+        while (p.length > IG_TEXT_LIMIT) {
+            const win = p.slice(0, IG_TEXT_LIMIT);
+            const cut = Math.max(win.lastIndexOf('\n'), win.lastIndexOf('. '), win.lastIndexOf('! '), win.lastIndexOf('? '));
+            const at = cut > IG_TEXT_LIMIT / 2 ? cut + 1 : IG_TEXT_LIMIT;
+            parts.push(p.slice(0, at).trim()); p = p.slice(at);
+        }
+        cur = p;
+    }
+    flush();
+    return parts;
+}
+
 async function sendZernioMessage(botId, conversationId, text, opts = {}) {
+    // Директ: довгий текст — кількома повідомленнями (приватна відповідь на коментар дозволена лише одна — її не ділимо).
+    if (conversationId && String(text || '').length > IG_TEXT_LIMIT) {
+        const chunks = splitForInstagram(text); let firstId = null;
+        logger.info('[zernioHandler] довге повідомлення поділено на частини', { botId, sessionId: opts.sessionId, len: String(text).length, parts: chunks.length });
+        for (const c of chunks) { const id = await sendZernioMessageOne(botId, conversationId, c, opts); if (!firstId) firstId = id; }
+        return firstId;
+    }
+    return sendZernioMessageOne(botId, conversationId, text, opts);
+}
+
+async function sendZernioMessageOne(botId, conversationId, text, opts = {}) {
     const km = await getZernioKeys(botId);
     if (!isReal(km.ZERNIO_API_TOKEN)) throw new Error('ZERNIO_API_TOKEN ще не налаштований у ключах воронки.');
     if (!isReal(km.ZERNIO_ACCOUNT_ID)) throw new Error('ZERNIO_ACCOUNT_ID ще не налаштований у ключах воронки.');

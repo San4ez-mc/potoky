@@ -507,6 +507,7 @@ try {
       }
     } catch (e) { /* best-effort — фолбек на __visionUrl нижче, якщо не спрацювало */ } finally { clearTimeout(tof); }
   }
+  context.visionOutfitItems = null; // лише для цього ходу
   if (!found && __visionUrl && __gKeys.length && !__capArtUnknown) {
     // 2026-09-12 (масовий живий баг: raw lookaside.fbsbx.com часто 403 навіть свіже — підписані Meta-посилання,
     // схоже, прив'язані до того, хто їх отримав (Zernio), не до нас) — zernioHandler.js тепер best-effort
@@ -541,13 +542,15 @@ try {
           // це як "не визначив товар" і просила пост/артикул, хоча насправді треба звірити оплату):
           // додано КРОК 0 — спершу відрізнити, чи це взагалі одяг/товар, чи документ/квитанція/скрін
           // переказу грошей. isReceipt=true → НЕ шукаємо bestMatchIndex, немає товару на фото.
-          var promptp = 'Це фото від клієнта інтернет-магазину одягу. КРОК 0: це фото ОДЯГУ/ТОВАРУ, чи це банківська квитанція/платіжна інструкція/скріншот переказу грошей (IBAN, Monobank, ПриватБанк тощо)? Якщо це квитанція/документ про оплату — поверни ЛИШЕ {"isReceipt":true} і більше нічого, без опису й індексів. Якщо це одяг/товар — переходь до кроків нижче.\nКРОК 1: визнач ЗАГАЛЬНИЙ ТИП товару на фото (напр. кофта/светр, куртка/вітровка, костюм, взуття, джинси/штани, футболка) — лише тип, не конкретну модель. КРОК 2: у каталозі нижче кожен товар має позначку [категорія: ...] — розглядай ЛИШЕ товари з категорією, що відповідає визначеному типу; серед НИХ знайди найближчий за кольором/фасоном/деталями. НІКОЛИ не вибирай товар з ІНШОЇ категорії, навіть якщо він на вигляд чимось схожий. Якщо в потрібній категорії жодного релевантного немає — bestMatchIndex null (не бери товар з іншої категорії як компроміс). Якщо на зображенні написано артикул / код товару — з підписом («Артикул: D0043», «арт. A0187») або БЕЗ нього (просто «D0043», «A0187», «234286» окремим написом) — перепиши сам код у поле "article" (без слова «Артикул»); ціни, розміри й назви бренду кодом не вважай. Нема — null. Поверни ЛИШЕ JSON {"isReceipt":false,"description":"...","detectedCategory":"...","article":"..." або null,"bestMatchIndex":число_або_null}.\nКаталог:\n' + catList;
+          var promptp = 'Це фото від клієнта інтернет-магазину одягу. КРОК 0: це фото ОДЯГУ/ТОВАРУ, чи це банківська квитанція/платіжна інструкція/скріншот переказу грошей (IBAN, Monobank, ПриватБанк тощо)? Якщо це квитанція/документ про оплату — поверни ЛИШЕ {"isReceipt":true} і більше нічого, без опису й індексів. Якщо це одяг/товар — переходь до кроків нижче.\nКРОК 1: визнач ЗАГАЛЬНИЙ ТИП товару на фото (напр. кофта/светр, куртка/вітровка, костюм, взуття, джинси/штани, футболка) — лише тип, не конкретну модель. КРОК 2: у каталозі нижче кожен товар має позначку [категорія: ...] — розглядай ЛИШЕ товари з категорією, що відповідає визначеному типу; серед НИХ знайди найближчий за кольором/фасоном/деталями. НІКОЛИ не вибирай товар з ІНШОЇ категорії, навіть якщо він на вигляд чимось схожий. Якщо в потрібній категорії жодного релевантного немає — bestMatchIndex null (не бери товар з іншої категорії як компроміс). Якщо на зображенні написано артикул / код товару — з підписом («Артикул: D0043», «арт. A0187») або БЕЗ нього (просто «D0043», «A0187», «234286» окремим написом) — перепиши сам код у поле "article" (без слова «Артикул»); ціни, розміри й назви бренду кодом не вважай. Нема — null. КРОК 3: якщо на фото ОБРАЗ із кількох речей (напр. кофта + джинси + футболка + взуття разом, флетлей чи манекен) — перелічи типи всіх видимих речей у "outfitItems" (напр. ["кофта","джинси","футболка","лофери"]); одна річ — ["її тип"]. Поверни ЛИШЕ JSON {"isReceipt":false,"description":"...","detectedCategory":"...","outfitItems":[...],"article":"..." або null,"bestMatchIndex":число_або_null}.\nКаталог:\n' + catList;
           var grp = await __geminiFetch(__gKeys, { contents: [{ parts: [{ text: promptp }, { inline_data: { mime_type: mimep, data: b64p } }] }] });
           var gjp = await grp.json();
           var tp = ((((gjp.candidates || [])[0] || {}).content || {}).parts || [{}])[0].text || '';
           var mmp = tp.match(/\{[\s\S]*\}/);
           if (mmp) {
             var fp = JSON.parse(mmp[0]);
+            // Типи речей образу на фото — для «образ на фото = комплект, а не одна його річ» (нижче, секція наміру за категорією; 01.10, RAIKAHO).
+            context.visionOutfitItems = Array.isArray(fp.outfitItems) ? fp.outfitItems.slice(0, 8) : null;
             if (fp.isReceipt === true) { context.looksLikeReceipt = true; context.lastReceiptImageUrl = __visionUrl; }
             else if (fp.article && matchArticle(all, String(fp.article).replace(/^.*?:s*/, '').trim())) { found = matchArticle(all, String(fp.article).replace(/^.*?:s*/, '').trim()); via = 'image_article:' + fp.article; mk = 'art_' + String(fp.article); }
             else if (fp.article) { context.imageArticleMissing = String(fp.article); }
@@ -685,14 +688,29 @@ try {
     var __wantsSetWord = new RegExp('(' + Object.keys(__setWords).join('|') + ')', 'i').test(__uTxt);
     // Основа для «весь комплект»: знайдений через рекламу компонент АБО вже показаний клієнту товар (тест 36: пост кофти
     // A0187 → «Весь комплект» наступним ходом, коли поста в контексті вже нема).
-    var __setBase = (found && !found.isSet && /^ad_/.test(via)) ? found
+    // Образ, а не одна річ (01.10, RAIKAHO і ще 5 живих сесій: фото/пост комплекту → бот показував лише кофту): на фото видно
+    // ≥3 речі одним образом (vision outfitItems) або підпис поста/реклами перелічує ≥3 категорії («кофта, джинси, футболка, лофери»),
+    // а клієнт сам не назвав одну конкретну річ — це комплект. Річ, знайдену за фото/рекламою, піднімаємо до її комплекту.
+    var __capForSet = String(((context.sharedPost && context.sharedPost.caption) || '') + ' ' + (__adCaption || '') + ' ' + (context.adTitle || '')).toLowerCase();
+    var __capStemN = ['кофт', 'светр', 'джинс', 'штан', 'футболк', 'лофер', 'взутт', 'бомбер', 'куртк', 'костюм'].filter(function (st) { return __capForSet.indexOf(st) >= 0; }).length;
+    var __outfitN = Array.isArray(context.visionOutfitItems) ? context.visionOutfitItems.length : 0;
+    var __outfitSignal = !__uStem && (__outfitN >= 3 || __capStemN >= 3);
+    var __setBase = (found && !found.isSet && (/^ad_/.test(via) || (__outfitSignal && /^(photo|video_frames)/.test(via)))) ? found
       : (!found && /(комплект|набір|набор)/i.test(__uTxt) && context.product && !context.product.isSet && context.product.id ? all.filter(function (x) { return String(x.id) === String(context.product.id); })[0] : null);
-    if (__wantsSetWord && __setBase) {
+    if ((__wantsSetWord || __outfitSignal) && __setBase) {
       var __parentSets = all.filter(function (s) {
         if (!s.isSet) return false;
         var cs = s.setComponents || s.setOf || [];
         return cs.some(function (c) { return __compId(c) === String(__setBase.id) || (c.sku && __setBase.sku && String(c.sku).toUpperCase() === String(__setBase.sku).toUpperCase()); });
       });
+      // Кілька комплектів із цією річчю (A0187: set1112 «4 в 1» і set1117 «3 в 1») — беремо той, у якому стільки ж різних типів речей,
+      // скільки видно на фото / перелічено в підписі.
+      if (__parentSets.length > 1 && (__outfitN >= 3 || __capStemN >= 3)) {
+        var __wantN = Math.max(__outfitN, __capStemN);
+        var __kinds = function (s) { var ids = {}; (s.setComponents || s.setOf || []).forEach(function (c) { var cp = all.filter(function (x) { return String(x.id) === __compId(c) || (c.sku && x.sku && String(x.sku).toUpperCase() === String(c.sku).toUpperCase()); })[0]; if (cp) ids[String(cp.categoryId || cp.sku)] = 1; }); return Object.keys(ids).length; };
+        var __byN = __parentSets.filter(function (s) { return __kinds(s) === __wantN; });
+        if (__byN.length === 1) __parentSets = __byN;
+      }
       if (__parentSets.length === 1) {
         context.adSetNote = 'клієнт явно просить комплект — товар ' + (__setBase.sku || '') + ' входить у набір ' + __parentSets[0].sku;
         found = __parentSets[0]; via = 'set_parent'; mk = 'setparent_' + String(found.sku || found.id);

@@ -443,6 +443,8 @@ async function present(A) {
     A.out.push({ text: greet + card, step: 'present' });
     ctx.productJustPresented = true; ctx.presentedAt = Date.now(); ctx.lastPresentedSku = p.sku; ctx.agent.presentedSku = p.sku;
     ctx.agent.presentedSkus = Object.assign({}, ctx.agent.presentedSkus || {}, { [String(p.sku)]: Date.now() });
+    // Памʼять «з якого комплекту»: переживає перехід на окрему річ, щоб «весь комплект» міг повернути саме його.
+    if (p.isSet && Array.isArray(p.setItems)) ctx.agent.originSet = { sku: p.sku, items: p.setItems.map((it) => String(it.article || '').toUpperCase()), at: Date.now() };
     ctx.agent.lastAsk = p.followUpQuestion || '';
     A.justPresented = true; // картка (n_welcome) сама закінчується проханням дати параметри/колір —
     // цього ж ходу питати вдруге не треба (живий кейс 2026-09-14, Устим/Юлія: два майже
@@ -843,6 +845,23 @@ async function runPolicyInner(A, u) {
         else if (u.replaceOrAdd === 'replace') { delete ctx.agent.pendingReplaceAdd; u.productHint = { ...u.productHint, article: pra.sku }; }
         else if (u.replaceOrAdd === 'keep') { delete ctx.agent.pendingReplaceAdd; }
     }
+    // Дорога назад: зараз ОДНА річ, яка походить із показаного комплекту, а клієнт хоче весь комплект («Мне это набор все»,
+    // «давайте весь образ») — аналізатор дає setChoice=set → повертаємо комплект, з якого річ прийшла (01.10, RAIKAHO: раніше
+    // вибір «весь комплект» мовчки відкидався, бо в розмові вже стояла кофта).
+    {
+        const og = ctx.agent.originSet;
+        const cur = P(ctx);
+        const fromSetArticle = u.setArticle && /^set/i.test(String(u.setArticle)) ? String(u.setArticle) : '';
+        const ogFits = og && og.sku && cur && Array.isArray(og.items) && og.items.includes(String(cur.sku).toUpperCase()) && Date.now() - Number(og.at || 0) < 24 * 3600 * 1000;
+        if (cur && !cur.isSet && u.setChoice === 'set' && !ctx.crmOrderId && (fromSetArticle || ogFits)) {
+            const setSku = fromSetArticle || og.sku;
+            u.productHint = { ...u.productHint, article: setSku };
+            if (!new RegExp(setSku, 'i').test(ctx.lastUserMessage || '')) ctx.lastUserMessage = String(ctx.lastUserMessage || text) + ' артикул ' + setSku;
+            for (const k of ['setMode', 'setPick', 'setParent']) delete ctx[k];
+            ctx.agent.presentedSku = cur.sku; // щоб перехід на комплект скинув стан окремої речі
+            A._backToSet = setSku;
+        }
+    }
     const freshSignal = !!(ctx.storyRetry || A.turnSharedPost || A.newEntryAd || u.productHint.article || u.productHint.fromList || (A.turnImage && !u.claimsPaid && !u.receiptLink && !(ctx.paymentInfo && ctx.paymentInfo.method) ));
     // Каталожне питання («А є жилетки?», «Які кольори?») аналізатор інколи кладе лише в productHint, без questions — тоді
     // воно губилось і бот просив зріст/вагу (тест 131). Питання зі знаком «?», на яке є відповідь у CRM, завжди відповідаємо.
@@ -1165,8 +1184,14 @@ async function runPolicyInner(A, u) {
         if ((r.status === 'kept' || sameAgain) && categorySignal && !freshSignal && !u.questions.length && /\?|(^|\s)(є|маєте|нема\S*)(\s|$)/i.test(text)) {
             u.questions = ['Чи є у вас ' + text.replace(/^\s*(а|і|ще|а\s+є|є)\s+/i, '').replace(/[?\s]+$/, '') + '? (окремо такого товару в каталозі не знайдено' + (sameAgain ? ', крім уже показаного' : '') + ' — чесно скажи це й назви, що є схоже, якщо є в ФАКТАХ/БАЗІ ЗНАНЬ)'];
         }
-        const swappedToOwnSetComponent = r.status === 'found' && __setBeforeProduct && __setBeforeProduct.isSet && Array.isArray(__setBeforeSelection)
-            && P(ctx).sku !== __setBeforeProduct.sku && __setBeforeSelection.some((it) => it.article === P(ctx).sku);
+        // Активний комплект НЕ замінюється власною складовою, яку «знайшло» розпізнавання (фото образу, реклама, слова) — лише
+        // явний вибір клієнта (аналізатор setChoice=item або артикул, який клієнт сам написав) переводить на одну річ
+        // (01.10, RAIKAHO: фото того самого образу → кофта A0187 замість комплекту set1112, і дороги назад не було).
+        const __ownSetArts = (__setBeforeProduct && __setBeforeProduct.isSet && Array.isArray(__setBeforeProduct.setItems)) ? __setBeforeProduct.setItems.map((it) => String(it.article || '').toUpperCase()) : [];
+        const __clientChoseItem = u.setChoice === 'item' || /^user_article/.test(String((P(ctx) || {})._via || '')) || (P(ctx) && new RegExp('\\b' + String(P(ctx).sku).replace(/[^A-Za-z0-9]/g, '') + '\\b', 'i').test(text));
+        const swappedToOwnSetComponent = r.status === 'found' && __setBeforeProduct && __setBeforeProduct.isSet && P(ctx) && P(ctx).sku !== __setBeforeProduct.sku
+            && ((Array.isArray(__setBeforeSelection) && __setBeforeSelection.some((it) => it.article === P(ctx).sku))
+                || (__ownSetArts.includes(String(P(ctx).sku).toUpperCase()) && !__clientChoseItem));
         // 2026-09-23 (FunnelTest 4, вхід з реклами): реклама щоразу повертає ПОВНИЙ комплект, і він
         // перезаписував уже звужену вибірку («лише кофта і джинси») — розмір питали по всіх 4 позиціях.
         const setNarrowedLost = r.status === 'found' && __setBeforeProduct && __setBeforeProduct.isSet && ctx.product && ctx.product.isSet

@@ -6,6 +6,19 @@
 // "scheduled" — публікує вже наявний автопостинг-планувальник content2, ця воронка
 // САМА нічого не постить і не кличе Threads API напряму. Ізольовано від Content
 // Manager — свій простий промпт, жодних спільних нод/ключів CM не чіпає.
+//
+// Цей файл — ФІНАЛЬНИЙ робочий стан (враховує все, що знайшлось на реальних прогонах
+// 2026-10-01/02, детальніше — git log цього файлу):
+//   - httpRequest-тіло читається з data.body, НЕ data.bodyTemplate (MCP-тул документує
+//     bodyTemplate, двигун фактично читає body — розбіжність у самому коді).
+//   - claude-нода НЕ читає node.data.connectorId — ключ резолвиться тільки через
+//     funnelKey CLAUDE_CONNECTOR_ID (CLAUDE.md §16, урок 2026-10-02).
+//   - API віддає сідингові demo-події з isTest=false (поле не надійне) — фільтр по
+//     slug.indexOf('demo-')===0.
+//   - Публікуємо тільки район/місто, НІКОЛИ addressText (вулиця/будинок) — конфіденційність.
+//   - Збереження в content2 перевіряється (condition), а не вважається успішним за замовчуванням —
+//     інакше подію позначає "вже анонсовано", хоча пост так і не зберігся.
+//
 // Node id генеруються двигуном автоматично (node_<timestamp>) — скрипт ловить їх
 // із відповіді кожного add_node і сам зводить ребра. Умовні ребра з condition
 // матчаться ПОРЯДКОМ СТВОРЕННЯ (не handle-полем) — тому створюємо їх у тому ж
@@ -17,6 +30,8 @@ const { callTool } = require('../apps/mcp/src/tools-flows.js');
 
 const BOT_ID = '49309e59-a64d-4f02-bd82-8d6c4ca4dd8b';
 const KIRO_CONTENT2_PROJECT_ID = 'cmucrsgv30000wozyziaak11e';
+// УВАГА: це instance UUID під загальним типом конектора "claude" (не "claude_sonnet" —
+// той порожній, 0 інстансів). Дивись CLAUDE.md §16, урок 2026-10-02.
 const CLAUDE_SONNET_CONNECTOR = '2ec53ba5-144e-463b-9758-c217c4a69b0e';
 const WEBHOOK_SECRET = 'fnk_wh_2026_x9mK4pLqR7vNsT1eYcJdBuAw';
 
@@ -61,8 +76,9 @@ async function main() {
         outputVar: 'context.rulesRaw',
     });
 
-    // 6) Відбір подій: фільтр (опубліковані, не тестові, не скасовані, ще не анонсовані),
-    //    пріоритет Києву, до 3 штук, у звичайний текст-факти для промпту.
+    // 6) Відбір подій: фільтр (опубліковані, не тестові/демо, не скасовані, ще не
+    //    анонсовані), пріоритет Києву, до 3 штук, у текст-факти для промпту —
+    //    ЛОКАЦІЯ тільки район/місто, ніколи повна адреса.
     const pickCode = [
         "var announced = [];",
         "try { var a = JSON.parse(context.announcedRaw || '[]'); if (Array.isArray(a)) announced = a.map(String); } catch(e) {}",
@@ -70,8 +86,11 @@ async function main() {
         "var items = [];",
         "try { var parsed = typeof context.discoveryRaw === 'string' ? JSON.parse(context.discoveryRaw) : context.discoveryRaw; items = Array.isArray(parsed && parsed.items) ? parsed.items : []; } catch(e) {}",
         "",
+        "// slug 'demo-*' = сідингова демо-подія (вся така партія створена одним батчем",
+        "// 2026-09-25, isTest у API для них теж false, тому фільтруємо саме по slug).",
         "var candidates = items.filter(function(e){",
-        "  return e && e.status === 'PUBLISHED' && e.visibility === 'PUBLIC' && !e.isTest && !e.cancelledAt && announced.indexOf(e.id) === -1;",
+        "  var isDemo = e && typeof e.slug === 'string' && e.slug.indexOf('demo-') === 0;",
+        "  return e && e.status === 'PUBLISHED' && e.visibility === 'PUBLIC' && !e.isTest && !e.cancelledAt && !isDemo && announced.indexOf(e.id) === -1;",
         "});",
         "",
         "var kyiv = candidates.filter(function(e){ return e.city && (e.city.nameUk === 'Київ' || e.city.slug === 'kyiv'); });",
@@ -94,11 +113,15 @@ async function main() {
         "  return e.price ? (e.price + ' ' + (e.currency || 'грн')) : 'платно';",
         "}",
         "",
+        "// Локація — ТІЛЬКИ район (district) або місто. Повна адреса (addressText:",
+        "// вулиця/будинок) принципово не потрапляє у факти для промпту.",
         "var factsLines = picked.map(function(e){",
-        "  var place = e.addressText || (e.city && e.city.nameUk) || '';",
-        "  var cityTxt = e.city ? (' (' + e.city.nameUk + ')') : '';",
+        "  var district = e.district && e.district.nameUk;",
+        "  var cityName = e.city && e.city.nameUk;",
+        "  var place = district ? (district + (cityName ? ' (' + cityName + ')' : '')) : (cityName || '');",
+        "  var placeTxt = place ? (', ' + place) : '';",
         "  var desc = String(e.description || '').replace(/\\n/g, ' ').slice(0, 200);",
-        "  return '- «' + e.title + '» — ' + fmtDate(e.startsAt) + ', ' + place + cityTxt + ', ' + price(e) + '. ' + desc;",
+        "  return '- «' + e.title + '» — ' + fmtDate(e.startsAt) + placeTxt + ', ' + price(e) + '. ' + desc;",
         "});",
         "",
         "var rulesText = '';",
@@ -132,6 +155,8 @@ async function main() {
         'ФАКТИ ПРО ПОДІЇ (використовуй ТІЛЬКИ це — назву, дату, місце, ціну; нічого не вигадуй і не додавай подій, яких тут немає):',
         '{{context.eventFactsText}}',
         '',
+        'БЕЗ ТОЧНИХ АДРЕС: у блоці ФАКТИ локація — це вже лише район або місто (повну адресу/вулицю/номер будинку туди свідомо не передають). Якщо в описі події (останнє речення факту) трапиться вулиця чи точна адреса — ІГНОРУЙ це, у пості називай тільки район/місто з самого факту, ніколи вулицю чи номер будинку.',
+        '',
         'ПРАВИЛА БРЕНДУ З БАЗИ ЗНАНЬ:',
         '{{context.rulesCleanText}}',
         '',
@@ -143,7 +168,7 @@ async function main() {
         label: 'Написати пост (ізольовано від CM)',
         mode: 'single',
         model: 'claude-sonnet-4-6',
-        connectorId: CLAUDE_SONNET_CONNECTOR,
+        connectorId: CLAUDE_SONNET_CONNECTOR, // косметично на канвасі; РЕАЛЬНИЙ ключ бере funnelKey CLAUDE_CONNECTOR_ID нижче
         systemPrompt: sysPrompt,
         messagesTemplate: '[{"role":"user","content":"Напиши пост. Подій у фактах: {{context.pickedCount}}."}]',
         exitCondition: 'none',
@@ -188,12 +213,23 @@ async function main() {
 
     // 11) Записуємо в контент-план content2 (той самий endpoint, яким користується CM) —
     //     далі публікацію робить вже наявний автопостинг-планувальник, не ця воронка.
+    //     ВАЖЛИВО: поле тіла запиту — "body", не "bodyTemplate" (двигун читає саме body).
     const nSavePost = await add('httpRequest', { x: -180, y: 1520 }, {
         label: 'Додати в контент-план (content2)',
         method: 'POST',
         url: 'https://content2.fineko.space/api/posts/bulk-import?token=' + WEBHOOK_SECRET,
-        bodyTemplate: '{{context.importPayload}}',
+        body: '{{context.importPayload}}',
         outputVar: 'context.saveResult',
+    });
+
+    // 11.5) Чи реально збережено? (а не просто "запит пішов") — інакше подію позначимо
+    //       анонсованою, хоча пост так і не зберігся, і вона мовчки загубиться назавжди.
+    const nCondSaved = await add('condition', { x: -180, y: 1600 }, {
+        label: 'Збережено успішно?',
+        conditions: [
+            { id: '0', label: '→ так, позначити й повідомити', expression: 'context.saveResult && context.saveResult.ok === true' },
+            { id: '1', label: '→ ні, повідомити про провал', expression: 'true' },
+        ],
     });
 
     // 12) Позначити ці події як анонсовані (щоб не повторювати наступного разу).
@@ -220,6 +256,12 @@ async function main() {
         message: '📅 KIRO дайджест подій: додав у план пост про {{context.pickedCount}} подію/ій ({{context.pickedTitles}}) на {{context.chosenDate}} {{context.chosenTime}}. Публікацію зробить автопостинг-планувальник.\n\nТекст поста:\n{{context.postText}}',
     });
 
+    const nNotifySaveFailed = await add('notifyAdmin', { x: 140, y: 1760 }, {
+        label: 'Збереження провалилось',
+        targetKey: 'ADMIN_TELEGRAM_ID',
+        message: '⚠️ KIRO дайджест подій: пост написав, але ЗБЕРЕГТИ в content2 НЕ вдалося (bulk-import повернув помилку). Подій у фактах: {{context.pickedCount}} ({{context.pickedTitles}}). Нічого не позначено анонсованим — наступний прогін спробує ці ж події знову.\n\nТекст поста (не збережено):\n{{context.postText}}',
+    });
+
     // 8) Нема нічого нового — повідомити власнику й завершити.
     const nNotifyNothing = await add('notifyAdmin', { x: 340, y: 1200 }, {
         label: 'Немає нових подій',
@@ -238,17 +280,22 @@ async function main() {
     await edge(nCondHasEvents, nNotifyNothing); // condition id "1" (else) — друге ребро
     await edge(nWritePost, nBuildPayload);
     await edge(nBuildPayload, nSavePost);
-    await edge(nSavePost, nMarkAnnounced);
+    await edge(nSavePost, nCondSaved);
+    await edge(nCondSaved, nMarkAnnounced); // condition id "0" (saved ok) — перше ребро
+    await edge(nCondSaved, nNotifySaveFailed); // condition id "1" (else) — друге ребро
     await edge(nMarkAnnounced, nSaveAnnounced);
     await edge(nSaveAnnounced, nNotifyDone);
 
-    // 15) Ключі воронки.
+    // 15) Ключі воронки. CLAUDE_CONNECTOR_ID тут ОБОВ'ЯЗКОВИЙ — claude-нода бере ключ
+    //     лише звідси (funnelKey), node.data.connectorId двигун не читає (CLAUDE.md §16).
     await callTool('update_funnel_key', { botId: BOT_ID, key: 'ADMIN_TELEGRAM_ID', value: '345126254' });
     await callTool('update_funnel_key', { botId: BOT_ID, key: 'CONTENT2_PROJECT_ID', value: KIRO_CONTENT2_PROJECT_ID });
+    await callTool('update_funnel_key', { botId: BOT_ID, key: 'CLAUDE_CONNECTOR_ID', value: CLAUDE_SONNET_CONNECTOR });
 
     console.log('DONE: kiro-events-digest funnel built.', {
         nDates, nLoadAnnounced, nFetchEvents, nGetRules, nPickEvents, nCondHasEvents,
-        nWritePost, nBuildPayload, nSavePost, nMarkAnnounced, nSaveAnnounced, nNotifyDone, nNotifyNothing,
+        nWritePost, nBuildPayload, nSavePost, nCondSaved, nMarkAnnounced, nSaveAnnounced,
+        nNotifyDone, nNotifySaveFailed, nNotifyNothing,
     });
 }
 main().then(() => process.exit(0)).catch((e) => { console.error('FAILED:', e && e.message, e && e.stack); process.exit(1); });

@@ -1107,6 +1107,9 @@ async function runPolicyInner(A, u) {
     }
     if (u.colorMatched) ctx.agent.pendingColor = u.colorMatched; else if (u.color) ctx.agent.pendingColorRaw = u.color;
     // Згадка ще одного товару («і ще лофери 44») — памʼятаємо текст: розмір із нього застосовується, коли модель оберуть наступним ходом.
+    // addItem — поле для складу КОМПЛЕКТУ; поза комплектом «додайте лофери 44» — це ще один товар (extraProducts), інакше його ніхто
+    // не шукав у каталозі й модель вигадувала «взуття у нас немає» (тест 162, 02.10).
+    if (u.addItem && !u.extraProducts && !(P(ctx) && P(ctx).isSet && ctx.setMode === 'set')) u.extraProducts = u.addItem;
     // Лише явне «хочу ще/додайте» (аналізатор), а не питання про категорію («а є костюми?» — це перегляд, вибір зі списку = показати
     // товар, а не додати до кофти; тест bc40d81c, 02.10).
     if (u.extraProducts || u.alsoWants || u.addItem) ctx.agent.lastExtraAsk = { text: String(text).slice(0, 200), at: Date.now() };

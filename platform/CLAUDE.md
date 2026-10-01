@@ -452,6 +452,16 @@ pm2 logs platform-api --lines 20
 ### Урок з помилки (2026-05-28)
 
 `AI_CONNECTOR_ID = 30edf58a` — це **ID типу конектора** (definition), а не збереженого екземпляру. Правильний **instance ID** = `2ec53ba5`. Через цю помилку Claude нода не могла знайти конектор і падала. Завжди використовувати instance UUID з `list_connectors → instances[].id`.
+### Урок з помилки (2026-10-02) — claude-нода читає ключ ІНАКШЕ, ніж connector-нода
+
+Правило вище («не створюй per-funnel `CLAUDE_CONNECTOR_ID`, вставляй UUID прямо в `connectorId` ноди») стосується нод типу **`connector`** (WayForPay/ibanoplata/monobank) — вони РЕАЛЬНО читають `node.data.connectorId`.
+
+Нода типу **`claude`** працює інакше: `node.data.connectorId` **взагалі не читається двигуном** (перевірено грепом по `testSession.js` — жодного вжитку). Ключ для неї резолвиться ТІЛЬКИ через `resolveFunnelClaudeKey(sessionId)` (`packages/claude/src/wrapper.js`), яка шукає funnelKey бота `CLAUDE_API_KEY` / `ANTHROPIC_API_KEY` / **`CLAUDE_CONNECTOR_ID`** (саму funnelKey-назву, не поле ноди) і через неї — `savedConnector`.
+
+**Правило для claude-нод:** постав `CLAUDE_CONNECTOR_ID` як **funnelKey воронки** (значення — instance UUID зі списку `list_connectors`, напр. `2ec53ba5-...`). Поле `connectorId` у самій ноді можна лишити для наочності на канвасі, але на роботу воно не впливає.
+
+Додатково: `list_connectors` показує порожні вбудовані типи `claude_sonnet`/`claude_opus`/`claude_haiku` (`instances: []` — ніхто туди ключ не заводив) ОКРЕМО від реальних робочих інстансів, які лежать під загальним типом **`claude`** (напр. `2ec53ba5-...` «Claude для воронок», `4f9fbe29-...` «Claude ключ для контент платформи»). Не плутати — дивитись `instances` масив, а не назву типу.
+
 
 ---
 

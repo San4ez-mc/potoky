@@ -366,9 +366,11 @@ async function answerThenAsk(A, u, askText, o = {}) {
         } catch (e) { /* best-effort */ }
     }
     // «А джинси у вас є?» посеред розмови про інший товар — разом із відповіддю показуємо фото цих товарів (перше фото, не мініатюра).
-    if (catQs.length) {
+    // …але не коли в розмові КОМПЛЕКТ, а клієнт говорить про його ж позиції («мне футболку джинсы чешки и кофту») — це склад
+    // комплекту, а не «покажіть інші товари категорії» (01.10, RAIKAHO: летіли фото чужої кофти D0050 і окремих лоферів).
+    if (catQs.length && !(pp0 && pp0.isSet)) {
         try {
-            const base1 = (A.keys.CRM_PUBLIC_BASE || 'https://pcrm.fineko.space').replace(/\/$/, '');
+            const base1 =(A.keys.CRM_PUBLIC_BASE || 'https://pcrm.fineko.space').replace(/\/$/, '');
             for (const pr of await otherCategoryProducts(A, catQs.concat([String(A.turnText || '')]))) { const im = (pr.images || [])[0]; if (im) A.out.push({ photoUrls: [/^https?:/.test(im) ? im : base1 + (String(im).charAt(0) === '/' ? im : '/' + im)], caption: String(pr.customerName || pr.name || '').split('\n')[0].replace(/\.?\s*Артикул:?.*$/i, '').trim() + ' — ' + Number(pr.price) + ' грн', step: 'category_photo' }); }
         } catch (e) { /* best-effort */ }
     }

@@ -50,6 +50,18 @@ var active = all.filter(function (p) { return p.isActive !== false && !p.archive
 var counts = {};
 active.forEach(function (p) { var n = cats[p.categoryId]; if (n) counts[n] = (counts[n] || 0) + 1; });
 var catList = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a]; }).map(function (n) { return n.toLowerCase() + ' (' + counts[n] + ')'; }).join(', ');
+// Підпис поста/реклами прямо називає «Артикул: X», а X у каталозі нема (новинка чи знятий) — товар визначено, його просто нема.
+// Слова підпису («зимовий», «плащівка», «біопух») тут лише вгадують схожий товар: жилет Z9901 ставав пуховиком D0043 з ціною
+// (тест 123, 01.10; правило власника 29.09 — не підставляти схожий, чесно передати менеджеру).
+try {
+  var __capTxt = String(((context.sharedPost && context.sharedPost.caption) || '') + '\n' + (context.adTitle || ''));
+  var __capArtM = __capTxt.match(/артикул\s*[:#№.\-]?\s*([A-Za-zА-Яа-яІіЇїЄєҐґ]{0,5}\d{2,8})/i);
+  if (__capArtM && !context.lastUserImageUrl) {
+    var __capArt = __capArtM[1].toUpperCase().replace(/[АВЕКМНОРСТХ]/g, function (ch) { return { 'А': 'A', 'В': 'B', 'Е': 'E', 'К': 'K', 'М': 'M', 'Н': 'H', 'О': 'O', 'Р': 'P', 'С': 'C', 'Т': 'T', 'Х': 'X' }[ch]; });
+    var __known = all.some(function (p) { return [p.sku, p.supplierArticle].concat((p.offers || []).map(function (o) { return o.sku; })).some(function (x) { return x && String(x).toUpperCase().trim() === __capArt; }); });
+    if (!__known) return out('', 0, catList);
+  }
+} catch (e) { /* best-effort */ }
 // Підказка від n_lookup: реклама комплекту, клієнт назвав категорію, у наборах кілька таких компонентів — питаємо, який.
 if (context.setComponentHint) { var __scn = String(context.setComponentHint).split('\n').length; return { catalogHint: context.setComponentHint, catalogHintCount: __scn, catalogHintTotal: __scn, catalogCategories: catList, unknownTurns: unknownTurns }; }
 if (!msg) return out('', 0, catList);

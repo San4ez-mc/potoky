@@ -456,6 +456,7 @@ async function present(A) {
         // правка f9a5b98b) — питаємо саме їх, а не хардкод «розмір за талією».
         if (szItems.length > 1 && szItems.every((z) => /^\d+$/.test(z)) && !(Array.isArray(p.categoryParams) && p.categoryParams.length)) card = card.replace(/👉[^\n]*/, '👉 Підкажіть, будь ласка, ваш розмір за талією (' + szLine.replace(/\s*\(.*$/, '') + ') 😊');
         else if (ctx.sizeInput && ctx.sizeInput.height && ctx.sizeInput.weight) card = card.replace(/\n*👉[^\n]*(зріст|вага)[^\n]*/i, '');
+        if (ctx.sizeInput && ctx.sizeInput.shoeSize) card = card.replace(/\n*👉[^\n]*розмір взуття[^\n]*/i, ''); // розмір взуття вже названо (тест 165)
     } catch (e) { /* best-effort */ }
     if (!urls.length) card = card + '\n\nНа жаль, фото цього товару зараз відсутнє 🙏';
     A.out.push({ text: greet + card, step: 'present' });
@@ -1593,7 +1594,7 @@ async function runPolicyInner(A, u) {
                 sizeBody = sizeTextClean.split(/(?<=[.!?…👌📏])\s+/u).filter((s) => !recRe.test(s.toUpperCase()) && !/^[\s—–-]*(сяде|перевірено)/i.test(s)).join(' ').trim();
             }
             // Параметри взято з попереднього товару / з раніших повідомлень — називаємо їх, щоб клієнт міг поправити (напр. якщо цей товар для іншої людини).
-            const carriedNote = !usedMemory && ctx.agent.hwCarried && si.height && si.weight && !sizeTextClean.includes(String(si.weight)) ? 'Беру ваші параметри ' + si.height + ' см / ' + si.weight + ' кг 🙂 ' : '';
+            const carriedNote = !usedMemory && !numericSizes && ctx.agent.hwCarried && si.height && si.weight && !sizeTextClean.includes(String(si.weight)) ? 'Беру ваші параметри ' + si.height + ' см / ' + si.weight + ' кг 🙂 ' : '';
             delete ctx.agent.hwCarried;
             const reply = (usedMemory ? 'Беру ваші параметри з минулого разу (' + si.height + ' см / ' + si.weight + ' кг) 🙂 ' : '') + carriedNote + claimNote + sizeBody + (ctx.sizeColorFollowup ? ' ' + norm(String(ctx.sizeColorFollowup)) : '');
             const hasColorNow = ctx.colorChoice && ctx.colorChoice.color;

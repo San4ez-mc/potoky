@@ -80,8 +80,12 @@ async function main() {
     //    анонсовані), пріоритет Києву, до 3 штук, у текст-факти для промпту —
     //    ЛОКАЦІЯ тільки район/місто, ніколи повна адреса.
     const pickCode = [
+        "// loadFile кладе в context ВЖЕ розпарсений JSON, не сирий рядок — JSON.parse(масиву)",
+        "// кидає виняток (масив -> 'a,b' -> не валідний JSON), try/catch ковтав і 'вже",
+        "// анонсовані' завжди читались як порожньо (реальний дубль-баг 2026-10-01, піст-клон).",
         "var announced = [];",
-        "try { var a = JSON.parse(context.announcedRaw || '[]'); if (Array.isArray(a)) announced = a.map(String); } catch(e) {}",
+        "if (Array.isArray(context.announcedRaw)) { announced = context.announcedRaw.map(String); }",
+        "else { try { var a = JSON.parse(context.announcedRaw || '[]'); if (Array.isArray(a)) announced = a.map(String); } catch(e) {} }",
         "",
         "var items = [];",
         "try { var parsed = typeof context.discoveryRaw === 'string' ? JSON.parse(context.discoveryRaw) : context.discoveryRaw; items = Array.isArray(parsed && parsed.items) ? parsed.items : []; } catch(e) {}",
@@ -237,7 +241,8 @@ async function main() {
         label: 'Позначити події анонсованими',
         code: [
             "var announced = [];",
-            "try { var a = JSON.parse(context.announcedRaw || '[]'); if (Array.isArray(a)) announced = a.map(String); } catch(e) {}",
+            "if (Array.isArray(context.announcedRaw)) { announced = context.announcedRaw.map(String); }",
+            "else { try { var a = JSON.parse(context.announcedRaw || '[]'); if (Array.isArray(a)) announced = a.map(String); } catch(e) {} }",
             "var newIds = Array.isArray(context.pickedIds) ? context.pickedIds : [];",
             "var merged = announced.concat(newIds);",
             "if (merged.length > 150) merged = merged.slice(merged.length - 150);",

@@ -1044,7 +1044,10 @@ async function runPolicyInner(A, u) {
     let __phoneNote = '';
     {
         const runs = String(text).replace(/[\s\-()+.]/g, '').match(/\d{9,13}/g) || [];
-        if (runs.length && !runs.some((r) => /^0\d{9}$/.test(r) || /^380\d{9}$/.test(r))) { u.phone = null; __phoneNote = 'Номер телефону виглядає некоректно — напишіть, будь ласка, 10 цифр, наприклад 0501234567 📱 '; }
+        // Номер, який виділив аналізатор, стоїть у тексті ОКРЕМИМ числом (не частиною довшого) — він правильний, навіть якщо поруч
+        // інші цифри: «Київ нп 339⏎0688874470» склеювалось у «3390688874470» і бот казав «номер некоректний» (правка 8a8c27b8, 01.10).
+        const phoneAlone = !!(u.phone && /^0\d{9}$/.test(u.phone) && new RegExp('(?<![0-9])(?:\\+?3[\\s\\-()]*8[\\s\\-()]*)?' + u.phone.split('').join('[\\s\\-()]*') + '(?![0-9])').test(String(text)));
+        if (runs.length && !phoneAlone && !runs.some((r) => /^0\d{9}$/.test(r) || /^380\d{9}$/.test(r))) { u.phone = null; __phoneNote = 'Номер телефону виглядає некоректно — напишіть, будь ласка, 10 цифр, наприклад 0501234567 📱 '; }
     }
     if (__phoneNote) { A.out.push({ text: __phoneNote.trim(), step: 'phone_invalid' }); A._phoneNoteSent = true; } // явне пояснення, що саме не так з номером (далі йде звичайний запит решти даних)
     const __dataThisTurn = !!((u.phone || u.fullName || u.city || u.branch) && !u.homeAddress);

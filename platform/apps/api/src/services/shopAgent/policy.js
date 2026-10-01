@@ -1594,7 +1594,7 @@ async function runPolicyInner(A, u) {
                 sizeBody = sizeTextClean.split(/(?<=[.!?…👌📏])\s+/u).filter((s) => !recRe.test(s.toUpperCase()) && !/^[\s—–-]*(сяде|перевірено)/i.test(s)).join(' ').trim();
             }
             // Параметри взято з попереднього товару / з раніших повідомлень — називаємо їх, щоб клієнт міг поправити (напр. якщо цей товар для іншої людини).
-            const carriedNote = !usedMemory && !numericSizes && ctx.agent.hwCarried && si.height && si.weight && !sizeTextClean.includes(String(si.weight)) ? 'Беру ваші параметри ' + si.height + ' см / ' + si.weight + ' кг 🙂 ' : '';
+            const carriedNote = !usedMemory && !numericSizes && !(si.shoeSize && String(ctx.recommendedSize) === String(si.shoeSize)) && ctx.agent.hwCarried && si.height && si.weight && !sizeTextClean.includes(String(si.weight)) ? 'Беру ваші параметри ' + si.height + ' см / ' + si.weight + ' кг 🙂 ' : '';
             delete ctx.agent.hwCarried;
             const reply = (usedMemory ? 'Беру ваші параметри з минулого разу (' + si.height + ' см / ' + si.weight + ' кг) 🙂 ' : '') + carriedNote + claimNote + sizeBody + (ctx.sizeColorFollowup ? ' ' + norm(String(ctx.sizeColorFollowup)) : '');
             const hasColorNow = ctx.colorChoice && ctx.colorChoice.color;

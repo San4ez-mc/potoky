@@ -1107,7 +1107,9 @@ async function runPolicyInner(A, u) {
     }
     if (u.colorMatched) ctx.agent.pendingColor = u.colorMatched; else if (u.color) ctx.agent.pendingColorRaw = u.color;
     // Згадка ще одного товару («і ще лофери 44») — памʼятаємо текст: розмір із нього застосовується, коли модель оберуть наступним ходом.
-    if (u.extraProducts || u.alsoWants || u.addItem || (u.productHint && u.productHint.category)) ctx.agent.lastExtraAsk = { text: String(text).slice(0, 200), at: Date.now() };
+    // Лише явне «хочу ще/додайте» (аналізатор), а не питання про категорію («а є костюми?» — це перегляд, вибір зі списку = показати
+    // товар, а не додати до кофти; тест bc40d81c, 02.10).
+    if (u.extraProducts || u.alsoWants || u.addItem) ctx.agent.lastExtraAsk = { text: String(text).slice(0, 200), at: Date.now() };
     // 2026-09-23 (FunnelTest 4: «джинси хочу чорні» до підбору розміру губилось — секція кольорів
     // комплекту виконується лише ПІСЛЯ розміру і бачила тільки текст свого ходу): запамʼятовуємо
     // сирі повідомлення з кольором, поки комплект активний, і розбираємо їх по позиціях пізніше.

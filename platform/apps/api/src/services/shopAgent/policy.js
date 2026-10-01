@@ -855,7 +855,11 @@ async function runPolicyInner(A, u) {
         const cur = P(ctx);
         const fromSetArticle = u.setArticle && /^set/i.test(String(u.setArticle)) ? String(u.setArticle) : '';
         const ogFits = og && og.sku && cur && Array.isArray(og.items) && og.items.includes(String(cur.sku).toUpperCase()) && Date.now() - Number(og.at || 0) < 24 * 3600 * 1000;
-        if (cur && !cur.isSet && u.setChoice === 'set' && !ctx.crmOrderId && (fromSetArticle || ogFits)) {
+        // …і так само, коли клієнт обирає ІНШИЙ комплект, ніж той, що в розмові (тест 155: «Так, давайте його» про set1111, поки в розмові set1112).
+        if (cur && cur.isSet && u.setChoice === 'set' && fromSetArticle && fromSetArticle.toUpperCase() !== String(cur.sku).toUpperCase() && !ctx.crmOrderId) {
+            u.productHint = { ...u.productHint, article: fromSetArticle };
+            if (!new RegExp(fromSetArticle, 'i').test(ctx.lastUserMessage || '')) ctx.lastUserMessage = String(ctx.lastUserMessage || text) + ' артикул ' + fromSetArticle;
+        } else if (cur && !cur.isSet && u.setChoice === 'set' && !ctx.crmOrderId && (fromSetArticle || ogFits)) {
             const setSku = fromSetArticle || og.sku;
             u.productHint = { ...u.productHint, article: setSku };
             if (!new RegExp(setSku, 'i').test(ctx.lastUserMessage || '')) ctx.lastUserMessage = String(ctx.lastUserMessage || text) + ' артикул ' + setSku;

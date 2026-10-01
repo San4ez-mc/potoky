@@ -32,7 +32,6 @@ async function main() {
     const delUrl = 'http://localhost:3002/api/agent-tools?action=delete_posts&token=' + encodeURIComponent(secret) + '&projectId=' + encodeURIComponent(projectId);
     await fetch(delUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date_from: '2020-01-01', date_to: '2035-12-31' }) });
 
-    const tomorrow = new Date(Date.now() + 24 * 3600 * 1000).toISOString().slice(0, 10);
     const r = await fetch('http://127.0.0.1:3000/webhook/bot/content-manager-v2', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -44,7 +43,10 @@ async function main() {
     });
     if (!r.ok) fail('webhook HTTP ' + r.status);
 
-    const url = 'http://localhost:3002/api/agent-tools?action=list_posts&token=' + encodeURIComponent(secret) + '&projectId=' + encodeURIComponent(projectId) + '&date_from=' + tomorrow + '&date_to=2099-01-01';
+    // date_from=today, не tomorrow — «найближчий тиждень» часто стартує СЬОГОДНІ
+    // (залежно від того, як диспетчер трактує фразу), tomorrow губив перші пости.
+    const today = new Date().toISOString().slice(0, 10);
+    const url = 'http://localhost:3002/api/agent-tools?action=list_posts&token=' + encodeURIComponent(secret) + '&projectId=' + encodeURIComponent(projectId) + '&date_from=' + today + '&date_to=2099-01-01';
     let posts = [];
     for (let i = 0; i < 40; i++) {
         await new Promise((res) => setTimeout(res, 5000));

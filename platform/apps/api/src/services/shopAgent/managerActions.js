@@ -40,7 +40,7 @@ async function previewText(A) {
     if (!groups.length) out.push('⚠️ У замовленні не знайдено жодної позиції з артикулом — оформіть вручну.');
     for (const g of groups) {
         out.push('🏭 <b>' + esc(g.name) + '</b> — ' + esc(MECH_LABEL[g.mechanism] || g.mechanism));
-        for (const l of g.lines) out.push('   • ' + esc(l.name) + (l.sku ? ' (' + esc(l.sku) + ')' : '') + [l.color, l.size].filter(Boolean).map((x) => ' · ' + esc(x)).join('') + ' × ' + (Number(l.qty) || 1) + ' — ' + Math.round((Number(l.price) || 0) * (Number(l.qty) || 1)) + ' грн');
+        for (const l of g.lines) out.push('   • ' + esc(l.name) + (l.sku && !String(l.name || '').toUpperCase().includes(String(l.sku).toUpperCase()) ? ' (' + esc(l.sku) + ')' : '') + [l.color, l.size].filter(Boolean).map((x) => ' · ' + esc(x)).join('') + ' × ' + (Number(l.qty) || 1) + ' — ' + Math.round((Number(l.price) || 0) * (Number(l.qty) || 1)) + ' грн');
     }
     const od = ctx.orderData || {};
     out.push('');
@@ -52,7 +52,7 @@ async function previewText(A) {
     out.push('💳 ' + payLine + ' · ' + (ctx.payStatus === 'confirmed' ? '✅ оплату у виписці знайдено' : '⚠️ оплату у виписці НЕ знайдено — оформлюйте, лише якщо перевірили оплату самі'));
     if (groups.length > 1) out.push('📮 ' + groups.length + ' окремі посилки (різні постачальники).');
     out.push('');
-    out.push('Щоб змінити позиції чи дані — виправте до натискання (кнопка оформлює саме те, що вище).');
+    out.push('Кнопка оформлює саме те, що вище. Якщо щось не так — «Скасувати».');
     return out.join('\n');
 }
 

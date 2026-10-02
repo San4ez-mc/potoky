@@ -147,14 +147,19 @@ async function main() {
     {
         const n = node(N_DISPATCH);
         const sp = String(n.data.systemPrompt);
-        if (sp.includes('РОЗКИДАТИ ПО ДНЯХ')) console.log('dispatcher spread: already patched');
-        else {
-            const needle = '- topic: якщо користувач ЯВНО вказав тему';
+        const MARK_S = '- РОЗКИДАТИ ПО ДНЯХ:';
+        const add = MARK_S + ' якщо користувач просить розкидати пости по днях («по одному на день», «щодня по одному», «розкидай по днях») АБО просить кілька постів «на найближчі дні / на кілька днів / на тиждень» без точної дати, і дає count N — став date = «N днів від завтра» (або «N днів від <дата>»; для «від сьогодні» — «N днів від сьогодні»), щоб на кожен день припав один пост. НЕ став date=«завтра» чи «найближчі дні» для кількох постів, коли просили розкидати.\n';
+        const needle = '- topic: якщо користувач ЯВНО вказав тему';
+        let next;
+        if (sp.includes(MARK_S)) {
+            const i = sp.indexOf(MARK_S), j = sp.indexOf('\n', i) + 1;
+            next = sp.slice(0, i) + add + sp.slice(j);
+        } else {
             if (!sp.includes(needle)) throw new Error('dispatcher: рядок topic не знайдено');
-            const add = '- РОЗКИДАТИ ПО ДНЯХ: якщо користувач просить розкидати пости по днях («по одному на день», «щодня по одному», «розкидай по днях») і дає count N — став date = «N днів від завтра» (або «N днів від <дата>»), щоб на кожен день припав один пост. Не став date=«завтра» для кількох постів, коли просили розкидати.\n';
-            await callTool('update_node', { botId: CM, nodeId: N_DISPATCH, data: { systemPrompt: sp.replace(needle, add + needle) } });
-            console.log('dispatcher spread: patched');
+            next = sp.replace(needle, add + needle);
         }
+        if (next === sp) console.log('dispatcher spread: already patched');
+        else { await callTool('update_node', { botId: CM, nodeId: N_DISPATCH, data: { systemPrompt: next } }); console.log('dispatcher spread: patched'); }
     }
 
     // 6) Parse Intent: rangeSpan() повертав 1 для будь-якої фрази зі словом «завтра» ДО перевірки «N днів/тижнів»,

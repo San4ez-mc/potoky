@@ -532,6 +532,11 @@ async function present(A) {
         const sum = p.setItems.reduce((t, it) => t + (Number(it.price) || 0), 0);
         const short = (n) => String(n || '').split('.')[0].replace(/^Чоловіч\S*\s+/i, '').trim();
         card = card.replace(/\n[^\n]*Комплект[^\n:]{0,25}:\s*\d[\d\s]*\s*(₴|грн)[^\n]*/i, '');
+        // Рядок ціни відсутньої речі («💵 Лофери: 1990 ₴») — за коренем останнього слова її назви («замшеві лофери» → «лофер»).
+        for (const n of p.setOutOfStock) {
+            const w = short(n).split(/\s+/).pop().toLowerCase().slice(0, 5);
+            if (w.length >= 4) card = card.split('\n').filter((l) => !(/💵|₴|грн/.test(l) && l.toLowerCase().includes(w))).join('\n');
+        }
         card += '\n\n⚠️ Зараз немає в наявності: ' + p.setOutOfStock.map((n) => short(n).toLowerCase()).join(', ') + '. Комплект можна взяти без них — ' + p.setItems.map((it) => short(it.name).toLowerCase()).join(', ') + (sum ? ' разом за ' + sum + ' ₴' : '') + ' 🙂';
     }
     A.out.push({ text: greet + card, step: 'present' });

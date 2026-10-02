@@ -26,7 +26,8 @@ function fmtProduct(pr, withDesc) {
     const colors = [...new Set(inStockOffers.map(colorOf).filter(Boolean))];
     const perColor = inStockOffers.map((o) => ({ c: colorOf(o), s: Array.isArray(o.effectiveSizes) && o.effectiveSizes.length ? o.effectiveSizes : (o.sizesCustomized ? (o.availableSizes || []) : []) })).filter((x) => x.c && x.s.length);
     const generalSizes = (Array.isArray(pr.sizes) && pr.sizes.length ? pr.sizes.join(', ') : '') || sizesFromText(pr);
-    const available = !!(pr.alwaysAvailable || inStockOffers.length || !offers.length);
+    // «Немає в наявності» в CRM (outOfStock, 03.10) — перекриває все інше (товар без варіантів інакше вважався наявним).
+    const available = !pr.outOfStock && !!(pr.alwaysAvailable || inStockOffers.length || !offers.length);
     const bulk = Array.isArray(pr.bulkPricing) && pr.bulkPricing.length ? ' (' + pr.bulkPricing.map((b) => (b.qty || b.minQty) + ' шт: ' + (b.total || b.price) + ' грн').join(', ') + ')' : '';
     const parts = [name + ' (арт. ' + pr.sku + ')', 'ціна ' + Number(pr.price) + ' грн' + bulk, available ? 'є в наявності' : 'НЕМАЄ в наявності'];
     if (colors.length) parts.push('кольори в наявності: ' + colors.join(', '));

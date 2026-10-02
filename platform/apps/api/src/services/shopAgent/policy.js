@@ -126,6 +126,12 @@ function initSetSelection(pp) {
     // тоді бот ніколи не питає й не вгадує, бере готове значення з CRM.
     return (pp.setItems || []).map((it) => ({ article: it.article, id: it.id, name: it.name, price: Number(it.price) || 0, supplier: it.supplier || '', supplierArticle: it.supplierArticle || '', colors: it.colors || [], colorPhotos: it.colorPhotos || {}, sizes: (Array.isArray(it.sizes) && it.sizes.length) ? it.sizes : ((Array.isArray(it.structuredSizes) && it.structuredSizes.length) ? it.structuredSizes : ((it.sizeChartData && Array.isArray(it.sizeChartData.sizes)) ? it.sizeChartData.sizes : [])), qty: 1, color: it.fixedColor || '', size: '' }));
 }
+/** Пари «позиція — колір» від аналізатора (u.itemColors), поки комплект збирається: секція кольорів іде ПІСЛЯ розміру,
+ * тож кольори, названі разом із вибором речей, інакше губились (2026-10-02, живий кейс c6d03189). */
+function rememberSetItemColors(ctx, u) {
+    const pairs = (Array.isArray(u.itemColors) ? u.itemColors : []).filter((ic) => ic && ic.item && ic.color);
+    if (pairs.length) ctx.agent.setItemColorHints = (ctx.agent.setItemColorHints || []).concat(pairs).slice(-8);
+}
 function stemsOf(name) {
     return String(name || '').toLowerCase().replace(/[«»().,]/g, ' ').split(/\s+/).filter((w) => w.length >= 4 && !/^(чоловіч|жіноч|дитяч|артикул|комплект)/.test(w)).map((w) => w.slice(0, 5));
 }
@@ -493,7 +499,7 @@ function resetForNewProduct(A, sku) {
         // «бот знову питає зріст і вагу», 01.10: 38 — картка нового товару просила їх заново). Скидаємо лише розмір/заміри під товар.
         const body = ctx.sizeInput && ctx.sizeInput.height && ctx.sizeInput.weight ? { height: ctx.sizeInput.height, weight: ctx.sizeInput.weight, ...(ctx.sizeInput.belly ? { belly: true } : {}), ...(ctx.sizeInput.shoeSize ? { shoeSize: ctx.sizeInput.shoeSize } : {}) } : null;
         for (const k of ['sizeInput','recommendedSize', 'sizeSource', 'sizeReplyText', 'sizeColorFollowup', 'sizeOutOfRange', 'sizeOorReason', 'sizeOorAlternative', 'isSetSizeCalc', 'setSizesText', 'setSizeMap', 'setSizeOor', 'colorChoice', 'available', 'availReason', 'orderUnits', 'orderUnitsText', 'orderUnitsTotal', 'orderQty', 'orderIntent', 'setMode', 'setPick', 'setSelection', 'availChecked', 'extraItems', 'extraItemsText', 'extraUnresolved', 'orderExtras', 'unavailableColors', 'availableColorsNow']) delete ctx[k];
-        for (const k of ['setOriginal', 'setPricing', 'setStageSent', 'setEditNote', 'setParams', 'upsellOffered', 'upsellDeclined', 'setGeneralQ', 'setNamedItem', 'payRepeatCount', 'upsellPhotoSent', 'availKey', 'sizeVerifyAsked', 'sizeClaim']) delete ctx.agent[k];
+        for (const k of ['setOriginal', 'setPricing', 'setStageSent', 'setEditNote', 'setParams', 'setItemColorHints', 'setColorHints', 'upsellOffered', 'upsellDeclined', 'setGeneralQ', 'setNamedItem', 'payRepeatCount', 'upsellPhotoSent', 'availKey', 'sizeVerifyAsked', 'sizeClaim']) delete ctx.agent[k];
         if (!ctx.crmOrderId) for (const k of ['paymentInfo', 'payAmount', 'payLabel', 'orderRef', 'orderRefAt', 'ibanPayUrl', 'ibanInvoiceUid', 'requisitesSentAt']) delete ctx[k];
         if (body) { ctx.sizeInput = body; if (!A.hwThisTurn) ctx.agent.hwCarried = true; }
     }
@@ -1161,6 +1167,7 @@ async function runPolicyInner(A, u) {
     // сирі повідомлення з кольором, поки комплект активний, і розбираємо їх по позиціях пізніше.
     if (ctx.product && ctx.product.isSet && (ctx.setMode === 'set' || (Array.isArray(ctx.setSelection) && ctx.setSelection.length)) && !ctx.agent.setColorsResolved) {
         ctx.agent.setColorHints = (ctx.agent.setColorHints || []).concat(text).slice(-5);
+        rememberSetItemColors(ctx, u);
     }
     const earlyReceipt = (u.receiptLink || u.claimsPaid || (A.turnImage && addressComplete(ctx.orderData))) && !ctx.crmOrderId && !(ctx.paymentInfo && ctx.paymentInfo.method);
     if (earlyReceipt && !ctx.agent.receiptEarlyAlertAt) {
@@ -1486,6 +1493,8 @@ async function runPolicyInner(A, u) {
                 ctx.setSelection = initSetSelection(ctx.product);
                 ctx.setMode = 'set';
                 multiHandled = true;
+                // Кольори з цього ж повідомлення («джинси синього… кофта чорного») — до секції кольорів дійде пізніше (після розміру).
+                rememberSetItemColors(ctx, u);
             }
         }
         if (!multiHandled) {
@@ -1879,9 +1888,13 @@ async function runPolicyInner(A, u) {
             const catNamesSet = ctx.agent.setParams && ctx.agent.setParams.categoryNames;
             // Хто якого кольору — спершу за змістом (аналізатор, u.itemColors): «кофта чорна джинси 👖 темно сині» без ком
             // регулярка читала як ОДНУ позицію, і джинси ставали чорними (2026-09-30, правка 8292a6c8). Нарізка тексту — лише запас.
-            for (const ic of (Array.isArray(u.itemColors) ? u.itemColors : [])) {
+            // Спершу пари з попередніх ходів (сказані до підбору розміру), потім цього — новіше перекриває.
+            // Збережені пари лише заповнюють порожнє (не повертають колір, який клієнт потім змінив); пари цього ходу — перекривають.
+            const curPairs = Array.isArray(u.itemColors) ? u.itemColors : [];
+            for (const ic of [...(ctx.agent.setItemColorHints || []).map((x) => ({ ...x, __old: true })), ...curPairs]) {
                 const item = ic && ic.item && matchSetItem(String(ic.item), ctx.setSelection, catNamesSet);
-                const c = item && Array.isArray(item.colors) && item.colors.length && ic.color ? matchColor({ colors: item.colors.join(',') }, String(ic.color)) : null;
+                if (!item || (ic.__old && item.color)) continue;
+                const c = Array.isArray(item.colors) && item.colors.length && ic.color ? matchColor({ colors: item.colors.join(',') }, String(ic.color)) : null;
                 if (c) item.color = c;
             }
             const segments = (Array.isArray(u.itemColors) && u.itemColors.length) ? [] : [...(ctx.agent.setColorHints || []), text].flatMap((tx) => String(tx).split(/[,;\n]|\s+(?:і|та|и|й)\s+/iu)).map((s) => s.trim()).filter(Boolean);

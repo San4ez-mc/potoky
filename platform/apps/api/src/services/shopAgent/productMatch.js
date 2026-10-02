@@ -864,7 +864,7 @@ try {
   // а n_order_intent пропонував "ці аксесуари" списком: клієнт погоджувався на три, платив за один.
   for (var ui = 0; ui < compIds.length && upsell.length < 1; ui++) {
     var cprod = all.filter(function (x) { return String(x.id) === String(compIds[ui]) && String(x.id) !== String(found.id); })[0];
-    if (!cprod) continue;
+    if (!cprod || cprod.outOfStock) continue; // «Немає в наявності» в CRM — не пропонуємо як допродаж (03.10)
     upsell.push(upname(cprod));
     var __cq = {}; (Array.isArray(cprod.bulkPricing) ? cprod.bulkPricing : []).forEach(function (b) { if (b && b.quantity && b.price) __cq[String(b.quantity)] = Number(b.price); });
     upsellItems.push({ id: cprod.id, sku: cprod.sku || '', supplierArticle: cprod.supplierArticle || '', name: upname(cprod).replace(/\s—\s\d+ грн$/, ''), price: Number(cprod.price) || 0, qtyPrices: __cq, offers: cprod.offers || [], colors: [...new Set((cprod.offers || []).flatMap(function (o) { return (o.properties || []).filter(function (q) { return /кол|цвет/i.test(q.name || ''); }).map(function (q) { return q.value; }); }))].join(', ') });
@@ -953,9 +953,14 @@ try {
       // тепер і для КОМПОНЕНТА комплекту — resolveUrl тут же, готовий URL для sendPhoto нижче.
       sizeChartUrl: (compFull && compFull.sizeChartImage) ? resolveUrl(compFull.sizeChartImage) : '',
       categoryId: (compFull && (compFull.categoryId || (compFull.category && compFull.category.id))) || null,
-      photoUrl: cImgs[0] || '', imageUrls: cImgs.slice(0, 5)
+      photoUrl: cImgs[0] || '', imageUrls: cImgs.slice(0, 5),
+      outOfStock: !!(compFull && compFull.outOfStock)
     });
   }
+  // «Немає в наявності» в CRM (03.10, власник: лофери позначені, а бот їх продавав у комплекті): річ прибираємо зі складу комплекту,
+  // клієнту — чесна примітка, ціна — сумою решти речей (policy.applySetPricing бачить setOutOfStock).
+  var setOutOfStock = setItems.filter(function (x) { return x.outOfStock; }).map(function (x) { return x.name; });
+  setItems = setItems.filter(function (x) { return !x.outOfStock; });
   var setList = setItems.map(function (x) { return x.name + (x.price ? (' — ' + x.price + ' грн') : '') + ' [арт. ' + x.article + ']' + (x.colors && x.colors.length ? ' (кольори: ' + x.colors.join(', ') + ')' : '') + (x.sizes && x.sizes.length ? ' (розміри: ' + x.sizes.join(', ') + ')' : ''); }).join('; ');
   // 2026-09-13 (живий баг, MaksimKapelyan: "лофери 5934, стелька 30 см — чи є такий розмір?" —
   // ескалювало на менеджера, хоча sizeChartData компонента вже мав дані для відповіді. Знайдено
@@ -1138,7 +1143,7 @@ try {
     product: {
       _source: 'crm', supplier: (found.supplier && found.supplier.name) || '', supplierId: (found.supplier && found.supplier.id) || '',
       supplierInfo: supplierInfo, // {mechanism, loginUsername, loginPassword, aiNotes, telegramGroupId, website, contactInfo, description} — §4 ТЗ
-      setComponents: rawComponents.map(function (c) { return c.sku; }).join(', '), isSet: !!found.isSet, setItems: setItems, setList: setList, setSizeChartText: setSizeChartText,
+      setComponents: rawComponents.map(function (c) { return c.sku; }).join(', '), isSet: !!found.isSet, setItems: setItems, setOutOfStock: setOutOfStock, outOfStock: !!found.outOfStock, setList: setList, setSizeChartText: setSizeChartText,
       matchNote: __matchNote, matchConfidence: __lowConfidence ? 'low' : 'high',
       _matchKey: mk, _via: via, _matchedSharedPostId: (context.sharedPost && context.sharedPost.mediaId) ? String(context.sharedPost.mediaId) : '', _matchedEntryAd: String(context.entryAd || context.entryAdId || ''),
       id: found.id, sku: found.sku || '', article: found.sku || '', categoryId: found.categoryId, categoryName: (categoryFull && categoryFull.name) || '',

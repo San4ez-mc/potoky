@@ -176,7 +176,8 @@ function applySetPricing(ctx, pp) {
     const sel = ctx.setSelection;
     // Розміри позицій із n_calc (setSizeMap) — у структуру замовлення для CRM/постачальника.
     if (ctx.setSizeMap && Array.isArray(sel)) for (const it of sel) if (!it.size && ctx.setSizeMap[it.article]) it.size = ctx.setSizeMap[it.article];
-    if (setMatchesOriginal(sel, ctx.agent.setOriginal)) {
+    // Частина речей комплекту «немає в наявності» (CRM outOfStock) — це вже не той комплект, що рекламується: ціна — сумою решти.
+    if (!(Array.isArray(pp.setOutOfStock) && pp.setOutOfStock.length) && setMatchesOriginal(sel, ctx.agent.setOriginal)) {
         // 2026-09-24 (FunnelTest 37, «решта −200 грн»): у CRM ціна комплекту = 0 (вона лише в тексті картки «Комплект (4 в 1): 5290 ₴»),
         // тож n_pay_amount, що бере ціну з product.price, рахував суму 0. Беремо рекламовану ціну з тексту, інакше суму позицій,
         // і записуємо її в product.price — для оплати, CRM і постачальника.
@@ -522,6 +523,17 @@ async function present(A) {
         if (ctx.sizeInput && ctx.sizeInput.shoeSize) card = card.replace(/\n*👉[^\n]*розмір взуття[^\n]*/i, ''); // розмір взуття вже названо (тест 165)
     } catch (e) { /* best-effort */ }
     if (!urls.length) card = card + '\n\nНа жаль, фото цього товару зараз відсутнє 🙏';
+    // «Немає в наявності» в CRM (outOfStock, 03.10). Окремий товар: чесно кажемо й не просимо параметрів.
+    // Комплект без частини речей: ціна повного комплекту вже не діє — прибираємо її рядок і кажемо, з чого він зараз і за скільки.
+    if (p.outOfStock && !p.isSet) {
+        card = card.replace(/\n*👉[^\n]*/g, '') + '\n\n' + (messageText(A.assets, 'n_agent_out_of_stock', ctx, A.session.id) || 'На жаль, цього товару зараз немає в наявності 😔 Можу підібрати щось схоже — напишіть, що шукаєте 🙂');
+        ctx.agent.outOfStockShown = p.sku;
+    } else if (p.isSet && Array.isArray(p.setOutOfStock) && p.setOutOfStock.length && Array.isArray(p.setItems) && p.setItems.length) {
+        const sum = p.setItems.reduce((t, it) => t + (Number(it.price) || 0), 0);
+        const short = (n) => String(n || '').split('.')[0].replace(/^Чоловіч\S*\s+/i, '').trim();
+        card = card.replace(/\n[^\n]*Комплект[^\n:]{0,25}:\s*\d[\d\s]*\s*(₴|грн)[^\n]*/i, '');
+        card += '\n\n⚠️ Зараз немає в наявності: ' + p.setOutOfStock.map((n) => short(n).toLowerCase()).join(', ') + '. Комплект можна взяти без них — ' + p.setItems.map((it) => short(it.name).toLowerCase()).join(', ') + (sum ? ' разом за ' + sum + ' ₴' : '') + ' 🙂';
+    }
     A.out.push({ text: greet + card, step: 'present' });
     ctx.productJustPresented = true; ctx.presentedAt = Date.now(); ctx.lastPresentedSku = p.sku; ctx.agent.presentedSku = p.sku;
     ctx.agent.presentedSkus = Object.assign({}, ctx.agent.presentedSkus || {}, { [String(p.sku)]: Date.now() });
@@ -1372,6 +1384,8 @@ async function runPolicyInner(A, u) {
             if (samePresented && ctx.agent.presentedSku !== P(ctx).sku) { ctx.agent.presentedSku = P(ctx).sku; ctx.presentedAt = shownAt; }
             if (!samePresented) {
                 await present(A);
+                // Товару немає в наявності (CRM outOfStock) — картка вже сказала це чесно; далі не питаємо зріст/колір і не оформлюємо.
+                if (P(ctx).outOfStock && !P(ctx).isSet) { ctx.agent.lastAsk = 'що підібрати замість відсутнього товару'; return; }
                 // «2,4»: після картки першого варіанту коротко показуємо й другий, обраний одночасно (FunnelTest 34).
                 if (ctx.agent.multiPickExtra) {
                     try {
@@ -1674,6 +1688,12 @@ async function runPolicyInner(A, u) {
     const sizeKeyOf = (x) => [Number((x || {}).height) || 0, Number((x || {}).weight) || 0, (x || {}).belly ? 1 : 0].join('/');
     if (ctx.recommendedSize && !ctx.crmOrderId && ctx.agent.sizeCalcKey && sizeKeyOf(ctx.sizeInput) !== ctx.agent.sizeCalcKey) {
         ctx.recommendedSize = null; ctx.isSetSizeCalc = false; ctx.setSizesText = ''; ctx.sizeOutOfRange = false;
+    }
+    // Товару немає в наявності (CRM outOfStock): не підбираємо розмір і не оформлюємо — відповідаємо на питання й пропонуємо інше.
+    if (pp.outOfStock && !pp.isSet && !ctx.crmOrderId) {
+        if (!A.out.some((o) => o.step === 'present')) A.out.push({ text: await answerThenAsk(A, u, messageText(A.assets, 'n_agent_out_of_stock', ctx, A.session.id) || 'На жаль, цього товару зараз немає в наявності 😔 Можу підібрати щось схоже — напишіть, що шукаєте 🙂'), step: 'out_of_stock' });
+        ctx.agent.lastAsk = 'що підібрати замість відсутнього товару';
+        return;
     }
     // 4. Розмір
     const needSize = (pp.isClothing || pp.isSet) && !ctx.recommendedSize && !ctx.isSetSizeCalc && !ctx.sizeOutOfRange;

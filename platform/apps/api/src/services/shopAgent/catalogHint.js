@@ -45,7 +45,8 @@ try {
     var jc = await rc.json().catch(function () { return {}; }); (Array.isArray(jc.data) ? jc.data : []).forEach(function (c) { cats[c.id] = String(c.name || '').trim(); });
   } finally { clearTimeout(to); }
 } catch (e) { return out('', 0, ''); }
-var active = all.filter(function (p) { return p.isActive !== false && !p.archived && !/^set/i.test(String(p.sku || '')); });
+// «Немає в наявності» в CRM (outOfStock, 03.10) — не пропонуємо ні в списках, ні вибором за словом.
+var active = all.filter(function (p) { return p.isActive !== false && !p.archived && !p.outOfStock && !/^set/i.test(String(p.sku || '')); });
 // Категорії з кількістю товарів — для привітання («що цікавить: кофти (6), бомбери (4)…»)
 var counts = {};
 active.forEach(function (p) { var n = cats[p.categoryId]; if (n) counts[n] = (counts[n] || 0) + 1; });
@@ -124,7 +125,7 @@ if (!wants.length) return out('', 0, catList);
 var __catStems = ['кофт', 'джинс', 'футболк', 'лофер', 'бомбер', 'куртк', 'костюм', 'кросів', 'черевик', 'штан'].filter(function (st) { return msg.indexOf(st) >= 0; });
 if (__catStems.length >= 3 && wants.indexOf('комплект') < 0) wants.push('комплект');
 function hay(p) { return (String(p.name || '') + ' ' + String(p.customerName || '') + ' ' + (cats[p.categoryId] || '')).toLowerCase(); }
-var pool = wants.indexOf('комплект') >= 0 ? all : active;
+var pool = wants.indexOf('комплект') >= 0 ? all.filter(function (p) { return !p.outOfStock; }) : active;
 var hits = pool.filter(function (p) { var h = hay(p); return wants.some(function (w) { return h.indexOf(w) >= 0; }); });
 if (!hits.length) return out('', 0, catList);
 // 2026-09-12 (власник: "а є чорні лофери?" — колір і категорія в ОДНОМУ, ПЕРШОМУ повідомленні,

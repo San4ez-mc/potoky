@@ -43,8 +43,8 @@ const AGENT_BLOCK =
     'НОВА ІНФОРМАЦІЯ ПРО ПРОДУКТ/КОМПАНІЮ (ВАЖЛИВО): якщо користувач ділиться новиною чи станом справ — скільки людей тестує, який етап запуску, що вже випущено або буде випущено і коли, нові функції, ціни, події, зміни («у нас уже…», «тепер…», «зʼявилось…», «коли буде 100 — вийде…») — це ФАКТ З ДАТОЮ, а не правило стилю. Роби так:\n' +
     '1) Розбий повідомлення на окремі факти (одна тема = один факт; одна фраза користувача може дати 3-4 факти).\n' +
     '2) Спершу виклич get_facts(status="all"): якщо тема вже є — використай ТУ САМУ topic, тоді новий факт автоматично замінить старий (старий стане «застарілим»).\n' +
-    '3) Для кожного факту — save_fact(topic, title, content, valid_from?, valid_until?, stale_markers?). topic — коротка стабільна тема (напр. «статус тестування», «випуск на iOS»). content — повне самодостатнє твердження з конкретикою, БЕЗ слів «сьогодні/вчора/зараз» (давай явні дати ДД.ММ.РРРР). Те, що буде в майбутньому, — з valid_from (дата початку дії), якщо дата відома; якщо дати нема, а умова є («коли буде 100 користувачів») — пиши умову прямо в content. stale_markers — 1-4 короткі фрази СТАРОГО формулювання, яких більше не можна вживати (напр. старе число чи статус; візьми зі старих фактів, бази знань, продуктів, постів).\n' +
-    '4) Якщо save_fact повернув stalePosts>0 — виклич find_stale_posts, для кожного поста get_post, перепиши застаріле місце під нові факти й збережи через edit_post (check_writing перед цим).\n' +
+    '3) Для кожного факту — save_fact(topic, title, content, valid_from?, valid_until?, stale_markers?). topic — коротка стабільна тема (напр. «статус тестування», «випуск на iOS»). content — повне самодостатнє твердження з конкретикою, БЕЗ слів «сьогодні/вчора/зараз» (давай явні дати ДД.ММ.РРРР). Те, що буде в майбутньому, — з valid_from (дата початку дії), якщо дата відома; якщо дати нема, а умова є («коли буде 100 користувачів») — пиши умову прямо в content. stale_markers — 2-5 КОРОТКИХ (2-4 слова) ключових фраз СТАРОГО формулювання, що збігаються з будь-яким перефразуванням, а не цілі речення (напр. «15 тестувальників», «15 живих», «перших 15», «ще не доступний»); візьми їх зі старих фактів, бази знань, продуктів, постів.\n' +
+    '4) ПЕРЕВІР ЗАПЛАНОВАНІ ПОСТИ на застаріле. (а) Якщо save_fact повернув stalePosts>0 — виклич find_stale_posts. (б) Маркери ловлять лише дослівні збіги, тому ЗАВЖДИ додатково виклич list_posts(date_from=сьогодні, date_to=далека дата) і за уривками знайди пости, що за змістом суперечать новим фактам (старі числа чи статуси, «ще не доступний», «потрібно N тестувальників» тощо, коли тепер інакше). Для кожного такого поста get_post → перепиши лише застаріле місце під нові факти (решту тексту, довжину й тон збережи) → check_writing → edit_post. Не чіпай пости, яких новина не стосується.\n' +
     '5) Якщо ще й просять написати пости — після збереження фактів створи до 5 постів сам (create_post); для більшого обсягу скажи надіслати окремий запит на генерацію (тоді він піде вже з новими фактами).\n' +
     '6) Підсумок: що тепер актуальне, що замінено як застаріле, які пости виправлено. Не кажи «зберіг», якщо save_fact не повернув ok=true.\n' +
     'Правила стилю, заборони, тон — і далі save_rule; факти про СТАН (числа, етапи, дати, статуси) — ТІЛЬКИ save_fact. Якщо щось просто перестало бути правдою і заміни нема — expire_fact(id або topic). Про що зараз актуально/застаріло — відповідай з get_facts(status="all").\n\n';
@@ -88,14 +88,16 @@ async function main() {
         let sp = String(n.data.systemPrompt);
         const tools = Array.isArray(n.data.tools) ? n.data.tools.slice() : [];
         const data = {};
-        if (sp.includes('НОВА ІНФОРМАЦІЯ ПРО ПРОДУКТ')) console.log('agent prompt: already patched');
-        else {
-            const needle = 'ІНСТРУМЕНТИ ДАНИХ:';
-            if (!sp.includes(needle)) throw new Error('agent: маркер ІНСТРУМЕНТИ ДАНИХ не знайдено');
-            sp = sp.replace(needle, AGENT_BLOCK + needle);
-            sp = sp.replace('Якщо юзер дає правки (стиль, ЦА, факти) — застосуй', 'Якщо юзер дає правки (стиль, ЦА) — застосуй');
-            data.systemPrompt = sp;
-        }
+        // Блок АГЕНТА — між «АКТУАЛЬНІ ФАКТИ ПРО ПРОДУКТ/КОМПАНІЮ» і «ІНСТРУМЕНТИ ДАНИХ:»; якщо він уже є —
+        // оновлюємо до поточного тексту (щоб правки формулювань застосовувались повторним запуском).
+        const needle = 'ІНСТРУМЕНТИ ДАНИХ:';
+        const startMark = 'АКТУАЛЬНІ ФАКТИ ПРО ПРОДУКТ/КОМПАНІЮ';
+        if (!sp.includes(needle)) throw new Error('agent: маркер ІНСТРУМЕНТИ ДАНИХ не знайдено');
+        const si = sp.indexOf(startMark);
+        const next = si >= 0 ? sp.slice(0, si) + AGENT_BLOCK + sp.slice(sp.indexOf(needle)) : sp.replace(needle, AGENT_BLOCK + needle);
+        const next2 = next.replace('Якщо юзер дає правки (стиль, ЦА, факти) — застосуй', 'Якщо юзер дає правки (стиль, ЦА) — застосуй');
+        if (next2 === sp) console.log('agent prompt: already up to date');
+        else data.systemPrompt = next2;
         const wanted = [
             tool('get_facts', 'Факти з датами. status: active (за замовчуванням) | scheduled | outdated | all. Повертає facts[] (id, topic, title, content, status, validFrom, validUntil) і готовий блок text. Для питань «що актуально / що застаріло» — status=all.',
                 { status: { type: 'string', description: 'active|scheduled|outdated|all' } }),
@@ -106,15 +108,20 @@ async function main() {
                     content: { type: 'string', description: 'Повне самодостатнє твердження українською, з явними датами ДД.ММ.РРРР, без «сьогодні/вчора»' },
                     valid_from: { type: 'string', description: 'З якої дати діє (YYYY-MM-DD), якщо факт про майбутнє; інакше пропусти' },
                     valid_until: { type: 'string', description: 'До якої дати діє (YYYY-MM-DD), якщо відомо' },
-                    stale_markers: { type: 'string', description: 'Фрази СТАРОГО формулювання (по одній у рядок), яких більше не можна вживати в постах' },
+                    stale_markers: { type: 'string', description: 'КОРОТКІ (2-4 слова) фрази СТАРОГО формулювання (по одній у рядок), яких більше не можна вживати в постах, напр. "15 тестувальників"' },
                 }, ['topic', 'title', 'content']),
             tool('expire_fact', 'Позначити факт застарілим без заміни (передай id з get_facts або topic).',
                 { id: { type: 'string' }, topic: { type: 'string' }, valid_until: { type: 'string', description: 'опційно YYYY-MM-DD' } }),
             tool('find_stale_posts', 'Заплановані пости та чернетки (від сьогодні), у яких лишилась фраза зі старого формулювання (stale_markers фактів). Повертає номери постів — виправ їх через get_post + edit_post.', {}),
         ];
         let added = 0;
-        for (const t of wanted) if (!tools.some((x) => x.name === t.name)) { tools.push(t); added++; }
-        if (added) data.tools = tools;
+        let refreshed = 0;
+        for (const t of wanted) {
+            const i = tools.findIndex((x) => x.name === t.name);
+            if (i < 0) { tools.push(t); added++; }
+            else if (JSON.stringify(tools[i]) !== JSON.stringify(t)) { tools[i] = t; refreshed++; }
+        }
+        if (added || refreshed) data.tools = tools;
         const qa = String(n.data.qaExpectation || '');
         if (!qa.includes('save_fact')) data.qaExpectation = qa + ' Нову інформацію про стан продукту (числа, етапи, дати) зберігає через save_fact (з topic, щоб замінити старий факт), а не save_rule, і виправляє заплановані пости зі старим формулюванням.';
         if (Object.keys(data).length) { await callTool('update_node', { botId: CM, nodeId: N_AGENT, data }); console.log('agent: patched', Object.keys(data).join(', '), '(+' + added + ' tools)'); }

@@ -58,7 +58,7 @@ async function main() {
         audience: 'cold', post_type: 'post',
     });
     if (!staleCreate.ok) fail('seed stale post: ' + JSON.stringify(staleCreate));
-    const stalePostNumber = staleCreate.number;
+    const stalePostNumber = staleCreate.post && staleCreate.post.number;
     console.log('Сід: старий факт, прострочений факт, майбутній факт, запланований пост #' + stalePostNumber);
 
     // ── 1. новина боту ───────────────────────────────────────────────────────

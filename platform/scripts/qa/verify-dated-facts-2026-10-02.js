@@ -42,7 +42,7 @@ async function main() {
 
     // ── 0. чистий стан ───────────────────────────────────────────────────────
     await tool('delete_posts', { date_from: '2020-01-01', date_to: '2035-12-31' });
-    await db.$executeRawUnsafe("delete from knowledge_entries where project_id = $1 and category = 'fact'", projectId);
+    await tool('delete_facts', {});
 
     const r1 = await tool('save_fact', { topic: 'акція на хліб', title: 'Акція СУБОТА-40', content: 'Щосуботи діє акція «СУБОТА-40»: буханка ранкового хліба коштує 40 грн.', valid_from: iso(-20) });
     if (!r1.ok) fail('seed old fact: ' + JSON.stringify(r1));
@@ -88,17 +88,23 @@ async function main() {
     if (/ПОДІЛ-20/.test(actualPart)) problems.push('ПОДІЛ-20 потрапив у «актуальне», хоча діє лише з майбутньої дати');
 
     // ── 3. запланований пост виправлено ──────────────────────────────────────
-    const stalePost = await db.$queryRawUnsafe('select i.content from post_groups g join post_items i on i.group_id = g.id where g.project_id = $1 and g.number = $2', projectId, stalePostNumber);
-    const staleText = stalePost[0] && stalePost[0].content || '';
-    if (!stalePost.length) problems.push('запланований пост #' + stalePostNumber + ' зник');
+    const stalePost = await tool('get_post', { number: String(stalePostNumber) });
+    const staleText = stalePost.ok && stalePost.post ? stalePost.post.content || '' : '';
+    if (!stalePost.ok) problems.push('запланований пост #' + stalePostNumber + ' зник');
     else if (/СУБОТА-40/.test(staleText)) problems.push('пост #' + stalePostNumber + ' лишився зі старим формулюванням СУБОТА-40: «' + staleText.slice(0, 80) + '»');
     console.log('Пост #' + stalePostNumber + ' після новини: «' + staleText.slice(0, 160) + '»');
 
     // ── 4. генерація нових постів ────────────────────────────────────────────
     const gen = await chat(projectId, '6 постів для Threads на найближчий тиждень про наші акції та ціни на хліб, тільки текст без картинок', 480);
     console.log('Відповідь бота на генерацію (початок): ' + String(gen.replies.slice(-1)[0] || '').slice(0, 200));
-    const rows = await db.$queryRawUnsafe(
-        "select g.number, i.content from post_groups g join post_items i on i.group_id = g.id where g.project_id = $1 and g.number <> $2 and length(i.content) > 0 order by g.number", projectId, stalePostNumber);
+    const listed = await tool('list_posts', { date_from: iso(0), date_to: '2099-01-01' });
+    const rows = [];
+    for (const p of (listed.posts || [])) {
+        if (p.number === stalePostNumber) continue;
+        const full = await tool('get_post', { number: String(p.number) });
+        const content = full.ok && full.post ? full.post.content || '' : '';
+        if (content.length > 0) rows.push({ number: p.number, content });
+    }
     if (rows.length < 3) problems.push('згенеровано замало постів: ' + rows.length);
     const hits = (re) => rows.filter((x) => re.test(x.content)).map((x) => '#' + x.number);
     const sat = hits(/СУБОТА-40|субот\S*\s*-?\s*40/i);

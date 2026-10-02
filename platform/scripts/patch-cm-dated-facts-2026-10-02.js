@@ -141,5 +141,20 @@ async function main() {
             console.log('dispatcher: patched');
         }
     }
+
+    // 5) Dispatcher: «розкидай по одному на день» → date = «N днів від завтра» (інакше всі пости лягали на одну дату;
+    //    Parse Intent розкидає по днях лише коли date містить «N днів/тижнів»; виявлено 2026-10-02 на постах для організаторів)
+    {
+        const n = node(N_DISPATCH);
+        const sp = String(n.data.systemPrompt);
+        if (sp.includes('РОЗКИДАТИ ПО ДНЯХ')) console.log('dispatcher spread: already patched');
+        else {
+            const needle = '- topic: якщо користувач ЯВНО вказав тему';
+            if (!sp.includes(needle)) throw new Error('dispatcher: рядок topic не знайдено');
+            const add = '- РОЗКИДАТИ ПО ДНЯХ: якщо користувач просить розкидати пости по днях («по одному на день», «щодня по одному», «розкидай по днях») і дає count N — став date = «N днів від завтра» (або «N днів від <дата>»), щоб на кожен день припав один пост. Не став date=«завтра» для кількох постів, коли просили розкидати.\n';
+            await callTool('update_node', { botId: CM, nodeId: N_DISPATCH, data: { systemPrompt: sp.replace(needle, add + needle) } });
+            console.log('dispatcher spread: patched');
+        }
+    }
 }
 main().then(() => process.exit(0)).catch((e) => { console.error('FAILED:', e && e.message); process.exit(1); });

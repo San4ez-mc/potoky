@@ -47,6 +47,8 @@ async function cleanupQaPosts() {
     const url = 'http://localhost:3002/api/agent-tools?action=delete_posts&token=' + encodeURIComponent(secret) + '&projectId=' + encodeURIComponent(projectId);
     const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date_from: '2020-01-01', date_to: '2035-12-31' }) });
     log('cleanup QA posts → HTTP', r.status, (await r.text()).slice(0, 120));
+    // факти з датами (C12) теж чистимо — інакше факти минулого прогону впливають на наступний
+    await db.$executeRawUnsafe("delete from knowledge_entries where project_id = $1 and category = 'fact'", projectId);
 }
 
 

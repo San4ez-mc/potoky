@@ -16,6 +16,7 @@
 const crypto = require('crypto');
 const { db, logger, loadAssets, cleanJsonDeep } = require('./lib');
 const { planOrder } = require('./supplierDispatch');
+const { loadDispatchSource } = require('./orderSource');
 const { redisClient } = require('../../lib/sessionStore');
 
 function webhookSecret(tok) { return crypto.createHash('sha256').update('admin-tg:' + String(tok || '')).digest('hex').slice(0, 48); }
@@ -32,28 +33,46 @@ async function tg(tok, method, body) {
 
 const MECH_LABEL = { brewdrop: 'автоматично через API BrewDrop', easydrop_offline: 'автоматично через форму EasyDrop', easydrop_cart: 'автоматично через кошик EasyDrop', manual: 'механізм не налаштований — лишиться вручну' };
 
-/** Текст попереднього перегляду: що САМЕ піде постачальникам. */
-async function previewText(A) {
+/** Відбиток того, що піде постачальнику: «Так, оформити» з перегляду, після якого замовлення змінили в CRM, не оформлює наосліп. */
+function sourceHash(src) {
+    const od = src.orderData || {};
+    const key = JSON.stringify({ l: src.lines.map((l) => [l.sku, l.color, l.size, l.qty, l.price]), o: [od.fullName, od.phone, od.city, od.branch] });
+    return crypto.createHash('sha1').update(key).digest('hex').slice(0, 10);
+}
+const linesTotal = (lines) => Math.round(lines.reduce((s, l) => s + (Number(l.price) || 0) * (Number(l.qty) || 1), 0) * 100) / 100;
+
+/** Перегляд: що САМЕ піде постачальникам — позиції й доставка із замовлення CRM (з правками менеджера). */
+async function previewText(A, src) {
     const { ctx } = A;
-    const groups = await planOrder(A);
-    const out = ['<b>📦 Оформити постачальнику?</b>' + (ctx.orderRef ? ' · <code>' + esc(ctx.orderRef) + '</code>' : ''), ''];
-    if (!groups.length) out.push('⚠️ У замовленні не знайдено жодної позиції з артикулом — оформіть вручну.');
+    src = src || await loadDispatchSource(A);
+    const groups = await planOrder(A, src.lines);
+    const edited = src.order && src.order.managerEditedAt;
+    const out = ['<b>📦 Оформити постачальнику?</b>' + (ctx.orderRef ? ' · <code>' + esc(ctx.orderRef) + '</code>' : '')];
+    if (edited) out.push('✏️ Змінено менеджером у CRM ' + esc(kyivTime(new Date(edited))));
+    if (src.warn) out.push('⚠️ ' + esc(src.warn));
+    out.push('');
+    if (!groups.length) out.push('⚠️ У замовленні не знайдено жодної позиції — оформіть вручну.');
     for (const g of groups) {
         out.push('🏭 <b>' + esc(g.name) + '</b> — ' + esc(MECH_LABEL[g.mechanism] || g.mechanism));
-        for (const l of g.lines) out.push('   • ' + esc(l.name) + (l.sku && !String(l.name || '').toUpperCase().includes(String(l.sku).toUpperCase()) ? ' (' + esc(l.sku) + ')' : '') + [l.color, l.size].filter(Boolean).map((x) => ' · ' + esc(x)).join('') + ' × ' + (Number(l.qty) || 1) + ' — ' + Math.round((Number(l.price) || 0) * (Number(l.qty) || 1)) + ' грн');
+        for (const l of g.lines) out.push('   • ' + esc(l.name) + (l.sku && !String(l.name || '').toUpperCase().includes(String(l.sku).toUpperCase()) ? ' (' + esc(l.sku) + ')' : '') + [l.color, l.size].filter(Boolean).map((x) => ' · ' + esc(x)).join('') + ((l.color || l.size) ? '' : ' · ⚠️ без кольору/розміру') + ' × ' + (Number(l.qty) || 1) + ' — ' + Math.round((Number(l.price) || 0) * (Number(l.qty) || 1)) + ' грн');
     }
-    const od = ctx.orderData || {};
+    const od = src.orderData || {};
     out.push('');
     out.push('👤 ' + esc(od.fullName || '—') + ' · ' + esc(od.phone || '—'));
     out.push('📍 ' + esc(od.city || '—') + ', НП ' + esc(od.branch || (ctx.np && ctx.np.branch) || '—'));
-    const total = Number(ctx.orderTotal) || 0; const pre = Number(ctx.payAmount) || 0;
+    const total = linesTotal(src.lines) || Number(ctx.orderTotal) || 0; const pre = Number(ctx.payAmount) || 0;
+    if (Number(ctx.orderTotal) && Math.abs(total - Number(ctx.orderTotal)) >= 1) out.push('⚠️ Сума змінилась: було ' + Number(ctx.orderTotal) + ' грн, стало ' + total + ' грн — повідомте клієнта.');
     const method = ctx.paymentInfo && ctx.paymentInfo.method;
     const payLine = method === 'full' || (pre && pre >= total) ? 'повна передоплата ' + (pre || total) + ' грн' : (pre ? 'передоплата ' + pre + ' грн, накладений платіж ' + Math.max(0, total - pre) + ' грн' : 'накладений платіж ' + total + ' грн');
     out.push('💳 ' + payLine + ' · ' + (ctx.payStatus === 'confirmed' ? '✅ оплату у виписці знайдено' : '⚠️ оплату у виписці НЕ знайдено — оформлюйте, лише якщо перевірили оплату самі'));
     if (groups.length > 1) out.push('📮 ' + groups.length + ' окремі посилки (різні постачальники).');
     out.push('');
-    out.push('Кнопка оформлює саме те, що вище. Якщо щось не так — «Скасувати».');
-    return out.join('\n');
+    out.push('Кнопка оформлює саме те, що вище. Щось не так — «✏️ Редагувати» (картка в CRM), збережіть і натисніть «📦 Оформити постачальнику» ще раз.');
+    return { text: out.join('\n'), hash: sourceHash(src), src };
+}
+function previewKeyboard(A, sessionId, hash) {
+    const { crmOrderEditUrl } = require('./policy');
+    return { inline_keyboard: [[{ text: '✅ Так, оформити', callback_data: 'sy:' + sessionId + ':' + hash }, { text: '✖️ Скасувати', callback_data: 'sb:' + sessionId }], [{ text: '✏️ Редагувати замовлення', url: crmOrderEditUrl(A.keys, A.ctx.crmOrderId) }]] };
 }
 
 /** Зберігає лише змінені цим обробником поля поверх СВІЖОГО контексту (клієнт міг написати, поки йшло оформлення). */
@@ -82,9 +101,9 @@ function blockedReason(session, ctx) {
 }
 
 async function handleAdminCallback({ secret, cq }) {
-    const m = /^(so|sy|sb|sd):([0-9a-f-]{36})$/.exec(String((cq && cq.data) || ''));
+    const m = /^(so|sy|sb|sd):([0-9a-f-]{36})(?::([0-9a-f]{10}))?$/.exec(String((cq && cq.data) || ''));
     if (!m) return;
-    const [, action, sessionId] = m;
+    const [, action, sessionId, seenHash] = m;
     const session = await db.session.findUnique({ where: { id: sessionId }, include: { user: true } });
     if (!session) return;
     const assets = await loadAssets(session.botId);
@@ -110,10 +129,19 @@ async function handleAdminCallback({ secret, cq }) {
 
     if (action === 'so') {
         await answer('Перевірте, що піде постачальнику');
-        const text = await previewText(A);
-        await tg(tok, 'sendMessage', { chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true, reply_to_message_id: msgId, allow_sending_without_reply: true, reply_markup: { inline_keyboard: [[{ text: '✅ Так, оформити', callback_data: 'sy:' + sessionId }, { text: '✖️ Скасувати', callback_data: 'sb:' + sessionId }]] } });
+        const p = await previewText(A);
+        await tg(tok, 'sendMessage', { chat_id: chatId, text: p.text, parse_mode: 'HTML', disable_web_page_preview: true, reply_to_message_id: msgId, allow_sending_without_reply: true, reply_markup: previewKeyboard(A, sessionId, p.hash) });
         return;
     }
+
+    // Перегляд застарів (замовлення змінили в CRM після нього) — показуємо свіжий замість оформлення наосліп.
+    const fresh = await previewText(A);
+    if (fresh.hash !== seenHash) {
+        await answer('Замовлення змінилось після перевірки — перевірте ще раз', true);
+        await tg(tok, 'editMessageText', { chat_id: chatId, message_id: msgId, text: '🔄 Оновлено після змін у CRM\n' + fresh.text, parse_mode: 'HTML', disable_web_page_preview: true, reply_markup: previewKeyboard(A, sessionId, fresh.hash) });
+        return;
+    }
+    const src = fresh.src;
 
     // sy — оформлюємо. Замок від подвійного натискання (двоє менеджерів / подвійний тап).
     const lockKey = 'mgr-supplier:' + sessionId;
@@ -125,8 +153,15 @@ async function handleAdminCallback({ secret, cq }) {
         await answer('Оформлюю…');
         await tg(tok, 'editMessageText', { chat_id: chatId, message_id: msgId, text: '⏳ Оформлюю постачальнику…', parse_mode: 'HTML' });
         const before = snapshot(ctx);
+        // Доставка й сума — як у CRM (менеджер міг виправити): постачальнику, а також памʼяті розмови (подальші повідомлення клієнту).
+        const prevOd = ctx.orderData || {};
+        if (src.fromCrm) {
+            if (String(prevOd.city || '') !== String(src.orderData.city || '') || String(prevOd.branch || '') !== String(src.orderData.branch || '')) delete ctx.np; // довідка НП застаріла
+            ctx.orderData = src.orderData;
+            const t = linesTotal(src.lines); if (t > 0) ctx.orderTotal = t;
+        }
         const { runSupplierDispatch } = require('./policy');
-        const dispatch = await runSupplierDispatch(A, { force: true, silent: true });
+        const dispatch = await runSupplierDispatch(A, { force: true, silent: true, lines: src.lines });
         const by = whoPressed(cq.from);
         const anyManual = dispatch.groups.some((g) => g.needsManual);
         ctx.managerDispatch = { at: new Date().toISOString(), atText: kyivTime(), by, tgUserId: cq.from && cq.from.id, status: ctx.supplierOrderStatus };

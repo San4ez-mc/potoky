@@ -9,6 +9,7 @@ const T = require('./tools');
 const { compose } = require('./compose');
 const { messageText, messageTextMultiline, nodeData, norm, loadCategories, loadCatalog } = require('./lib');
 const { dispatchOrder, manualSupplierMode } = require('./supplierDispatch');
+const { syncSetComponents } = require('./orderSource');
 const { hasCategoryWord, categoryWordIsUpsell, categoryWordIsSetComponent, categoryWordIsMain } = require('./signal');
 const { resolveColorMention } = require('./cart');
 const { classifyKbQuestion, kbSimilarity, kbSimilar } = require('./kbRules');
@@ -529,11 +530,16 @@ async function sendCard(A) {
     else await sendManualRequisites(A, true); // немає картки в CRM — чесний фолбек на реквізити, а не вигадана картка
 }
 
+/** Картка замовлення в CRM одразу в режимі редагування (склад, колір/розмір, доставка). */
+function crmOrderEditUrl(keys, orderId) {
+    return String((keys && keys.CRM_PUBLIC_URL) || 'https://pcrm.fineko.space').replace(/\/$/, '') + '/orders?open=' + encodeURIComponent(orderId) + '&edit=1';
+}
+
 /** Кнопки під сповіщенням менеджеру (обробник — managerActions.js). Лише коли автооформлення вимкнено і замовлення ще не пішло постачальнику. */
 function supplierButtons(A) {
     const { ctx } = A;
     if (!manualSupplierMode(A.keys) || ctx.managerDispatch || !ctx.crmOrderId || String(ctx.crmOrderId).startsWith('TEST-')) return [];
-    return [[{ text: '📦 Оформити постачальнику', callback_data: 'so:' + A.session.id }]];
+    return [[{ text: '📦 Оформити постачальнику', callback_data: 'so:' + A.session.id }], [{ text: '✏️ Редагувати замовлення', url: crmOrderEditUrl(A.keys, ctx.crmOrderId) }]];
 }
 
 /**
@@ -545,7 +551,7 @@ async function runSupplierDispatch(A, opts = {}) {
     // Цикл по постачальниках (рішення власника 2026-09-14): кожна позиція йде своєму
     // постачальнику окремо (BrewDrop/EasyDrop — різні системи, реально різні посилки);
     // вручну лишається лише те, для чого механізм справді не налаштований у CRM.
-    const dispatch = await dispatchOrder(A, { force: !!opts.force });
+    const dispatch = await dispatchOrder(A, { force: !!opts.force, lines: opts.lines });
     ctx.parcelCount = dispatch.groups.length; ctx.multiParcel = dispatch.multiParcel;
     let buttonsShown = false;
     for (const g of dispatch.groups) {
@@ -583,6 +589,8 @@ async function afterOrderAccepted(A) {
             return 'paused';
         }
         // Автооформлення вимкнено (SUPPLIER_ORDERS_DISABLED=1): менеджер перевіряє замовлення і сам відправляє постачальнику кнопкою.
+        // Комплект: склад (колір/розмір кожної речі) — у рядок-комплект замовлення CRM, щоб менеджер бачив і міг виправити його там.
+        await syncSetComponents(A).catch(() => false);
         await T.alert(A, 'n_create', manualSupplierMode(A.keys) ? { details: '⏸ Автооформлення постачальнику вимкнено — перевірте замовлення й натисніть «📦 Оформити постачальнику».', buttons: supplierButtons(A) } : {});
         await T.funnelStage(A, ...(ctx.payStatus === 'confirmed' || Number(ctx.payAmount) === 0 ? STAGES.accepted : STAGES.awaiting));
     } else if (ctx.repeatPass || ctx.payStatus === 'confirmed') {
@@ -2238,4 +2246,4 @@ async function runPolicyInner(A, u) {
     }
 }
 
-module.exports = { runPolicy, addressComplete, matchColor, enforceInsistLimit, runSupplierDispatch };
+module.exports = { runPolicy, addressComplete, matchColor, enforceInsistLimit, runSupplierDispatch, crmOrderEditUrl };

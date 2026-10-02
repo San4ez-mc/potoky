@@ -168,7 +168,8 @@ async function dispatchEasydrop(A, nodeId, group, alloc) {
  */
 async function dispatchOrder(A, opts = {}) {
     const { ctx, keys } = A;
-    const lines = buildLines(ctx);
+    // opts.lines — позиції з замовлення CRM (orderSource.js: менеджер міг їх виправити); інакше — з розмови.
+    const lines = Array.isArray(opts.lines) ? opts.lines : buildLines(ctx);
     if (!lines.length) return { groups: [], multiParcel: false };
     const groups = await groupBySupplier(A, lines);
     // Тимчасовий вимикач (рішення власника, 2026-09-28): перед увімкненням бойового режиму воронки автоматичне
@@ -205,8 +206,8 @@ async function dispatchOrder(A, opts = {}) {
 }
 
 /** Що САМЕ піде постачальникам (без виклику постачальника): групи з механізмом — для попереднього перегляду менеджеру перед кнопкою. */
-async function planOrder(A) {
-    const groups = await groupBySupplier(A, buildLines(A.ctx));
+async function planOrder(A, lines) {
+    const groups = await groupBySupplier(A, Array.isArray(lines) ? lines : buildLines(A.ctx));
     for (const g of groups) {
         try { g.mechanism = (await mechanismFor(A, await resolveSupplierMeta(A, g.name))).mechanism; } catch (e) { g.mechanism = 'manual'; }
     }

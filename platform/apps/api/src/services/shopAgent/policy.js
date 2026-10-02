@@ -542,7 +542,7 @@ function resetForNewProduct(A, sku) {
         // «бот знову питає зріст і вагу», 01.10: 38 — картка нового товару просила їх заново). Скидаємо лише розмір/заміри під товар.
         const body = ctx.sizeInput && ctx.sizeInput.height && ctx.sizeInput.weight ? { height: ctx.sizeInput.height, weight: ctx.sizeInput.weight, ...(ctx.sizeInput.belly ? { belly: true } : {}), ...(ctx.sizeInput.shoeSize ? { shoeSize: ctx.sizeInput.shoeSize } : {}) } : null;
         for (const k of ['sizeInput','recommendedSize', 'sizeSource', 'sizeReplyText', 'sizeColorFollowup', 'sizeOutOfRange', 'sizeOorReason', 'sizeOorAlternative', 'isSetSizeCalc', 'setSizesText', 'setSizeMap', 'setSizeOor', 'colorChoice', 'available', 'availReason', 'orderUnits', 'orderUnitsText', 'orderUnitsTotal', 'orderQty', 'orderIntent', 'setMode', 'setPick', 'setSelection', 'availChecked', 'extraItems', 'extraItemsText', 'extraUnresolved', 'orderExtras', 'unavailableColors', 'availableColorsNow']) delete ctx[k];
-        for (const k of ['setOriginal', 'setPricing', 'setStageSent', 'setEditNote', 'setParams', 'setItemColorHints', 'setColorHints', 'upsellOffered', 'upsellDeclined', 'setGeneralQ', 'setNamedItem', 'payRepeatCount', 'upsellPhotoSent', 'availKey', 'sizeVerifyAsked', 'sizeClaim']) delete ctx.agent[k];
+        for (const k of ['setOriginal', 'setPricing', 'setStageSent', 'setEditNote', 'setParams', 'setItemsAll', 'setItemColorHints', 'setColorHints', 'upsellOffered', 'upsellDeclined', 'setGeneralQ', 'setNamedItem', 'payRepeatCount', 'upsellPhotoSent', 'availKey', 'sizeVerifyAsked', 'sizeClaim']) delete ctx.agent[k];
         if (!ctx.crmOrderId) for (const k of ['paymentInfo', 'payAmount', 'payLabel', 'orderRef', 'orderRefAt', 'ibanPayUrl', 'ibanInvoiceUid', 'requisitesSentAt']) delete ctx[k];
         if (body) { ctx.sizeInput = body; if (!A.hwThisTurn) ctx.agent.hwCarried = true; }
     }
@@ -1606,6 +1606,34 @@ async function runPolicyInner(A, u) {
         }
         }
     }
+    // Зміна складу комплекту («взуття не потрібно», «додайте футболку», «джинси чорні») — ДО підбору розміру, а не лише в секції
+    // кольорів (03.10, c6d03189: «Зріст 174 Вага 92 ⏎ Взуття не потрібно» → бот підібрав розмір і лоферам, двічі просив розмір
+    // взуття, бо секція розміру завершувала хід раніше, ніж доходило до прибирання). Звужуємо й склад самого товару (setItems),
+    // з якого рахуються розміри та параметри (без лоферів — без «розміру взуття»); повний склад лишається для повернення речі.
+    {
+        const p0 = P(ctx);
+        if (p0 && p0.isSet && ctx.setMode === 'set' && !ctx.crmOrderId && (u.removeItem || u.addItem || u.changeRequest)) {
+            if (!Array.isArray(ctx.setSelection) || !ctx.setSelection.length) { ctx.agent.setOriginal = ctx.agent.setOriginal || initSetSelection(p0); ctx.setSelection = initSetSelection(p0); }
+            if (!ctx.agent.setParams) ctx.agent.setParams = await resolveSetParams(A, p0); // назви категорій («взуття» → лофери)
+            if (!Array.isArray(ctx.agent.setItemsAll) || !ctx.agent.setItemsAll.length) ctx.agent.setItemsAll = Array.isArray(p0.setItems) ? p0.setItems : [];
+            const edited = await applySetEdit(A, u, p0);
+            A._setEditDone = true;
+            const keep = new Set(ctx.setSelection.map((s) => String(s.article).toUpperCase()));
+            const items = ctx.agent.setItemsAll.filter((it) => keep.has(String(it.article).toUpperCase()));
+            if (items.length && items.length !== (p0.setItems || []).length) {
+                ctx.product = { ...p0, setItems: items };
+                const catNames = ctx.agent.setParams && ctx.agent.setParams.categoryNames;
+                ctx.agent.setParams = await resolveSetParams(A, ctx.product);
+                if (catNames && ctx.agent.setParams) ctx.agent.setParams.categoryNames = { ...catNames, ...ctx.agent.setParams.categoryNames };
+                if (ctx.setSizeMap) for (const k of Object.keys(ctx.setSizeMap)) if (!keep.has(String(k).toUpperCase())) delete ctx.setSizeMap[k];
+                applySetPricing(ctx, ctx.product);
+            }
+            if (edited && ctx.agent.setEditNote) {
+                A.out.push({ text: 'Записала: ' + ctx.agent.setEditNote + ' ✅', step: 'set_edit' });
+                u.questions = u.questions.filter((q) => !/(розмір|більш|менш|замість|колір|взутт|без)/i.test(String(q)));
+            }
+        }
+    }
     const pp = P(ctx);
 
     // 2026-09-18 (живий кейс, LaT1K/C0043: "можна розмірну сітку?" / "не бачу фото" / "чекаю
@@ -1950,7 +1978,7 @@ async function runPolicyInner(A, u) {
         }
         // Зміни складу («кофту на розмір більше», «без взуття», «джинси чорні замість синіх») — одразу, а не лише після вибору
         // кольорів (тест 163, 02.10: бот відповів «можна XL», але розмір лишився L, бо зміна чекала кінця кольорів).
-        if (!ctx.crmOrderId && !ctx.agent.setColorsResolved && (u.removeItem || u.addItem || u.changeRequest)) {
+        if (!A._setEditDone && !ctx.crmOrderId && !ctx.agent.setColorsResolved && (u.removeItem || u.addItem || u.changeRequest)) {
             const editedEarly = await applySetEdit(A, u, pp);
             A._setEditDone = true;
             if (editedEarly && ctx.agent.setEditNote) {

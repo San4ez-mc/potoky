@@ -77,7 +77,11 @@ try {
     var __nameOf = function (p) { return (String(p.name || '') + ' ' + String(p.customerName || '')).toLowerCase(); };
     // 2026-09-09 (latifzada_0: «фото кофты «Сейн ангора»» → «ангора» є і в «Кофта Ангора» C0043 → два збіги → списку замість фото):
     // рахуємо, скільки слів клієнта є в назві; якщо є єдиний лідер за кількістю збігів — беремо його.
-    var __hitsBy = function (list) { var scored = list.map(function (p) { var h = __nameOf(p); return { p: p, n: __uw.filter(function (w) { return h.indexOf(w) >= 0; }).length }; }).filter(function (x) { return x.n > 0; }); if (!scored.length) return []; var top = Math.max.apply(null, scored.map(function (x) { return x.n; })); var best = scored.filter(function (x) { return x.n === top; }).map(function (x) { return x.p; }); return best; };
+    // 2026-10-02 (Edit 1316e183, Олексій: «бомбер з еко замші» → список із двох бомберів замість замшевого): слово клієнта
+    // шукалось у назві ЦІЛИМ — «замші» нема ні в «Бомбер замш Хьюстон», ні в «замшевий». Порівнюємо корені (без відмінкового
+    // закінчення, до 5 літер), як уже робить сортування списку нижче (__mw).
+    var __uwStems = __uw.map(function (w) { return w.replace(/(ього|ому|ого|ими|ій|ий|им|их|ої|ою|ам|ах|а|я|і|и|у|ю|е|є|ь)$/, '').slice(0, 5); }).filter(function (s) { return s.length >= 4; });
+    var __hitsBy = function (list) { var scored = list.map(function (p) { var h = __nameOf(p); return { p: p, n: __uwStems.filter(function (w) { return h.indexOf(w) >= 0; }).length }; }).filter(function (x) { return x.n > 0; }); if (!scored.length) return []; var top = Math.max.apply(null, scored.map(function (x) { return x.n; })); var best = scored.filter(function (x) { return x.n === top; }).map(function (x) { return x.p; }); return best; };
     var __prev = String(context.catalogHintSkus || '').toUpperCase().split(',').filter(Boolean);
     var __pick = null;
     // 2026-09-11 (Олексій: "не пиши їм скидати артикул — кажуть 'хочу сіру чи чорну', лови це"):

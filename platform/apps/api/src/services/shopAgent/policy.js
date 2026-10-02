@@ -2072,8 +2072,12 @@ async function runPolicyInner(A, u) {
             // комплекту йшов одним суцільним рядком через кому; тепер, як і скрізь для комплекту
             // (set_edit_confirm, humanSetList), кожна позиція на своєму рядку з буллетом.
             ctx.agent.lastSummaryKey = String(ctx.orderUnitsText || '') + '|' + total; // що саме показали клієнту в підсумку (щоб помітити зміну складу перед оплатою)
+            // Клієнт узяв НЕ всі речі комплекту — заголовок не «Комплект 4 в 1. Артикул: set1111» (вводив в оману), а «Ваш вибір із комплекту …» (власник 02.10).
+            const setOrigArts = Array.isArray(ctx.agent.setOriginal) ? ctx.agent.setOriginal.map((o) => String(o.article).toUpperCase()).sort().join('|') : '';
+            const setPartial = isSetFull && !!setOrigArts && setOrigArts !== [...new Set((ctx.setSelection || []).map((s) => String(s.article).toUpperCase()))].sort().join('|');
+            const setTitle = setPartial ? 'Ваш вибір із комплекту «' + String(pp.customerName || pp.name).replace(/\.?\s*Артикул:?\s*\S+\s*$/i, '').trim() + '»:' : (pp.customerName || pp.name);
             const summary = isSetFull
-                ? messageText(A.assets, 'n_agent_order_summary_header', ctx, A.session.id) + '\n' + (pp.customerName || pp.name) + '\n\n' + ctx.setSelection.map((it) => '• ' + it.name + ((it.color || it.size) ? ' (' + [it.color, it.size].filter(Boolean).join(', ') + ')' : '') + (it.qty > 1 ? ' ×' + it.qty : '') + ' — ' + (it.price * it.qty) + ' грн').join('\n') + '\n\nРазом: ' + total + ' грн' + '\n' + shipTerms(ctx)
+                ? messageText(A.assets, 'n_agent_order_summary_header', ctx, A.session.id) + '\n' + setTitle + '\n\n' + ctx.setSelection.map((it) => '• ' + it.name + ((it.color || it.size) ? ' (' + [it.color, it.size].filter(Boolean).join(', ') + ')' : '') + (it.qty > 1 ? ' ×' + it.qty : '') + ' — ' + (it.price * it.qty) + ' грн').join('\n') + '\n\nРазом: ' + total + ' грн' + '\n' + shipTerms(ctx)
                 : (() => { const units = ctx.orderUnitsText || ((ctx.colorChoice && ctx.colorChoice.color ? ctx.colorChoice.color : '') + (ctx.recommendedSize ? ' ' + ctx.recommendedSize : '')); return messageText(A.assets, 'n_agent_order_summary_header', ctx, A.session.id) + '\n' + (pp.customerName || pp.name) + (units ? ' — ' + units : '') + ' — ' + total + ' грн' + (ctx.extraItemsText ? '\n' + ctx.extraItemsText : '') + '\n' + shipTerms(ctx); })();
             // Допродаж уже доданий клієнтом як додатковий товар («і ще футболку») — не пропонуємо його вдруге.
             const upItem = Array.isArray(pp.upsellItems) && pp.upsellItems[0];

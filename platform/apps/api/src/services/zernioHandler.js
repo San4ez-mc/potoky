@@ -2312,7 +2312,7 @@ if (__runsBackground) setTimeout(() => { retryMissedZernioTurns(); setInterval(r
 // Розмови на паузі (веде менеджер) і тестовий режим — не чіпаємо. Запізнілий справжній вебхук потім ловить уже наявний
 // дедуп «той самий текст + той самий час клієнта» — подвійної відповіді не буде.
 const _pollState = new Map(); // botId -> lastPollAt (ms)
-async function pollZernioConversations() {
+async function pollZernioConversations(opts = {}) {
     let bots = [];
     try {
         const rows = await db.funnelKey.findMany({ where: { key: { in: ['ZERNIO_API_TOKEN', 'ZERNIO_ACCOUNT_ID', 'ZERNIO_POLL_MINUTES'] } }, select: { botId: true, key: true, value: true } });
@@ -2332,11 +2332,11 @@ async function pollZernioConversations() {
     } catch (e) { logger.warn('[zernioHandler] poll: keys load failed: ' + e.message); return; }
     const now = Date.now();
     for (const b of bots) {
-        const last = _pollState.get(b.botId);
+        const last = opts.dryRun ? null : _pollState.get(b.botId);
         if (last && now - last < b.minutes * 60 * 1000) continue;
-        _pollState.set(b.botId, now);
-        // Перекриття 4 хв із попередньою перевіркою; після (ре)старту — останні 30 хв.
-        const since = last ? last - 4 * 60 * 1000 : now - 30 * 60 * 1000;
+        if (!opts.dryRun) _pollState.set(b.botId, now);
+        // Перекриття 4 хв із попередньою перевіркою; після (ре)старту — останні 30 хв. opts — для ручної перевірки (без дій).
+        const since = last ? last - 4 * 60 * 1000 : now - (opts.sinceMinutes || 30) * 60 * 1000;
         const settle = now - 2 * 60 * 1000; // свіжіші за 2 хв — ще може прийти звичайний вебхук (типова затримка ~2 хв)
         let checked = 0, resumed = 0, created = 0;
         try {
@@ -2354,17 +2354,17 @@ async function pollZernioConversations() {
                     if (upd < since) { older = true; break; }
                     if (upd > settle || !c.participantId) continue;
                     checked++;
-                    const res = await pollOneConversation(b.botId, b.keys, c).catch((e) => { logger.warn('[zernioHandler] poll conv error: ' + e.message, { botId: b.botId, conv: c.id }); return null; });
+                    const res = await pollOneConversation(b.botId, b.keys, c, opts).catch((e) => { logger.warn('[zernioHandler] poll conv error: ' + e.message, { botId: b.botId, conv: c.id }); return null; });
                     if (res === 'resumed') resumed++; else if (res === 'created') created++;
                 }
                 cursor = j.pagination && j.pagination.hasMore ? j.pagination.nextCursor : null;
                 if (older || !cursor) break;
             }
         } catch (e) { logger.warn('[zernioHandler] poll failed: ' + e.message, { botId: b.botId }); }
-        if (checked) logger.info('[zernioHandler] poll Zernio conversations', { botId: b.botId, checked, resumed, created });
+        if (checked || opts.dryRun) logger.info('[zernioHandler] poll Zernio conversations', { botId: b.botId, checked, resumed, created, dryRun: !!opts.dryRun });
     }
 }
-async function pollOneConversation(botId, keys, c) {
+async function pollOneConversation(botId, keys, c, opts = {}) {
     const session = await db.session.findFirst({ where: { botId, isTest: false, context: { path: ['psid'], equals: String(c.participantId) } }, orderBy: { lastActive: 'desc' }, select: { id: true, context: true, lastActive: true } });
     if (session) {
         const ctx = session.context || {};
@@ -2372,13 +2372,14 @@ async function pollOneConversation(botId, keys, c) {
         // Свіжі (останні 14 хв) уже перевіряє retryMissedZernioTurns щохвилини — не дублюємо.
         if (session.lastActive && Date.now() - new Date(session.lastActive).getTime() < 14 * 60 * 1000) return null;
         if (await isBlockedByTestMode(botId, [ctx.igUsername, ctx.senderName])) return null;
-        const sync = await syncConversationTruth(botId, session.id, ctx.conversationId || c.id);
+        const sync = await syncConversationTruth(botId, session.id, ctx.conversationId || c.id, opts.dryRun ? { dryRun: true } : {});
         if (!sync.ok || sync.empty || sync.managerLed) return null;
         const unanswered = Array.isArray(sync.unanswered) ? sync.unanswered : [];
         const text = unanswered.map((u) => String(u.text || '').trim()).filter(Boolean).join('\n');
         const att = unanswered.map((u) => (u.attachments || []).find((a) => a.type === 'photo' && a.url)).find(Boolean);
         if (!text && !att) return null;
-        logger.info('[zernioHandler] poll: невідповідане в розмові без вебхука — відповідаю', { botId, sessionId: session.id, textPreview: text.slice(0, 60) });
+        logger.info('[zernioHandler] poll: невідповідане в розмові без вебхука — відповідаю', { botId, sessionId: session.id, textPreview: text.slice(0, 60), dryRun: !!opts.dryRun });
+        if (opts.dryRun) return 'resumed';
         scheduleFlowRun(session.id, { botId, contactId: ctx.contactId || ctx.psid, conversationId: ctx.conversationId || c.id, contactName: ctx.senderName, text, imageUrl: att ? att.url : null });
         return 'resumed';
     }
@@ -2396,7 +2397,8 @@ async function pollOneConversation(botId, keys, c) {
         message: { id: 'poll_' + lastMsg.id, direction: 'incoming', text: lastMsg.text || '', timestamp: lastMsg.createdAt.toISOString(), attachments: lastMsg.attachments.map((a) => ({ type: a.type, url: a.url, refreshUrl: a.refreshUrl })) },
         source: 'zernio_poll',
     };
-    logger.info('[zernioHandler] poll: нова розмова без вебхука — обробляю', { botId, conv: c.id, username: c.participantUsername, textPreview: String(lastMsg.text || '').slice(0, 60) });
+    logger.info('[zernioHandler] poll: нова розмова без вебхука — обробляю', { botId, conv: c.id, username: c.participantUsername, textPreview: String(lastMsg.text || '').slice(0, 60), dryRun: !!opts.dryRun });
+    if (opts.dryRun) return 'created';
     await handleZernioEvent(botId, body);
     return 'created';
 }
@@ -2410,5 +2412,5 @@ if (__runsBackground) setTimeout(() => { pollZernioConversations(); setInterval(
 // живий кейс mediaId без артикулу; Проблема Д — race condition у серіалізації
 // runFlowAndDeliver) і майбутніх регресійних тестів — не викликаються поза
 // handleZernioEvent у нормальному потоці.
-module.exports = { handleZernioEvent, sendZernioMessage, ensurePostAutomation, scheduleFlowRun, pickCommentPublicReply };
+module.exports = { pollZernioConversations, handleZernioEvent, sendZernioMessage, ensurePostAutomation, scheduleFlowRun, pickCommentPublicReply };
 

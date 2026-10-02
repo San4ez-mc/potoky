@@ -48,7 +48,8 @@ async function cleanupQaPosts() {
     const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date_from: '2020-01-01', date_to: '2035-12-31' }) });
     log('cleanup QA posts → HTTP', r.status, (await r.text()).slice(0, 120));
     // факти з датами (C12) теж чистимо — інакше факти минулого прогону впливають на наступний
-    await db.$executeRawUnsafe("delete from knowledge_entries where project_id = $1 and category = 'fact'", projectId);
+    const rf = await fetch(url.replace('action=delete_posts', 'action=delete_facts'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    log('cleanup QA facts → HTTP', rf.status, (await rf.text()).slice(0, 80));
 }
 
 

@@ -438,6 +438,29 @@ function humanizeParamsPrompt(prompt) {
     return hwPhrase + (rest.length ? ', а також ' + rest.join(', ') : '');
 }
 
+/** Заміри з таблиці CRM (sizeChartData → pp.sizeChartText) лише для розмірів, які назвав клієнт («заміри на xl xxl»). */
+function chartLinesFor(pp, text) {
+    const table = String((pp && pp.sizeChartText) || ''); if (!table) return '';
+    const canon = (x) => { const t = String(x).toUpperCase().trim(); return t === 'XXL' ? '2XL' : (t === 'XXXL' ? '3XL' : t); };
+    const want = (String(text || '').toUpperCase().match(/(?<![A-Z0-9])(XXXL|XXL|3XL|2XL|XL|XS|S|M|L)(?![A-Z0-9])/g) || []).map(canon);
+    if (!want.length) return '';
+    const [head, ...rows] = table.split('\n');
+    const hit = rows.filter((r) => want.includes(canon(r.split(' — ')[0])));
+    const unit = (head.match(/\(([^)]+)\):?$/) || [])[1] || 'см';
+    return hit.length ? '📏 Заміри (' + unit + '):\n' + hit.join('\n') : '';
+}
+/** Фото розмірної сітки (+ заміри цифрами для названих розмірів). Питання про сітку/заміри вважаємо відповіданими — інакше
+ * загальна відповідь на питання наприкінці ходу дописувала «Надсилаю сітку окремим фото», хоча фото вже пішло (Edit 1316e183). */
+function sendSizeChart(A, pp, u) {
+    const { ctx } = A;
+    A._chartSent = true;
+    A.out.push({ photoUrls: [pp.sizeChartUrl], caption: messageText(A.assets, 'n_agent_size_chart_caption', ctx, A.session.id), step: 'size_chart' });
+    ctx.agent.chartSentFor = pp.sku;
+    const lines = chartLinesFor(pp, A.turnText);
+    if (lines) A.out.push({ text: lines, step: 'size_chart_numbers', noMerge: true });
+    if (Array.isArray(u.questions)) u.questions = u.questions.filter((q) => !/(сітк|замір|таблиц|обхват|довжин)/i.test(String(q)));
+}
+
 async function resolveSetParams(A, pp) {
     if (!Array.isArray(pp.setItems) || !pp.setItems.length) return { params: [], prompt: '', isOnlyHW: false, categoryNames: {} };
     let categories = []; try { categories = await loadCategories(A.botId, A.keys); } catch (e) { categories = []; }
@@ -1546,9 +1569,7 @@ async function runPolicyInner(A, u) {
     if (!u.wantsSizeChart && ctx.recommendedSize && pp.sizeChartUrl && ctx.agent.chartSentFor !== pp.sku && /мал(уват|оват)|тісн|тісно|великуват|завелик|замал|не\s+буде\s+(малий|великий)/i.test(String(A.turnText || ''))) u.wantsSizeChart = true;
     if (u.wantsSizeChart && (ctx.recommendedSize || ctx.agent.chartSentFor === pp.sku) && pp.sizeChartUrl && !A._chartSent) { // явне повторне прохання сітки — надсилаємо знову (FunnelTest 27: обіцяли «ще раз» без вкладення)
         const _txt = String(A.turnText || '');
-        A.out.push({ photoUrls: [pp.sizeChartUrl], caption: messageText(A.assets, 'n_agent_size_chart_caption', ctx, A.session.id), step: 'size_chart' });
-        ctx.agent.chartSentFor = pp.sku; A._chartSent = true;
-        if (Array.isArray(u.questions)) u.questions = u.questions.filter((q) => !/(сітк|заміри|таблиц)/i.test(String(q))); // відповідь уже пішла фото — compose не має «обіцяти» її вдруге
+        sendSizeChart(A, pp, u); // відповідь уже пішла фото — compose не має «обіцяти» її вдруге
         // «Сітку кофти і футболки» — про другий товар відповідаємо окремо (тест 27: інакше частина прохання губиться).
         const _other = (_txt.match(/футболк\S*|джинс\S*|лофер\S*|взутт\S*|штан\S*|костюм\S*|кофт\S*|бомбер\S*|куртк\S*/gi) || []).filter((w) => !new RegExp(w.slice(0, 5), 'i').test(String(pp.name || '') + ' ' + String(pp.customerName || '')));
         if (_other.length) u.questions = (u.questions || []).concat(['Чи є окрема розмірна сітка для «' + _other[0] + '»? (сітку поточного товару вже надіслано фото)']);
@@ -1620,7 +1641,7 @@ async function runPolicyInner(A, u) {
         if (complete) {
             // Клієнт просить сітку в тому ж ході, коли розмір рахується (напр. після прохання перевірити розмір) — надсилаємо саме фото,
             // інакше compose пише «надсилаю окремим фото» без вкладення (тести 7c022683/6ed22687).
-            if (u.wantsSizeChart && pp.sizeChartUrl && !A._chartSent) { A._chartSent = true; A.out.push({ photoUrls: [pp.sizeChartUrl], caption: messageText(A.assets, 'n_agent_size_chart_caption', ctx, A.session.id), step: 'size_chart' }); ctx.agent.chartSentFor = pp.sku; }
+            if (u.wantsSizeChart && pp.sizeChartUrl && !A._chartSent) sendSizeChart(A, pp, u);
             await T.calcSize(A);
             ctx.agent.sizeCalcKey = sizeKeyOf(ctx.sizeInput);
             await T.funnelStage(A, ...STAGES.params);
@@ -1685,7 +1706,7 @@ async function runPolicyInner(A, u) {
             // що вже застосований для A.justPresented: якщо відповідь ВЖЕ дана (тут — фото),
             // не даємо compose() дублювати її текстом.
             const chartJustSent = !!(u.wantsSizeChart && pp.sizeChartUrl && !A._chartSent);
-            if (chartJustSent) { A._chartSent = true; A.out.push({ photoUrls: [pp.sizeChartUrl], caption: messageText(A.assets, 'n_agent_size_chart_caption', ctx, A.session.id), step: 'size_chart' }); ctx.agent.chartSentFor = pp.sku; }
+            if (chartJustSent) sendSizeChart(A, pp, u);
             let colorNote = '';
             // «Колір записала» — лише для кольору, що справді є в палітрі товару (2026-09-29, ed8e3e06: «Колір Бежевий — записала», а бежевого нема).
             const cmOk = !!(u.colorMatched && colorsOf(pp) && matchColor(pp, u.colorMatched));

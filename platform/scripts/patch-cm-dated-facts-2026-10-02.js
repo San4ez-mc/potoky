@@ -156,5 +156,31 @@ async function main() {
             console.log('dispatcher spread: patched');
         }
     }
+
+    // 6) Parse Intent: rangeSpan() повертав 1 для будь-якої фрази зі словом «завтра» ДО перевірки «N днів/тижнів»,
+    //    тож «3 дні від завтра» (і приклад із самого промпту диспетчера «5 днів від завтра») ніколи не розкидалось по днях —
+    //    усі пости лягали на одну дату (C6/C11 падали). Тепер спершу діапазони, «завтра» — лише як одиночний день;
+    //    а «від/з завтра» зсуває початок розкидання на завтра.
+    {
+        const n = node('node_1780590874133');
+        let code = String(n.data.code);
+        const single = String.raw`  if(/сьогодн|післязавтра|послязавтра|після\s*завтра|завтра/.test(s)) return 1;` + '\n';
+        const anchorOld = 'var startD=new Date(baseToday.getTime());          // ranges anchor at today';
+        const anchorNew = anchorOld + String.raw`
+    if(/(від|з)\s*завтра/.test(String(t.date||'').toLowerCase())) startD.setDate(startD.getDate()+1); // «від завтра»`;
+        if (code.includes('// «від завтра»')) console.log('parse intent: already patched');
+        else {
+            if (!code.includes(single) || !code.includes(anchorOld)) throw new Error('parse intent: маркери rangeSpan/startD не знайдено');
+            code = code.replace(single, '');
+            // одиночний день — після діапазонів, перед фінальним return 1
+            const tail = "  if(/тиждень|тижня|наступн.*тиж|на\\s*тиж/.test(s)) return 7;\n  return 1;";
+            if (!code.includes(tail)) throw new Error('parse intent: хвіст rangeSpan не знайдено');
+            code = code.replace(tail, "  if(/тиждень|тижня|наступн.*тиж|на\\s*тиж/.test(s)) return 7;\n  return 1; // сьогодні/завтра/післязавтра — один день");
+            code = code.replace(anchorOld, anchorNew);
+            new Function('context', code);
+            await callTool('update_node', { botId: CM, nodeId: 'node_1780590874133', data: { code } });
+            console.log('parse intent: patched (rangeSpan + «від завтра»)');
+        }
+    }
 }
 main().then(() => process.exit(0)).catch((e) => { console.error('FAILED:', e && e.message); process.exit(1); });

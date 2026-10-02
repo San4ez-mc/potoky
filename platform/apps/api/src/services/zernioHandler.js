@@ -1680,12 +1680,22 @@ async function runFlowAndDeliver(sessionId, entry) {
             const pend = Array.isArray(_c.commentPendingPhotos) ? _c.commentPendingPhotos : [];
             if (pend.length) {
                 await db.session.update({ where: { id: sessionId }, data: { context: cleanJsonDeep({ ..._c, commentPendingPhotos: [] }) } });
+                const _key = (u) => { try { const x = new URL(String(u)); return x.searchParams.get('asset_id') || x.pathname.split('/').pop(); } catch (e) { return String(u).split('?')[0].split('/').pop(); } };
+                const flushed = new Set();
                 for (const p of pend) {
                     try {
                         await sendMetaPhotoAlbum(botId, contactId, p.urls);
+                        p.urls.forEach((u) => flushed.add(_key(u)));
                         await logDelivery(sessionId, botId, 'ig_photo_album', true, null, { deferredFromComment: true, count: p.urls.length });
                         if (p.caption) await sendZernioMessage(botId, conversationId, p.caption, sendOpts);
                     } catch (e) { await logDelivery(sessionId, botId, 'ig_photo_album', false, e.message, { deferredFromComment: true }); }
+                }
+                // Те саме фото (розмірна сітка, фото товару) у відповіді цього ж ходу — вдруге не шлемо: відкладене щойно пішло
+                // (правка 1faacaf2, 02.10: коментар «можна сітку?» → у директі дві однакові сітки поспіль).
+                for (const om of outMsgs) {
+                    const att = (om.metadata || {}).attachment;
+                    const urls = att ? (Array.isArray(att.urls) && att.urls.length ? att.urls : [att.url]).filter(Boolean) : [];
+                    if (urls.length && urls.every((u) => flushed.has(_key(u)))) { om.metadata = { ...(om.metadata || {}), hidden: true, dupOfDeferred: true }; await db.message.update({ where: { id: om.id }, data: { metadata: om.metadata } }).catch(() => {}); }
                 }
             }
         } catch (e) { logger.warn('[zernioHandler] deferred photos: ' + e.message); }

@@ -16,6 +16,9 @@ const { geminiKeys, geminiFetch } = require('./geminiKey');
 const logger = require('@platform/logger');
 const { executeFlowStep } = require('./testSession');
 const { isBlockedByTestMode, isTestModeOn } = require('./testModeGate');
+// Фонові таймери цього файлу — лише в процесі API. Файл підтягує й platform-mcp (через testSession), і без цього кожен
+// тик ішов двічі: подвійні сповіщення, а resumeAfterManagerSilence міг двічі запустити хід бота (2026-10-03).
+const __runsBackground = !process.env.name || process.env.name === 'platform-api';
 const { syncConversationTruth, isTruthSyncEnabled } = require('./zernioConversationSync');
 const shopAgent = require('./shopAgent');
 const { execFile } = require('child_process');
@@ -2162,7 +2165,7 @@ async function resumeAfterManagerSilence() {
         }
     } catch (e) { logger.warn('[zernioHandler] resumeAfterManagerSilence error: ' + e.message); }
 }
-setTimeout(() => { resumeAfterManagerSilence(); setInterval(resumeAfterManagerSilence, 60 * 1000); }, 90 * 1000);
+if (__runsBackground) setTimeout(() => { resumeAfterManagerSilence(); setInterval(resumeAfterManagerSilence, 60 * 1000); }, 90 * 1000);
 
 // 2026-09-15 (власник: "давай розведемо іконки в адмінці... пауза — та, яка скидається сама
 // через 24 години"): resumeAfterManagerSilence вище — РОЗУМНА евристика (10 хв тиші, менеджер
@@ -2192,7 +2195,7 @@ async function hardExpirePauses() {
         }
     } catch (e) { logger.warn('[zernioHandler] hardExpirePauses error: ' + e.message); }
 }
-setTimeout(() => { hardExpirePauses(); setInterval(hardExpirePauses, 30 * 60 * 1000); }, 120 * 1000);
+if (__runsBackground) setTimeout(() => { hardExpirePauses(); setInterval(hardExpirePauses, 30 * 60 * 1000); }, 120 * 1000);
 
 // 2026-09-09 (власник, п.7 аудиту після регресії v12.7, коли 2 год нові сесії лишались без картки): сторож мовчання бота.
 // Раз на 10 хв: нові живі сесії за 30 хв, у яких є повідомлення клієнта (старше 3 хв), нема жодної відповіді бота (message з
@@ -2235,7 +2238,7 @@ async function checkBotSilence() {
         }
     } catch (e) { logger.warn('[zernioHandler] checkBotSilence error: ' + e.message); }
 }
-setTimeout(() => { checkBotSilence(); setInterval(checkBotSilence, 10 * 60 * 1000); }, 120 * 1000);
+if (__runsBackground) setTimeout(() => { checkBotSilence(); setInterval(checkBotSilence, 10 * 60 * 1000); }, 120 * 1000);
 
 // 2026-09-15 (живий тест власника, matsukoleksandr): звірка з розмовою (syncConversationTruth,
 // вище) — «джерело істини», яке ловить пропущене вебхуком, — РАНІШЕ спрацьовувала ЛИШЕ як побічний
@@ -2297,7 +2300,111 @@ async function retryMissedZernioTurns() {
         }
     } catch (e) { logger.warn('[zernioHandler] retryMissedZernioTurns error: ' + e.message); }
 }
-setTimeout(() => { retryMissedZernioTurns(); setInterval(retryMissedZernioTurns, 60 * 1000); }, 150 * 1000);
+if (__runsBackground) setTimeout(() => { retryMissedZernioTurns(); setInterval(retryMissedZernioTurns, 60 * 1000); }, 150 * 1000);
+
+// 2026-10-03 (правка 26a6ae37, власник: «давай рідше, хоча б раз в 5-10 хв»): retryMissedZernioTurns (вище) лікує лише
+// розмови, які ми вже бачили в останні 14 хв. Якщо Zernio не доставив вебхук ПЕРШОГО повідомлення нового клієнта
+// («Яка вартість костюму?», yevhen_samchuk 30.09 — у базі його нема зовсім) або клієнт повернувся через години й
+// вебхук загубився — нічого цю розмову не перевіряло. Опитувач раз на ZERNIO_POLL_MINUTES (ключ воронки, за
+// замовчуванням 7; 0 — вимкнено) бере в Zernio список розмов, оновлених після попередньої перевірки:
+//   • відома розмова з невідповіданим повідомленням клієнта → звірка з розмовою + звичайний хід (як retryMissed);
+//   • незнайома розмова → те саме повідомлення через handleZernioEvent, як вебхук (створить сесію, далі як завжди).
+// Розмови на паузі (веде менеджер) і тестовий режим — не чіпаємо. Запізнілий справжній вебхук потім ловить уже наявний
+// дедуп «той самий текст + той самий час клієнта» — подвійної відповіді не буде.
+const _pollState = new Map(); // botId -> lastPollAt (ms)
+async function pollZernioConversations() {
+    let bots = [];
+    try {
+        const rows = await db.funnelKey.findMany({ where: { key: { in: ['ZERNIO_API_TOKEN', 'ZERNIO_ACCOUNT_ID', 'ZERNIO_POLL_MINUTES'] } }, select: { botId: true, key: true, value: true } });
+        const by = new Map();
+        for (const r of rows) { if (!by.has(r.botId)) by.set(r.botId, {}); by.get(r.botId)[r.key] = String(r.value || '').trim(); }
+        const seenAccounts = new Set();
+        for (const [botId, k] of by) {
+            if (!isReal(k.ZERNIO_API_TOKEN) || !isReal(k.ZERNIO_ACCOUNT_ID)) continue;
+            const minutes = k.ZERNIO_POLL_MINUTES === undefined || k.ZERNIO_POLL_MINUTES === '' ? 7 : Number(k.ZERNIO_POLL_MINUTES);
+            if (!(minutes > 0)) continue;
+            // Один Zernio-акаунт підключений до кількох воронок (клон/форвард) — опитуємо раз, цільовою воронкою.
+            const target = await resolveZernioTargetBot(botId).catch(() => botId);
+            if (target !== botId || seenAccounts.has(k.ZERNIO_ACCOUNT_ID)) continue;
+            seenAccounts.add(k.ZERNIO_ACCOUNT_ID);
+            bots.push({ botId, keys: k, minutes });
+        }
+    } catch (e) { logger.warn('[zernioHandler] poll: keys load failed: ' + e.message); return; }
+    const now = Date.now();
+    for (const b of bots) {
+        const last = _pollState.get(b.botId);
+        if (last && now - last < b.minutes * 60 * 1000) continue;
+        _pollState.set(b.botId, now);
+        // Перекриття 4 хв із попередньою перевіркою; після (ре)старту — останні 30 хв.
+        const since = last ? last - 4 * 60 * 1000 : now - 30 * 60 * 1000;
+        const settle = now - 2 * 60 * 1000; // свіжіші за 2 хв — ще може прийти звичайний вебхук (типова затримка ~2 хв)
+        let checked = 0, resumed = 0, created = 0;
+        try {
+            let cursor = null;
+            for (let page = 0; page < 3; page++) {
+                const url = 'https://zernio.com/api/v1/inbox/conversations?accountId=' + encodeURIComponent(b.keys.ZERNIO_ACCOUNT_ID) + '&limit=50' + (cursor ? '&cursor=' + encodeURIComponent(cursor) : '');
+                const r = await fetch(url, { headers: { Authorization: 'Bearer ' + b.keys.ZERNIO_API_TOKEN } });
+                if (!r.ok) { logger.warn('[zernioHandler] poll: list failed', { botId: b.botId, status: r.status }); break; }
+                const j = await r.json().catch(() => ({}));
+                const convs = Array.isArray(j.data) ? j.data : [];
+                let older = false;
+                for (const c of convs) {
+                    const upd = Date.parse(c.updatedTime || c.updatedAt || '');
+                    if (!Number.isFinite(upd)) continue;
+                    if (upd < since) { older = true; break; }
+                    if (upd > settle || !c.participantId) continue;
+                    checked++;
+                    const res = await pollOneConversation(b.botId, b.keys, c).catch((e) => { logger.warn('[zernioHandler] poll conv error: ' + e.message, { botId: b.botId, conv: c.id }); return null; });
+                    if (res === 'resumed') resumed++; else if (res === 'created') created++;
+                }
+                cursor = j.pagination && j.pagination.hasMore ? j.pagination.nextCursor : null;
+                if (older || !cursor) break;
+            }
+        } catch (e) { logger.warn('[zernioHandler] poll failed: ' + e.message, { botId: b.botId }); }
+        if (checked) logger.info('[zernioHandler] poll Zernio conversations', { botId: b.botId, checked, resumed, created });
+    }
+}
+async function pollOneConversation(botId, keys, c) {
+    const session = await db.session.findFirst({ where: { botId, isTest: false, context: { path: ['psid'], equals: String(c.participantId) } }, orderBy: { lastActive: 'desc' }, select: { id: true, context: true, lastActive: true } });
+    if (session) {
+        const ctx = session.context || {};
+        if (ctx.funnelPaused) return null;
+        // Свіжі (останні 14 хв) уже перевіряє retryMissedZernioTurns щохвилини — не дублюємо.
+        if (session.lastActive && Date.now() - new Date(session.lastActive).getTime() < 14 * 60 * 1000) return null;
+        if (await isBlockedByTestMode(botId, [ctx.igUsername, ctx.senderName])) return null;
+        const sync = await syncConversationTruth(botId, session.id, ctx.conversationId || c.id);
+        if (!sync.ok || sync.empty || sync.managerLed) return null;
+        const unanswered = Array.isArray(sync.unanswered) ? sync.unanswered : [];
+        const text = unanswered.map((u) => String(u.text || '').trim()).filter(Boolean).join('\n');
+        const att = unanswered.map((u) => (u.attachments || []).find((a) => a.type === 'photo' && a.url)).find(Boolean);
+        if (!text && !att) return null;
+        logger.info('[zernioHandler] poll: невідповідане в розмові без вебхука — відповідаю', { botId, sessionId: session.id, textPreview: text.slice(0, 60) });
+        scheduleFlowRun(session.id, { botId, contactId: ctx.contactId || ctx.psid, conversationId: ctx.conversationId || c.id, contactName: ctx.senderName, text, imageUrl: att ? att.url : null });
+        return 'resumed';
+    }
+    // Незнайома розмова: лише якщо останнім писав клієнт (після нашої/менеджерської відповіді нічого робити не треба) і не давно.
+    const r = await fetchConversationMessagesForPoll(keys, c.id);
+    if (!r.ok || !r.msgs.length) return null;
+    const lastMsg = r.msgs[r.msgs.length - 1];
+    if (lastMsg.direction !== 'incoming') return null;
+    if (Date.now() - lastMsg.createdAt.getTime() > 2 * 60 * 60 * 1000) return null;
+    const body = {
+        event: 'message.received',
+        id: 'poll_' + lastMsg.id,
+        timestamp: lastMsg.createdAt.toISOString(),
+        conversation: { id: c.id, participantUsername: c.participantUsername || null, contact: { id: String(c.participantId), name: c.participantName || c.participantUsername || null, username: c.participantUsername || null } },
+        message: { id: 'poll_' + lastMsg.id, direction: 'incoming', text: lastMsg.text || '', timestamp: lastMsg.createdAt.toISOString(), attachments: lastMsg.attachments.map((a) => ({ type: a.type, url: a.url, refreshUrl: a.refreshUrl })) },
+        source: 'zernio_poll',
+    };
+    logger.info('[zernioHandler] poll: нова розмова без вебхука — обробляю', { botId, conv: c.id, username: c.participantUsername, textPreview: String(lastMsg.text || '').slice(0, 60) });
+    await handleZernioEvent(botId, body);
+    return 'created';
+}
+async function fetchConversationMessagesForPoll(keys, conversationId) {
+    const { fetchConversationMessages } = require('./zernioConversationSync');
+    return fetchConversationMessages(keys, conversationId);
+}
+if (__runsBackground) setTimeout(() => { pollZernioConversations(); setInterval(pollZernioConversations, 60 * 1000); }, 200 * 1000);
 
 // ensurePostAutomation/scheduleFlowRun експортовано для живого тестування (напр.
 // живий кейс mediaId без артикулу; Проблема Д — race condition у серіалізації

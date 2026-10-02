@@ -2365,4 +2365,4 @@ async function runPolicyInner(A, u) {
     }
 }
 
-module.exports = { runPolicy, addressComplete, matchColor, enforceInsistLimit, runSupplierDispatch, crmOrderEditUrl };
+module.exports = { runPolicy, addressComplete, matchColor, enforceInsistLimit, runSupplierDispatch, crmOrderEditUrl, shipTerms };

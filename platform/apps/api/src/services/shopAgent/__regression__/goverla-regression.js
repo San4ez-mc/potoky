@@ -663,6 +663,22 @@ async function main() {
         check('20.4 Зріст і вага з історії розмови потрапляють у sizeInput', A.ctx.sizeInput && A.ctx.sizeInput.height === 190 && A.ctx.sizeInput.weight === 115, JSON.stringify(A.ctx.sizeInput));
     }
 
+    // ── 21. Підтвердження після оформлення містить строк відправки (власник 03.10: «чому люди все ще питають, коли відправка?»,
+    // GOV76KRU0AV — було «після підтвердження оплати одразу відправляємо» без жодного слова про пошиття до 5 робочих днів).
+    {
+        const { shipTerms } = require('../policy');
+        const T = require('../tools');
+        const { messageTextMultiline } = require('../lib');
+        for (const pay of ['not_found', 'confirmed']) {
+            const A = freshA();
+            Object.assign(A.ctx, { crmOrderId: 'TEST-1', orderRef: 'GOVTEST', payStatus: pay, payAmount: 200 });
+            A.ctx.shipTermsText = shipTerms(A.ctx);
+            await T.confirmPrep(A);
+            const txt = messageTextMultiline(assets, 'n_confirm', A.ctx, A.session.id);
+            check('21.' + (pay === 'confirmed' ? '2' : '1') + ' Підтвердження замовлення (оплата: ' + pay + ') містить строк відправки й не обіцяє «одразу відправляємо»', /робочих дн/i.test(txt) && !/одразу відправля/i.test(txt), JSON.stringify(txt.slice(0, 160)));
+        }
+    }
+
     console.log('');
     const failed = results.filter((r) => !r.ok);
     console.log(results.length + ' тестів, ' + failed.length + ' провалено.');

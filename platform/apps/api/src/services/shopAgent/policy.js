@@ -419,6 +419,19 @@ function humanSetList(pp) { return (pp.setItems || []).map((it) => '• ' + it.n
  * налаштувань категорії): бот мав зайти в категорію КОЖНОГО товару в розмові й запитати РАЗОМ усі
  * потрібні параметри — а не хардкодити «зріст і вагу» незалежно від складу (set1112 містить
  * лофери з категорії «Взуття», якій потрібен окремий параметр «Розмір взуття», не зріст/вага). */
+/** «Зріст (см), Вага (кг), Розмір взуття (EU)» (назви параметрів категорій CRM) → «ваш зріст і вагу, а також розмір взуття (EU)».
+ * Власник 02.10: сирий перелік через кому звучав як анкета. Зріст і вага — одна фраза, решта — з малої літери після «а також». */
+function humanizeParamsPrompt(prompt) {
+    const parts = String(prompt || '').split(',').map((s) => s.trim()).filter(Boolean);
+    if (!parts.length) return '';
+    const isHW = (p) => /зріст|ріст|вага|height|weight/i.test(p);
+    const lc = (s) => s.charAt(0).toLowerCase() + s.slice(1);
+    const hw = parts.filter(isHW); const rest = parts.filter((p) => !isHW(p)).map(lc);
+    const hwPhrase = hw.length >= 2 ? 'ваш зріст і вагу' : (hw.length ? 'ваш ' + (/ваг/i.test(hw[0]) ? 'вагу' : 'зріст') : '');
+    if (!hwPhrase) return 'ваш ' + rest.join(', ');
+    return hwPhrase + (rest.length ? ', а також ' + rest.join(', ') : '');
+}
+
 async function resolveSetParams(A, pp) {
     if (!Array.isArray(pp.setItems) || !pp.setItems.length) return { params: [], prompt: '', isOnlyHW: false, categoryNames: {} };
     let categories = []; try { categories = await loadCategories(A.botId, A.keys); } catch (e) { categories = []; }
@@ -1447,8 +1460,17 @@ async function runPolicyInner(A, u) {
             const allItems = initSetSelection(p);
             const segs = text.split(/\s*[,;\n+]\s*|\s+(?:і|та|и|й)\s+/giu).map((s) => s.trim()).filter(Boolean);
             const matched = [];
+            const catNames0 = ctx.agent.setParams && ctx.agent.setParams.categoryNames;
+            // 2026-10-02 (власник; живий кейс c6d03189 «Джинси синього кольору футболка білого кофта чорного кольору» — без ком і «і»):
+            // перелік позицій за ЗМІСТОМ — аналізатор уже розклав повідомлення на пари «позиція — колір» (u.itemColors); сегменти
+            // нижче лишаються для «кофта, джинси» без кольорів. Раніше бот удруге питав «весь комплект чи окремі речі?», а на
+            // «Такий варіант» оформив увесь комплект з лоферами, яких клієнт не називав.
+            for (const ic of (Array.isArray(u.itemColors) ? u.itemColors : [])) {
+                const hit = matchSetItem(String((ic && ic.item) || ''), allItems, catNames0);
+                if (hit && !matched.some((m) => m.article === hit.article)) matched.push(hit);
+            }
             for (const seg of segs) {
-                const hit = matchSetItem(seg, allItems, null);
+                const hit = matchSetItem(seg, allItems, catNames0);
                 if (hit && !matched.some((m) => m.article === hit.article)) matched.push(hit);
             }
             // 2026-09-29 (скарга, сесія ed8e3e06: «Чи доступна кофта до замовлення?» на пост-образ): клієнт назвав ОДНУ позицію —
@@ -1468,7 +1490,7 @@ async function runPolicyInner(A, u) {
         }
         if (!multiHandled) {
         // Клієнт дав параметри/колір/згоду або просить змінити склад, не обравши окрему річ → хоче весь комплект
-        const impliedSet = !u.setChoice && !u.setArticle && (u.height || u.weight || u.clothingSize || u.ready === 'yes' || u.changeRequest || u.colorMatched || u.color);
+        const impliedSet = !u.setChoice && !u.setArticle && (u.height || u.weight || u.clothingSize || u.ready === 'yes' || u.changeRequest || u.colorMatched || u.color || (Array.isArray(u.itemColors) && u.itemColors.length > 1));
         const namedItem = ctx.agent.setNamedItem && Array.isArray(p.setItems) && p.setItems.some((it) => String(it.article).toUpperCase() === String(ctx.agent.setNamedItem).toUpperCase()) ? ctx.agent.setNamedItem : null;
         if (u.setChoice === 'item' && u.setArticle) { ctx.setPick = { setChoice: 'item', article: u.setArticle }; await T.setApply(A); }
         else if (impliedSet && namedItem) { ctx.setPick = { setChoice: 'item', article: namedItem }; await T.setApply(A); }
@@ -1571,7 +1593,9 @@ async function runPolicyInner(A, u) {
             if (A.justPresented) { const card = A.out.find((o) => o.step === 'present'); if (card && card.text) card.text = card.text.replace(/\n*👉[^\n]*(зріст|вага)[^\n]*/i, ''); }
             const catParams = String(paramsPrompt || '').trim();
             const sizesHint = Array.isArray(pp.sizes) && pp.sizes.length ? ' (у цієї моделі розміри ' + pp.sizes.join(', ') + ')' : '';
-            A.out.push({ text: 'Підберу розмір саме під вас' + sizesHint + ' 🙂 Напишіть, будь ласка:\n' + (catParams || messageText(A.assets, 'n_agent_ask_size_both', ctx, A.session.id)) + '\n— і я перевірю, чи ' + ctx.agent.sizeClaim + ' вам підійде.', step: 'size_verify_ask' });
+            A.out.push({ text: catParams
+                ? 'Підберу розмір саме під вас' + sizesHint + ' 🙂 Напишіть, будь ласка, ' + humanizeParamsPrompt(catParams) + ' — і я перевірю, чи ' + ctx.agent.sizeClaim + ' вам підійде.'
+                : 'Підберу розмір саме під вас' + sizesHint + ' 🙂 ' + messageText(A.assets, 'n_agent_ask_size_both', ctx, A.session.id) + '\n— і я перевірю, чи ' + ctx.agent.sizeClaim + ' вам підійде.', step: 'size_verify_ask' });
             ctx.agent.lastAsk = 'зріст і вага';
             return;
         }
@@ -1673,13 +1697,17 @@ async function runPolicyInner(A, u) {
             let ask = '';
             if (!A.justPresented) {
                 if (isHW) { ctx.agent.missingParam = missing; ask = missing ? messageText(A.assets, 'n_agent_ask_size_missing', ctx, A.session.id) : messageText(A.assets, 'n_agent_ask_size_both', ctx, A.session.id); }
-                else { ctx.agent.paramsPromptText = paramsPrompt || 'ваш розмір'; ask = messageText(A.assets, 'n_agent_ask_size_custom', ctx, A.session.id); }
+                else {
+                    ctx.agent.paramsPromptText = humanizeParamsPrompt(paramsPrompt) || 'ваш розмір';
+                    // Комплект — свій текст («підберу розмір для кожної речі комплекту»), нода n_agent_ask_size_set; без неї — загальний.
+                    ask = (setParams && messageText(A.assets, 'n_agent_ask_size_set', ctx, A.session.id)) || messageText(A.assets, 'n_agent_ask_size_custom', ctx, A.session.id);
+                }
             }
             // Повторне прохання тих самих параметрів (клієнт відповідає про інше) — інакше звучить як збій
             // (інваріант I2: дослівний повтор); перефразовуємо й лишаємо коротко.
             ctx.agent.paramsAskCount = (ctx.agent.paramsAskCount || 0) + 1;
             // Для товарів із власним параметром (джинси — розмір за талією) перефраз не має просити зріст/вагу (FunnelTest 35).
-            if (ask && !isHW && ctx.agent.paramsAskCount > 1 && ctx.agent.lastAsk === (paramsPrompt || 'зріст і вага')) ask = 'Підкажіть, будь ласка, ' + (paramsPrompt || 'ваш розмір') + ' — і одразу рухаємось далі 🙂';
+            if (ask && !isHW && ctx.agent.paramsAskCount > 1 && ctx.agent.lastAsk === (paramsPrompt || 'зріст і вага')) ask = 'Підкажіть, будь ласка, ' + (humanizeParamsPrompt(paramsPrompt) || 'ваш розмір') + ' — і одразу рухаємось далі 🙂';
             else if (ask && ctx.agent.paramsAskCount > 1 && ctx.agent.lastAsk === (paramsPrompt || 'зріст і вага')) ask = (ctx.agent.paramsAskCount % 2 ? 'Щоб підібрати розмір, лишилось дізнатись зріст і вагу 🙂 Напишіть, будь ласка, скільки у вас — і одразу рухаємось далі.' : 'Мені ще потрібні зріст і вага для підбору розміру 📏 Напишіть їх, будь ласка 🙂');
             A.out.push({ text: chartJustSent ? (preNote + colorNote + ask) : await answerThenAsk(A, u, preNote + colorNote + ask), step: 'ask_params' }); ctx.agent.lastAsk = paramsPrompt || 'зріст і вага';
             return;

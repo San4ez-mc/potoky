@@ -660,6 +660,7 @@ async function afterOrderAccepted(A) {
         if (ctx.receiptNew) await T.alert(A, 'n_receipt_alert', { photoUrl: ctx.lastReceiptImageUrl || '' });
     }
     if ((ctx.payStatus === 'confirmed' || Number(ctx.payAmount) === 0) && !ctx.supplierHandled) await runSupplierDispatch(A);
+    ctx.shipTermsText = shipTerms(ctx); // строк відправки в підтвердженні — той самий текст, що в підсумку (n_confirm_prep)
     await T.confirmPrep(A);
     const key = (ctx.payStatus || '') + ':' + (ctx.supplierTtn || '');
     if (ctx.agent.confirmKey !== key) {
@@ -1161,7 +1162,11 @@ async function runPolicyInner(A, u) {
             // як «бот не веде далі». Коротке нагадування замість тиші.
             A.out.push({ text: 'Дякую! 🙌 Чекаю на оплату за посиланням вище — щойно побачу її, одразу передам замовлення у відправку 💛', step: 'post_pay_reminder' });
         }
-        if (since > 30 * 60 * 1000 || u.statusQuestion) await T.alert(A, 'n_post_order_admin');
+        // Що САМЕ бот відповів — у сповіщення (власник 03.10: приходило «бот лише подякував», хоча бот відповів на питання про відправку).
+        if (since > 30 * 60 * 1000 || u.statusQuestion) {
+            const botReply = A.out.map((o) => String(o.text || '').trim()).filter(Boolean).join(' ').slice(0, 400);
+            await T.alert(A, 'n_post_order_admin', { details: botReply ? '🤖 Бот відповів: «' + botReply + '»' : '🤖 Бот нічого не відповів — відповідайте в чаті.' });
+        }
         return;
     }
 

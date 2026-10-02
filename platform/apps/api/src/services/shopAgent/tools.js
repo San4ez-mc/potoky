@@ -229,18 +229,20 @@ async function alert(A, nodeIdOrFields, extra = {}) {
     // приклад — n_receipt_alert), і сире посилання знову з'являється. Тут воно ловиться завжди.
     const txt = buildAdminAlert({ funnelEnv: keys, title: hideLinks(f.title), main: hideLinks(f.main), details: hideLinks([f.details, extra.details].filter(Boolean).join('\n')), ctx, sessionId: session.id });
     let j = {};
+    // extra.buttons — inline-кнопки під сповіщенням (напр. «Оформити постачальнику», натискання обробляє managerActions.js).
+    const markup = Array.isArray(extra.buttons) && extra.buttons.length ? { inline_keyboard: extra.buttons } : null;
     const photo = /^https?:\/\//.test(String(f.photoUrl || extra.photoUrl || '')) ? String(f.photoUrl || extra.photoUrl) : '';
     if (photo && txt.length <= 1000) {
         try {
             let buf = null; const pu = new URL(photo);
             if (pu.hostname.toLowerCase() === 'zernio.com' && keys.ZERNIO_API_TOKEN) { const ir = await fetch(photo, { headers: { Authorization: 'Bearer ' + keys.ZERNIO_API_TOKEN } }); if (ir.ok) buf = Buffer.from(await ir.arrayBuffer()); }
-            if (buf) { const fd = new FormData(); fd.append('chat_id', String(adminId)); fd.append('caption', txt); fd.append('parse_mode', 'HTML'); fd.append('photo', new Blob([buf]), 'photo.jpg'); const rp = await fetch('https://api.telegram.org/bot' + tok + '/sendPhoto', { method: 'POST', body: fd }).catch(() => null); j = rp ? await rp.json().catch(() => ({})) : {}; }
-            else { const rp = await fetch('https://api.telegram.org/bot' + tok + '/sendPhoto', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(adminId), photo, caption: txt, parse_mode: 'HTML' }) }).catch(() => null); j = rp ? await rp.json().catch(() => ({})) : {}; }
+            if (buf) { const fd = new FormData(); fd.append('chat_id', String(adminId)); fd.append('caption', txt); fd.append('parse_mode', 'HTML'); if (markup) fd.append('reply_markup', JSON.stringify(markup)); fd.append('photo', new Blob([buf]), 'photo.jpg'); const rp = await fetch('https://api.telegram.org/bot' + tok + '/sendPhoto', { method: 'POST', body: fd }).catch(() => null); j = rp ? await rp.json().catch(() => ({})) : {}; }
+            else { const rp = await fetch('https://api.telegram.org/bot' + tok + '/sendPhoto', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(adminId), photo, caption: txt, parse_mode: 'HTML', ...(markup ? { reply_markup: markup } : {}) }) }).catch(() => null); j = rp ? await rp.json().catch(() => ({})) : {}; }
         } catch (e) { /* fallback below */ }
     }
     if (!j.ok) {
         const text = photo ? (txt + '\n<a href="' + photo.replace(/"/g, '&quot;') + '">📷 фото</a>') : txt;
-        const r = await fetch('https://api.telegram.org/bot' + tok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(adminId), text, parse_mode: 'HTML', disable_web_page_preview: true }) }).catch(() => null);
+        const r = await fetch('https://api.telegram.org/bot' + tok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(adminId), text, parse_mode: 'HTML', disable_web_page_preview: true, ...(markup ? { reply_markup: markup } : {}) }) }).catch(() => null);
         j = r ? await r.json().catch(() => ({})) : {};
     }
     A.trace.push({ alert: f.title, ok: !!j.ok, error: j.ok ? null : (j.description || 'fetch failed') });

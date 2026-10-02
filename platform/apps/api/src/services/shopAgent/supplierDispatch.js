@@ -17,6 +17,9 @@
  */
 const { logger, nodeCode, runNodeCode, crmFetch, loadCatalog } = require('./lib');
 
+/** Ключ SUPPLIER_ORDERS_DISABLED=1 — автооформлення вимкнено: постачальнику йде лише після кнопки менеджера в Telegram. */
+function manualSupplierMode(keys) { return /^(1|true|on)$/i.test(String((keys && keys.SUPPLIER_ORDERS_DISABLED) || '').trim()); }
+
 function normSupplier(s) { return String(s || '').trim().toLowerCase(); }
 
 const _supplierCache = new Map(); // botId -> Map(normName -> {id,name,info})
@@ -163,7 +166,7 @@ async function dispatchEasydrop(A, nodeId, group, alloc) {
  * Оформлює замовлення постачальникам групами. Повертає { groups:[{supplier,mechanism,status,
  * result,ttn,id,needsManual,items,total}], multiParcel }.
  */
-async function dispatchOrder(A) {
+async function dispatchOrder(A, opts = {}) {
     const { ctx, keys } = A;
     const lines = buildLines(ctx);
     if (!lines.length) return { groups: [], multiParcel: false };
@@ -172,7 +175,8 @@ async function dispatchOrder(A) {
     // оформлення постачальникам вимкнено — усе йде менеджеру вручну (n_agent_supplier_manual_admin), доки власник
     // не прибере ключ SUPPLIER_ORDERS_DISABLED або не виставить його в 0. У тестах (ctx.testMode) не діє — тести
     // самі мокають виклик постачальника через testMode-гілки нод.
-    const dispatchDisabled = !ctx.testMode && /^(1|true|on)$/i.test(String((keys && keys.SUPPLIER_ORDERS_DISABLED) || '').trim());
+    // opts.force — менеджер сам перевірив замовлення і натиснув «Оформити постачальнику» в Telegram (managerActions.js).
+    const dispatchDisabled = !opts.force && !ctx.testMode && manualSupplierMode(keys);
     let remainingPrepay = Number(ctx.payAmount) || 0;
     const out = [];
     for (const g of groups) {
@@ -200,4 +204,13 @@ async function dispatchOrder(A) {
     return { groups: out, multiParcel: out.length > 1 };
 }
 
-module.exports = { dispatchOrder, buildLines, groupBySupplier };
+/** Що САМЕ піде постачальникам (без виклику постачальника): групи з механізмом — для попереднього перегляду менеджеру перед кнопкою. */
+async function planOrder(A) {
+    const groups = await groupBySupplier(A, buildLines(A.ctx));
+    for (const g of groups) {
+        try { g.mechanism = (await mechanismFor(A, await resolveSupplierMeta(A, g.name))).mechanism; } catch (e) { g.mechanism = 'manual'; }
+    }
+    return groups;
+}
+
+module.exports = { dispatchOrder, buildLines, groupBySupplier, manualSupplierMode, planOrder };

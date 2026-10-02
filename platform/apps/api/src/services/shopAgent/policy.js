@@ -8,7 +8,7 @@
 const T = require('./tools');
 const { compose } = require('./compose');
 const { messageText, messageTextMultiline, nodeData, norm, loadCategories, loadCatalog } = require('./lib');
-const { dispatchOrder } = require('./supplierDispatch');
+const { dispatchOrder, manualSupplierMode } = require('./supplierDispatch');
 const { hasCategoryWord, categoryWordIsUpsell, categoryWordIsSetComponent, categoryWordIsMain } = require('./signal');
 const { resolveColorMention } = require('./cart');
 const { classifyKbQuestion, kbSimilarity, kbSimilar } = require('./kbRules');
@@ -529,6 +529,49 @@ async function sendCard(A) {
     else await sendManualRequisites(A, true); // немає картки в CRM — чесний фолбек на реквізити, а не вигадана картка
 }
 
+/** Кнопки під сповіщенням менеджеру (обробник — managerActions.js). Лише коли автооформлення вимкнено і замовлення ще не пішло постачальнику. */
+function supplierButtons(A) {
+    const { ctx } = A;
+    if (!manualSupplierMode(A.keys) || ctx.managerDispatch || !ctx.crmOrderId || String(ctx.crmOrderId).startsWith('TEST-')) return [];
+    return [[{ text: '📦 Оформити постачальнику', callback_data: 'so:' + A.session.id }]];
+}
+
+/**
+ * Оформлення постачальникам + сліди в ctx/CRM. Викликається з afterOrderAccepted (оплата є) і з кнопки менеджера
+ * (opts.force — оминає SUPPLIER_ORDERS_DISABLED; opts.silent — без окремих алертів по групах, результат показує сам обробник кнопки).
+ */
+async function runSupplierDispatch(A, opts = {}) {
+    const { ctx } = A;
+    // Цикл по постачальниках (рішення власника 2026-09-14): кожна позиція йде своєму
+    // постачальнику окремо (BrewDrop/EasyDrop — різні системи, реально різні посилки);
+    // вручну лишається лише те, для чого механізм справді не налаштований у CRM.
+    const dispatch = await dispatchOrder(A, { force: !!opts.force });
+    ctx.parcelCount = dispatch.groups.length; ctx.multiParcel = dispatch.multiParcel;
+    let buttonsShown = false;
+    for (const g of dispatch.groups) {
+        const itemsLine = g.items.map((l) => l.name + (l.color ? ' ' + l.color : '') + (l.size ? ' ' + l.size : '') + (l.qty > 1 ? ' ×' + l.qty : '')).join(', ');
+        ctx.agent.supplierName = g.supplier;
+        if (opts.silent) continue;
+        if (g.needsManual) {
+            // Кнопка одна на все замовлення (оформлює всі групи) — тому лише під першим алертом.
+            const buttons = g.status === 'manual_disabled' && !buttonsShown ? supplierButtons(A) : [];
+            if (buttons.length) buttonsShown = true;
+            await T.alert(A, 'n_agent_supplier_manual_admin', { details: '🏭 ' + g.supplier + ' (' + g.mechanism + ')\n🛍️ ' + itemsLine + (g.result ? '\n' + g.result : '') + '\n👤 ' + (ctx.senderName || '') + ' — https://instagram.com/' + (ctx.igUsername || ''), buttons });
+        } else {
+            ctx.agent.supplierResult = g.result || ('Оформлено (' + g.status + ').');
+            await T.alert(A, 'n_agent_supplier_ordered_admin', { details: '👤 ' + (ctx.senderName || '') + ' — https://instagram.com/' + (ctx.igUsername || '') + (g.ttn ? '\n📦 ТТН: ' + g.ttn : '') });
+        }
+    }
+    ctx.supplierOrderStatus = dispatch.groups.map((g) => g.status).join(',') || 'manual';
+    ctx.supplierTtn = dispatch.groups.map((g) => g.ttn).filter(Boolean).join(', ');
+    ctx.supplierOrderResult = dispatch.groups.map((g) => g.supplier + ': ' + (g.result || g.status)).join('\n');
+    ctx.supplierHandled = true;
+    await T.ttnSync(A);
+    // Стадія «оформлене в постачальника» — лише коли справді пішло (не «вимкнено, оформіть вручну»).
+    if (dispatch.groups.some((g) => !g.needsManual)) await T.funnelStage(A, ...STAGES.supplier);
+    return dispatch;
+}
+
 async function afterOrderAccepted(A) {
     // Створення замовлення в CRM → постачальник (якщо оплата є) → підтвердження клієнту.
     const { ctx } = A;
@@ -539,35 +582,14 @@ async function afterOrderAccepted(A) {
             A.out.push({ text: 'Дякую! Усі дані отримала 🙏 Менеджер зараз завершить оформлення і напише вам сюди 💛', step: 'crm_failed' });
             return 'paused';
         }
-        await T.alert(A, 'n_create');
+        // Автооформлення вимкнено (SUPPLIER_ORDERS_DISABLED=1): менеджер перевіряє замовлення і сам відправляє постачальнику кнопкою.
+        await T.alert(A, 'n_create', manualSupplierMode(A.keys) ? { details: '⏸ Автооформлення постачальнику вимкнено — перевірте замовлення й натисніть «📦 Оформити постачальнику».', buttons: supplierButtons(A) } : {});
         await T.funnelStage(A, ...(ctx.payStatus === 'confirmed' || Number(ctx.payAmount) === 0 ? STAGES.accepted : STAGES.awaiting));
     } else if (ctx.repeatPass || ctx.payStatus === 'confirmed') {
         await T.crmOrder(A); // повторний прохід: оплата в журнал + стадія
         if (ctx.receiptNew) await T.alert(A, 'n_receipt_alert', { photoUrl: ctx.lastReceiptImageUrl || '' });
     }
-    if ((ctx.payStatus === 'confirmed' || Number(ctx.payAmount) === 0) && !ctx.supplierHandled) {
-        // Цикл по постачальниках (рішення власника 2026-09-14): кожна позиція йде своєму
-        // постачальнику окремо (BrewDrop/EasyDrop — різні системи, реально різні посилки);
-        // вручну лишається лише те, для чого механізм справді не налаштований у CRM.
-        const dispatch = await dispatchOrder(A);
-        ctx.parcelCount = dispatch.groups.length; ctx.multiParcel = dispatch.multiParcel;
-        for (const g of dispatch.groups) {
-            const itemsLine = g.items.map((l) => l.name + (l.color ? ' ' + l.color : '') + (l.size ? ' ' + l.size : '') + (l.qty > 1 ? ' ×' + l.qty : '')).join(', ');
-            ctx.agent.supplierName = g.supplier;
-            if (g.needsManual) {
-                await T.alert(A, 'n_agent_supplier_manual_admin', { details: '🏭 ' + g.supplier + ' (' + g.mechanism + ')\n🛍️ ' + itemsLine + (g.result ? '\n' + g.result : '') + '\n👤 ' + (ctx.senderName || '') + ' — https://instagram.com/' + (ctx.igUsername || '') });
-            } else {
-                ctx.agent.supplierResult = g.result || ('Оформлено (' + g.status + ').');
-                await T.alert(A, 'n_agent_supplier_ordered_admin', { details: '👤 ' + (ctx.senderName || '') + ' — https://instagram.com/' + (ctx.igUsername || '') + (g.ttn ? '\n📦 ТТН: ' + g.ttn : '') });
-            }
-        }
-        ctx.supplierOrderStatus = dispatch.groups.map((g) => g.status).join(',') || 'manual';
-        ctx.supplierTtn = dispatch.groups.map((g) => g.ttn).filter(Boolean).join(', ');
-        ctx.supplierOrderResult = dispatch.groups.map((g) => g.supplier + ': ' + (g.result || g.status)).join('\n');
-        ctx.supplierHandled = true;
-        await T.ttnSync(A);
-        await T.funnelStage(A, ...STAGES.supplier);
-    }
+    if ((ctx.payStatus === 'confirmed' || Number(ctx.payAmount) === 0) && !ctx.supplierHandled) await runSupplierDispatch(A);
     await T.confirmPrep(A);
     const key = (ctx.payStatus || '') + ':' + (ctx.supplierTtn || '');
     if (ctx.agent.confirmKey !== key) {
@@ -2216,4 +2238,4 @@ async function runPolicyInner(A, u) {
     }
 }
 
-module.exports = { runPolicy, addressComplete, matchColor, enforceInsistLimit };
+module.exports = { runPolicy, addressComplete, matchColor, enforceInsistLimit, runSupplierDispatch };

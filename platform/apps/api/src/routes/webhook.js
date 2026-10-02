@@ -97,6 +97,20 @@ router.post('/telegram',
 );
 
 // POST /webhook/telegram/:botId — bot-scoped webhook endpoint (platform flow bots)
+// POST /webhook/admin-tg — натискання кнопок під сповіщеннями менеджерам магазину (бот сповіщень =
+// TELEGRAM_BOT_TOKEN воронки, напр. Fineko_Goverla_Bot): «📦 Оформити постачальнику». Сесія — з callback_data,
+// справжність — секрет вебхука, похідний від токена (перевіряє shopAgent/managerActions.js).
+router.post('/admin-tg', (req, res) => {
+    res.json({ ok: true });
+    const cq = req.body && req.body.callback_query;
+    if (!cq) return;
+    const secret = String(req.get('X-Telegram-Bot-Api-Secret-Token') || '');
+    setImmediate(() => {
+        require('../services/shopAgent/managerActions').handleAdminCallback({ secret, cq })
+            .catch((e) => logger.error('admin-tg callback failed', { error: e.message }));
+    });
+});
+
 router.post('/telegram/:botId',
     verifyTelegramSecretForBot,
     asyncHandler(async (req, res) => {

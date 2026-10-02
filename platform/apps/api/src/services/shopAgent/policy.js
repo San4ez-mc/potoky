@@ -61,7 +61,7 @@ function matchColor(p, want) {
     const pw = words.flatMap((x) => x.split('-')).filter(Boolean);
     for (let i = 0; i < pw.length - 1; i++) {
         if (!SHADE.test(pw[i])) continue;
-        const a = pw[i].slice(0, 4); const b = ruToUaColorWord(pw[i + 1]).replace(/(ий|а|е|у|ого|им|ому|ої|ою|их|і)$/u, '').slice(0, 4);
+        const a = pw[i].slice(0, 4); const b = ruToUaColorWord(pw[i + 1]).replace(/(ього|ьому|ьої|ьою|ий|а|е|у|ого|им|ому|ої|ою|их|і)$/u, '').slice(0, 4);
         if (b.length < 3) continue;
         const both = list.filter((c) => c.toLowerCase().includes(a) && c.toLowerCase().includes(b));
         if (both.length === 1) return both[0];
@@ -76,7 +76,7 @@ function matchColor(p, want) {
         // «і» (закінчення множини прикметника: чорний→чорні, синій→сині) не відсікалось, тому
         // стем лишався 5-символьним «чорні» й не збігався підрядком із каталожним «чорний»
         // (5-та літера и/і різна). Додано «і» до відсічуваних закінчень.
-        const stem = one.replace(/(ий|а|е|у|ого|им|ому|ої|ою|их|і)$/u, '').slice(0, 5);
+        const stem = one.replace(/(ього|ьому|ьої|ьою|ий|а|е|у|ого|им|ому|ої|ою|их|і)$/u, '').slice(0, 5);
         // Корінь з 1–2 літер («Ау» → «а») знаходився всередині будь-якої назви («Графітовий») — це не колір (2026-09-30, тест 1c5dee4b).
         if (!stem || stem.length < 3) continue;
         // Лише відтінок без кольору («темний», «світлий») — це побажання, не колір: інакше «темний» = єдиний «Темно-синій» (тест 34).

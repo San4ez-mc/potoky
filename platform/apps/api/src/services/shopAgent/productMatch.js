@@ -14,7 +14,7 @@ const { geminiFetch: __geminiFetch } = require('../geminiKey');
  * alsoWants, skipPresentation, etc.) so nothing downstream (compose.js prompts, policy.js
  * presentation code) needs to change.
  */
-async function matchProduct(context, keys, input) {
+async function matchProduct(context, keys, input, opts = {}) {
 // Ключі Gemini: власний воронки → конектор воронки (index.js кладе keys.__geminiKeys; 2026-09-29, ключ воронки вичерпав кредити).
 var __gKeys = (Array.isArray(keys.__geminiKeys) && keys.__geminiKeys.length) ? keys.__geminiKeys : [keys.GEMINI_API_KEY].filter(Boolean);
 // n_lookup — версія для НОВОЇ Fineko CRM (заміна n_lookup-code.js, який ходив у KeyCRM).
@@ -618,6 +618,28 @@ try {
         adAccountId: 'instagram_messages', adAccountName: 'Instagram-пости без активної реклами', adCreatedAt: new Date().toISOString(),
       }) });
     } catch (e) { /* best-effort */ }
+  }
+
+  // 2026-10-03 (Edit 6ca45d28, andrew_stepanchuk, «Яка вартість костюму?» з реклами флісового костюма A0191): нова реклама ще
+  // не привʼязана, назва «Чоловічий флісовий костюм» спільна для реклам ЧОТИРЬОХ товарів (A0191/A0189/A0068/SH617927), повного
+  // тексту посту з артикулом Meta не віддає (реклама поза кабінетом) — бот показав загальний список «костюмів» із кофтами.
+  // Автопривʼязка (adAutoBind: підпис посту з артикулом → фото креативу) пізніше привʼязала її правильно, але вона ходить раз на
+  // 3 год. Тепер, якщо товар не визначено, а реклама без товару, — запускаємо ту саму автопривʼязку для ЦІЄЇ реклами одразу
+  // (раз на рекламу в розмові, до 25 с) і беремо її результат.
+  if (!found && context.entryAd && !context.testMode && opts.botId && context.autoBindTriedFor !== String(context.entryAd) && !(context.storyId && String(context.storyId) === String(context.entryAd))) {
+    context.autoBindTriedFor = String(context.entryAd);
+    try {
+      var __abRow = __adAlreadyExists && Array.isArray(__existsJson && __existsJson.data) ? __existsJson.data[0] : null;
+      if (!__abRow || !__abRow.productId) {
+        var __ab = await Promise.race([
+          require('../adAutoBind').autoBindAds(opts.botId, { onlyExternalIds: [String(context.entryAd)], limit: 1 }),
+          new Promise(function (res) { setTimeout(function () { res(null); }, 25000); }),
+        ]);
+        var __abSku = __ab && Array.isArray(__ab.report) && __ab.report[0] && __ab.report[0].sku;
+        var __abHit = __abSku ? all.filter(function (x) { return String(x.sku || '').toUpperCase() === String(__abSku).toUpperCase(); })[0] : null;
+        if (__abHit) { found = __abHit; via = 'ad_autobind:' + (__ab.report[0].source || ''); mk = 'adautobind_' + __abHit.id; context.adAutoBound = String(context.entryAd) + '→' + __abHit.sku; }
+      }
+    } catch (e) { /* best-effort: без автопривʼязки — як і раніше */ }
   }
 
   // Автозвʼязка допис→товар: якщо товар визначено за артикулом З ПІДПИСУ допису (не з тексту клієнта) і в /ads для цього

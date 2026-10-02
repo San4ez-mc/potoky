@@ -77,7 +77,7 @@ async function resolveShoppingIntent(A, u, tool) {
     // мутації, а не лише ctx.product — інакше стан презентації розсинхронізується з тим, який
     // товар насправді лишився активним.
     const ctxSnapshotBefore = Object.assign({}, ctx);
-    Object.assign(ctx, await matchProduct(ctx, keys, text));
+    Object.assign(ctx, await matchProduct(ctx, keys, text, { botId: A.botId }));
     if (!hasAnySignal(signal) && nameTry && !(ctx.product && ctx.product.sku && /^user_name/.test(String(ctx.product._via || '')))) {
         // Пошук лише за назвою не дав точного збігу — нічого не підставляємо (жодних «найближчих» товарів на «Дякую» тощо).
         for (const k of Object.keys(ctx)) { if (!(k in ctxSnapshotBefore)) delete ctx[k]; }
@@ -131,7 +131,7 @@ async function resolveShoppingIntent(A, u, tool) {
         Object.assign(ctx, await computeCatalogHint(ctx, keys, text));
         if (ctx.catalogHintPick) {
             delete ctx.productUnknown;
-            Object.assign(ctx, await matchProduct(ctx, keys, text));
+            Object.assign(ctx, await matchProduct(ctx, keys, text, { botId: A.botId }));
             if (ctx.product && ctx.product.sku && !ctx.productUnknown) status = 'found';
         }
         if (status !== 'found' && ctx.catalogHint) {

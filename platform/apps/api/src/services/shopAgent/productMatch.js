@@ -613,6 +613,9 @@ try {
         externalId: String(context.entryAd), name: String(context.adTitle || __campaign.ad_title || 'Реклама ' + context.entryAd).slice(0, 200),
         productId: null, campaignName: String(context.adTitle || '').replace(/_group_\d+/i, '').slice(0, 200) || null,
         thumbnailUrl: __regThumb || null,
+        // Реклама, яку бот бачить лише з повідомлень клієнтів (синк Meta її не знає — просування поза Ads Manager): окремий «кабінет»
+        // у фільтрі CRM і дата першого звернення замість порожньої дати запуску — інакше рядок губився в кінці списку (02.10, Олексій).
+        adAccountId: 'instagram_messages', adAccountName: 'Instagram: з повідомлень клієнтів (поза Ads Manager)', adCreatedAt: new Date().toISOString(),
       }) });
     } catch (e) { /* best-effort */ }
   }

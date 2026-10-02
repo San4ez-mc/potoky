@@ -27,6 +27,7 @@ const SCHEMA = `{
  "wantsManualReq": true|false, "wantsCard": true|false, "paymentMethodChange": "cod|full"|null, "claimsPaid": true|false, "receiptLink": "<url>"|null,
  "refersToStory": true|false, "replaceOrAdd": "replace|add|keep"|null, "wantsOrderSummary": true|false, "compare": true|false,
  "wantsSizeChart": true|false, "wantsPhoto": true|false, "wantsUpsellPhoto": true|false, "wantsHuman": true|false, "isComplaint": true|false, "annoyedAtBot": true|false, "returnRequest": true|false, "statusQuestion": true|false,
+ "returnType": "return|exchange"|null, "returnReason": "<що не підійшло, словами клієнта коротко>"|null, "exchangeFor": "<на що обміняти: розмір/колір/товар>"|null,
  "productHint": {"article": "<A0187 тощо>"|null, "category": "<кофта|костюм|куртка|бомбер|футболка|джинси|лофери|...>"|null, "fromList": "<назва/артикул зі списку, який бот щойно показав>"|null},
  "questions": ["<питання клієнта, на які треба відповісти фактами>"],
  "sentiment": "neutral|positive|annoyed|angry",
@@ -69,7 +70,7 @@ const RULES = `ПРАВИЛА РОЗБОРУ:
   вулиця/будинок/квартира/«додому»/«таксі» БЕЗ жодного посилання на Нову Пошту чи номера.
 - wantsPhoto/wantsSizeChart: ЛИШЕ коли клієнт явно просить надіслати фото/сітку («скиньте фото», «є розмірна сітка?»); прикріплене клієнтом фото — це НЕ прохання фото.
 - annoyedAtBot=true — ЛИШЕ явне обурення самою розмовою, образа чи насмішка над нами: «ви знущаєтесь?», «ви на приколі?», «ви мене дістали», лайка на адресу магазину. НЕ annoyedAtBot: нетерплячка («?», «Ау», «???», «ви тут?»), уточнення чи повтор свого вибору («я ж написав один», «я відповів на вашу історію», «я вже казав розмір») — це звичайні повідомлення зі змістом, на них відповідаємо по суті.
-- wantsHuman: явно просить людину/менеджера, «ви бот?», «дайте живу людину». isComplaint: претензія (не той товар, брак, не прийшло). returnRequest: хоче повернути/обміняти ВЖЕ ОТРИМАНИЙ товар (є замовлення/посилка на руках). Брак/дефект/не той товар чи розмір у ВЖЕ ОТРИМАНІЙ посилці («отримав кофту, а вона розійшлась по шву, що робити?», «прийшла з діркою», «прислали не той колір») — ЗАВЖДИ returnRequest=true (і isComplaint=true): клієнту потрібне рішення — обмін/повернення, а не лише «передала менеджеру». Загальне запитання про політику («чи можна обміняти/повернути, якщо не підійде?», «які умови повернення?») ДО покупки — це НЕ returnRequest, а звичайне питання в questions (відповідь є в базі знань).
+- wantsHuman: явно просить людину/менеджера, «ви бот?», «дайте живу людину». isComplaint: претензія (не той товар, брак, не прийшло). returnRequest: хоче повернути/обміняти ВЖЕ ОТРИМАНИЙ товар (є замовлення/посилка на руках). Брак/дефект/не той товар чи розмір у ВЖЕ ОТРИМАНІЙ посилці («отримав кофту, а вона розійшлась по шву, що робити?», «прийшла з діркою», «прислали не той колір») — ЗАВЖДИ returnRequest=true (і isComplaint=true): клієнту потрібне рішення — обмін/повернення, а не лише «передала менеджеру». Загальне запитання про політику («чи можна обміняти/повернути, якщо не підійде?», «які умови повернення?») ДО покупки — це НЕ returnRequest, а звичайне питання в questions (відповідь є в базі знань). returnType / returnReason / exchangeFor — коли клієнт говорить про повернення/обмін ВЖЕ ОТРИМАНОГО товару або відповідає на питання бота про це (див. «ПОВЕРНЕННЯ» у стані): returnType "return" — хоче повернути й отримати гроші, "exchange" — обміняти (на інший розмір/колір/товар); returnReason — що не так («замалий», «не той колір», «брак: розійшовся шов», «не сподобалась»); exchangeFor — на що міняти, якщо названо («на L», «на чорний», «на розмір більше»). Не вигадуй: чого клієнт не сказав — null. «Хочу поміняти на XL» = returnType "exchange" + exchangeFor "XL".
 - statusQuestion: питає, де посилка/коли відправлять/ТТН уже оформленого замовлення.
 - productHint.category — лише коли клієнт хоче ІНШИЙ товар цієї категорії («а джинси є?», «покажіть куртки»). Якщо він говорить про ЧАСТИНУ товару в розмові (штани чи верх костюма, рукав кофти: «штани подобаються, а верх ні», «штани звужені?») — category = null, це розмова про поточний товар.
 - belly=true — клієнт згадує живіт/животик/пузо/«повний у талії» (навіть окремим коротким повідомленням після підбору розміру) — це параметр для підбору (розмір більше), а не питання.
@@ -102,6 +103,8 @@ function summarizeState(ctx) {
     if (ctx.orderData) st.push('доставка: ' + ['fullName', 'phone', 'city', 'branch'].map((k) => k + '=' + (ctx.orderData[k] || '—')).join(', '));
     if (ctx.payStatus) st.push('статус оплати: ' + ctx.payStatus);
     if (ctx.crmOrderId) st.push('ЗАМОВЛЕННЯ ВЖЕ ОФОРМЛЕНО (№' + (ctx.orderRef || ctx.crmOrderId) + ')');
+    // Повернення/обмін у процесі (бот збирає дані) — щоб коротке «обмін», «замалий», «на L» аналізатор читав саме як відповідь про повернення.
+    if (ctx.returnFlow && ctx.returnFlow.stage === 'collect') st.push('ПОВЕРНЕННЯ: бот зʼясовує дані — тип: ' + (ctx.returnFlow.type || '?') + ', причина: ' + (ctx.returnFlow.reason || '?') + (ctx.returnFlow.type === 'exchange' ? ', обмін на: ' + (ctx.returnFlow.exchangeFor || '?') : ''));
     if (ctx.agent && ctx.agent.lastAsk) st.push('останнє питання бота: «' + String(ctx.agent.lastAsk).slice(0, 160) + '»');
     if (ctx.catalogHint && !(p && p.sku)) st.push('бот щойно показав список: ' + String(ctx.catalogHint).replace(/\n/g, ' | ').slice(0, 400));
     if (ctx.trustScriptStep) st.push('скрипт довіри до передоплати: крок ' + ctx.trustScriptStep);
@@ -154,6 +157,8 @@ async function understand(A) {
     u.intent = u.intent || 'other';
     u.questions = Array.isArray(u.questions) ? u.questions.filter((q) => q && String(q).trim()).map(String) : [];
     u.productHint = u.productHint && typeof u.productHint === 'object' ? u.productHint : { article: null, category: null, fromList: null };
+    u.returnType = u.returnType === 'return' || u.returnType === 'exchange' ? u.returnType : null;
+    for (const k of ['returnReason', 'exchangeFor']) u[k] = u[k] && String(u[k]).trim() ? String(u[k]).trim().slice(0, 200) : null;
     if (u.sizeShift !== 1 && u.sizeShift !== -1) u.sizeShift = Number(u.sizeShift) === 1 ? 1 : (Number(u.sizeShift) === -1 ? -1 : null);
     if (u.footLength != null && Number(u.footLength) >= 34 && Number(u.footLength) <= 50 && !u.shoeSize) { u.shoeSize = Number(u.footLength); u.footLength = null; } // EU-розмір, не см стопи
     for (const k of ['height', 'weight', 'chest', 'footLength', 'shoeSize', 'waist', 'qty', 'upsellQty']) { const v = Number(u[k]); u[k] = Number.isFinite(v) && v > 0 ? v : null; }

@@ -215,6 +215,41 @@ async function funnelStage(A, stageName, stageOrder) {
     } catch (e) { return false; }
 }
 
+// ── Повернення/обмін у CRM (2026-10-03, власник: «нехай збирає») ───────────────────────────────
+/** Замовлення, яке повертають: цієї розмови, інакше — останнє оформлене цим клієнтом в інших розмовах (повертаються часто
+ *  через дні, нерідко новою розмовою). */
+async function returnOrderId(A) {
+    const { ctx } = A;
+    if (ctx.crmOrderId && !String(ctx.crmOrderId).startsWith('TEST-')) return { orderId: ctx.crmOrderId, orderRef: ctx.orderRef || '' };
+    if (!ctx.psid) return null;
+    const s = await db.session.findFirst({
+        where: { botId: A.botId, isTest: false, id: { not: A.session.id }, AND: [{ context: { path: ['psid'], equals: String(ctx.psid) } }, { context: { path: ['crmOrderId'], not: null } }] },
+        orderBy: { lastActive: 'desc' }, select: { context: true },
+    }).catch(() => null);
+    const c = s && s.context;
+    return c && c.crmOrderId && !String(c.crmOrderId).startsWith('TEST-') ? { orderId: c.crmOrderId, orderRef: c.orderRef || '' } : null;
+}
+/** Запис у розділі CRM «Повернення» (CRM сама переносить замовлення на стадію «Повернення/обмін»). */
+async function returnCreate(A) {
+    const { ctx, keys } = A; const rf = ctx.returnFlow || {};
+    if (ctx.testMode) { rf.crmReturnId = 'TEST-RETURN'; A.trace.push({ tool: 'returnCreate', skipped: 'testMode' }); return true; }
+    const ord = await returnOrderId(A);
+    if (!ord) { rf.noOrder = true; return false; }
+    rf.orderId = ord.orderId; if (ord.orderRef) rf.orderRef = ord.orderRef;
+    const r = await crmFetch(keys, '/returns', { method: 'POST', body: JSON.stringify({ orderId: ord.orderId, type: rf.type || 'return', reason: rf.reason || rf.firstText || null, exchangeFor: rf.exchangeFor || null, source: 'bot' }) }, 8000);
+    A.trace.push({ tool: 'returnCreate', ok: r.ok, status: r.status });
+    if (r.ok && r.data && r.data.id) { rf.crmReturnId = r.data.id; return true; }
+    logger.warn('[shopAgent] returnCreate failed', { sessionId: A.session.id, status: r.status, error: r.json && r.json.error });
+    return false;
+}
+/** ТТН зворотної посилки — у запис повернення. */
+async function returnAttachTtn(A, ttn) {
+    const rf = (A.ctx.returnFlow || {});
+    if (A.ctx.testMode || !rf.crmReturnId || String(rf.crmReturnId).startsWith('TEST-')) return false;
+    const r = await crmFetch(A.keys, '/returns/' + rf.crmReturnId, { method: 'PATCH', body: JSON.stringify({ ttn }) }, 6000);
+    return !!r.ok;
+}
+
 // ── Telegram-алерт менеджеру (той самий формат, що notifyTg-ноди) ─────────────────────────────
 async function alert(A, nodeIdOrFields, extra = {}) {
     const { ctx, keys, session } = A;
@@ -258,4 +293,4 @@ async function alert(A, nodeIdOrFields, extra = {}) {
     return !!j.ok;
 }
 
-module.exports = { tool, resolveProduct, setApply, calcSize, checkAvail, availSearch, extraResolve, orderPrefill, intlRoute, payAmount, npCheck, reconcile, crmOrder, supplierRoute, supplierOrder, confirmPrep, ttnSync, returnCrmUpdate, kbContext, kbAsk, kbHit, createInvoice, deleteInvoice, monoStatement, markConsumed, funnelStage, alert, activeFop };
+module.exports = { tool, resolveProduct, setApply, calcSize, checkAvail, availSearch, extraResolve, orderPrefill, intlRoute, payAmount, npCheck, reconcile, crmOrder, supplierRoute, supplierOrder, confirmPrep, ttnSync, returnCrmUpdate, returnCreate, returnAttachTtn, kbContext, kbAsk, kbHit, createInvoice, deleteInvoice, monoStatement, markConsumed, funnelStage, alert, activeFop };

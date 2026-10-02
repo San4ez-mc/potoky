@@ -425,6 +425,26 @@ function humanSetList(pp) { return (pp.setItems || []).map((it) => '• ' + it.n
  * налаштувань категорії): бот мав зайти в категорію КОЖНОГО товару в розмові й запитати РАЗОМ усі
  * потрібні параметри — а не хардкодити «зріст і вагу» незалежно від складу (set1112 містить
  * лофери з категорії «Взуття», якій потрібен окремий параметр «Розмір взуття», не зріст/вага). */
+/** Деталі повернення/обміну для менеджера (одним блоком у сповіщенні). */
+function returnDetails(rf) {
+    rf = rf || {};
+    return [
+        '🔁 ' + (rf.type === 'exchange' ? 'Обмін' : rf.type === 'return' ? 'Повернення коштів' : 'Тип не уточнено'),
+        '💬 Причина: ' + (rf.reason || ('«' + String(rf.firstText || '—') + '»')),
+        rf.type === 'exchange' ? '↔️ Обмін на: ' + (rf.exchangeFor || 'не уточнено') : '',
+        rf.orderRef ? '🧾 Замовлення: ' + rf.orderRef : '',
+        rf.crmReturnId && !String(rf.crmReturnId).startsWith('TEST-') ? '📋 Запис у CRM «Повернення» створено' : (rf.noOrder ? '⚠️ Замовлення клієнта не знайдено — створіть повернення в CRM вручну' : ''),
+        rf.returnTtn ? '📦 ТТН повернення: ' + rf.returnTtn : '',
+    ].filter(Boolean).join('\n');
+}
+/** Дані зібрано (або клієнт пішов від теми): запис у CRM, інструкція «Легке повернення», сигнал менеджеру. */
+async function finishReturnCollect(A, opts = {}) {
+    const { ctx } = A; const rf = ctx.returnFlow;
+    await T.returnCreate(A).catch(() => false);
+    rf.stage = opts.silent ? 'done' : 'await_ttn'; rf.at = Date.now();
+    if (!opts.silent) A.out.push({ text: messageTextMultiline(A.assets, 'n_return_easy_msg', ctx, A.session.id), step: 'return_easy' });
+    await T.alert(A, 'n_agent_return_request_admin', { details: returnDetails(rf) + (opts.silent ? '\nℹ️ Клієнт не відповів на уточнення — бот повернувся до звичайної розмови, інструкцію не надсилав.' : '') });
+}
 /** «Зріст (см), Вага (кг), Розмір взуття (EU)» (назви параметрів категорій CRM) → «ваш зріст і вагу, а також розмір взуття (EU)».
  * Власник 02.10: сирий перелік через кому звучав як анкета. Зріст і вага — одна фраза, решта — з малої літери після «а також». */
 function humanizeParamsPrompt(prompt) {
@@ -1017,18 +1037,46 @@ async function runPolicyInner(A, u) {
         await pause(A, 'complaint', 'n_agent_complaint_admin', '💬 «' + text.slice(0, 300) + '»');
         return;
     }
+    // ── Повернення/обмін (власник 03.10: «нехай збирає») ─────────────────────────────────────────────
+    // 1) зʼясовуємо тип (повернення/обмін), причину і — для обміну — на що міняти (лише те, чого ще не сказано, до 2 питань);
+    // 2) запис у CRM «Повернення» (CRM сама переводить замовлення на «Повернення/обмін») + інструкція «Легке повернення»;
+    // 3) ТТН зворотної посилки → у запис повернення й у замовлення, менеджеру — усе разом.
+    // Очікування ТТН не тримає клієнта вічно: через 21 день — звичайна розмова.
+    if (ctx.returnFlow && ctx.returnFlow.stage === 'await_ttn' && Date.now() - (ctx.returnFlow.at || 0) > 21 * 86400000) ctx.returnFlow = { ...ctx.returnFlow, stage: 'expired' };
     if (ctx.returnFlow && ctx.returnFlow.stage === 'await_ttn') {
         const ttn = ttnIn(text);
-        if (ttn) { ctx.returnFlow = { ...ctx.returnFlow, ttn, stage: 'done' }; ctx.returnTtn = ttn; await T.returnCrmUpdate(A); A.out.push({ text: messageTextMultiline(A.assets, 'n_return_confirm_msg', ctx, A.session.id), step: 'return_confirm' }); await T.alert(A, 'n_return_admin'); return; }
+        if (ttn) {
+            // returnTtn — саме це поле читають n_return_crm_update і n_return_admin (раніше писалось у .ttn — CRM-стадія й ТТН у сповіщенні губились).
+            ctx.returnFlow = { ...ctx.returnFlow, ttn, returnTtn: ttn, stage: 'done' }; ctx.returnTtn = ttn;
+            await T.returnAttachTtn(A, ttn);
+            if (ctx.crmOrderId || ctx.returnFlow.orderId) { const own = ctx.crmOrderId; if (!own) ctx.crmOrderId = ctx.returnFlow.orderId; await T.returnCrmUpdate(A); if (!own) delete ctx.crmOrderId; }
+            A.out.push({ text: messageTextMultiline(A.assets, 'n_return_confirm_msg', ctx, A.session.id), step: 'return_confirm' });
+            await T.alert(A, 'n_return_admin', { details: returnDetails(ctx.returnFlow) });
+            return;
+        }
         A.out.push({ text: await answerThenAsk(A, u, messageText(A.assets, 'n_agent_return_wait_ask', ctx, A.session.id)), step: 'return_wait' });
         return;
     }
-    if (u.returnRequest) {
-        A.out.push({ text: messageTextMultiline(A.assets, 'n_return_easy_msg', ctx, A.session.id), step: 'return_easy' });
-        ctx.returnFlow = { stage: 'await_ttn', at: Date.now() };
-        await T.alert(A, 'n_agent_return_request_admin', { details: '💬 «' + text.slice(0, 200) + '»' });
+    const rfCollecting = ctx.returnFlow && ctx.returnFlow.stage === 'collect';
+    const returnSignal = u.returnRequest || u.returnType || u.returnReason || u.exchangeFor;
+    if (u.returnRequest || (rfCollecting && returnSignal)) {
+        const rf = ctx.returnFlow = rfCollecting ? ctx.returnFlow : { stage: 'collect', at: Date.now(), asks: 0, firstText: text.slice(0, 300) };
+        if (u.returnType) rf.type = u.returnType;
+        if (u.returnReason) rf.reason = u.returnReason;
+        if (u.exchangeFor) { rf.exchangeFor = u.exchangeFor; if (!rf.type) rf.type = 'exchange'; }
+        const ask = !rf.type && !rf.reason ? 'n_agent_return_ask_type_reason' : (!rf.type ? 'n_agent_return_ask_type' : (!rf.reason ? 'n_agent_return_ask_reason' : (rf.type === 'exchange' && !rf.exchangeFor ? 'n_agent_return_ask_exchange' : '')));
+        const askText = ask ? messageText(A.assets, ask, ctx, A.session.id) : '';
+        if (askText && (rf.asks || 0) < 2) {
+            rf.asks = (rf.asks || 0) + 1; rf.at = Date.now();
+            A.out.push({ text: await answerThenAsk(A, u, askText), step: 'return_collect' });
+            ctx.agent.lastAsk = 'дані для повернення/обміну';
+            return;
+        }
+        await finishReturnCollect(A);
         return;
     }
+    // Клієнт пішов від теми, не відповівши: що зібрали — у CRM і менеджеру, далі звичайна розмова.
+    if (rfCollecting) await finishReturnCollect(A, { silent: true });
 
     // 1. Після оформленого замовлення
     if (ctx.crmOrderId && !freshSignal) {

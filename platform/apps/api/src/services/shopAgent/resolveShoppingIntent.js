@@ -58,7 +58,10 @@ async function resolveShoppingIntent(A, u, tool) {
     ctx.cart.lastSignal = Object.assign({}, signal, { turnAt: Date.now() });
 
     // Товару ще нема, клієнт пише коротку назву («Гельсінкі», «мажор петля») — пробуємо знайти за назвою в каталозі (тест 95).
-    const nameTry = !hadProduct && /[a-zа-яіїєґ]{4,}/i.test(text) && text.trim().split(/\s+/).length <= 4 && !/\d{2,}/.test(text);
+    // Але не коли бот щойно показав список, а клієнт ПИТАЄ (аналізатор: intent=question) — це питання про показані товари
+    // («Это же не кожа» після списку бомберів → пошук за назвою знаходив куртку D0005 за словом «кожа»; Edit e7457632, 03.10).
+    const listOnScreen = !!String(ctx.catalogHintSkus || '').trim();
+    const nameTry = !hadProduct && /[a-zа-яіїєґ]{4,}/i.test(text) && text.trim().split(/\s+/).length <= 4 && !/\d{2,}/.test(text) && !(listOnScreen && u && u.intent === 'question');
     if (!hasAnySignal(signal) && !nameTry) {
         // А6 — немає жодного сигналу про товар цього ходу: не чіпаємо активний товар.
         return { status: hadProduct ? 'kept' : 'none', skipPresentation: true, signal, action: 'NONE' };

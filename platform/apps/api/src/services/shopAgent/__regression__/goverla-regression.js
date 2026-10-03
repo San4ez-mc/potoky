@@ -776,10 +776,15 @@ async function main() {
             const A = mk('Кофта сірий колір');
             await runPolicy(A, freshU({ intent: 'give_color', color: 'сірий', setItemsWanted: { all: false, items: ['A0187'] } }));
             check('25.1 Аналізатор: лише кофта → товар A0187 (а не весь комплект за кольором)', A.ctx.product && A.ctx.product.sku === 'A0187', 'товар ' + (A.ctx.product && A.ctx.product.sku));
-            const B = mk('Цікавить кофта та лофери');
-            await runPolicy(B, freshU({ intent: 'choose_set', setItemsWanted: { all: false, items: ['кофта', 'лофери'] } }));
+            const B = mk('Цікавить кофта та джинси');
+            await runPolicy(B, freshU({ intent: 'choose_set', setItemsWanted: { all: false, items: ['кофта', 'джинси'] } }));
             const bArts = (B.ctx.product.setItems || []).map((it) => it.article);
-            check('25.2 Аналізатор словами («кофта», «лофери») → комплект із двох речей', B.ctx.setMode === 'set' && bArts.length === 2, 'позиції ' + bArts.join(','));
+            check('25.2 Аналізатор словами («кофта», «джинси») → комплект із двох речей', B.ctx.setMode === 'set' && bArts.length === 2, 'позиції ' + bArts.join(','));
+            if (Array.isArray(set.setOutOfStock) && set.setOutOfStock.length) {
+                const F = mk('Цікавить кофта та лофери');
+                await runPolicy(F, freshU({ intent: 'choose_set', setItemsWanted: { all: false, items: ['кофта', 'лофери'] } }));
+                check('25.6 Названа річ «немає в наявності» (лофери) → бот прямо каже про це, не відкидає мовчки', F.out.some((o) => o.step === 'set_item_missing' && /лофер/i.test(o.text)), 'steps: ' + F.out.map((o) => o.step).join(','));
+            }
             const C = mk('Ні, мені лише кофту', { setMode: 'set' });
             await runPolicy(C, freshU({ intent: 'choose_set', setItemsWanted: { all: false, items: ['A0187'] } }));
             check('25.3 Уже весь комплект → «лише кофту» → товар A0187', C.ctx.product && C.ctx.product.sku === 'A0187', 'товар ' + (C.ctx.product && C.ctx.product.sku));

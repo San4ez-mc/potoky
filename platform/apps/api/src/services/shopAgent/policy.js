@@ -313,15 +313,17 @@ function setItemsWantedArticles(ctx, u, p) {
     if (w.all) return { all: true, articles: full.map((it) => it.article) };
     const catNames = ctx.agent.setParams && ctx.agent.setParams.categoryNames;
     const sel = initSetSelection({ setItems: full });
-    const arts = [];
+    const arts = []; const missing = [];
     for (const raw of (w.items || [])) {
         const exact = full.find((it) => String(it.article).toUpperCase() === String(raw).toUpperCase());
         const hit = exact || matchSetItem(String(raw), sel, catNames);
         if (hit && !arts.includes(hit.article)) arts.push(hit.article);
+        // Названа річ, якої вже нема в складі, бо в CRM «немає в наявності» (лофери з 03.10) — скажемо клієнту, а не мовчки відкинемо.
+        else if (!hit && Array.isArray(p.setOutOfStock) && p.setOutOfStock.some((n) => stemsOf(n).some((st) => String(raw).toLowerCase().includes(st.slice(0, 4))))) missing.push(String(raw));
     }
     if (!arts.length) return null;
-    if (arts.length === full.length) return { all: true, articles: arts };
-    return { all: false, articles: arts };
+    if (arts.length === full.length && !missing.length) return { all: true, articles: arts, missing };
+    return { all: false, articles: arts, missing };
 }
 
 /** Одна річ, обрана з комплекту, — ЗВИЧАЙНИЙ товар із CRM, зібраний тим самим кодом, що й товар за артикулом (productMatch),
@@ -1745,6 +1747,7 @@ async function runPolicyInner(A, u) {
         // Етап 3 «Комплекти» (03.10): що з комплекту клієнт хоче купити, вирішує аналізатор (setItemsWanted) з урахуванням усієї
         // розмови. Здогадки нижче (нарізка тексту, «назвав одну річ», «колір/зріст → комплект») — лише запас, коли він не впевнений.
         const want = setItemsWantedArticles(ctx, u, p);
+        if (want && want.missing && want.missing.length) A.out.push({ text: 'На жаль, ' + want.missing.join(', ') + ' зараз немає в наявності 😔 Решту оформлю для вас 👌', step: 'set_item_missing' });
         if (want && want.all) { ctx.setPick = { setChoice: 'set' }; await T.setApply(A); ctx.setMode = 'set'; multiHandled = true; }
         else if (want && want.articles.length === 1) { await pickSingleSetItem(A, want.articles[0]); multiHandled = true; }
         else if (want && want.articles.length > 1) { ctx.agent.setOriginal = initSetSelection(p); await narrowSetTo(A, want.articles); rememberSetItemColors(ctx, u); multiHandled = true; }

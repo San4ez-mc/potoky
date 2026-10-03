@@ -21,6 +21,7 @@ const N = {
     accum: 'node_1781266857076', build: 'node_1781266905762', agent: 'node_agent_content_mgr',
 };
 const MARK = 'ВІДЕО-СЦЕНАРІЇ';
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
 const VIDEO_BLOCK = String.raw`ВІДЕО-СЦЕНАРІЇ (формати tiktok_video, youtube_short, instagram_reels — короткі вертикальні відео БЕЗ людини в кадрі, 12-18 с; збирає воронка content-short-video):
 Такий пост — це СЦЕНАРІЙ. У JSON: platform = tiktok | youtube | reels; post_type = video | short | reel; funnel_slug = "content-short-video"; content = ПІДПИС під відео (1-2 речення + заклик + 3-5 хештегів; для youtube — ще перший рядок-назва ≤100 символів); structure = одна зі структур vid_* зі списку СТРУКТУРИ ПОСТІВ (vid_cartoon_story, vid_kinetic_facts, vid_organizer_story, vid_pov_mini_film); hook = напис першої сцени. funnel_params:
@@ -113,7 +114,7 @@ async function main() {
             if (!b.includes(t1) || !b.includes(t2)) throw new Error('build: маркери humanizer не знайдено');
             b = b.replace(t1, 'funnel_params.slides[].subText, funnel_params.scenes[].text)')
                 .replace(t2, 'image_prompt та imagePrompt (лишай англійською); funnel_params.scenes[].visual/sec/motion/motionPrompt, funnel_params.style, funnel_params.music — англійською/числа, не чіпай.');
-            new Function('context', b);
+            new AsyncFunction('context', 'keys', b); // тіло ноди має top-level await (двигун обгортає в async)
             await callTool('update_node', { botId: CM, nodeId: N.build, data: { code: b } });
             console.log('build: patched');
         }

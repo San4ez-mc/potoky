@@ -523,9 +523,11 @@ try {
         var abp = await irp.arrayBuffer();
         if (abp.byteLength <= 8000000) {
           var b64p = Buffer.from(abp).toString('base64');
-          __refImg0 = { mime: 'image/jpeg', data: b64p };
           var mimepRaw = (irp.headers.get('content-type') || '').split(';')[0];
           var mimep = (!mimepRaw || mimepRaw === 'application/octet-stream') ? 'image/jpeg' : mimepRaw;
+          // Zernio віддає рілс із реклами як attachment type «photo», а насправді це video/mp4 (2026-10-03, Анна) — звірка з
+          // еталонами має отримати справжній тип, інакше Gemini відкидає запит і результат за назвами лишається без перевірки.
+          __refImg0 = { mime: mimep, data: b64p };
           // 2026-09-13 (власник: "Джимінай кидати фото каталогу — наскільки дорожче?" —
           // погоджено дешевий перший крок): БЕЗ жодних додаткових фото чи викликів — той самий
           // ОДИН запит з ОДНИМ фото клієнта, просто з категорією поруч кожної назви в каталозі

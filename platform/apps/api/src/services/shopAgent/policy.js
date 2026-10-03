@@ -474,6 +474,20 @@ async function oversizeAlternative(A, pp) {
         return 'На жаль, цей товар йде тільки до ' + (LABEL[curMax] || curMax) + ' розміру, і він вам буде малий. Можу запропонувати ' + offer + '.';
     } catch (e) { return ''; }
 }
+/** Рядок допродажу в підсумку («Футболка оверсайз база — 2 шт (Білий XL ×2) — 799 грн») і його сума. 03.10 (Edit e86adb58):
+ *  «А можна дві білих футболки?» — бот записав допродаж, але мовчки перейшов до оплати, а підсумок показував лише кофту. */
+function upsellSummary(ctx, pp) {
+    const oi = ctx.orderIntent; const up = pp && Array.isArray(pp.upsellItems) && pp.upsellItems[0];
+    if (!oi || !oi.addUpsell || !up) return null;
+    const units = Array.isArray(oi.upsellUnits) && oi.upsellUnits.length ? oi.upsellUnits : null;
+    const qty = Number(oi.upsellQty) || (units ? units.length : 1);
+    const sum = Number(ctx.upsellSum) || (up.qtyPrices && Number(up.qtyPrices[String(qty)])) || (Number(up.price) || 0) * qty;
+    const groups = {};
+    for (const un of (units || [])) { const k = [un && un.color, un && un.size].filter(Boolean).join(' '); if (k) groups[k] = (groups[k] || 0) + 1; }
+    const det = Object.entries(groups).map(([k, n]) => k + (n > 1 ? ' ×' + n : '')).join(', ');
+    const name = String(up.name || '').split(/\.\s|\s—\s/)[0].trim();
+    return { text: name + ' — ' + qty + ' шт' + (det ? ' (' + det + ')' : '') + ' — ' + sum + ' грн', sum };
+}
 /** Деталі повернення/обміну для менеджера (одним блоком у сповіщенні). */
 function returnDetails(rf) {
     rf = rf || {};
@@ -1574,7 +1588,8 @@ async function runPolicyInner(A, u) {
     if (ctx.agent.lastSummaryKey && u.wantsOrderSummary) {
         const unitsS = ctx.orderUnitsText || ((ctx.colorChoice && ctx.colorChoice.color ? ctx.colorChoice.color : '') + (ctx.recommendedSize ? ' ' + ctx.recommendedSize : ''));
         const totalS = (p.isSet && ctx.agent.setPricing && ctx.agent.setPricing.total) || ctx.orderUnitsTotal || p.price;
-        A.out.push({ text: 'Ваше замовлення 🙌\n' + String(p.customerName || p.name).split('\n')[0] + (unitsS ? ' — ' + unitsS.trim() : '') + ' — ' + totalS + ' грн' + (ctx.extraItemsText ? '\n' + ctx.extraItemsText : ''), step: 'order_reshow' });
+        const usS = !(p.isSet && ctx.setMode === 'set') ? upsellSummary(ctx, p) : null;
+        A.out.push({ text: 'Ваше замовлення 🙌\n' + String(p.customerName || p.name).split('\n')[0] + (unitsS ? ' — ' + unitsS.trim() : '') + ' — ' + totalS + ' грн' + (usS ? '\n+ ' + usS.text + '\nРазом: ' + (Number(totalS) + usS.sum) + ' грн' : '') + (ctx.extraItemsText ? '\n' + ctx.extraItemsText : ''), step: 'order_reshow' });
         u.questions = (u.questions || []).filter((q) => !/(замовленн|підсум)/i.test(String(q)));
     }
 
@@ -2246,8 +2261,16 @@ async function runPolicyInner(A, u) {
         const gaveAddress = !!(u.phone || u.city || u.branch || u.fullName);
         if (u.ready === 'yes' || gaveAddress || u.payMethod || answeringUpsellClarify) {
             const addUpsellFinal = answeringUpsellClarify ? !upsellExplicitNo : !!u.addUpsell;
+            const upsellWasOn = !!(ctx.orderIntent && ctx.orderIntent.addUpsell);
             ctx.orderIntent = { ready: 'yes', addUpsell: addUpsellFinal, upsellQty: u.upsellQty || upsellQtyFallback || undefined, upsellNote: u.upsellNote || (answeringUpsellClarify && addUpsellFinal ? text : undefined), upsellUnits: u.upsellUnits || undefined, units: u.units || undefined, qty: u.qty || undefined, extras: undefined, extraProducts: undefined };
             fillUpsellSize(ctx);
+            // Клієнт щойно додав допродаж («А можна дві білих футболки?») — підтверджуємо, що саме записали і нову суму, а не
+            // мовчки переходимо до оплати (Edit e86adb58: клієнт перепитав «А футболки?»).
+            if (addUpsellFinal && !upsellWasOn && !(pp.isSet && ctx.setMode === 'set')) {
+                const usA = upsellSummary(ctx, pp);
+                const baseA = Number(ctx.orderUnitsTotal || pp.price) || 0;
+                if (usA) A.out.push({ text: 'Записала: + ' + usA.text + ' ✅' + (baseA ? '\nРазом: ' + (baseA + usA.sum) + ' грн' : ''), step: 'upsell_ack' });
+            }
             if (gaveAddress) { ctx.orderIntent.prefill = { fullName: u.fullName || undefined, phone: u.phone || undefined, city: u.city || undefined, branch: u.branch || undefined, region: u.region || undefined }; await T.orderPrefill(A); }
             // 2026-09-30 (правки ea8bcaf5, ea18a400): «Оформляємо» без слова про футболку — це «без неї». Допродаж уже
             // запропоновано в підсумку; окреме «з футболкою чи без?» клієнти сприймали як нав'язування (і воно наздоганяло
@@ -2270,7 +2293,7 @@ async function runPolicyInner(A, u) {
             const setTitle = setPartial ? 'Ваш вибір із комплекту «' + String(pp.customerName || pp.name).replace(/\.?\s*Артикул:?\s*\S+\s*$/i, '').trim() + '»:' : (pp.customerName || pp.name);
             const summary = isSetFull
                 ? messageText(A.assets, 'n_agent_order_summary_header', ctx, A.session.id) + '\n' + setTitle + '\n\n' + ctx.setSelection.map((it) => '• ' + it.name + ((it.color || it.size) ? ' (' + [it.color, it.size].filter(Boolean).join(', ') + ')' : '') + (it.qty > 1 ? ' ×' + it.qty : '') + ' — ' + (it.price * it.qty) + ' грн').join('\n') + '\n\nРазом: ' + total + ' грн' + '\n' + shipTerms(ctx)
-                : (() => { const units = ctx.orderUnitsText || ((ctx.colorChoice && ctx.colorChoice.color ? ctx.colorChoice.color : '') + (ctx.recommendedSize ? ' ' + ctx.recommendedSize : '')); return messageText(A.assets, 'n_agent_order_summary_header', ctx, A.session.id) + '\n' + (pp.customerName || pp.name) + (units ? ' — ' + units : '') + ' — ' + total + ' грн' + (ctx.extraItemsText ? '\n' + ctx.extraItemsText : '') + '\n' + shipTerms(ctx); })();
+                : (() => { const units = ctx.orderUnitsText || ((ctx.colorChoice && ctx.colorChoice.color ? ctx.colorChoice.color : '') + (ctx.recommendedSize ? ' ' + ctx.recommendedSize : '')); const usM = upsellSummary(ctx, pp); return messageText(A.assets, 'n_agent_order_summary_header', ctx, A.session.id) + '\n' + (pp.customerName || pp.name) + (units ? ' — ' + units : '') + ' — ' + total + ' грн' + (usM ? '\n+ ' + usM.text + '\nРазом: ' + (Number(total) + usM.sum) + ' грн' : '') + (ctx.extraItemsText ? '\n' + ctx.extraItemsText : '') + '\n' + shipTerms(ctx); })();
             // Допродаж уже доданий клієнтом як додатковий товар («і ще футболку») — не пропонуємо його вдруге.
             const upItem = Array.isArray(pp.upsellItems) && pp.upsellItems[0];
             const upsellAlreadyExtra = !!(pp.upsell && upItem && Array.isArray(ctx.extraItems) && ctx.extraItems.some((x) => x && ((x.id && x.id === upItem.id) || (x.sku && upItem.sku && x.sku === upItem.sku))));

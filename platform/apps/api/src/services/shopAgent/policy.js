@@ -430,6 +430,7 @@ function humanSetList(pp) { return (pp.setItems || []).map((it) => '• ' + it.n
  *  комплекти, не взуття), у яких є більші розміри, групуємо за категорією («костюми — до ХХХЛ»). Нічого — порожньо
  *  (тоді чесне «такого розміру немає»). Розміри — Product.sizes, інакше sizeChartData.sizes. */
 async function oversizeAlternative(A, pp) {
+    const { ctx } = A;
     const ORDER = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL', '4XL'];
     const LABEL = { S: 'S', M: 'M', L: 'L', XL: 'ХЛ', XXL: 'ХХЛ', XXXL: 'ХХХЛ', '4XL': '4ХЛ' };
     const nz = (x) => { const t = String(x || '').toUpperCase().trim(); return t === '2XL' ? 'XXL' : t === '3XL' ? 'XXXL' : t; };
@@ -442,6 +443,21 @@ async function oversizeAlternative(A, pp) {
         const cur = cat.products.find((x) => String(x.sku).toUpperCase() === String(pp.sku).toUpperCase()) || pp;
         const curMax = maxOf(cur);
         if (!curMax) return '';
+        // Який розмір потрібен клієнту — за тією ж таблицею SIZE_CHART і тим самим допуском, що й n_calc (вага до +8 кг понад
+        // найбільший розмір — ще він; більше — не підійде нічого). Пропонуємо лише товари, що йдуть до цього розміру (власник 03.10).
+        let need = '';
+        try {
+            const chart = JSON.parse(A.keys.SIZE_CHART || '{}'); const w = Number(ctx.sizeInput && ctx.sizeInput.weight) || 0;
+            const keysC = Object.keys(chart).map(nz).filter((k) => ORDER.includes(k)).sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b));
+            const rng = (k) => { const r = (chart[k] || chart[k === 'XXL' ? '2XL' : k === 'XXXL' ? '3XL' : k] || {}).weight || []; return [Number(r[0]), Number(r[1])]; };
+            if (w && keysC.length) {
+                const hit = keysC.filter((k) => { const [a, b] = rng(k); return w >= a && w <= b; });
+                const top = keysC[keysC.length - 1]; const topMax = rng(top)[1];
+                if (hit.length) need = hit[hit.length - 1];
+                else if (w > topMax && w <= topMax + 8) need = top;
+                else if (w > topMax + 8) return ''; // більший за всю таблицю — запропонувати нічого
+            }
+        } catch (e) { need = ''; }
         const byCat = new Map();
         for (const p of cat.products) {
             if (p.outOfStock || p.isSet || String(p.sku) === String(pp.sku)) continue;
@@ -449,6 +465,7 @@ async function oversizeAlternative(A, pp) {
             if (!catName || /взутт/i.test(catName)) continue;
             const m = maxOf(p);
             if (!m || ORDER.indexOf(m) <= ORDER.indexOf(curMax)) continue;
+            if (need && ORDER.indexOf(m) < ORDER.indexOf(need)) continue; // не дотягує до потрібного клієнту розміру
             const prev = byCat.get(catName);
             if (!prev || ORDER.indexOf(m) > ORDER.indexOf(prev)) byCat.set(catName, m);
         }

@@ -9,7 +9,7 @@ const { execFileSync } = require('child_process');
 const SV = 'http://127.0.0.1:3016';
 const cheap = process.argv.includes('--cheap');
 
-const STYLE = 'flat 2D cartoon illustration, thick clean outlines, bold saturated colors with deep purple, electric orange and teal, simple round-headed faceless character with no facial features, vertical cinematic composition, no text, no letters, no logos';
+const STYLE = 'flat 2D cartoon illustration, thick clean outlines, bold saturated colors with deep purple, electric orange and teal, main character is a friendly chubby cartoon character with a round lavender head, small dot eyes, orange hoodie and dark blue pants, vertical cinematic composition, no text, no letters, no logos';
 const scenes = [
     { sec: 3, visual: 'the character slumped on a grey sofa in a dull empty living room on a Saturday evening, a clock on the wall showing 7pm, bored mood, muted colors', text: 'Субота. 19:00. Нічого робити.', motion: 'zoom_in' },
     { sec: 3, visual: 'the character scrolling a phone, many silent chat bubbles with question marks floating around, gloomy cold light', text: 'Чати мовчать.', motion: 'pan_right' },

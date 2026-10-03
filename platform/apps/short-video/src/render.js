@@ -97,10 +97,18 @@ function motionFilter(motion, frames) {
 }
 const MOTIONS = ['zoom_in', 'pan_right', 'zoom_out', 'pan_left'];
 
-function drawTextFilter(textFile, size, sec) {
-    // білий напис із товстою чорною обводкою (читається на будь-якому фоні), поява за 0.2 с, у «безпечній зоні» ленти
-    return `drawtext=fontfile=${FONT}:textfile=${textFile}:fontsize=${size}:fontcolor=white:borderw=7:bordercolor=black:line_spacing=14:` +
-        `x=(w-text_w)/2:y=h*0.60-text_h/2:alpha='if(lt(t,0.1),0,min(1,(t-0.1)/0.25))'`;
+function drawTextFilters(dir, i, layout) {
+    // кожен рядок — окремий drawtext, вирівняний по центру (багаторядковий drawtext вирівнює рядки по лівому краю блока).
+    // Білий напис із чорною обводкою читається на будь-якому фоні; поява за 0.2 с; у «безпечній зоні» стрічки (~60% висоти).
+    const n = layout.lines.length;
+    const lineH = Math.round(layout.size * 1.22);
+    return layout.lines.map((ln, j) => {
+        const tf = path.join(dir, `t${i}_${j}.txt`);
+        fs.writeFileSync(tf, ln, 'utf8');
+        const off = Math.round((j - (n - 1) / 2) * lineH);
+        return `drawtext=fontfile=${FONT}:textfile=${tf}:fontsize=${layout.size}:fontcolor=white:borderw=8:bordercolor=black:` +
+            `x=(w-text_w)/2:y=h*0.60+(${off})-text_h/2:alpha='if(lt(t,0.1),0,min(1,(t-0.1)/0.25))'`;
+    });
 }
 
 async function buildSceneClip(scene, i, imgPath, dir, secs) {
@@ -115,11 +123,7 @@ async function buildSceneClip(scene, i, imgPath, dir, secs) {
         // рух за вибором сценариста, інакше чергуємо, щоб сусідні кадри не рухались однаково
         vf = motionFilter(MOTIONS.includes(scene.motion) ? scene.motion : MOTIONS[i % MOTIONS.length], frames);
     }
-    if (layout.lines.length) {
-        const tf = path.join(dir, `t${i}.txt`);
-        fs.writeFileSync(tf, layout.lines.join('\n'), 'utf8');
-        vf += ',' + drawTextFilter(tf, layout.size, secs);
-    }
+    if (layout.lines.length) vf += ',' + drawTextFilters(dir, i, layout).join(',');
     vf += ',format=yuv420p';
     const input = scene._videoPath ? ['-i', scene._videoPath] : ['-loop', '1', '-framerate', String(FPS), '-i', imgPath];
     await run('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', ...input, '-vf', vf, '-t', String(secs), '-r', String(FPS),
@@ -127,12 +131,21 @@ async function buildSceneClip(scene, i, imgPath, dir, secs) {
     return clipPath;
 }
 
-async function generateImage(scene, style, falKey, model) {
-    const prompt = (style ? style + '. ' : '') + String(scene.visual || '').trim();
-    const body = { prompt, image_size: { width: 864, height: 1536 }, num_images: 1, enable_safety_checker: true };
-    if (model.includes('schnell')) body.num_inference_steps = 4;
-    else { body.num_inference_steps = 28; body.guidance_scale = 3.5; }
-    const j = await falPost(model, falKey, body);
+async function generateImage(scene, style, falKey, model, refUrl) {
+    const visual = String(scene.visual || '').trim();
+    let j;
+    if (refUrl) {
+        // ТОЙ САМИЙ персонаж і стиль, що в першому кадрі: image-to-image (FLUX Kontext) замість малювання з нуля
+        j = await falPost('fal-ai/flux-kontext/dev', falKey, {
+            prompt: `Keep the exact same main character (same face, body proportions, clothes, colors) and the exact same art style. Show the character in a new scene: ${visual}. ${style ? 'Style reminder: ' + style : ''}`,
+            image_url: refUrl, num_inference_steps: 28, guidance_scale: 2.5, num_images: 1, output_format: 'png',
+        });
+    } else {
+        const body = { prompt: (style ? style + '. ' : '') + visual, image_size: { width: 864, height: 1536 }, num_images: 1, enable_safety_checker: true };
+        if (model.includes('schnell')) body.num_inference_steps = 4;
+        else { body.num_inference_steps = 28; body.guidance_scale = 3.5; }
+        j = await falPost(model, falKey, body);
+    }
     const url = j.images && j.images[0] && j.images[0].url;
     if (!url) throw new Error('fal image: no url ' + JSON.stringify(j).slice(0, 200));
     return url;
@@ -186,18 +199,21 @@ async function renderVideo(job, ctx) {
     const imgUrls = new Array(scenes.length);
 
     onStep('images');
-    // кадри — по 3 паралельно
-    let next = 0;
-    async function worker() {
-        while (next < scenes.length) {
-            const i = next++;
-            const s = scenes[i];
-            const url = s.imageUrl || (await generateImage(s, job.style, falKey, model));
-            if (!s.imageUrl) cost += model.includes('schnell') ? 0.003 : 0.025;
-            imgUrls[i] = url;
-            imgPaths[i] = await download(url, path.join(dir, `img${i}.png`));
-        }
+    // Перший кадр малюємо з тексту, решту — від нього (той самий персонаж), по 3 паралельно.
+    // Сцена з готовим imageUrl або sameCharacter:false малюється окремо. consistency:'off' вимикає це.
+    const useRef = job.consistency !== 'off' && !model.includes('schnell');
+    async function makeScene(i, refUrl) {
+        const s = scenes[i];
+        const ref = s.sameCharacter === false ? null : refUrl;
+        const url = s.imageUrl || (await generateImage(s, job.style, falKey, model, ref));
+        if (!s.imageUrl) cost += model.includes('schnell') ? 0.003 : 0.025;
+        imgUrls[i] = url;
+        imgPaths[i] = await download(url, path.join(dir, `img${i}.png`));
     }
+    await makeScene(0, null);
+    const refUrl = useRef ? imgUrls[0] : null;
+    let next = 1;
+    async function worker() { while (next < scenes.length) { const i = next++; await makeScene(i, refUrl); } }
     await Promise.all([worker(), worker(), worker()]);
 
     // AI-анімація обраних сцен (дорого — лише коли явно motion:'ai', не більше 2 на ролик)

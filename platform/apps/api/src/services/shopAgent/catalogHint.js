@@ -195,7 +195,7 @@ var top = hits.slice(0, 4);
 // setColorAskList: номер, який реально можна назвати у відповіді, а не просто оздоблення.
 // Назва для клієнта — customerName («Чоловіча вʼязана кофта»), а не внутрішня назва постачальника («Кофта Мажор петля»,
 // Edit 54d934fd); артикул у рядку розрізняє товари з однаковою клієнтською назвою.
-var lines = top.map(function (p, i) { return (i + 1) + '. ' + (p.sku ? ('Артикул ' + p.sku + ' — ') : '') + String(p.customerName || p.name || '').trim() + (Number(p.price) ? (' — ' + Number(p.price) + ' грн') : ''); });
+var lines = top.map(function (p, i) { return (i + 1) + '. ' + (p.sku ? ('Артикул ' + p.sku + ' — ') : '') + String(p.customerName || p.name || '').replace(/[.,]?\s*артикул\s*[:#№]?\s*\S*\s*$/i, '').trim() + (Number(p.price) ? (' — ' + Number(p.price) + ' грн') : ''); });
 // 2026-09-11 (Олексій: "люди не розуміють що то за кофти по артикулах — зразу скидати фото і
 // ловити відповідь типу 'хочу сіру чи чорну'"): клієнт бачить фото одразу, не питає артикул.
 // thumbnailUrl у CRM — відносний шлях (/uploads/...), той самий resolveUrl, що й у n_lookup.

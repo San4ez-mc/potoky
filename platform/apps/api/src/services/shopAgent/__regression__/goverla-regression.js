@@ -679,6 +679,29 @@ async function main() {
         }
     }
 
+    // ── 22. Реклама від Zernio не прийшла (≈22% розмов; Edits fafba197/af603158/951031bf, 03.10): «Яка ціна кофти?» → товар
+    // береться серед АКТИВНИХ реклам категорії (CRM /ads/active-summary), а не перші кофти каталогу за ціною. Тест не привʼязаний
+    // до конкретних артикулів — реклами змінюються: перевіряємо, що вибір/список складається лише з рекламованих товарів.
+    {
+        const { computeCatalogHint, activeAdProductIds } = require('../catalogHint');
+        const { loadCategories } = require('../lib');
+        const adv = await activeAdProductIds(assets.keys);
+        const { loadCatalog } = require('../lib');
+        const cat = await loadCatalog(BOT, assets.keys);
+        const advSkus = new Set(cat.products.filter((p) => adv[p.id] != null).map((p) => String(p.sku).toUpperCase()));
+        check('22.0 CRM віддає активні реклами з товарами', advSkus.size > 0, 'рекламованих товарів: ' + advSkus.size);
+        for (const msg of ['Яка ціна кофти?', 'Яка ціна костюму?', 'а скільки бомбер?']) {
+            const ctx = { lastUserMessage: msg, _hintNoRef: true, catalogHintCategoriesRaw: await loadCategories(BOT, assets.keys) };
+            const r = await computeCatalogHint(ctx, assets.keys, msg);
+            const skus = r.catalogHintPick ? [r.catalogHintPick] : String(r.catalogHintSkus || '').split(',').filter(Boolean);
+            const allAdv = skus.length > 0 && skus.every((s) => advSkus.has(String(s).toUpperCase()));
+            check('22.1 «' + msg + '» без реклами → лише рекламовані товари категорії', !r.catalogHint && !r.catalogHintPick ? true : allAdv, (r.catalogHintPick ? 'картка ' : 'список ') + skus.join(','));
+            if (r.catalogHint) check('22.2 «' + msg + '»: у рядках списку клієнтська назва без задвоєного «Артикул»', !/артикул[^\n]*артикул/i.test(r.catalogHint), r.catalogHint.split('\n')[0]);
+        }
+        const r0 = await computeCatalogHint({ lastUserMessage: 'Яка ціна кофти?', _hintNoRef: false, catalogHintCategoriesRaw: await loadCategories(BOT, assets.keys) }, assets.keys, 'Яка ціна кофти?');
+        check('22.3 Є реклама/фото/товар (_hintNoRef=false) → звичайний список, без вгадування за рекламою', !r0.catalogHintPick && !r0.catalogHintAdGuess, 'skus ' + r0.catalogHintSkus);
+    }
+
     console.log('');
     const failed = results.filter((r) => !r.ok);
     console.log(results.length + ' тестів, ' + failed.length + ' провалено.');

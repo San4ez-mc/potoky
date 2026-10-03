@@ -758,6 +758,39 @@ async function main() {
         }
     }
 
+    // ── 25. Етап 3 комплектів (03.10): що з комплекту купує клієнт, каже аналізатор (setItemsWanted); policy лише виконує.
+    {
+        const { matchProduct } = require('../productMatch');
+        const { loadCatalog } = require('../lib');
+        const cat = await loadCatalog(BOT, assets.keys);
+        const tmp = { lookupProductsRaw: cat.products, lookupAdsRaw: cat.ads, lookupCategoriesRaw: cat.categories || [], agent: {} };
+        const r = await matchProduct(tmp, assets.keys, 'артикул set1112', { botId: BOT });
+        const set = (r && r.product) || tmp.product;
+        if (set && set.isSet) {
+            const arts = (set.setItems || []).map((it) => it.article);
+            const mk = (turnText, extra = {}) => { const A = freshA({ turnText }); A.ctx.product = JSON.parse(JSON.stringify(set)); A.ctx.agent.setAskedAt = { sku: set.sku, at: Date.now() - 60 * 1000 }; Object.assign(A.ctx, extra); return A; };
+            const A = mk('Кофта сірий колір');
+            await runPolicy(A, freshU({ intent: 'give_color', color: 'сірий', setItemsWanted: { all: false, items: ['A0187'] } }));
+            check('25.1 Аналізатор: лише кофта → товар A0187 (а не весь комплект за кольором)', A.ctx.product && A.ctx.product.sku === 'A0187', 'товар ' + (A.ctx.product && A.ctx.product.sku));
+            const B = mk('Цікавить кофта та лофери');
+            await runPolicy(B, freshU({ intent: 'choose_set', setItemsWanted: { all: false, items: ['кофта', 'лофери'] } }));
+            const bArts = (B.ctx.product.setItems || []).map((it) => it.article);
+            check('25.2 Аналізатор словами («кофта», «лофери») → комплект із двох речей', B.ctx.setMode === 'set' && bArts.length === 2, 'позиції ' + bArts.join(','));
+            const C = mk('Ні, мені лише кофту', { setMode: 'set' });
+            await runPolicy(C, freshU({ intent: 'choose_set', setItemsWanted: { all: false, items: ['A0187'] } }));
+            check('25.3 Уже весь комплект → «лише кофту» → товар A0187', C.ctx.product && C.ctx.product.sku === 'A0187', 'товар ' + (C.ctx.product && C.ctx.product.sku));
+            const D = mk('Кофта і джинси');
+            await runPolicy(D, freshU({ intent: 'choose_set', setItemsWanted: { all: false, items: [arts[0], arts[1]] } }));
+            D.turnText = 'А давайте весь комплект'; D.out = [];
+            await runPolicy(D, freshU({ intent: 'choose_set', setItemsWanted: { all: true, items: [] } }));
+            check('25.4 Звужений до 2 речей → «весь комплект» → знову всі ' + arts.length, (D.ctx.product.setItems || []).length === arts.length, 'позиції ' + (D.ctx.product.setItems || []).map((it) => it.article).join(','));
+            const E = mk('кофти в мене розмір s/m');
+            E.ctx.agent.setGeneralQ = true; // раніше питав «Яка ціна товарів?» (тест 145)
+            await runPolicy(E, freshU({ intent: 'give_params', clothingSize: 'M', setItemsWanted: null }));
+            check('25.5 Аналізатор не впевнений (null) → поведінка як раніше (запас), товар лишається комплектом', E.ctx.product && E.ctx.product.isSet, 'товар ' + (E.ctx.product && E.ctx.product.sku));
+        } else check('25.0 set1112 завантажується', false, '');
+    }
+
     console.log('');
     const failed = results.filter((r) => !r.ok);
     console.log(results.length + ' тестів, ' + failed.length + ' провалено.');

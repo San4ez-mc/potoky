@@ -294,6 +294,28 @@ async function narrowSetTo(A, articles) {
     return true;
 }
 
+/** Рішення аналізатора «що з комплекту клієнт хоче купити» (u.setItemsWanted) → { all } або { articles:[артикули складу] }, або
+ * null, коли аналізатор не впевнений. Слова клієнта («светр», «чешки») аналізатор уже звів до артикулів; якщо прийшло слово —
+ * звіряємо зі складом тим самим matchSetItem (назва категорії з CRM / слова назви), що й правки складу. */
+function setItemsWantedArticles(ctx, u, p) {
+    const w = u && u.setItemsWanted;
+    if (!w || !p || !p.isSet) return null;
+    const full = (Array.isArray(ctx.agent.setItemsAll) && ctx.agent.setItemsAll.length) ? ctx.agent.setItemsAll : (Array.isArray(p.setItems) ? p.setItems : []);
+    if (!full.length) return null;
+    if (w.all) return { all: true, articles: full.map((it) => it.article) };
+    const catNames = ctx.agent.setParams && ctx.agent.setParams.categoryNames;
+    const sel = initSetSelection({ setItems: full });
+    const arts = [];
+    for (const raw of (w.items || [])) {
+        const exact = full.find((it) => String(it.article).toUpperCase() === String(raw).toUpperCase());
+        const hit = exact || matchSetItem(String(raw), sel, catNames);
+        if (hit && !arts.includes(hit.article)) arts.push(hit.article);
+    }
+    if (!arts.length) return null;
+    if (arts.length === full.length) return { all: true, articles: arts };
+    return { all: false, articles: arts };
+}
+
 /** Одна річ, обрана з комплекту, — ЗВИЧАЙНИЙ товар із CRM, зібраний тим самим кодом, що й товар за артикулом (productMatch),
  * а не копія комплекту з частково перезаписаними полями. n_set_apply робив Object.assign({}, комплект, {...}) — річ успадковувала
  * розмірну сітку, «Інформацію для ШІ», фото допродажу комплекту й губила власні ціни за кількість (правка 89b80358, урок §15.25).
@@ -1660,13 +1682,22 @@ async function runPolicyInner(A, u) {
     if (p.isSet && ctx.setMode === 'set' && !ctx.crmOrderId && Array.isArray(p.setItems) && p.setItems.length > 1) {
         // Лише на явне «тільки/лише X» — «джинси хочу чорні» у звуженому комплекті це зміна кольору, не вибір однієї речі (тест 4).
         const onlyWord = /(тільки|лише|только|лиш)\s/i.test(text + ' ');
-        let art = (onlyWord && u.setChoice === 'item' && u.setArticle) ? String(u.setArticle) : '';
-        if (!art && onlyWord) {
+        // Спершу — рішення аналізатора (setItemsWanted, етап 3): одна річ → вона; кілька → звужуємо; «таки весь» → повертаємо всі.
+        const wantS = setItemsWantedArticles(ctx, u, p);
+        let art = (wantS && !wantS.all && wantS.articles.length === 1) ? wantS.articles[0] : '';
+        if (wantS && !art) {
+            const full = (Array.isArray(ctx.agent.setItemsAll) && ctx.agent.setItemsAll.length ? ctx.agent.setItemsAll : p.setItems).map((it) => it.article);
+            const target = wantS.all ? full : wantS.articles;
+            const cur = p.setItems.map((it) => String(it.article).toUpperCase()).sort().join('|');
+            if (target.length > 1 && target.map((x) => String(x).toUpperCase()).sort().join('|') !== cur) { await narrowSetTo(A, target); p = P(ctx); }
+        }
+        if (!art && !wantS && onlyWord && u.setChoice === 'item' && u.setArticle) art = String(u.setArticle);
+        if (!art && !wantS && onlyWord) {
             const segs0 = text.split(/\s*[,;\n+]\s*|\s+(?:і|та|и|й)\s+/giu).map((s) => s.trim()).filter(Boolean);
             const hits0 = []; for (const sg of segs0) { const h = matchSetItem(sg, initSetSelection(p), null); if (h && !hits0.some((x) => x.article === h.article)) hits0.push(h); }
             if (hits0.length === 1) art = hits0[0].article;
         }
-        const it0 = art && p.setItems.find((it) => String(it.article).toUpperCase() === art.toUpperCase());
+        const it0 = art && p.setItems.concat(Array.isArray(ctx.agent.setItemsAll) ? ctx.agent.setItemsAll : []).find((it) => String(it.article).toUpperCase() === art.toUpperCase());
         if (it0) {
             const prev = (Array.isArray(ctx.setSelection) ? ctx.setSelection : []).find((x) => String(x.article).toUpperCase() === art.toUpperCase());
             await pickSingleSetItem(A, it0.article);
@@ -1699,7 +1730,13 @@ async function runPolicyInner(A, u) {
         // де одна сторона \w, а інша — ні) — розбиваємо на сполучники "і/та/и/й" через пробіли з
         // обох боків (\s+…\s+), а не межі слова.
         let multiHandled = false;
-        if (Array.isArray(p.setItems) && p.setItems.length > 1) {
+        // Етап 3 «Комплекти» (03.10): що з комплекту клієнт хоче купити, вирішує аналізатор (setItemsWanted) з урахуванням усієї
+        // розмови. Здогадки нижче (нарізка тексту, «назвав одну річ», «колір/зріст → комплект») — лише запас, коли він не впевнений.
+        const want = setItemsWantedArticles(ctx, u, p);
+        if (want && want.all) { ctx.setPick = { setChoice: 'set' }; await T.setApply(A); ctx.setMode = 'set'; multiHandled = true; }
+        else if (want && want.articles.length === 1) { await pickSingleSetItem(A, want.articles[0]); multiHandled = true; }
+        else if (want && want.articles.length > 1) { ctx.agent.setOriginal = initSetSelection(p); await narrowSetTo(A, want.articles); rememberSetItemColors(ctx, u); multiHandled = true; }
+        if (!multiHandled && Array.isArray(p.setItems) && p.setItems.length > 1) {
             const allItems = initSetSelection(p);
             const segs = text.split(/\s*[,;\n+]\s*|\s+(?:і|та|и|й)\s+/giu).map((s) => s.trim()).filter(Boolean);
             const matched = [];

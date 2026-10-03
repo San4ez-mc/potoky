@@ -133,22 +133,31 @@ async function buildSceneClip(scene, i, imgPath, dir, secs) {
 
 async function generateImage(scene, style, falKey, model, refUrl) {
     const visual = String(scene.visual || '').trim();
-    let j;
+    const pick = (j) => {
+        const url = j && j.images && j.images[0] && j.images[0].url;
+        if (!url) throw new Error('fal image: no url ' + JSON.stringify(j).slice(0, 200));
+        return url;
+    };
+    // Ланцюжок спроб: (1) ТОЙ САМИЙ персонаж із першого кадру — image-to-image (FLUX Kontext); якщо перевірка контенту fal
+    // хибно спрацювала (422 content_policy на мультяшну сцену) або збій — (2) малюємо кадр з тексту в тому ж стилі.
+    const attempts = [];
     if (refUrl) {
-        // ТОЙ САМИЙ персонаж і стиль, що в першому кадрі: image-to-image (FLUX Kontext) замість малювання з нуля
-        j = await falPost('fal-ai/flux-kontext/dev', falKey, {
+        attempts.push(async () => pick(await falPost('fal-ai/flux-kontext/dev', falKey, {
             prompt: `Keep the exact same main character (same face, body proportions, clothes, colors) and the exact same art style. Show the character in a new scene: ${visual}. ${style ? 'Style reminder: ' + style : ''}`,
             image_url: refUrl, num_inference_steps: 28, guidance_scale: 2.5, num_images: 1, output_format: 'png',
-        });
-    } else {
+        })));
+    }
+    attempts.push(async () => {
         const body = { prompt: (style ? style + '. ' : '') + visual, image_size: { width: 864, height: 1536 }, num_images: 1, enable_safety_checker: true };
         if (model.includes('schnell')) body.num_inference_steps = 4;
         else { body.num_inference_steps = 28; body.guidance_scale = 3.5; }
-        j = await falPost(model, falKey, body);
+        return pick(await falPost(model, falKey, body));
+    });
+    let last = null;
+    for (let i = 0; i < attempts.length; i++) {
+        try { return await attempts[i](); } catch (e) { last = e; console.error('[short-video] image attempt ' + (i + 1) + '/' + attempts.length + ' failed:', String(e.message).slice(0, 160)); }
     }
-    const url = j.images && j.images[0] && j.images[0].url;
-    if (!url) throw new Error('fal image: no url ' + JSON.stringify(j).slice(0, 200));
-    return url;
+    throw last;
 }
 
 async function generateAiClip(scene, imageUrl, falKey) {
@@ -194,6 +203,7 @@ async function renderVideo(job, ctx) {
     const totalSec = secs.reduce((a, b) => a + b, 0);
 
     let cost = 0;
+    const warnings = [];
     const model = job.imageModel || 'fal-ai/flux/dev';
     const imgPaths = new Array(scenes.length);
     const imgUrls = new Array(scenes.length);
@@ -205,7 +215,14 @@ async function renderVideo(job, ctx) {
     async function makeScene(i, refUrl) {
         const s = scenes[i];
         const ref = s.sameCharacter === false ? null : refUrl;
-        const url = s.imageUrl || (await generateImage(s, job.style, falKey, model, ref));
+        let url;
+        try { url = s.imageUrl || (await generateImage(s, job.style, falKey, model, ref)); }
+        catch (e) {
+            // жоден спосіб не дав кадр (напр. хибний content-фільтр) — не валимо весь ролик: беремо кадр попередньої сцени, а рух/напис лишаються свої
+            const fb = i > 0 ? (imgUrls[i - 1] || imgUrls[0]) : null;
+            if (fb) { console.error('[short-video] scene ' + i + ' reuses a previous frame:', String(e.message).slice(0, 120)); url = fb; warnings.push('scene ' + (i + 1) + ': reused previous frame'); }
+            else throw e;
+        }
         if (!s.imageUrl) cost += model.includes('schnell') ? 0.003 : 0.025;
         imgUrls[i] = url;
         imgPaths[i] = await download(url, path.join(dir, `img${i}.png`));
@@ -257,7 +274,7 @@ async function renderVideo(job, ctx) {
     const thumb = outFile.replace(/\.mp4$/, '.jpg');
     try { await run('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', '-ss', '0.8', '-i', outFile, '-frames:v', '1', '-q:v', '3', thumb]); } catch (e) { /* прев'ю не критичне */ }
 
-    return { file: outFile, thumb: fs.existsSync(thumb) ? thumb : null, durationSec: Number(totalSec.toFixed(1)), cost: Number(cost.toFixed(3)), music: !!musicPath };
+    return { file: outFile, thumb: fs.existsSync(thumb) ? thumb : null, durationSec: Number(totalSec.toFixed(1)), cost: Number(cost.toFixed(3)), music: !!musicPath, warnings };
 }
 
 module.exports = { renderVideo, wrapText, textLayout };

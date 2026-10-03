@@ -45,7 +45,7 @@ async function runJob(jobId, payload) {
         const res = await renderVideo(payload, { dir, outFile, onStep: (step) => setJob(jobId, { step }) });
         const videoUrl = `${PUBLIC_BASE}/files/${jobId}.mp4`;
         const thumbUrl = res.thumb ? `${PUBLIC_BASE}/files/${jobId}.jpg` : null;
-        setJob(jobId, { status: 'done', step: 'done', videoUrl, thumbUrl, durationSec: res.durationSec, cost: res.cost, music: res.music });
+        setJob(jobId, { status: 'done', step: 'done', videoUrl, thumbUrl, durationSec: res.durationSec, cost: res.cost, music: res.music, warnings: res.warnings });
         await notify(payload.callbackUrl, { status: 'success', videoUrl, thumbUrl, durationSec: res.durationSec, postItemId: payload.postItemId, postGroupId: payload.postGroupId });
     } catch (e) {
         console.error('[short-video] job failed', jobId, e.message);

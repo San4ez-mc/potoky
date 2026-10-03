@@ -296,7 +296,17 @@ const OUTRO_SEC = 1.8;
  * Логотип у відео: (1) невеликий водяний знак зліва вгорі (нижче системної смуги TikTok/Shorts, не заважає підписам знизу й кнопкам справа);
  * (2) фінальна заставка 1.8 с: лого по центру на темному тлі з плавною появою. Працює і для вже готових відео (скрипт бренду готових).
  */
-async function applyBranding(videoPath, logoPath, outPath, dir) {
+async function applyBranding(videoPath, rawLogoPath, outPath, dir) {
+    // Лого з квадратним тлом (JPEG з тінню навколо іконки) дає на будь-якому фоні видимий «ореол»-квадрат.
+    // Вирізаємо саму іконку (центральні ~78%) і округлюємо кути прозорою маскою — виходить чиста app-іконка.
+    let logoPath = rawLogoPath;
+    try {
+        const clean = path.join(dir, 'logo_clean.png');
+        await run('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', '-i', rawLogoPath,
+            '-vf', "crop=iw*0.78:ih*0.78:iw*0.11:ih*0.11,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lte(hypot(max(abs(X-W/2)-(W/2-W*0.235),0),max(abs(Y-H/2)-(H/2-H*0.235),0)),W*0.235),255,0)'",
+            '-frames:v', '1', clean]);
+        logoPath = clean;
+    } catch (e) { console.error('[short-video] logo clean failed, using raw logo:', String(e.message).slice(0, 100)); }
     const wm = path.join(dir, 'wm.mp4');
     // водяний знак поверх усього відео (аудіо без змін)
     await run('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', '-i', videoPath, '-i', logoPath,

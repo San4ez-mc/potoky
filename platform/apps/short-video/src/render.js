@@ -304,8 +304,16 @@ async function applyBranding(videoPath, logoPath, outPath, dir) {
         '-map', '[v]', '-map', '0:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-r', String(FPS), '-c:a', 'copy', '-movflags', '+faststart', wm]);
     // заставка з лого + тиха доріжка того ж формату
     const outro = path.join(dir, 'outro.mp4');
+    // тло заставки = колір кута логотипа (інакше навколо лого видно світліший квадрат)
+    let bg = '0x12141c';
+    try {
+        const px = path.join(dir, 'px.raw');
+        await run('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', '-i', logoPath, '-vf', 'crop=1:1:4:4,format=rgb24', '-frames:v', '1', '-f', 'rawvideo', px]);
+        const b = fs.readFileSync(px);
+        if (b.length >= 3) bg = '0x' + [b[0], b[1], b[2]].map((v) => v.toString(16).padStart(2, '0')).join('');
+    } catch (e) { /* лишаємо типове тло */ }
     await run('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error',
-        '-f', 'lavfi', '-i', `color=c=0x12141c:s=${W}x${H}:r=${FPS}:d=${OUTRO_SEC}`,
+        '-f', 'lavfi', '-i', `color=c=${bg}:s=${W}x${H}:r=${FPS}:d=${OUTRO_SEC}`,
         '-loop', '1', '-framerate', String(FPS), '-t', String(OUTRO_SEC), '-i', logoPath,
         '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo',
         '-filter_complex', `[1:v]scale=760:-1,format=rgba,fade=t=in:st=0:d=0.5:alpha=1[l];[0:v][l]overlay=(W-w)/2:(H-h)/2-60,format=yuv420p[v]`,

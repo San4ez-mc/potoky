@@ -36,6 +36,13 @@ return (async () => {
     if (!tj.access_token) return await done({ platform: 'tiktok', publishError: 'TOKEN_REFRESH_FAILED ' + JSON.stringify(tj).slice(0, 300) });
     token = tj.access_token;
     rotated = !!(tj.refresh_token && tj.refresh_token !== k.TIKTOK_REFRESH_TOKEN);
+    // TikTok може видати НОВИЙ refresh-токен — без збереження наступне оновлення впаде. Пишемо його у ключі цієї воронки.
+    if (rotated && k.MCP_SECRET && k.SELF_BOT_ID) {
+      try {
+        await fetch('https://flows.fineko.space/api/mcp-edit', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + k.MCP_SECRET },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'update_funnel_key', arguments: { botId: k.SELF_BOT_ID, key: 'TIKTOK_REFRESH_TOKEN', value: tj.refresh_token, label: 'TikTok refresh token (~365 днів)', isSecret: true } } }) });
+      } catch (e) {}
+    }
   }
   if (!token) return await done({ platform: 'tiktok', publishError: 'NEED_TIKTOK_KEYS: TIKTOK_ACCESS_TOKEN або CLIENT_KEY+CLIENT_SECRET+REFRESH_TOKEN' });
 

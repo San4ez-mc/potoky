@@ -94,6 +94,16 @@ async function t(name, fn) { try { await fn(); passed++; console.log('✅', name
         assert.strictEqual(r.publishError, null); assert.strictEqual(r.tiktokRefreshRotated, true);
         assert.strictEqual(has(calls, 'creator_info')[0].headers.Authorization, 'Bearer fresh');
     });
+    await t('tiktok: ротація refresh-токена зберігається у ключі воронки через mcp-edit', async () => {
+        const calls = mockFetch(tiktokOk(['SELF_ONLY'], [
+            { when: (u) => u.includes('oauth/token'), reply: resp({ access_token: 'fresh', refresh_token: 'NEWREFRESH' }) },
+            { when: (u) => u.includes('mcp-edit'), reply: resp({ result: {} }) },
+        ]));
+        await run('publish-tiktok-node-code.js', { videoUrl: 'https://v/x.mp4', content: 'x' }, { TIKTOK_CLIENT_KEY: 'ck', TIKTOK_CLIENT_SECRET: 'cs', TIKTOK_REFRESH_TOKEN: 'OLD', MCP_SECRET: 'm', SELF_BOT_ID: 'bot-1' });
+        const w = JSON.parse(has(calls, 'mcp-edit')[0].body).params.arguments;
+        assert.strictEqual(w.botId, 'bot-1'); assert.strictEqual(w.key, 'TIKTOK_REFRESH_TOKEN'); assert.strictEqual(w.value, 'NEWREFRESH');
+        assert.strictEqual(has(calls, 'mcp-edit')[0].headers.Authorization, 'Bearer m');
+    });
     await t('tiktok: без ключів / без відео → чесна помилка і callback failed', async () => {
         const calls = mockFetch([{ when: (u) => u.includes('/cb'), reply: resp({}) }]);
         const r1 = await run('publish-tiktok-node-code.js', { videoUrl: 'https://v/x.mp4', callbackUrl: 'https://c2/cb', postGroupId: 'g' }, {});
@@ -139,6 +149,39 @@ async function t(name, fn) { try { await fn(); passed++; console.log('✅', name
         mockFetch(ytOk({ error: { message: 'quota', errors: [{ reason: 'quotaExceeded' }] } }));
         const r = await run('publish-youtube-node-code.js', { videoUrl: 'https://v/x.mp4', content: 'x' }, ytKeys);
         assert.ok(/quotaExceeded/.test(r.publishError));
+    });
+
+    // ── OAuth-воронка TikTok/YouTube ───────────────────────────────────────
+    const oKeys = { TIKTOK_CLIENT_KEY: 'ck', TIKTOK_CLIENT_SECRET: 'cs', YT_CLIENT_ID: 'yid', YT_CLIENT_SECRET: 'ysec', MCP_SECRET: 'm', PUBLISH_TIKTOK_BOT_ID: 'tt-bot', PUBLISH_YOUTUBE_BOT_ID: 'yt-bot' };
+    await t('oauth: крок 1 дає посилання авторизації (TikTok і YouTube), без ключів — підказка', async () => {
+        mockFetch([]);
+        const a = await run('oauth-video-node-code.js', { platform: 'tiktok' }, oKeys);
+        assert.ok(a.oauthMessage.includes('tiktok.com/v2/auth/authorize') && a.oauthMessage.includes('video.publish') && a.oauthOk);
+        const b = await run('oauth-video-node-code.js', { platform: 'youtube' }, oKeys);
+        assert.ok(b.oauthMessage.includes('accounts.google.com') && b.oauthMessage.includes('access_type=offline') && b.oauthMessage.includes('youtube.upload'));
+        const c = await run('oauth-video-node-code.js', { platform: 'tiktok' }, {});
+        assert.strictEqual(c.oauthOk, false);
+    });
+    await t('oauth: TikTok code (URL-закодований) → токени записані у publish-tiktok', async () => {
+        const calls = mockFetch([
+            { when: (u) => u.includes('oauth/token'), reply: resp({ access_token: 'AT', refresh_token: 'RT', open_id: 'oid', scope: 'video.publish' }) },
+            { when: (u) => u.includes('mcp-edit'), reply: resp({ result: {} }) },
+        ]);
+        const r = await run('oauth-video-node-code.js', { platform: 'tiktok', code: 'abc%2Adef' }, oKeys);
+        assert.strictEqual(r.oauthOk, true);
+        assert.ok(String(has(calls, 'oauth/token')[0].body).includes('code=abc*def'));
+        const writes = has(calls, 'mcp-edit').map((c) => JSON.parse(c.body).params.arguments);
+        assert.deepStrictEqual(writes.map((w) => w.key).sort(), ['TIKTOK_ACCESS_TOKEN', 'TIKTOK_CLIENT_KEY', 'TIKTOK_CLIENT_SECRET', 'TIKTOK_REFRESH_TOKEN']);
+        assert.ok(writes.every((w) => w.botId === 'tt-bot'));
+    });
+    await t('oauth: YouTube code → refresh_token у publish-youtube-shorts; без refresh_token — зрозуміла помилка', async () => {
+        let calls = mockFetch([{ when: (u) => u.includes('googleapis.com/token'), reply: resp({ access_token: 'x', refresh_token: 'RT' }) }, { when: (u) => u.includes('mcp-edit'), reply: resp({}) }]);
+        const r = await run('oauth-video-node-code.js', { platform: 'youtube', code: 'gcode' }, oKeys);
+        assert.strictEqual(r.oauthOk, true);
+        assert.deepStrictEqual(has(calls, 'mcp-edit').map((c) => JSON.parse(c.body).params.arguments.key).sort(), ['YT_CLIENT_ID', 'YT_CLIENT_SECRET', 'YT_REFRESH_TOKEN']);
+        mockFetch([{ when: (u) => u.includes('googleapis.com/token'), reply: resp({ access_token: 'x' }) }]);
+        const r2 = await run('oauth-video-node-code.js', { platform: 'youtube', code: 'gcode' }, oKeys);
+        assert.strictEqual(r2.oauthOk, false); assert.ok(/refresh_token/.test(r2.oauthMessage));
     });
 
     // ── content-scheduler ──────────────────────────────────────────────────

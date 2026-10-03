@@ -44,6 +44,8 @@ const AGENT_VIDEO_BLOCK = String.raw`ВІДЕО БЕЗ ОБЛИЧЧЯ (TikTok / 
 async function main() {
     const f = await callTool('get_funnel', { botId: CM });
     const node = (id) => f.nodes.find((x) => x.id === id);
+    // Parse Intent правиться кількома кроками: кожен мусить брати СВІЖИЙ код (інакше пізніший крок з застарілого знімка затирає попередній)
+    const fresh = async (id) => (await callTool('get_funnel', { botId: CM })).nodes.find((x) => x.id === id);
 
     // 1) Dispatcher
     {
@@ -63,7 +65,7 @@ async function main() {
 
     // 2) Parse Intent
     {
-        let code = String(node(N.parse).data.code);
+        let code = String((await fresh(N.parse)).data.code);
         if (code.includes('tiktok_video')) console.log('parse: already patched');
         else {
             const a = "telegram_post:'Telegram'};";
@@ -123,7 +125,7 @@ async function main() {
     // 7) Parse Intent: «14 днів від 06.10.2026» розкидалось від СЬОГОДНІ, бо явна дата початку ігнорувалась (startD завжди today/завтра).
     //    Знайдено 2026-10-03 на плані відео для KIRO: пости лягли на 03.10-16.10 замість 06.10-19.10.
     {
-        let code = String(node(N.parse).data.code);
+        let code = String((await fresh(N.parse)).data.code);
         if (code.includes('__exStart')) console.log('parse start-date: already patched');
         else {
             const a = "// «від завтра»";
@@ -141,7 +143,7 @@ async function main() {
     // 8) Parse Intent: відео-план шматками по 5 (а не 10). 2026-10-03: перший шматок із 10 відео-сценаріїв (~25 КБ JSON) закінчився
     //    bulk-import 500 «Unexpected end of JSON input» (тіло запиту обірвалось) — 10 плейсхолдерів зависли й впали по таймауту.
     {
-        let code = String(node(N.parse).data.code);
+        let code = String((await fresh(N.parse)).data.code);
         if (code.includes('__videoChunk')) console.log('parse chunk: already patched');
         else {
             const a = 'var CHUNK_MAX = 10;';

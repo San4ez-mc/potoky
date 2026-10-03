@@ -702,6 +702,29 @@ async function main() {
         check('22.3 Є реклама/фото/товар (_hintNoRef=false) → звичайний список, без вгадування за рекламою', !r0.catalogHintPick && !r0.catalogHintAdGuess, 'skus ' + r0.catalogHintSkus);
     }
 
+    // ── 23. «Весь комплект чи окремі речі?» — лише раз (03.10: 30+ розмов, де бот питав це 2–3 рази поспіль; картка комплекту
+    // сама закінчується цим питанням, а пачка повідомлень клієнта одразу після неї запускала ще хід із тим самим питанням).
+    {
+        const mkSet = () => ({ sku: 'set1112', isSet: true, price: 5290, customerName: 'Комплект 4 в 1', setItems: [{ article: 'A0187', name: 'Кофта', price: 1279 }, { article: 'j0032', name: 'Джинси', price: 1590 }] });
+        const A = freshA({ turnText: '[фото]' });
+        A.ctx.product = mkSet();
+        A.ctx.agent.setAskedAt = { sku: 'set1112', at: Date.now() - 20 * 1000 };
+        A.ctx.presentedAt = Date.now() - 20 * 1000; A.ctx.agent.presentedSku = 'set1112';
+        await runPolicy(A, freshU({ intent: 'other' }));
+        check('23.1 Картку комплекту показано 20 с тому, нового нема → питання не повторюється', !A.out.some((o) => /весь комплект/i.test(String(o.text || ''))), 'steps: ' + A.out.map((o) => o.step).join(','));
+        const B = freshA({ turnText: 'Яка ціна товарів?' });
+        B.ctx.product = mkSet();
+        B.ctx.agent.setAskedAt = { sku: 'set1112', at: Date.now() - 20 * 1000 };
+        B.ctx.presentedAt = Date.now() - 20 * 1000; B.ctx.agent.presentedSku = 'set1112';
+        await runPolicy(B, freshU({ intent: 'question', questions: ['Яка ціна товарів?'] }));
+        check('23.2 «Яка ціна товарів?» пачкою після картки (ціни вже в ній) → ні повторного питання, ні переказу цін', !B.out.some((o) => /весь комплект|1279|1590/i.test(String(o.text || ''))), 'steps: ' + B.out.map((o) => o.step + ':' + String(o.text || '').slice(0, 50)).join(' | '));
+        const C = freshA({ turnText: 'Привіт' });
+        C.ctx.product = mkSet();
+        C.ctx.agent.setAskedAt = { sku: 'set1112', at: Date.now() - 40 * 60 * 1000 };
+        await runPolicy(C, freshU({ intent: 'greeting' }));
+        check('23.3 Питали 40 хв тому — нагадування дозволене', C.out.some((o) => o.step === 'set_ask'), 'steps: ' + C.out.map((o) => o.step).join(','));
+    }
+
     console.log('');
     const failed = results.filter((r) => !r.ok);
     console.log(results.length + ' тестів, ' + failed.length + ' провалено.');

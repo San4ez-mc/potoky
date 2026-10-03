@@ -120,6 +120,31 @@ async function main() {
         }
     }
 
+    // 6) Chat text: для відео-постів показуємо сценарій по сценах (раніше в чат ішов лише підпис)
+    {
+        const cn = node('node_1781269102711');
+        let code = String(cn.data.code);
+        if (code.includes('p.funnel_params.scenes')) console.log('chat text: already patched');
+        else {
+            const a = '  var vio = scanW(txt);';
+            if (!code.includes(a)) throw new Error('chat text: маркер scanW не знайдено');
+            const add = [
+                "  if (p.funnel_slug === 'content-short-video' && p.funnel_params && Array.isArray(p.funnel_params.scenes)) {",
+                "    var sc = p.funnel_params.scenes, tot = 0;",
+                "    var sl = sc.map(function(s, k){ tot += Number(s.sec)||3; return (k+1)+') '+(Number(s.sec)||3)+' с · напис: «'+String(s.text||'')+'» · кадр: '+String(s.visual||'').slice(0,110); });",
+                "    lines.push('🎬 Сценарій (≈'+Math.round(tot)+' с, відео без обличчя; збереться за 3-6 хв і зʼявиться в календарі):');",
+                "    lines.push(FENCE); lines.push(sl.join('\\n'));",
+                "    if (p.funnel_params.music && p.funnel_params.music.prompt) lines.push('музика: '+p.funnel_params.music.prompt);",
+                "    lines.push(FENCE);",
+                "  }",
+            ].join('\n') + '\n';
+            code = code.replace(a, add + a);
+            new Function('context', code);
+            await callTool('update_node', { botId: CM, nodeId: 'node_1781269102711', data: { code } });
+            console.log('chat text: patched');
+        }
+    }
+
     // 5) Content Agent
     {
         const n = node(N.agent);

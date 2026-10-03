@@ -52,6 +52,9 @@ async function previewText(A, src) {
     if (src.warn) out.push('⚠️ ' + esc(src.warn));
     out.push('');
     if (!groups.length) out.push('⚠️ У замовленні не знайдено жодної позиції — оформіть вручну.');
+    // Рядки без кольору/розміру (у товару їх кілька) кнопка не оформить — постачальник узяв би перший варіант (Edit 91843fa8).
+    const gaps = groups.flatMap((g) => g.lines).filter((l) => Array.isArray(l.missing) && l.missing.length);
+    if (gaps.length) { out.push('⛔ Не вказано ' + gaps.map((l) => esc(String(l.name || l.sku).split('(')[0].trim()) + ' — ' + l.missing.join(' і ')).join('; ') + '. Таке не оформлю — натисніть «✏️ Редагувати», вкажіть і збережіть.'); out.push(''); }
     for (const g of groups) {
         out.push('🏭 <b>' + esc(g.name) + '</b> — ' + esc(MECH_LABEL[g.mechanism] || g.mechanism));
         for (const l of g.lines) out.push('   • ' + esc(l.name) + (l.sku && !String(l.name || '').toUpperCase().includes(String(l.sku).toUpperCase()) ? ' (' + esc(l.sku) + ')' : '') + [l.color, l.size].filter(Boolean).map((x) => ' · ' + esc(x)).join('') + ((l.color || l.size) ? '' : ' · ⚠️ без кольору/розміру') + ' × ' + (Number(l.qty) || 1) + ' — ' + Math.round((Number(l.price) || 0) * (Number(l.qty) || 1)) + ' грн');
@@ -96,7 +99,7 @@ function blockedReason(session, ctx) {
     if (session.isTest || ctx.testMode) return 'Це тестова сесія — постачальнику не оформлюємо.';
     if (!ctx.crmOrderId || String(ctx.crmOrderId).startsWith('TEST-')) return 'Замовлення ще не створене в CRM.';
     if (ctx.managerDispatch) return 'Вже оформлено: ' + (ctx.managerDispatch.by || 'менеджер') + ', ' + (ctx.managerDispatch.atText || '') + '.';
-    if (ctx.supplierHandled && !/manual_disabled/.test(String(ctx.supplierOrderStatus || ''))) return 'Постачальнику вже оформлено автоматично (' + String(ctx.supplierOrderStatus || '') + ').';
+    if (ctx.supplierHandled && !/manual_disabled|incomplete/.test(String(ctx.supplierOrderStatus || ''))) return 'Постачальнику вже оформлено автоматично (' + String(ctx.supplierOrderStatus || '') + ').';
     return null;
 }
 
@@ -164,6 +167,14 @@ async function handleAdminCallback({ secret, cq }) {
         const dispatch = await runSupplierDispatch(A, { force: true, silent: true, lines: src.lines });
         const by = whoPressed(cq.from);
         const anyManual = dispatch.groups.some((g) => g.needsManual);
+        // Нічого не пішло, бо в замовленні не вказано колір/розмір (missingVariant) — це не «оформлено»: менеджер виправляє
+        // замовлення в CRM і натискає кнопку ще раз (кнопки під сповіщенням лишаються).
+        if (dispatch.groups.length && dispatch.groups.every((g) => g.status === 'incomplete')) {
+            await saveCtxDiff(sessionId, before, ctx);
+            const msg = ['<b>⛔ Не оформлено</b>' + (ctx.orderRef ? ' · <code>' + esc(ctx.orderRef) + '</code>' : ''), ''].concat(dispatch.groups.map((g) => esc(String(g.result || '').slice(0, 600))), ['', 'Натисніть «✏️ Редагувати», вкажіть колір/розмір, збережіть і натисніть «📦 Оформити постачальнику» ще раз.']);
+            await tg(tok, 'editMessageText', { chat_id: chatId, message_id: msgId, text: msg.join('\n'), parse_mode: 'HTML', disable_web_page_preview: true });
+            return;
+        }
         ctx.managerDispatch = { at: new Date().toISOString(), atText: kyivTime(), by, tgUserId: cq.from && cq.from.id, status: ctx.supplierOrderStatus };
         await saveCtxDiff(sessionId, before, ctx);
         logger.info('[managerActions] supplier dispatch by manager', { sessionId, by, status: ctx.supplierOrderStatus });

@@ -807,7 +807,7 @@ async function runSupplierDispatch(A, opts = {}) {
         if (opts.silent) continue;
         if (g.needsManual) {
             // Кнопка одна на все замовлення (оформлює всі групи) — тому лише під першим алертом.
-            const buttons = g.status === 'manual_disabled' && !buttonsShown ? supplierButtons(A) : [];
+            const buttons = (g.status === 'manual_disabled' || g.status === 'incomplete') && !buttonsShown ? supplierButtons(A) : [];
             if (buttons.length) buttonsShown = true;
             await T.alert(A, 'n_agent_supplier_manual_admin', { details: '🏭 ' + g.supplier + ' (' + g.mechanism + ')\n🛍️ ' + itemsLine + (g.result ? '\n' + g.result : '') + '\n👤 ' + (ctx.senderName || '') + ' — https://instagram.com/' + (ctx.igUsername || ''), buttons });
         } else {
@@ -869,6 +869,22 @@ function shipTerms(ctx) {
 }
 
 /** Допродаж без розміру («ще дві білі футболки»): беремо розмір клієнта, якщо допродаж його має (за офферами товару). */
+/** Допродаж додано, а кольори не названо (Edit 91843fa8: «Давайте тоже 2 футболки» → постачальнику пішли дві чорні S).
+ * Один колір у товару — підставляємо сам; кілька — повертає {colors, qty}, щоб спитати. null — усе відомо. */
+function upsellColorGap(ctx) {
+    const oi = ctx.orderIntent; const up = ctx.product && Array.isArray(ctx.product.upsellItems) && ctx.product.upsellItems[0];
+    if (!oi || !oi.addUpsell || !up) return null;
+    const colors = [...new Set((up.offers || []).flatMap((o) => (o.properties || []).filter((q) => /кол|цвет|color/i.test(q.name || '')).map((q) => String(q.value || '').trim())))].filter(Boolean);
+    const units = Array.isArray(oi.upsellUnits) ? oi.upsellUnits : [];
+    const qty = Math.max(Number(oi.upsellQty) || 0, units.length, 1);
+    if (colors.length <= 1) {
+        if (colors.length === 1 && units.filter((x) => x && x.color).length < qty) { oi.upsellUnits = Array.from({ length: qty }, (_, i) => ({ color: colors[0], size: (units[i] && units[i].size) || '' })); fillUpsellSize(ctx); }
+        return null;
+    }
+    if (units.filter((x) => x && x.color).length >= qty) return null;
+    return { colors, qty, name: String(up.customerName || up.name || 'допродажу').split('.')[0].replace(/^Чоловіч\S*\s+/i, '').trim() };
+}
+
 function fillUpsellSize(ctx) {
     const oi = ctx.orderIntent; const upI = ctx.product && Array.isArray(ctx.product.upsellItems) && ctx.product.upsellItems[0];
     if (!oi || !oi.addUpsell || !Array.isArray(oi.upsellUnits) || !oi.upsellUnits.length || !ctx.recommendedSize || !upI) return;
@@ -2472,6 +2488,12 @@ async function runPolicyInner(A, u) {
     // 7b. Колір/кількість допродажу, названі ПІЗНІШЕ за підсумок (FunnelTest 9: бот спитав спосіб
     //     оплати, клієнт відповів «одна біла і одна чорна футболка» — orderIntent уже був
     //     зафіксований без цих даних, вони губились, і в замовленні лишалась 1 футболка без кольору).
+    // Щойно питали саме кольори допродажу — кольори з відповіді («одна біла, одна чорна») стосуються його, навіть якщо аналізатор
+    // поклав їх в units основного товару.
+    if (ctx.orderIntent && ctx.orderIntent.addUpsell && /^колір допродажу/.test(String(ctx.agent.lastAsk || '')) && !(Array.isArray(u.upsellUnits) && u.upsellUnits.length)) {
+        const cand = (Array.isArray(u.units) && u.units.length) ? u.units : ((u.color || u.colorMatched) ? [{ color: u.colorMatched || u.color, size: '' }] : null);
+        if (cand) { u.upsellUnits = cand; u.units = null; u.color = null; u.colorMatched = null; }
+    }
     if (ctx.orderIntent && ctx.orderIntent.addUpsell && !ctx.crmOrderId && (u.upsellUnits || u.upsellQty || u.upsellNote)) {
         const oi = ctx.orderIntent;
         if (u.upsellUnits) oi.upsellUnits = u.upsellUnits;
@@ -2502,6 +2524,20 @@ async function runPolicyInner(A, u) {
         }
     }
 
+    // 7d. Кольори допродажу мають бути відомі ДО оплати й оформлення (Edit 91843fa8). Питаємо не більше двох разів; далі —
+    //     оформлення постачальнику однаково не пропустить рядок без кольору (supplierDispatch: missingVariant) і покличе менеджера.
+    if (!ctx.crmOrderId && ctx.orderIntent && ctx.orderIntent.addUpsell) {
+        const gap = upsellColorGap(ctx);
+        if (gap && (ctx.agent.upsellColorAsks || 0) < 2) {
+            ctx.upsellAskName = gap.qty > 1 ? 'футболки' : 'футболку';
+            if (!/футболк/i.test(gap.name)) ctx.upsellAskName = gap.name.toLowerCase();
+            ctx.upsellAskColors = gap.colors.join(', ');
+            ctx.agent.upsellColorAsks = (ctx.agent.upsellColorAsks || 0) + 1;
+            A.out.push({ text: await answerThenAsk(A, u, messageText(A.assets, 'n_agent_upsell_color_ask', ctx, A.session.id) || ('Якого кольору ' + ctx.upsellAskName + '? Є: ' + ctx.upsellAskColors + ' 🙂')), step: 'upsell_color_ask' });
+            ctx.agent.lastAsk = 'колір допродажу (' + gap.name + ': ' + ctx.upsellAskColors + ')';
+            return;
+        }
+    }
     // 8. Спосіб оплати (якщо клієнт саме зараз надсилає дані доставки частинами — спершу дозбираємо адресу)
     if (ctx.agent.paidBeforeInvoice && ctx.requisitesSentAt && !ctx.crmOrderId && /^\s*[12]\s*[.!]?\s*$/.test(text) && !addressComplete(ctx.orderData)) {
         // клієнт підтверджує варіант після того, як уже сплатив і в нього вже попросили дані — не повторюємо прохання

@@ -800,6 +800,33 @@ async function main() {
         } else check('25.0 set1112 завантажується', false, '');
     }
 
+    // ── 26. Допродаж без кольорів (Edit 91843fa8, 03.10): «Давайте тоже 2 футболки» → бот питає кольори до оплати; постачальнику
+    // рядок без кольору/розміру не йде (раніше — дві чорні S замість білої й чорної XL).
+    {
+        const { matchProduct } = require('../productMatch');
+        const { loadCatalog } = require('../lib');
+        const { missingVariant } = require('../supplierDispatch');
+        const cat = await loadCatalog(BOT, assets.keys);
+        const tmp = { lookupProductsRaw: cat.products, lookupAdsRaw: cat.ads, lookupCategoriesRaw: cat.categories || [], agent: {} };
+        const r = await matchProduct(tmp, assets.keys, 'артикул C0043', { botId: BOT });
+        const kof = (r && r.product) || tmp.product;
+        const up = kof && Array.isArray(kof.upsellItems) && kof.upsellItems[0];
+        const upCat = up && cat.products.find((p) => String(p.sku).toUpperCase() === String(up.sku).toUpperCase());
+        if (kof && up && upCat) {
+            const miss = missingVariant({ sku: up.sku, color: '', size: '' }, upCat);
+            check('26.1 Рядок допродажу без кольору → оформлення постачальнику його не пропускає', miss.includes('колір'), 'бракує: ' + miss.join(', '));
+            const A = freshA({ turnText: 'Давайте тоже 2 футболки' });
+            Object.assign(A.ctx, { product: JSON.parse(JSON.stringify(kof)), recommendedSize: 'XL', colorChoice: { qty: 2, colors: ['Чорний', 'Сірий'] }, orderUnits: [{ color: 'Чорний', size: 'XL' }, { color: 'Сірий', size: 'XL' }], orderUnitsTotal: 2199, sizeInput: { height: 192, weight: 96 } });
+            A.ctx.agent.lastAsk = 'оформляємо?'; A.ctx.agent.upsellOffered = true; A.ctx.agent.presentedSku = kof.sku;
+            await runPolicy(A, freshU({ intent: 'order_yes', ready: 'yes', addUpsell: true, upsellQty: 2 }));
+            check('26.2 «Давайте тоже 2 футболки» без кольорів → бот питає кольори, а не переходить до оплати', A.out.some((o) => o.step === 'upsell_color_ask') && !A.out.some((o) => /спосіб оплати|1️⃣/i.test(String(o.text || ''))), 'steps: ' + A.out.map((o) => o.step).join(','));
+            A.turnText = 'Одна біла, одна чорна'; A.out = [];
+            await runPolicy(A, freshU({ intent: 'give_color', units: [{ color: 'Білий', size: '' }, { color: 'Чорний', size: '' }] }));
+            const uu = (A.ctx.orderIntent && A.ctx.orderIntent.upsellUnits) || [];
+            check('26.3 «Одна біла, одна чорна» → кольори допродажу записано, розмір = розмір кофти (XL)', uu.length === 2 && uu.every((x) => x.color && x.size === 'XL') && uu.some((x) => /біл/i.test(x.color)), JSON.stringify(uu));
+        } else check('26.0 C0043 з допродажем завантажується', false, (kof && kof.sku) + ' upsell ' + (up && up.sku));
+    }
+
     console.log('');
     const failed = results.filter((r) => !r.ok);
     console.log(results.length + ' тестів, ' + failed.length + ' провалено.');

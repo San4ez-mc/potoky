@@ -108,11 +108,28 @@ function buildLines(ctx) {
     return lines.filter((l) => l.sku || l.id);
 }
 
+/** Чого бракує рядку, щоб постачальник узяв саме той варіант: колір/розмір, коли в товару їх кілька, а в рядку не вказано.
+ * Без цього постачальник мовчки брав перший варіант каталогу (Edit 91843fa8, 03.10: дві чорні футболки S замість білої й чорної XL). */
+function missingVariant(line, prod) {
+    if (!prod || prod.isSet) return [];
+    const colors = new Set(); const sizes = new Set();
+    for (const o of prod.offers || []) for (const q of o.properties || []) {
+        if (/кол|цвет|color/i.test(q.name || '')) colors.add(String(q.value || '').trim());
+        if (/розм|разм|size/i.test(q.name || '')) sizes.add(String(q.value || '').trim());
+    }
+    const prodSizes = Array.isArray(prod.sizes) ? prod.sizes.filter(Boolean) : [];
+    const miss = [];
+    if (colors.size > 1 && !String(line.color || '').trim()) miss.push('колір');
+    if ((sizes.size > 1 || prodSizes.length > 1) && !String(line.size || '').trim()) miss.push('розмір');
+    return miss;
+}
+
 async function groupBySupplier(A, lines) {
     const cat = await loadCatalog(A.botId, A.keys);
     const bySku = new Map(cat.products.map((p) => [String(p.sku || '').toUpperCase(), p]));
     const groups = new Map(); // normName -> {name, lines[]}
     for (const l of lines) {
+        l.missing = missingVariant(l, bySku.get(String(l.sku || '').toUpperCase()));
         let supplierName = l.supplierName;
         if (!supplierName) { const p = bySku.get(String(l.sku || '').toUpperCase()); supplierName = (p && p.supplier && p.supplier.name) || ''; }
         const key = normSupplier(supplierName) || '(невідомий постачальник)';
@@ -184,7 +201,11 @@ async function dispatchOrder(A, opts = {}) {
         const gTotal = g.lines.reduce((s, l) => s + l.price * l.qty, 0);
         const gPrepay = Math.min(remainingPrepay, gTotal); remainingPrepay -= gPrepay;
         let res;
-        if (dispatchDisabled) {
+        const incomplete = g.lines.filter((l) => Array.isArray(l.missing) && l.missing.length);
+        if (incomplete.length) {
+            // Навіть після кнопки менеджера: рядок без кольору/розміру не оформлюємо наосліп — спершу «Редагувати» в CRM.
+            res = { supplier: g.name, mechanism: 'manual', status: 'incomplete', result: 'Не вказано: ' + incomplete.map((l) => (String(l.name || l.sku).split('(')[0].trim()) + ' — ' + l.missing.join(' і ')).join('; ') + '. Постачальнику не відправлено — виправте замовлення в CRM.', needsManual: true };
+        } else if (dispatchDisabled) {
             res = { supplier: g.name, mechanism: 'manual', status: 'manual_disabled', result: 'Автооформлення постачальнику тимчасово вимкнено власником — оформити вручну.', needsManual: true };
         } else {
             const meta = await resolveSupplierMeta(A, g.name);
@@ -214,4 +235,4 @@ async function planOrder(A, lines) {
     return groups;
 }
 
-module.exports = { dispatchOrder, buildLines, groupBySupplier, manualSupplierMode, planOrder };
+module.exports = { dispatchOrder, buildLines, groupBySupplier, manualSupplierMode, planOrder, missingVariant };

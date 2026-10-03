@@ -3374,6 +3374,26 @@ ${sourceContent || '(немає даних)'}
                 // First encounter — send a callback button so user can confirm homework done.
                 // Повторний показ теж — якщо клієнт написав текстом замість кнопки, раніше
                 // бот мовчав повністю; тепер нагадуємо про кнопку замість повної тиші.
+                // Тихе очікування + relayToKey: репліку користувача пересилаємо адміну (питання не мають зникати), користувачу — relayAck.
+                if (data.silent === true && data.relayToKey && runtime.lastUserMessage) {
+                    if (!ctx.testMode) {
+                        try {
+                            const _rc = funnelEnv[String(data.relayToKey)] || '';
+                            const _rt = funnelEnv.TELEGRAM_BOT_TOKEN || '';
+                            if (_rc && /^\d+:[A-Za-z0-9_-]{20,}$/.test(_rt)) {
+                                const _who = (session.user && session.user.username) ? '@' + session.user.username : '';
+                                const _tid = session.user && session.user.telegramId ? String(session.user.telegramId) : '';
+                                await fetch('https://api.telegram.org/bot' + _rt + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(_rc), text: renderTemplate(String(data.relayPrefix || '💬 Відповідь від користувача'), scope) + ' ' + _who + (_tid ? ' (tg://user?id=' + _tid + ')' : '') + ':' + String.fromCharCode(10, 10) + String(runtime.lastUserMessage).slice(0, 1500), disable_web_page_preview: true }) }).catch(function () { return null; });
+                            }
+                        } catch (_e) { /* релей не має ламати очікування */ }
+                    }
+                    if (data.relayAck) {
+                        const _ack = renderTemplate(String(data.relayAck), scope);
+                        await persistAssistantMessage(session.id, _ack, { nodeId: node.id, nodeType: 'wait_relay_ack' });
+                        lastAssistant = _ack;
+                    }
+                    runtime.lastUserMessage = '';
+                }
                 if (data.silent !== true && (runtime.waitEventNodeId !== node.id || runtime.lastUserMessage)) {
                     const buttonLabel = renderTemplate(String(data.buttonText || '✅ Домашнє завдання виконано'), scope);
                     const waitMsg = renderTemplate(String(data.waitMessage || 'Виконай домашнє завдання і натисни кнопку нижче, коли буде готово 👇'), scope);

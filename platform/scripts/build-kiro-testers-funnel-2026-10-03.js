@@ -128,7 +128,7 @@ async function main() {
         buttons: [[{ text: '✅ Додано до тестувальників', callback_data: 'evt:{{user.telegramId}}:' + SLUG + ':kt_granted' }]],
     });
     await add('ack', 'message', { label: 'Android: пошту отримано', text: T.ack });
-    await add('waitGrant', 'wait', { label: 'Чекаємо підтвердження адміна', mode: 'event', eventKey: 'kt_granted', silent: true });
+    await add('waitGrant', 'wait', { label: 'Чекаємо підтвердження адміна', mode: 'event', eventKey: 'kt_granted', silent: true, relayToKey: 'ADMIN_TELEGRAM_ID', relayPrefix: '💬 Тестувальник KIRO пише, поки чекає доступ', relayAck: 'Дякую, передав команді — відповімо тут найближчим часом 🙌' });
     await add('access', 'message', { label: 'Android: доступ надано', text: T.access });
 
     await add('ios', 'message', { label: 'iOS: пізніше + сайт', text: T.ios });

@@ -1332,6 +1332,20 @@ async function runPolicyInner(A, u) {
         }
         if (u.productHint.article && !/артикул|арт\.|\b[a-z]\d{3,6}\b/i.test(text)) ctx.lastUserMessage = text + ' артикул ' + u.productHint.article;
         const r = await T.resolveProduct(A, u);
+        // Давня розмова: товар показано понад 24 год тому, клієнт прийшов із НОВИМ сигналом (реклама/пост/фото), а новий товар не
+        // визначився — не продовжуємо про старий (03.10, andrew_stepanchuk: комплект set1112 з 09.09, 02.10 прийшов з реклами
+        // флісового костюма → бот «Комплект 4 в 1 коштує 5290 ₴»). Забуваємо старий товар (параметри людини — зріст/вага — лишаються),
+        // далі — як нове звернення: список/питання, що саме цікавить. Оформлене замовлення не чіпаємо.
+        {
+            const prevAt = Number(ctx.presentedAt || 0);
+            const newSignal = A.newEntryAd || A.turnSharedPost || (A.turnImage && !u.claimsPaid && !u.receiptLink);
+            if (newSignal && r.status !== 'found' && !ctx.crmOrderId && __setBeforeProduct && P(ctx) && P(ctx).sku === __setBeforeProduct.sku && prevAt && Date.now() - prevAt > 24 * 3600 * 1000) {
+                resetForNewProduct(A, '__stale__');
+                for (const k of ['product', 'setMode', 'setSelection', 'presentedAt', 'lastPresentedSku']) delete ctx[k];
+                delete ctx.agent.presentedSku; delete ctx.agent.originSet;
+                A._staleProductDropped = __setBeforeProduct.sku;
+            }
+        }
         // Клієнт вказує на сторіз, а її кадри не впізнано і повторно — не вгадуємо, передаємо менеджеру (сесія e5090bb9).
         if (ctx.storyRetry && r.status !== 'found') {
             delete ctx.storyRetry;

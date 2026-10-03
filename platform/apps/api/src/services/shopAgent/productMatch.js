@@ -491,7 +491,7 @@ try {
       if (__frameParts.length) {
         __refImg0 = { mime: __frameParts[0].inline_data.mime_type, data: __frameParts[0].inline_data.data };
         var catListF = all.map(function (p, i) { return i + ': ' + (p.displayName || p.name || ''); }).join('\n').slice(0, 6000);
-        var promptf = 'Це ' + __frameParts.length + ' зображення від клієнта ПРО ОДИН товар (кадри рілсу/сторіз у різні моменти або кілька фото/скрінів — дивись на ВСІ разом: загальний план важливіший за крупний) — ймовірно, товар з нашого магазину. Опиши коротко, що на них (тип товару, колір, помітний текст/бренд), враховуючи ВСІ кадри разом. Потім знайди НАЙБЛИЖЧИЙ відповідник у каталозі нижче (формат: індекс: назва). Якщо жодного релевантного немає — bestMatchIndex null. Якщо на зображенні написано артикул / код товару — з підписом («Артикул: D0043», «арт. A0187») або БЕЗ нього (просто «D0043», «A0187», «234286» окремим написом) — перепиши сам код у поле "article" (без слова «Артикул»); ціни, розміри й назви бренду кодом не вважай. Нема — null. Поверни ЛИШЕ JSON {"description":"...","article":"..." або null,"bestMatchIndex":число_або_null}.\nКаталог:\n' + catListF;
+        var promptf = 'Це ' + __frameParts.length + ' зображення від клієнта ПРО ОДИН товар (кадри рілсу/сторіз у різні моменти або кілька фото/скрінів — дивись на ВСІ разом: загальний план важливіший за крупний) — ймовірно, товар з нашого магазину. Опиши коротко, що на них (тип товару, колір, помітний текст/бренд), враховуючи ВСІ кадри разом. Потім знайди НАЙБЛИЖЧИЙ відповідник у каталозі нижче (формат: індекс: назва). Якщо жодного релевантного немає — bestMatchIndex null. Якщо на зображенні написано артикул / код товару — з підписом («Артикул: D0043», «арт. A0187») або БЕЗ нього (просто «D0043», «A0187», «234286» окремим написом) — перепиши сам код у поле "article" (без слова «Артикул»); ціни, розміри й назви бренду кодом не вважай. Код бери ЛИШЕ якщо він буквально видимий на зображенні — НІКОЛИ не переписуй артикул із каталогу нижче. Нема — null. Поверни ЛИШЕ JSON {"description":"...","article":"..." або null,"bestMatchIndex":число_або_null}.\nКаталог:\n' + catListF;
         var grf = await __geminiFetch(__gKeys, { contents: [{ parts: [{ text: promptf }].concat(__frameParts) }] });
         var gjf = await grf.json();
         var tf = ((((gjf.candidates || [])[0] || {}).content || {}).parts || [{}])[0].text || '';
@@ -542,7 +542,7 @@ try {
           // це як "не визначив товар" і просила пост/артикул, хоча насправді треба звірити оплату):
           // додано КРОК 0 — спершу відрізнити, чи це взагалі одяг/товар, чи документ/квитанція/скрін
           // переказу грошей. isReceipt=true → НЕ шукаємо bestMatchIndex, немає товару на фото.
-          var promptp = 'Це фото від клієнта інтернет-магазину одягу. КРОК 0: це фото ОДЯГУ/ТОВАРУ, чи це банківська квитанція/платіжна інструкція/скріншот переказу грошей (IBAN, Monobank, ПриватБанк тощо)? Якщо це квитанція/документ про оплату — поверни ЛИШЕ {"isReceipt":true} і більше нічого, без опису й індексів. Якщо це одяг/товар — переходь до кроків нижче.\nКРОК 1: визнач ЗАГАЛЬНИЙ ТИП товару на фото (напр. кофта/светр, куртка/вітровка, костюм, взуття, джинси/штани, футболка) — лише тип, не конкретну модель. КРОК 2: у каталозі нижче кожен товар має позначку [категорія: ...] — розглядай ЛИШЕ товари з категорією, що відповідає визначеному типу; серед НИХ знайди найближчий за кольором/фасоном/деталями. НІКОЛИ не вибирай товар з ІНШОЇ категорії, навіть якщо він на вигляд чимось схожий. Якщо в потрібній категорії жодного релевантного немає — bestMatchIndex null (не бери товар з іншої категорії як компроміс). Якщо на зображенні написано артикул / код товару — з підписом («Артикул: D0043», «арт. A0187») або БЕЗ нього (просто «D0043», «A0187», «234286» окремим написом) — перепиши сам код у поле "article" (без слова «Артикул»); ціни, розміри й назви бренду кодом не вважай. Нема — null. КРОК 3: якщо на фото ОБРАЗ із кількох речей (напр. кофта + джинси + футболка + взуття разом, флетлей чи манекен) — перелічи типи всіх видимих речей у "outfitItems" (напр. ["кофта","джинси","футболка","лофери"]); одна річ — ["її тип"]. Поверни ЛИШЕ JSON {"isReceipt":false,"description":"...","detectedCategory":"...","outfitItems":[...],"article":"..." або null,"bestMatchIndex":число_або_null}.\nКаталог:\n' + catList;
+          var promptp = 'Це фото від клієнта інтернет-магазину одягу. КРОК 0: це фото ОДЯГУ/ТОВАРУ, чи це банківська квитанція/платіжна інструкція/скріншот переказу грошей (IBAN, Monobank, ПриватБанк тощо)? Якщо це квитанція/документ про оплату — поверни ЛИШЕ {"isReceipt":true} і більше нічого, без опису й індексів. Якщо це одяг/товар — переходь до кроків нижче.\nКРОК 1: визнач ЗАГАЛЬНИЙ ТИП товару на фото (напр. кофта/светр, куртка/вітровка, костюм, взуття, джинси/штани, футболка) — лише тип, не конкретну модель. КРОК 2: у каталозі нижче кожен товар має позначку [категорія: ...] — розглядай ЛИШЕ товари з категорією, що відповідає визначеному типу; серед НИХ знайди найближчий за кольором/фасоном/деталями. НІКОЛИ не вибирай товар з ІНШОЇ категорії, навіть якщо він на вигляд чимось схожий. Якщо в потрібній категорії жодного релевантного немає — bestMatchIndex null (не бери товар з іншої категорії як компроміс). Якщо на зображенні написано артикул / код товару — з підписом («Артикул: D0043», «арт. A0187») або БЕЗ нього (просто «D0043», «A0187», «234286» окремим написом) — перепиши сам код у поле "article" (без слова «Артикул»); ціни, розміри й назви бренду кодом не вважай. Код бери ЛИШЕ якщо він буквально видимий на самому зображенні — НІКОЛИ не переписуй артикул із каталогу нижче. Нема — null. КРОК 3: якщо на фото ОБРАЗ із кількох речей (напр. кофта + джинси + футболка + взуття разом, флетлей чи манекен) — перелічи типи всіх видимих речей у "outfitItems" (напр. ["кофта","джинси","футболка","лофери"]); одна річ — ["її тип"]. Поверни ЛИШЕ JSON {"isReceipt":false,"description":"...","detectedCategory":"...","outfitItems":[...],"article":"..." або null,"bestMatchIndex":число_або_null}.\nКаталог:\n' + catList;
           var grp = await __geminiFetch(__gKeys, { contents: [{ parts: [{ text: promptp }, { inline_data: { mime_type: mimep, data: b64p } }] }] });
           var gjp = await grp.json();
           var tp = ((((gjp.candidates || [])[0] || {}).content || {}).parts || [{}])[0].text || '';
@@ -570,15 +570,19 @@ try {
   // Звірка з ЕТАЛОННИМИ фото кандидатів тієї ж категорії: за назвами модель не розрізняє схожі товари (чорні флісові костюми
   // A0191/A0189/SH617927 — сторіз e5090bb9 → «Гельсінкі» замість «Космо»). Кандидатів у категорії >1 — порівнюємо фото;
   // ніхто точно не збігся — не вгадуємо (далі чесна передача менеджеру).
-  if (found && __refImg0 && /^(video_frames|photo)$/.test(via)) {
+  // + «артикул з фото» (2026-10-03, Edit 9fcdb064/32a20161, Анна): на фото флісового костюма A0191 артикулу не було, модель
+  // переписала «234286» з рядка каталогу в промпті → замшевий костюм пройшов як «артикул на зображенні» без жодної звірки.
+  // Тепер і він звіряється з еталонними фото: інший кандидат точно збігся — беремо його; звірка не впевнена — лишаємо артикул.
+  var __viaArt = /^image_article/.test(via);
+  if (found && __refImg0 && (/^(video_frames|photo)$/.test(via) || __viaArt)) {
     try {
       var __sameCat = all.filter(function (x) { return !x.isSet && x.categoryId && String(x.categoryId) === String(found.categoryId || ''); });
       if (__sameCat.length > 1) {
         var __pubBase = (keys.CRM_PUBLIC_BASE || 'https://pcrm.fineko.space').replace(/\/$/, '');
         var __resolve = function (u) { u = String(u || ''); if (!u) return ''; return /^https?:/.test(u) ? u : __pubBase + (u.charAt(0) === '/' ? u : '/' + u); };
         var __pick = await require('../adAutoBind').geminiPick({ __geminiKeys: __gKeys }, __refImg0, '', __sameCat, __resolve, 'Клієнт надіслав зображення товару (кадр сторіз/рілсу або фото). Який із кандидатів — ТОЧНО той самий товар: крій, капюшон/комір, блискавка, манжети, фактура тканини, колірна гама? Кольори в кандидатів можуть відрізнятись — порівнюй модель, не колір.');
-        if (__pick && __pick.product) { found = __pick.product; via = via + '+ref'; mk = 'ref_' + String(found.sku || found.id); }
-        else { context.visionUncertain = String(found.sku || ''); found = null; via = ''; mk = ''; }
+        if (__pick && __pick.product) { if (!__viaArt || __pick.product !== found) { found = __pick.product; via = (__viaArt ? 'photo' : via) + '+ref'; mk = 'ref_' + String(found.sku || found.id); } }
+        else if (!__viaArt) { context.visionUncertain = String(found.sku || ''); found = null; via = ''; mk = ''; }
       }
     } catch (e) { /* best-effort: лишаємо результат за назвами */ }
   }
@@ -719,7 +723,10 @@ try {
     var __capForSet = String(((context.sharedPost && context.sharedPost.caption) || '') + ' ' + (__adCaption || '') + ' ' + (context.adTitle || '')).toLowerCase();
     var __capStemN = ['кофт', 'светр', 'джинс', 'штан', 'футболк', 'лофер', 'взутт', 'бомбер', 'куртк', 'костюм'].filter(function (st) { return __capForSet.indexOf(st) >= 0; }).length;
     var __outfitN = Array.isArray(context.visionOutfitItems) ? context.visionOutfitItems.length : 0;
-    var __outfitSignal = !__uStem && (__outfitN >= 3 || __capStemN >= 3);
+    // Фото тієї речі, яку бот щойно показав у списку (catalogHintSkus) — клієнт обрав її, а не комплект (2026-10-03, Edit 369d65ab,
+    // Елена: список кофт → фото A0187 на манекені з футболкою й штанами → outfitItems=3 → бот показав комплект set1117).
+    var __pickedFromList = found && String(context.catalogHintSkus || '').toUpperCase().split(',').indexOf(String(found.sku || '').toUpperCase()) >= 0;
+    var __outfitSignal = !__uStem && !__pickedFromList && (__outfitN >= 3 || __capStemN >= 3);
     var __setBase = (found && !found.isSet && (/^ad_/.test(via) || (__outfitSignal && /^(photo|video_frames)/.test(via)))) ? found
       : (!found && /(комплект|набір|набор)/i.test(__uTxt) && context.product && !context.product.isSet && context.product.id ? all.filter(function (x) { return String(x.id) === String(context.product.id); })[0] : null);
     if ((__wantsSetWord || __outfitSignal) && __setBase) {
@@ -735,6 +742,16 @@ try {
         var __kinds = function (s) { var ids = {}; (s.setComponents || s.setOf || []).forEach(function (c) { var cp = all.filter(function (x) { return String(x.id) === __compId(c) || (c.sku && x.sku && String(x.sku).toUpperCase() === String(c.sku).toUpperCase()); })[0]; if (cp) ids[String(cp.categoryId || cp.sku)] = 1; }); return Object.keys(ids).length; };
         var __byN = __parentSets.filter(function (s) { return __kinds(s) === __wantN; });
         if (__byN.length === 1) __parentSets = __byN;
+      }
+      // Образ видно лише на ФОТО (не в підписі й не словами клієнта): річ на манекені/моделі майже завжди стилізована футболкою
+      // й штанами — це ще не комплект. Звіряємо фото клієнта з еталонними фото самої речі й комплекту; збіглась річ — лишаємо річ.
+      if (__parentSets.length === 1 && !__wantsSetWord && __outfitN >= 3 && __capStemN < 3 && __refImg0 && __gKeys.length && found === __setBase) {
+        try {
+          var __pubB = (keys.CRM_PUBLIC_BASE || 'https://pcrm.fineko.space').replace(/\/$/, '');
+          var __resB = function (u) { u = String(u || ''); if (!u) return ''; return /^https?:/.test(u) ? u : __pubB + (u.charAt(0) === '/' ? u : '/' + u); };
+          var __sp = await require('../adAutoBind').geminiPick({ __geminiKeys: __gKeys }, __refImg0, '', [__setBase, __parentSets[0]], __resB, 'Клієнт надіслав зображення. На ньому ОДНА річ (інші речі на манекені чи моделі — лише стилізація фото) чи КОМПЛЕКТ речей, що продається разом? Обери кандидата, чиє еталонне фото відповідає зображенню клієнта: окрема річ чи комплект.');
+          if (__sp && __sp.product === __setBase) __parentSets = [];
+        } catch (e) { /* best-effort: лишаємо підйом до комплекту, як було */ }
       }
       if (__parentSets.length === 1) {
         context.adSetNote = 'клієнт явно просить комплект — товар ' + (__setBase.sku || '') + ' входить у набір ' + __parentSets[0].sku;

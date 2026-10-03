@@ -128,7 +128,10 @@ async function resolveShoppingIntent(A, u, tool) {
         if (hadProduct) delete ctx.product;
         delete ctx.catalogHintPick;
         ctx.catalogHintCategoriesRaw = await loadCategories(A.botId, keys);
+        // Реклама не прийшла (≈22% розмов Zernio) — catalogHint бере найімовірніший товар серед активних реклам категорії.
+        ctx._hintNoRef = !hadProduct && !signal.photoUrl && !signal.adReferral && !signal.forwardedPost && !ctx.entryAdId;
         Object.assign(ctx, await computeCatalogHint(ctx, keys, text));
+        delete ctx._hintNoRef;
         if (ctx.catalogHintPick) {
             delete ctx.productUnknown;
             Object.assign(ctx, await matchProduct(ctx, keys, text, { botId: A.botId }));

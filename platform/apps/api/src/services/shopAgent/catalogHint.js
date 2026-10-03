@@ -13,6 +13,21 @@
  * reading both sources: prep's fields are dead once wired into a plain function call
  * instead of a flow graph). Folded into one function; prep's node is not migrated.
  */
+// Активні реклами з товаром, згруповані по товару (CRM GET /ads/active-summary): кеш 10 хв на процес — дані в CRM
+// оновлюються раз на 5 год (крон Meta Ads Sync), а запит робиться на кожен хід без товару.
+var __advCache = { at: 0, key: '', data: [] };
+async function activeAdsSummary(base, hdr) {
+  if (__advCache.key === base && Date.now() - __advCache.at < 10 * 60 * 1000) return __advCache.data;
+  var ac = new AbortController(); var to = setTimeout(function () { try { ac.abort(); } catch (e) {} }, 3000);
+  try {
+    var r = await fetch(base + '/ads/active-summary?days=3', { headers: hdr, signal: ac.signal });
+    var j = await r.json().catch(function () { return {}; });
+    var data = r.ok && Array.isArray(j.data) ? j.data : [];
+    __advCache = { at: Date.now(), key: base, data: data };
+    return data;
+  } catch (e) { return __advCache.key === base ? __advCache.data : []; } finally { clearTimeout(to); }
+}
+
 async function computeCatalogHint(context, keys, input) {
 // n_catalog_hint — джерело істини (CRM-клони, патч patch-goverla-crm-audit-2026-09-04.js, v5).
 // Діалог не завжди починається з поста/реклами (2026-09-04, рішення власника): клієнт може написати
@@ -147,18 +162,47 @@ if (__hintColorWords.length) {
 var __mw = msg.replace(/[^a-zа-яіїєґ0-9\s]/gi, ' ').split(/\s+/).filter(function (w) { return w.length >= 4; }).map(function (w) { return w.slice(0, 5); });
 function __ov(p) { var h = hay(p); var n = 0; __mw.forEach(function (w) { if (h.indexOf(w) >= 0 && !wants.some(function (s) { return w.indexOf(s.slice(0, 4)) === 0; })) n++; }); return n; }
 hits.sort(function (a, b) { return (__ov(b) - __ov(a)) || ((Number(a.price) || 0) - (Number(b.price) || 0)); });
+// 2026-10-03 (категорія «Розпізнавання товару»; Edits fafba197/af603158/951031bf, рішення власника): ≈22% розмов Zernio приходять
+// без даних реклами — клієнт пише «Яка ціна кофти?» у відповідь на рекламу, а бот бачить лише слово «кофта» і показує
+// перші 3–4 кофти каталогу за ціною (рекламованої серед них часто нема). Тоді найімовірніший товар — серед тих, що ЗАРАЗ
+// рекламуються в цій категорії (CRM «Оголошення», вага = розмови за 3 дні з Meta, оновлення раз на 5 год).
+// Один рекламований товар у категорії або один займає ≥75% розмов → одразу його картка; кілька → список лише з них.
+// Лише коли товару ще нема, реклама/пост/фото цього ходу не прийшли, а клієнт не назвав іншого слова з назви товару.
+var __advList = false;
+try {
+  // _hintNoRef виставляє resolveShoppingIntent: товару ще нема, цього ходу нема ні фото, ні пересланого поста, ні реклами.
+  var __noRef = context._hintNoRef === true && !context.entryAdId && !String(context.catalogHintSkus || '');
+  var __ovTop = hits.length ? __ov(hits[0]) : 0;
+  if (__noRef) {
+    var __adv = await activeAdsSummary(base, hdr);
+    var __convBy = {}; __adv.forEach(function (r) { if (r && r.productId && !r.outOfStock) __convBy[r.productId] = (__convBy[r.productId] || 0) + (Number(r.conversations) || 0); });
+    var __advHits = hits.filter(function (p) { return __convBy[p.id] != null && (!__ovTop || __ov(p) === __ovTop); })
+      .sort(function (a, b) { return __convBy[b.id] - __convBy[a.id]; });
+    if (__advHits.length) {
+      var __sum = __advHits.reduce(function (s, p) { return s + __convBy[p.id]; }, 0);
+      var __lead = __advHits[0];
+      if (__lead.sku && (__advHits.length === 1 || (__sum > 0 && __convBy[__lead.id] / __sum >= 0.75))) {
+        return { catalogHint: '', catalogHintCount: 0, catalogHintSkus: '', catalogHintPick: String(__lead.sku), catalogHintAdGuess: String(__lead.sku), hasProductSignal: true, hasFreshSignalThisTurn: true, catalogCategories: catList, unknownTurns: unknownTurns - 1 };
+      }
+      hits = __advHits.slice(0, 3);
+      __advList = true;
+    }
+  }
+} catch (e) { /* best-effort: без реклам — звичайний список */ }
 var top = hits.slice(0, 4);
 // 2026-09-15 (власник: "тут теж можна додати нумерацію і гарний списочок") — нумерація тут же,
 // детерміновано (не лишаємо це на розсуд LLM-переказу нижче) — той самий принцип, що вже є для
 // setColorAskList: номер, який реально можна назвати у відповіді, а не просто оздоблення.
-var lines = top.map(function (p, i) { return (i + 1) + '. ' + (p.sku ? ('Артикул ' + p.sku + ' — ') : '') + String(p.name || '').trim() + (Number(p.price) ? (' — ' + Number(p.price) + ' грн') : ''); });
+// Назва для клієнта — customerName («Чоловіча вʼязана кофта»), а не внутрішня назва постачальника («Кофта Мажор петля»,
+// Edit 54d934fd); артикул у рядку розрізняє товари з однаковою клієнтською назвою.
+var lines = top.map(function (p, i) { return (i + 1) + '. ' + (p.sku ? ('Артикул ' + p.sku + ' — ') : '') + String(p.customerName || p.name || '').trim() + (Number(p.price) ? (' — ' + Number(p.price) + ' грн') : ''); });
 // 2026-09-11 (Олексій: "люди не розуміють що то за кофти по артикулах — зразу скидати фото і
 // ловити відповідь типу 'хочу сіру чи чорну'"): клієнт бачить фото одразу, не питає артикул.
 // thumbnailUrl у CRM — відносний шлях (/uploads/...), той самий resolveUrl, що й у n_lookup.
 var __publicBase = (keys.CRM_PUBLIC_BASE || 'https://pcrm.fineko.space').replace(/\/$/, '');
 function __resolveUrl(u) { if (!u) return ''; return /^https?:\/\//i.test(u) ? u : (__publicBase + (u.charAt(0) === '/' ? u : '/' + u)); }
 var catalogHintPhotos = top.map(function (p) { return __resolveUrl((Array.isArray(p.images) && p.images[0]) || ''); }).filter(Boolean);
-return { catalogHint: lines.join('\n'), catalogHintCount: top.length, catalogHintTotal: hits.length, catalogHintSkus: top.map(function (p) { return String(p.sku || ''); }).filter(Boolean).join(','), catalogHintPhotos: catalogHintPhotos, catalogCategories: catList, unknownTurns: unknownTurns };
+return { catalogHint: lines.join('\n'), catalogHintCount: top.length, catalogHintTotal: hits.length, catalogHintSkus: top.map(function (p) { return String(p.sku || ''); }).filter(Boolean).join(','), catalogHintPhotos: catalogHintPhotos, catalogHintAdGuess: __advList ? 'list' : '', catalogCategories: catList, unknownTurns: unknownTurns };
 
 }
 module.exports = { computeCatalogHint };

@@ -2259,8 +2259,12 @@ async function runPolicyInner(A, u) {
         const upsellQtyFallback = (() => { if (!answeringUpsellClarify || upsellExplicitNo) return undefined; const m = text.match(/(\d+)\s*(шт|штук|пар)?/iu); return m ? Number(m[1]) : undefined; })();
         if (u.ready === 'no' && !answeringUpsellClarify) { A.out.push({ text: messageText(A.assets, 'n_declined_msg', ctx, A.session.id), step: 'declined' }); ctx.declinedAt = Date.now(); ctx.agent.lastAsk = ''; return; }
         const gaveAddress = !!(u.phone || u.city || u.branch || u.fullName);
-        if (u.ready === 'yes' || gaveAddress || u.payMethod || answeringUpsellClarify) {
-            const addUpsellFinal = answeringUpsellClarify ? !upsellExplicitNo : !!u.addUpsell;
+        // Ми запропонували допродаж у підсумку («Оформляємо? І додати футболку?»), а клієнт у відповідь називає його («А можна дві
+        // білих футболки?») — це згода оформити З допродажем, навіть якщо аналізатор прочитав фразу як питання (Edit e86adb58:
+        // той самий текст раз давав ready=yes, раз — питання, і бот перепитував «додати футболки чи лише кофту?»).
+        const namesUpsell = !!(ctx.agent.upsellOffered && !ctx.agent.upsellDeclined && pp.upsell && (u.addUpsell === true || (Array.isArray(u.upsellUnits) && u.upsellUnits.length) || Number(u.upsellQty) > 0));
+        if (u.ready === 'yes' || gaveAddress || u.payMethod || answeringUpsellClarify || namesUpsell) {
+            const addUpsellFinal = answeringUpsellClarify ? !upsellExplicitNo : (!!u.addUpsell || namesUpsell);
             const upsellWasOn = !!(ctx.orderIntent && ctx.orderIntent.addUpsell);
             ctx.orderIntent = { ready: 'yes', addUpsell: addUpsellFinal, upsellQty: u.upsellQty || upsellQtyFallback || undefined, upsellNote: u.upsellNote || (answeringUpsellClarify && addUpsellFinal ? text : undefined), upsellUnits: u.upsellUnits || undefined, units: u.units || undefined, qty: u.qty || undefined, extras: undefined, extraProducts: undefined };
             fillUpsellSize(ctx);

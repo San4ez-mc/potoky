@@ -161,6 +161,24 @@ async function main() {
         }
     }
 
+    // 9) Parse Intent: «з 17.10 по 19.10» без слів «N днів» давало span=1 — усі пости лягали на одну дату (2026-10-03, 3 відео на 17.10).
+    //    Тепер діапазон двох явних дат рахується як кількість днів між ними.
+    {
+        let code = String((await fresh(N.parse)).data.code);
+        if (code.includes('__twoDates')) console.log('parse date-range: already patched');
+        else {
+            const a = "  if(!s) return 1;\n";
+            if (!code.includes(a)) throw new Error('parse date-range: маркер rangeSpan не знайдено');
+            const add = String.raw`  var __twoDates = s.match(/(\d{1,2})\.(\d{1,2})(?:\.\d{2,4})?\D+?(\d{1,2})\.(\d{1,2})(?:\.\d{2,4})?/);
+  if (__twoDates) { var __y0 = baseToday.getFullYear(); var __d1 = new Date(__y0, parseInt(__twoDates[2],10)-1, parseInt(__twoDates[1],10)); var __d2 = new Date(__y0, parseInt(__twoDates[4],10)-1, parseInt(__twoDates[3],10)); var __diff = Math.round((__d2 - __d1) / 86400000) + 1; if (__diff > 1 && __diff <= 62) return __diff; }
+`;
+            code = code.replace(a, a + add);
+            new Function('context', code);
+            await callTool('update_node', { botId: CM, nodeId: N.parse, data: { code } });
+            console.log('parse date-range: patched');
+        }
+    }
+
     // 6) Chat text: для відео-постів показуємо сценарій по сценах (раніше в чат ішов лише підпис)
     {
         const cn = node('node_1781269102711');

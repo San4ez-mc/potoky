@@ -606,12 +606,33 @@ async function present(A) {
     ctx.agent.presentedSkus = Object.assign({}, ctx.agent.presentedSkus || {}, { [String(p.sku)]: Date.now() });
     // Памʼять «з якого комплекту»: переживає перехід на окрему річ, щоб «весь комплект» міг повернути саме його.
     if (p.isSet && Array.isArray(p.setItems)) ctx.agent.originSet = { sku: p.sku, items: p.setItems.map((it) => String(it.article || '').toUpperCase()), at: Date.now() };
+    // Картка комплекту закінчується питанням «весь комплект, чи окремі товари?» (productMatch) — воно вже поставлене.
+    if (p.isSet) ctx.agent.setAskedAt = { sku: p.sku, at: Date.now() };
     ctx.agent.lastAsk = p.followUpQuestion || '';
     A.justPresented = true; // картка (n_welcome) сама закінчується проханням дати параметри/колір —
     // цього ж ходу питати вдруге не треба (живий кейс 2026-09-14, Устим/Юлія: два майже
     // однакових повідомлення поспіль, «дайте зріст і вагу» одразу після картки, де це прохання
     // вже є останнім рядком)
     await T.funnelStage(A, ...STAGES.presented);
+}
+
+/** Питання, на які щойно показана картка товару вже відповіла (ціна, кольори, «а є …?», артикул) — знімаємо, щоб compose не
+ * переказував картку вдруге (2026-09-23 FunnelTest 6; правки 8577bd2d, 272c33d0, 0759abcb; тест 95). */
+function dropQuestionsAnsweredByCard(A, u) {
+    const { ctx } = A; const p = P(ctx);
+    if (!p || !Array.isArray(u.questions) || !u.questions.length) return;
+    u.questions = u.questions.filter((q) => !/(ціна|ціну|цін[иі]|скільки\s+кошту|вартіст|почім|прайс)/i.test(String(q)));
+    // «Клієнт написав 234286 — уточнити, що це» — картка цього артикула щойно показана, питання закрите (правка 8577bd2d).
+    if (p.sku) u.questions = u.questions.filter((q) => !String(q).toUpperCase().includes(String(p.sku).toUpperCase()));
+    // «А є джинси?» — щойно показана картка джинсів і є відповіддю.
+    const pn = String((p.name || '') + ' ' + (p.customerName || '')).toLowerCase();
+    u.questions = u.questions.filter((q) => !(/(^|\s)(а\s+)?(у\s+вас\s+)?(чи\s+)?(є|маєте)\s/i.test(String(q)) && String(q).toLowerCase().split(/[^a-zа-яіїєґ]+/).some((w) => w.length >= 4 && pn.includes(w.slice(0, 5)))));
+    // «Які є кольори?» — картка щойно їх перелічила; окремий рядок «Кофта є у трьох кольорах…» — дубль (правки 272c33d0, 0759abcb).
+    // Питання про конкретний колір, якого нема в палітрі («а беж є?»), лишаємо — на нього треба чесна відповідь.
+    if (colorsOf(p)) u.questions = u.questions.filter((q) => !(/(кольор|колір|відтін)/i.test(String(q)) && !(u.color && !matchColor(p, u.color))));
+    // «Чи є костюм Гельсінкі?» — картка цього товару щойно показана, це і є відповідь (тест 95: бот дописав «такого немає»).
+    const nameStems = String((p.name || '') + ' ' + (p.customerName || '')).toLowerCase().split(/[^a-zа-яіїєґ0-9]+/i).filter((w) => w.length >= 5).map((w) => w.slice(0, 5));
+    u.questions = u.questions.filter((q) => !(/(є|наявн|існує|маєте|немає|нема)/i.test(String(q)) && String(q).toLowerCase().split(/[^a-zа-яіїєґ0-9]+/i).some((w) => w.length >= 5 && nameStems.includes(w.slice(0, 5)) && !/^(костю|кофта|кофти|куртк|джинс|футбо|лофер|бомбе|чолов)/.test(w))));
 }
 
 function resetForNewProduct(A, sku) {
@@ -1492,20 +1513,7 @@ async function runPolicyInner(A, u) {
                 // 2026-09-23 (FunnelTest 6: «яка ціна?» разом із постом — картка ВЖЕ містить ціну, а
                 // compose відповідав на питання ще раз і навіть озвучив службову примітку «клієнт щойно
                 // переслав пост…»). Запитання про ціну, на яке щойно відповіла картка, знімаємо.
-                if (A.justPresented && Array.isArray(u.questions) && u.questions.length) {
-                    u.questions = u.questions.filter((q) => !/(ціна|ціну|цін[иі]|скільки\s+кошту|вартіст|почім|прайс)/i.test(String(q)));
-                    // «Клієнт написав 234286 — уточнити, що це» — картка цього артикула щойно показана, питання закрите (правка 8577bd2d).
-                    if (P(ctx).sku) u.questions = u.questions.filter((q) => !String(q).toUpperCase().includes(String(P(ctx).sku).toUpperCase()));
-                    // «А є джинси?» — щойно показана картка джинсів і є відповіддю.
-                    const pn = String((P(ctx).name || '') + ' ' + (P(ctx).customerName || '')).toLowerCase();
-                    u.questions = u.questions.filter((q) => !(/(^|\s)(а\s+)?(у\s+вас\s+)?(чи\s+)?(є|маєте)\s/i.test(String(q)) && String(q).toLowerCase().split(/[^a-zа-яіїєґ]+/).some((w) => w.length >= 4 && pn.includes(w.slice(0, 5)))));
-                    // «Які є кольори?» — картка щойно їх перелічила; окремий рядок «Кофта є у трьох кольорах…» — дубль (правки 272c33d0, 0759abcb).
-                    // Питання про конкретний колір, якого нема в палітрі («а беж є?»), лишаємо — на нього треба чесна відповідь.
-                    if (colorsOf(P(ctx))) u.questions = u.questions.filter((q) => !(/(кольор|колір|відтін)/i.test(String(q)) && !(u.color && !matchColor(P(ctx), u.color))));
-                    // «Чи є костюм Гельсінкі?» — картка цього товару щойно показана, це і є відповідь (тест 95: бот дописав «такого немає»).
-                    const nameStems = String((P(ctx).name || '') + ' ' + (P(ctx).customerName || '')).toLowerCase().split(/[^a-zа-яіїєґ0-9]+/i).filter((w) => w.length >= 5).map((w) => w.slice(0, 5));
-                    u.questions = u.questions.filter((q) => !(/(є|наявн|існує|маєте|немає|нема)/i.test(String(q)) && String(q).toLowerCase().split(/[^a-zа-яіїєґ0-9]+/i).some((w) => w.length >= 5 && nameStems.includes(w.slice(0, 5)) && !/^(костю|кофта|кофти|куртк|джинс|футбо|лофер|бомбе|чолов)/.test(w))));
-                }
+                if (A.justPresented) dropQuestionsAnsweredByCard(A, u);
             }
             else if (u.wantsPhoto && !A.turnImage && (Date.now() - Number(ctx.presentedAt)) > 2 * 60 * 1000) { const urls = firstPhotoUrls(P(ctx)); if (urls.length) A.out.push({ photoUrls: urls, caption: '', step: 'photo_again' }); }
             if (ctx.adLinkMismatchAt && !ctx.adLinkMismatchAlertedAt) { await T.alert(A, 'n_ad_conflict_admin'); ctx.adLinkMismatchAlertedAt = Date.now(); }
@@ -1618,6 +1626,10 @@ async function runPolicyInner(A, u) {
         }
     }
 
+    // Пачка повідомлень клієнта («Як підібрати розмір?» + «Яка ціна товарів?» + пост) обробляється кількома ходами підряд:
+    // картку показав перший, а наступний (за секунди) переказував ті самі ціни ще раз (03.10, zhenya8019). Картка цього
+    // товару показана < 90 с тому — питання, на які вона вже відповіла, закриті й для цього ходу.
+    if (!A.justPresented && ctx.presentedAt && ctx.agent.presentedSku === p.sku && Date.now() - Number(ctx.presentedAt) < 90 * 1000) dropQuestionsAnsweredByCard(A, u);
     // 3. Комплект
     if (p.isSet && !ctx.setMode) {
         // 2026-09-18 (живий кейс, Roman/tovstanovskiy_, сесія 20af04a6: "Кофта и лоферы" / "5934
@@ -1686,6 +1698,14 @@ async function runPolicyInner(A, u) {
         // питанням виглядало як збій. Той самий принцип, що вже застосований нижче для розміру
         // (A.justPresented) — тут його раніше не було.
         else if (A.justPresented && !u.questions.length) { ctx.agent.lastAsk = 'весь комплект чи окремі речі'; return; }
+        // Питання «весь комплект чи окремі речі?» вже поставлене (карткою чи окремо) протягом 10 хв, а вибору ще нема — не повторюємо
+        // його (03.10: 30+ розмов, де бот питав це 2–3 рази поспіль, зокрема на пачку повідомлень клієнта одразу після картки).
+        // Є питання клієнта — відповідаємо лише на нього; нема — нічого не додаємо, чекаємо вибору.
+        else if (ctx.agent.setAskedAt && ctx.agent.setAskedAt.sku === p.sku && Date.now() - Number(ctx.agent.setAskedAt.at || 0) < 10 * 60 * 1000) {
+            ctx.agent.lastAsk = 'весь комплект чи окремі речі';
+            if (u.questions.length) A.out.push({ text: await answerThenAsk(A, u, ''), step: 'set_answer' });
+            return;
+        }
         else {
             ctx.agent.preNote = preNote; ctx.agent.setAskList = humanSetList(p);
             // 2026-09-17 (живий кейс, Степанович/_ilya.tishkun_: "Яка ціна товарів?" одразу ПІСЛЯ
@@ -1698,7 +1718,7 @@ async function runPolicyInner(A, u) {
             // даємо compose() відповісти на питання БЕЗ додаткового заклику в кінці.
             const setAsk = A.justPresented ? '' : messageTextMultiline(A.assets, 'n_agent_set_ask', ctx, A.session.id);
             A.out.push({ text: await answerThenAsk(A, u, preNote + setAsk), step: 'set_ask' });
-            ctx.agent.lastAsk = 'весь комплект чи окремі речі'; return;
+            ctx.agent.lastAsk = 'весь комплект чи окремі речі'; ctx.agent.setAskedAt = { sku: p.sku, at: Date.now() }; return;
         }
         }
     }

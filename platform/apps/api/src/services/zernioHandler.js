@@ -1327,6 +1327,20 @@ async function handleIncomingMessage(botId, body) {
     // відправки клієнтом, не час доставки нам) у межах цієї сесії. Наслідок бага без цього
     // фіксу: та сама claude-нода (n_size) виконувалась ДВІЧІ на дублюючому вхідному — клієнт
     // бачив два майже ідентичних повідомлення поспіль ("Є три кольори"/"Доступні три кольори").
+    // 2026-10-03 (категорія «Комплекти», 55 випадків за 3 доби, 51 — фото/пости без тексту): на початку ходу звірка з Zernio REST
+    // (zernioConversationSync) дотягує повідомлення клієнта, яке вебхук ще не доставив, і хід його вже обробляє; за кілька секунд
+    // те саме повідомлення приходить вебхуком і запускало ДРУГИЙ хід («весь комплект чи окремі речі?» удруге, картка вдруге).
+    // REST-id повідомлення = platformMessageId вебхука (той самий Instagram mid) — це одне повідомлення: дотегуємо й не обробляємо.
+    if (platformMessageId) {
+        try {
+            const synced = await db.message.findFirst({ where: { sessionId: session.id, role: 'user', metadata: { path: ['zernioRestId'], equals: String(platformMessageId) } }, select: { id: true, metadata: true } });
+            if (synced) {
+                await db.message.update({ where: { id: synced.id }, data: { metadata: { ...(synced.metadata || {}), zernioMessageId: zMsgId || null, platformMessageId } } }).catch(() => {});
+                logger.info('[zernioHandler] inbound already ingested via REST sync — ignored', { botId, sessionId: session.id, zernioMessageId: zMsgId, platformMessageId: String(platformMessageId).slice(-16) });
+                return { ok: true, processed: 0, duplicate: 'rest_synced' };
+            }
+        } catch (e) { logger.warn('[zernioHandler] rest-sync dup check failed: ' + e.message, { botId, sessionId: session.id }); }
+    }
     if (text) {
         try {
             const recentSame = await db.message.findMany({

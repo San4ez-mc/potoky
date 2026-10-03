@@ -37,6 +37,13 @@ async function notify(url, body) {
     }
 }
 
+// Черга живе в памʼяті, а pm2-рестарт (деплой сусідніх сервісів тощо) її обнуляє: завдання в роботі гинули, а пост у content2
+// висів у «generating» до таймауту. Тому payload (з ключем fal, права 0600) лежить на диску, поки ролик не готовий,
+// і при старті недороблені завдання беруться знову.
+const payloadFile = (id) => path.join(JOBS_DIR, id + '.payload.json');
+function persistPayload(id, payload) { try { fs.writeFileSync(payloadFile(id), JSON.stringify(payload), { mode: 0o600 }); } catch (e) { /* не критично */ } }
+function dropPayload(id) { try { fs.rmSync(payloadFile(id), { force: true }); } catch (e) { /* ignore */ } }
+
 async function runJob(jobId, payload) {
     const dir = path.join(DATA_DIR, 'work', jobId);
     const outFile = path.join(FILES_DIR, jobId + '.mp4');
@@ -52,6 +59,7 @@ async function runJob(jobId, payload) {
         setJob(jobId, { status: 'failed', error: String(e.message).slice(0, 500) });
         await notify(payload.callbackUrl, { status: 'error', error: String(e.message).slice(0, 500), postItemId: payload.postItemId, postGroupId: payload.postGroupId });
     } finally {
+        dropPayload(jobId);
         try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) { /* ignore */ }
     }
 }
@@ -80,6 +88,7 @@ const server = http.createServer(async (req, res) => {
             }
             const jobId = payload.jobId && /^[a-zA-Z0-9_-]{4,64}$/.test(payload.jobId) ? payload.jobId : 'sv_' + crypto.randomBytes(6).toString('hex');
             setJob(jobId, { status: 'queued', step: 'queued', postItemId: payload.postItemId || null, createdAt: new Date().toISOString() });
+            persistPayload(jobId, payload);
             queue = queue.then(() => runJob(jobId, payload)).catch(() => {});
             return send(res, 202, { ok: true, jobId });
         }
@@ -102,5 +111,18 @@ try {
     const cutoff = Date.now() - 14 * 86400000;
     for (const d of [FILES_DIR, JOBS_DIR]) for (const f of fs.readdirSync(d)) { const p = path.join(d, f); if (fs.statSync(p).mtimeMs < cutoff) fs.rmSync(p, { force: true }); }
 } catch (e) { /* ignore */ }
+
+// відновлення після рестарту: недороблені завдання (є payload і статус queued/processing) — в чергу знову, у порядку створення
+try {
+    const pending = fs.readdirSync(JOBS_DIR).filter((f) => f.endsWith('.payload.json')).map((f) => f.replace('.payload.json', ''))
+        .map((id) => ({ id, j: loadJob(id) })).filter((x) => x.j && (x.j.status === 'queued' || x.j.status === 'processing'))
+        .sort((a, b) => String(a.j.createdAt).localeCompare(String(b.j.createdAt)));
+    for (const { id } of pending) {
+        let payload; try { payload = JSON.parse(fs.readFileSync(payloadFile(id), 'utf8')); } catch (e) { continue; }
+        setJob(id, { status: 'queued', step: 'resumed' });
+        queue = queue.then(() => runJob(id, payload)).catch(() => {});
+        console.log('[short-video] resumed job', id);
+    }
+} catch (e) { console.error('[short-video] resume failed:', e.message); }
 
 server.listen(PORT, '127.0.0.1', () => console.log('[short-video] listening on 127.0.0.1:' + PORT));

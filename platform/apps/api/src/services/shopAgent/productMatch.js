@@ -14,6 +14,26 @@ const { geminiFetch: __geminiFetch } = require('../geminiKey');
  * alsoWants, skipPresentation, etc.) so nothing downstream (compose.js prompts, policy.js
  * presentation code) needs to change.
  */
+// Два кадри (1-ша і 3-тя секунда) з відео, яке вже завантажене в памʼять — base64 JPEG. Best-effort: ffmpeg недоступний/впав → [].
+async function videoFramesFromBuffer(buf) {
+  var os = require('os'), fs = require('fs'), path = require('path');
+  var execFileP = require('util').promisify(require('child_process').execFile);
+  var dir = null, out = [];
+  try {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pmvid-'));
+    var src = path.join(dir, 'in.mp4'); fs.writeFileSync(src, buf);
+    var offs = ['00:00:01', '00:00:03'];
+    for (var i = 0; i < offs.length; i++) {
+      try {
+        var dst = path.join(dir, 'f' + i + '.jpg');
+        await execFileP('ffmpeg', ['-y', '-loglevel', 'error', '-ss', offs[i], '-i', src, '-frames:v', '1', '-q:v', '4', '-vf', 'scale=720:-1', dst], { timeout: 8000 });
+        if (fs.existsSync(dst) && fs.statSync(dst).size > 500) out.push(fs.readFileSync(dst).toString('base64'));
+      } catch (e) { /* кадру нема (відео коротше) — беремо, що є */ }
+    }
+  } catch (e) { /* best-effort */ } finally { try { if (dir) fs.rmSync(dir, { recursive: true, force: true }); } catch (e) { } }
+  return out;
+}
+
 async function matchProduct(context, keys, input, opts = {}) {
 // Ключі Gemini: власний воронки → конектор воронки (index.js кладе keys.__geminiKeys; 2026-09-29, ключ воронки вичерпав кредити).
 var __gKeys = (Array.isArray(keys.__geminiKeys) && keys.__geminiKeys.length) ? keys.__geminiKeys : [keys.GEMINI_API_KEY].filter(Boolean);
@@ -525,8 +545,11 @@ try {
           var b64p = Buffer.from(abp).toString('base64');
           var mimepRaw = (irp.headers.get('content-type') || '').split(';')[0];
           var mimep = (!mimepRaw || mimepRaw === 'application/octet-stream') ? 'image/jpeg' : mimepRaw;
-          // Zernio віддає рілс із реклами як attachment type «photo», а насправді це video/mp4 (2026-10-03, Анна) — звірка з
-          // еталонами має отримати справжній тип, інакше Gemini відкидає запит і результат за назвами лишається без перевірки.
+          // Zernio віддає рілс із реклами як attachment type «photo», а насправді це video/mp4 (2026-10-03, Анна: ціле відео →
+          // «замшевий костюм», звірка з еталонами — то SH617927, то A0188). Як і для пересланих рілсів (правило власника 12.09) —
+          // два кадри замість відео: розпізнавання і звірка йдуть по кадрах.
+          var __vidFrames = /^video\//i.test(mimep) ? await videoFramesFromBuffer(Buffer.from(abp)) : [];
+          if (__vidFrames.length) { b64p = __vidFrames[0]; mimep = 'image/jpeg'; }
           __refImg0 = { mime: mimep, data: b64p };
           // 2026-09-13 (власник: "Джимінай кидати фото каталогу — наскільки дорожче?" —
           // погоджено дешевий перший крок): БЕЗ жодних додаткових фото чи викликів — той самий
@@ -545,7 +568,7 @@ try {
           // додано КРОК 0 — спершу відрізнити, чи це взагалі одяг/товар, чи документ/квитанція/скрін
           // переказу грошей. isReceipt=true → НЕ шукаємо bestMatchIndex, немає товару на фото.
           var promptp = 'Це фото від клієнта інтернет-магазину одягу. КРОК 0: це фото ОДЯГУ/ТОВАРУ, чи це банківська квитанція/платіжна інструкція/скріншот переказу грошей (IBAN, Monobank, ПриватБанк тощо)? Якщо це квитанція/документ про оплату — поверни ЛИШЕ {"isReceipt":true} і більше нічого, без опису й індексів. Якщо це одяг/товар — переходь до кроків нижче.\nКРОК 1: визнач ЗАГАЛЬНИЙ ТИП товару на фото (напр. кофта/светр, куртка/вітровка, костюм, взуття, джинси/штани, футболка) — лише тип, не конкретну модель. КРОК 2: у каталозі нижче кожен товар має позначку [категорія: ...] — розглядай ЛИШЕ товари з категорією, що відповідає визначеному типу; серед НИХ знайди найближчий за кольором/фасоном/деталями. НІКОЛИ не вибирай товар з ІНШОЇ категорії, навіть якщо він на вигляд чимось схожий. Якщо в потрібній категорії жодного релевантного немає — bestMatchIndex null (не бери товар з іншої категорії як компроміс). Якщо на зображенні написано артикул / код товару — з підписом («Артикул: D0043», «арт. A0187») або БЕЗ нього (просто «D0043», «A0187», «234286» окремим написом) — перепиши сам код у поле "article" (без слова «Артикул»); ціни, розміри й назви бренду кодом не вважай. Код бери ЛИШЕ якщо він буквально видимий на самому зображенні — НІКОЛИ не переписуй артикул із каталогу нижче. Нема — null. КРОК 3: якщо на фото ОБРАЗ із кількох речей (напр. кофта + джинси + футболка + взуття разом, флетлей чи манекен) — перелічи типи всіх видимих речей у "outfitItems" (напр. ["кофта","джинси","футболка","лофери"]); одна річ — ["її тип"]. Поверни ЛИШЕ JSON {"isReceipt":false,"description":"...","detectedCategory":"...","outfitItems":[...],"article":"..." або null,"bestMatchIndex":число_або_null}.\nКаталог:\n' + catList;
-          var grp = await __geminiFetch(__gKeys, { contents: [{ parts: [{ text: promptp }, { inline_data: { mime_type: mimep, data: b64p } }] }] });
+          var grp = await __geminiFetch(__gKeys, { contents: [{ parts: [{ text: promptp + (__vidFrames.length > 1 ? '\n(Зображення нижче — ' + __vidFrames.length + ' кадри одного відео про ОДИН товар.)' : '') }, { inline_data: { mime_type: mimep, data: b64p } }].concat(__vidFrames.slice(1).map(function (f) { return { inline_data: { mime_type: 'image/jpeg', data: f } }; })) }] });
           var gjp = await grp.json();
           var tp = ((((gjp.candidates || [])[0] || {}).content || {}).parts || [{}])[0].text || '';
           var mmp = tp.match(/\{[\s\S]*\}/);

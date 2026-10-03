@@ -294,6 +294,14 @@ async function narrowSetTo(A, articles) {
     return true;
 }
 
+/** Аналізатор каже, що клієнт хоче весь комплект або ≥2 його речі (артикули зі складу комплекту, з якого прийшла поточна річ). */
+function wantsSeveralFromOrigin(u, og) {
+    const w = u && u.setItemsWanted;
+    if (!w || !og || !Array.isArray(og.items)) return false;
+    if (w.all) return true;
+    return (w.items || []).filter((x) => og.items.includes(String(x).toUpperCase())).length >= 2;
+}
+
 /** Рішення аналізатора «що з комплекту клієнт хоче купити» (u.setItemsWanted) → { all } або { articles:[артикули складу] }, або
  * null, коли аналізатор не впевнений. Слова клієнта («светр», «чешки») аналізатор уже звів до артикулів; якщо прийшло слово —
  * звіряємо зі складом тим самим matchSetItem (назва категорії з CRM / слова назви), що й правки складу. */
@@ -1144,7 +1152,11 @@ async function runPolicyInner(A, u) {
         if (cur && cur.isSet && u.setChoice === 'set' && fromSetArticle && fromSetArticle.toUpperCase() !== String(cur.sku).toUpperCase() && !ctx.crmOrderId) {
             u.productHint = { ...u.productHint, article: fromSetArticle };
             if (!new RegExp(fromSetArticle, 'i').test(ctx.lastUserMessage || '')) ctx.lastUserMessage = String(ctx.lastUserMessage || text) + ' артикул ' + fromSetArticle;
-        } else if (cur && !cur.isSet && u.setChoice === 'set' && !ctx.crmOrderId && (fromSetArticle || ogFits)) {
+        } else if (cur && !cur.isSet && !ctx.crmOrderId && ((u.setChoice === 'set' && (fromSetArticle || ogFits)) || (ogFits && wantsSeveralFromOrigin(u, og)))) {
+            // + аналізатор каже, що клієнт хоче КІЛЬКА речей цього ж комплекту («Кофта чорна, джинси темно сині», поки в розмові лише
+            // кофта; тест 145) — повертаємо комплект, а розділ 3 звузить його до названих речей (setItemsWanted).
+            // Колір уже обраної речі переносимо в підказки кольорів позицій, щоб він не загубився при поверненні до комплекту.
+            if (ctx.colorChoice && ctx.colorChoice.color) ctx.agent.setItemColorHints = (ctx.agent.setItemColorHints || []).concat([{ item: cur.sku, color: ctx.colorChoice.color }]).slice(-8);
             const setSku = fromSetArticle || og.sku;
             u.productHint = { ...u.productHint, article: setSku };
             if (!new RegExp(setSku, 'i').test(ctx.lastUserMessage || '')) ctx.lastUserMessage = String(ctx.lastUserMessage || text) + ' артикул ' + setSku;

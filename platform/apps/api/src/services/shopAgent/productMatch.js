@@ -582,7 +582,22 @@ try {
       if (__sameCat.length > 1) {
         var __pubBase = (keys.CRM_PUBLIC_BASE || 'https://pcrm.fineko.space').replace(/\/$/, '');
         var __resolve = function (u) { u = String(u || ''); if (!u) return ''; return /^https?:/.test(u) ? u : __pubBase + (u.charAt(0) === '/' ? u : '/' + u); };
-        var __pick = await require('../adAutoBind').geminiPick({ __geminiKeys: __gKeys }, __refImg0, '', __sameCat, __resolve, 'Клієнт надіслав зображення товару (кадр сторіз/рілсу або фото). Який із кандидатів — ТОЧНО той самий товар: крій, капюшон/комір, блискавка, манжети, фактура тканини, колірна гама? Кольори в кандидатів можуть відрізнятись — порівнюй модель, не колір.');
+        var __refQ = 'Клієнт надіслав зображення товару (кадр сторіз/рілсу або фото). Який із кандидатів — ТОЧНО той самий товар: крій, капюшон/комір, блискавка, манжети, фактура тканини, колірна гама? Кольори в кандидатів можуть відрізнятись — порівнюй модель, не колір.';
+        var __pick = null;
+        // Реклама не прийшла (≈22% розмов), а клієнт надіслав рілс/фото — найчастіше це креатив реклами, що зараз крутиться.
+        // Спершу звіряємо лише з рекламованими товарами категорії; не збіглось — з усією категорією (2026-10-03, Анна: рілс A0191
+        // → схожий нерекламований SH617927).
+        if (!context.entryAdId) {
+          try {
+            var __advIds = await require('./catalogHint').activeAdProductIds(keys);
+            var __advCat = __sameCat.filter(function (x) { return __advIds[x.id] != null; });
+            if (__advCat.length && __advCat.length < __sameCat.length) {
+              __pick = await require('../adAutoBind').geminiPick({ __geminiKeys: __gKeys }, __refImg0, '', __advCat, __resolve, __refQ);
+              if (__pick && __pick.product) context.photoAdPrior = String(__pick.product.sku || '');
+            }
+          } catch (e) { __pick = null; }
+        }
+        if (!(__pick && __pick.product)) __pick = await require('../adAutoBind').geminiPick({ __geminiKeys: __gKeys }, __refImg0, '', __sameCat, __resolve, __refQ);
         if (__pick && __pick.product) { if (!__viaArt || __pick.product !== found) { found = __pick.product; via = (__viaArt ? 'photo' : via) + '+ref'; mk = 'ref_' + String(found.sku || found.id); } }
         else if (!__viaArt) { context.visionUncertain = String(found.sku || ''); found = null; via = ''; mk = ''; }
       }

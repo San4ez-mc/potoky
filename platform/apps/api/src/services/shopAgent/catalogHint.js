@@ -205,4 +205,12 @@ var catalogHintPhotos = top.map(function (p) { return __resolveUrl((Array.isArra
 return { catalogHint: lines.join('\n'), catalogHintCount: top.length, catalogHintTotal: hits.length, catalogHintSkus: top.map(function (p) { return String(p.sku || ''); }).filter(Boolean).join(','), catalogHintPhotos: catalogHintPhotos, catalogHintAdGuess: __advList ? 'list' : '', catalogCategories: catList, unknownTurns: unknownTurns };
 
 }
-module.exports = { computeCatalogHint };
+// Для productMatch: id товарів, які зараз рекламуються (і є в наявності) — пріоритет при звірці фото без даних реклами.
+async function activeAdProductIds(keys) {
+  var base = (keys.CRM_API_BASE || 'http://127.0.0.1:4700/api').replace(/\/$/, '');
+  var apiKey = (keys.CRM_API_KEY || '').trim(); if (!apiKey) return {};
+  var ids = {};
+  (await activeAdsSummary(base, { Authorization: 'Bearer ' + apiKey, Accept: 'application/json' })).forEach(function (r) { if (r && r.productId && !r.outOfStock) ids[r.productId] = Number(r.conversations) || 0; });
+  return ids;
+}
+module.exports = { computeCatalogHint, activeAdProductIds };

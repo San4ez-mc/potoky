@@ -725,6 +725,39 @@ async function main() {
         check('23.3 Питали 40 хв тому — нагадування дозволене', C.out.some((o) => o.step === 'set_ask'), 'steps: ' + C.out.map((o) => o.step).join(','));
     }
 
+    // ── 24. Етап 2 комплектів (03.10): одна річ із комплекту — звичайний товар із CRM; звуження складу — одна функція.
+    {
+        const { matchProduct } = require('../productMatch');
+        const { loadCatalog } = require('../lib');
+        const cat = await loadCatalog(BOT, assets.keys);
+        const load = async (sku) => { const tmp = { lookupProductsRaw: cat.products, lookupAdsRaw: cat.ads, lookupCategoriesRaw: cat.categories || [], agent: {} }; const r = await matchProduct(tmp, assets.keys, 'артикул ' + sku, { botId: BOT }); return (r && r.product) || tmp.product; };
+        const set = await load('set1112');
+        const kofta = await load('A0187');
+        check('24.0 set1112 і A0187 завантажуються з CRM', set && set.isSet && kofta && kofta.sku === 'A0187', (set && set.sku) + ' / ' + (kofta && kofta.sku));
+        if (set && set.isSet && kofta) {
+            // 24.1 «Тільки кофта» → кофта з ВЛАСНИМИ полями (назва, ціни за кількість), а не копія комплекту.
+            const A = freshA({ turnText: 'Тільки кофта' });
+            A.ctx.product = JSON.parse(JSON.stringify(set));
+            A.ctx.agent.setAskedAt = { sku: set.sku, at: Date.now() - 60 * 1000 };
+            await runPolicy(A, freshU({ intent: 'choose_set', setChoice: 'item', setArticle: 'A0187' }));
+            const p = A.ctx.product || {};
+            check('24.1 «Тільки кофта» → товар A0187 зі своєю назвою, не назвою комплекту', p.sku === 'A0187' && !p.isSet && !/комплект|set11/i.test(String(p.customerName || '')), (p.sku || '') + ' «' + String(p.customerName || '').slice(0, 50) + '» via ' + p._via);
+            check('24.2 …і зі своїми цінами за кількість та сіткою, як у картці A0187', JSON.stringify(p.qtyPrices || null) === JSON.stringify(kofta.qtyPrices || null) && String(p.sizeChartUrl || '') === String(kofta.sizeChartUrl || ''), 'qtyPrices ' + JSON.stringify(p.qtyPrices) + ' vs ' + JSON.stringify(kofta.qtyPrices));
+            // 24.3 «кофта і джинси», потім «поверніть футболку» → футболка і у виборі, і в товарі (розмір їй рахується).
+            const tee = (set.setItems || []).find((it) => /футбол/i.test(String(it.name)));
+            const B = freshA({ turnText: 'Кофта і джинси' });
+            B.ctx.product = JSON.parse(JSON.stringify(set));
+            B.ctx.agent.setAskedAt = { sku: set.sku, at: Date.now() - 60 * 1000 };
+            await runPolicy(B, freshU({ intent: 'choose_set', itemColors: [] }));
+            const narrowed = (B.ctx.product.setItems || []).length;
+            B.turnText = 'І футболку поверніть'; B.out = [];
+            await runPolicy(B, freshU({ intent: 'change_set', addItem: 'футболку' }));
+            const inProduct = tee && (B.ctx.product.setItems || []).some((it) => it.article === tee.article);
+            const inSel = tee && (B.ctx.setSelection || []).some((it) => it.article === tee.article);
+            check('24.3 «Кофта і джинси» → 2 речі; «поверніть футболку» → футболка і у виборі, і в товарі', narrowed === 2 && inProduct && inSel, 'після вибору: ' + narrowed + ' | у товарі: ' + (B.ctx.product.setItems || []).map((x) => x.article).join(',') + ' | у виборі: ' + (B.ctx.setSelection || []).map((x) => x.article).join(','));
+        }
+    }
+
     console.log('');
     const failed = results.filter((r) => !r.ok);
     console.log(results.length + ' тестів, ' + failed.length + ' провалено.');

@@ -16,6 +16,7 @@ const { classifyKbQuestion, kbSimilarity, kbSimilar } = require('./kbRules');
 const { catalogFacts, catalogProducts, otherCategoryProducts } = require('./catalogFacts');
 const { kbMatch, sameAsEscalated } = require('./kbMatch');
 const { extractHeightWeight } = require('./understand');
+const { matchProduct } = require('./productMatch');
 
 // 2026-09-14 (власник: "я взагалі проти будь-якого хардкоду... все в ноди перенеси"): TRUST_STEP1/2,
 // HANDOFF_TEXT та решта клієнтських/менеджерських текстів цього файлу БУЛИ тут як JS-константи —
@@ -261,6 +262,58 @@ async function applySetEdit(A, u, pp) {
     ctx.agent.setEditNote = notes.join('; ');
     if (changed) applySetPricing(ctx, pp);
     return changed;
+}
+
+/** Єдиний спосіб змінити, які речі комплекту беремо («кофта і джинси», «без взуття», «поверніть футболку»). Раніше це робили
+ * два місця по-різному: вибір кількох речей не запамʼятовував повний склад (setItemsAll), тож повернена потім річ потрапляла у
+ * вибір, але не в товар — і розмір їй не рахувався; розміри прибраних речей лишались лише в одному з двох шляхів.
+ * Тут: повний склад запамʼятовується один раз; уже обрані колір/розмір/кількість речей зберігаються; розміри прибраних
+ * речей видаляються; параметри підбору (зріст/вага/взуття) і ціна перераховуються під новий склад. */
+async function narrowSetTo(A, articles) {
+    const { ctx } = A; const p = P(ctx);
+    if (!p || !p.isSet) return false;
+    const up = (x) => String(x || '').toUpperCase();
+    const full = (Array.isArray(ctx.agent.setItemsAll) && ctx.agent.setItemsAll.length) ? ctx.agent.setItemsAll : (Array.isArray(p.setItems) ? p.setItems : []);
+    ctx.agent.setItemsAll = full;
+    if (!Array.isArray(ctx.agent.setOriginal) || !ctx.agent.setOriginal.length) ctx.agent.setOriginal = initSetSelection({ setItems: full });
+    const keep = new Set(articles.map(up));
+    const items = full.filter((it) => keep.has(up(it.article)));
+    if (!items.length) return false;
+    const cur = Array.isArray(ctx.setSelection) ? ctx.setSelection : [];
+    const prev = new Map(cur.map((s) => [up(s.article), s]));
+    // Речі не з цього комплекту, додані з каталогу («і ще бомбер» у комплекті) — лишаються у виборі як були.
+    const outside = cur.filter((s) => keep.has(up(s.article)) && !full.some((it) => up(it.article) === up(s.article)));
+    ctx.setSelection = initSetSelection({ setItems: items }).map((s) => prev.get(up(s.article)) || s).concat(outside);
+    ctx.product = { ...p, setItems: items };
+    ctx.setMode = 'set';
+    if (ctx.setSizeMap) for (const k of Object.keys(ctx.setSizeMap)) if (!keep.has(up(k))) delete ctx.setSizeMap[k];
+    const catNames = ctx.agent.setParams && ctx.agent.setParams.categoryNames;
+    ctx.agent.setParams = await resolveSetParams(A, ctx.product);
+    if (catNames && ctx.agent.setParams) ctx.agent.setParams.categoryNames = { ...catNames, ...ctx.agent.setParams.categoryNames };
+    applySetPricing(ctx, ctx.product);
+    return true;
+}
+
+/** Одна річ, обрана з комплекту, — ЗВИЧАЙНИЙ товар із CRM, зібраний тим самим кодом, що й товар за артикулом (productMatch),
+ * а не копія комплекту з частково перезаписаними полями. n_set_apply робив Object.assign({}, комплект, {...}) — річ успадковувала
+ * розмірну сітку, «Інформацію для ШІ», фото допродажу комплекту й губила власні ціни за кількість (правка 89b80358, урок §15.25).
+ * Комплект лишається в памʼяті (agent.originSet) — «весь комплект» повертає саме його. Якщо CRM недоступна — запас: n_set_apply. */
+async function pickSingleSetItem(A, article) {
+    const { ctx } = A; const setP = P(ctx);
+    let item = null; let supplier = '';
+    try {
+        const cat = await loadCatalog(A.botId, A.keys);
+        // Окремий контекст лише для пошуку за артикулом: без реклами/поста/фото цього ходу (інакше ті самі сигнали знову
+        // знайшли б комплект), і без поточного товару. Справжній ctx матчинг не чіпає.
+        const tmp = { ...ctx, product: undefined, catalogHintPick: '', entryAdId: undefined, entryAd: undefined, lastReferral: undefined, adTitle: undefined, sharedPost: undefined, lastUserImageUrl: undefined, lastUserImageUrls: undefined, storyFrames: undefined, storyRetry: undefined, commentProductArticle: undefined, lookupProductsRaw: cat.products, lookupAdsRaw: cat.ads, lookupCategoriesRaw: cat.categories || [] };
+        const r = await matchProduct(tmp, A.keys, 'артикул ' + article, { botId: A.botId });
+        const pr = (r && r.product) || tmp.product;
+        if (pr && !pr.isSet && String(pr.sku || '').toUpperCase() === String(article).toUpperCase()) { item = pr; supplier = (r && r.supplier) || pr.supplier || ''; }
+    } catch (e) { item = null; }
+    if (!item) { ctx.setPick = { setChoice: 'item', article }; await T.setApply(A); return; }
+    ctx.product = { ...item, _via: 'set_item:' + String((setP && setP.sku) || '') + ':' + article };
+    if (supplier) ctx.supplier = supplier;
+    ctx.setMode = 'item'; ctx.colorChoice = null; delete ctx.setPick;
 }
 
 /** Нормалізує питання для дедупу ескалацій (щоб той самий буквальний повтор не спамив Telegram). */
@@ -1616,8 +1669,7 @@ async function runPolicyInner(A, u) {
         const it0 = art && p.setItems.find((it) => String(it.article).toUpperCase() === art.toUpperCase());
         if (it0) {
             const prev = (Array.isArray(ctx.setSelection) ? ctx.setSelection : []).find((x) => String(x.article).toUpperCase() === art.toUpperCase());
-            ctx.setPick = { setChoice: 'item', article: it0.article };
-            await T.setApply(A);
+            await pickSingleSetItem(A, it0.article);
             delete ctx.setSelection; delete ctx.agent.setOriginal; delete ctx.agent.setPricing; delete ctx.agent.setColorsResolved;
             if (prev && prev.color) ctx.colorChoice = { color: prev.color };
             ctx.agent.lastAsk = '';
@@ -1671,11 +1723,8 @@ async function runPolicyInner(A, u) {
             if (!matched.length && u.questions && u.questions.length) ctx.agent.setGeneralQ = true;
             if (matched.length === 1 && !ctx.agent.setGeneralQ && !/комплект|весь|всі\b|все\b|образ|цілий|повн/i.test(text)) ctx.agent.setNamedItem = matched[0].article;
             if (matched.length > 1 && matched.length < allItems.length) {
-                const matchedArticles = new Set(matched.map((m) => m.article));
                 ctx.agent.setOriginal = allItems;
-                ctx.product = { ...p, setItems: p.setItems.filter((it) => matchedArticles.has(it.article)) };
-                ctx.setSelection = initSetSelection(ctx.product);
-                ctx.setMode = 'set';
+                await narrowSetTo(A, matched.map((m) => m.article));
                 multiHandled = true;
                 // Кольори з цього ж повідомлення («джинси синього… кофта чорного») — до секції кольорів дійде пізніше (після розміру).
                 rememberSetItemColors(ctx, u);
@@ -1685,8 +1734,11 @@ async function runPolicyInner(A, u) {
         // Клієнт дав параметри/колір/згоду або просить змінити склад, не обравши окрему річ → хоче весь комплект
         const impliedSet = !u.setChoice && !u.setArticle && (u.height || u.weight || u.clothingSize || u.ready === 'yes' || u.changeRequest || u.colorMatched || u.color || (Array.isArray(u.itemColors) && u.itemColors.length > 1));
         const namedItem = ctx.agent.setNamedItem && Array.isArray(p.setItems) && p.setItems.some((it) => String(it.article).toUpperCase() === String(ctx.agent.setNamedItem).toUpperCase()) ? ctx.agent.setNamedItem : null;
-        if (u.setChoice === 'item' && u.setArticle) { ctx.setPick = { setChoice: 'item', article: u.setArticle }; await T.setApply(A); }
-        else if (impliedSet && namedItem) { ctx.setPick = { setChoice: 'item', article: namedItem }; await T.setApply(A); }
+        // Артикул позиції від аналізатора має бути в цьому комплекті; інакше — як раніше (n_set_apply лишав комплект).
+        const inSet = (art) => Array.isArray(p.setItems) && p.setItems.some((it) => String(it.article).toUpperCase() === String(art || '').toUpperCase());
+        if (u.setChoice === 'item' && u.setArticle && inSet(u.setArticle)) await pickSingleSetItem(A, p.setItems.find((it) => String(it.article).toUpperCase() === String(u.setArticle).toUpperCase()).article);
+        else if (u.setChoice === 'item' && u.setArticle) { ctx.setPick = { setChoice: 'item', article: u.setArticle }; await T.setApply(A); }
+        else if (impliedSet && namedItem) await pickSingleSetItem(A, namedItem);
         else if (u.setChoice === 'set' || impliedSet) { ctx.setPick = { setChoice: 'set' }; await T.setApply(A); ctx.setMode = 'set'; }
         // Пряма відмова («дякую, не цікавить») — мʼяко закриваємо, а не питаємо вдруге «весь комплект чи окремі речі?» (2026-09-30, правка 87bfcfad «Наполегливий»).
         else if ((u.ready === 'no' || u.intent === 'order_no') && !u.questions.length) { A.out.push({ text: messageText(A.assets, 'n_declined_msg', ctx, A.session.id), step: 'declined' }); ctx.declinedAt = Date.now(); ctx.agent.lastAsk = ''; return; }
@@ -1734,16 +1786,9 @@ async function runPolicyInner(A, u) {
             if (!Array.isArray(ctx.agent.setItemsAll) || !ctx.agent.setItemsAll.length) ctx.agent.setItemsAll = Array.isArray(p0.setItems) ? p0.setItems : [];
             const edited = await applySetEdit(A, u, p0);
             A._setEditDone = true;
-            const keep = new Set(ctx.setSelection.map((s) => String(s.article).toUpperCase()));
-            const items = ctx.agent.setItemsAll.filter((it) => keep.has(String(it.article).toUpperCase()));
-            if (items.length && items.length !== (p0.setItems || []).length) {
-                ctx.product = { ...p0, setItems: items };
-                const catNames = ctx.agent.setParams && ctx.agent.setParams.categoryNames;
-                ctx.agent.setParams = await resolveSetParams(A, ctx.product);
-                if (catNames && ctx.agent.setParams) ctx.agent.setParams.categoryNames = { ...catNames, ...ctx.agent.setParams.categoryNames };
-                if (ctx.setSizeMap) for (const k of Object.keys(ctx.setSizeMap)) if (!keep.has(String(k).toUpperCase())) delete ctx.setSizeMap[k];
-                applySetPricing(ctx, ctx.product);
-            }
+            const nowArts = ctx.setSelection.map((s) => String(s.article).toUpperCase()).sort().join('|');
+            const prodArts = (p0.setItems || []).map((it) => String(it.article).toUpperCase()).sort().join('|');
+            if (nowArts !== prodArts) await narrowSetTo(A, ctx.setSelection.map((s) => s.article));
             if (edited && ctx.agent.setEditNote) {
                 A.out.push({ text: 'Записала: ' + ctx.agent.setEditNote + ' ✅', step: 'set_edit' });
                 u.questions = u.questions.filter((q) => !/(розмір|більш|менш|замість|колір|взутт|без)/i.test(String(q)));

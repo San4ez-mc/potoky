@@ -81,7 +81,10 @@ async function main() {
     const fk = await db.funnelKey.findUnique({ where: { botId_key: { botId: broll.id, key: 'FAL_CONNECTOR_ID' } }, select: { value: true } });
     await callTool('update_funnel_key', { botId: bot.id, key: 'FAL_CONNECTOR_ID', value: fk.value, label: 'fal.ai (кадри, музика, AI-анімація)' });
 
-    const f = await callTool('get_funnel', { botId: bot.id });
+    let f = await callTool('get_funnel', { botId: bot.id });
+    // new_bot кладе дефолтну message-ноду «Intro» з ребром від start: вона перехопила б перший хід (§15.8) — прибираємо
+    const intro = f.nodes.find((n) => n.id === 'msg_intro');
+    if (intro) { await callTool('delete_node', { botId: bot.id, nodeId: 'msg_intro' }); f = await callTool('get_funnel', { botId: bot.id }); }
     const find = (label) => f.nodes.find((n) => n.data && n.data.label === label);
     let start = f.nodes.find((n) => n.type === 'start');
     const L1 = 'Нормалізація сценарію';

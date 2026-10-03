@@ -20,8 +20,10 @@ const scenes = [
 
 async function main() {
     const bot = await db.bot.findFirst({ where: { slug: 'content-video-broll' } });
-    const k = await db.funnelKey.findUnique({ where: { botId_key: { botId: bot.id, key: 'FAL_AI_KEY' } }, select: { value: true } });
-    if (!k || !k.value) throw new Error('FAL_AI_KEY не знайдено');
+    const kc = await db.funnelKey.findUnique({ where: { botId_key: { botId: bot.id, key: 'FAL_CONNECTOR_ID' } }, select: { value: true } });
+    const conn = kc && kc.value ? await db.savedConnector.findUnique({ where: { id: kc.value } }) : null;
+    const k = { value: conn && conn.config && conn.config.api_key };
+    if (!k.value) throw new Error('ключ fal (конектор) не знайдено');
     const payload = {
         scenes, style: STYLE, falApiKey: k.value,
         imageModel: cheap ? 'fal-ai/flux/schnell' : 'fal-ai/flux/dev',

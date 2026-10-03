@@ -38,6 +38,7 @@ return {
   svStyle: String(context.style || context.styleBible || '').slice(0, 800),
   svMusic: music && (music.prompt || music.url) ? music : null,
   svTotalSec: scenes.reduce(function (a, s) { return a + s.sec; }, 0),
+  svLogo: context.logo === false ? null : (context.logoUrl || null), // логотип проєкту: watermark + фінальна заставка
 };`;
 
 const startCode = String.raw`// Запуск рендеру в мікросервісі short-video (асинхронно). Якщо запуск не вдався — одразу повідомляємо content2 про помилку,
@@ -52,7 +53,7 @@ return (async () => {
   if (!falKey) return await fail('NO_FAL_KEY: у воронки content-short-video нема FAL_CONNECTOR_ID');
   var payload = {
     scenes: context.svScenes, style: context.svStyle, music: context.svMusic, falApiKey: falKey,
-    imageModel: context.imageModel || undefined, consistency: context.consistency || undefined,
+    imageModel: context.imageModel || undefined, consistency: context.consistency || undefined, logoUrl: context.svLogo || undefined,
     callbackUrl: cb || null, postItemId: context.postItemId || null, postGroupId: context.postGroupId || null,
   };
   try {

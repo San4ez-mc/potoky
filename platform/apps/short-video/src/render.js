@@ -271,10 +271,49 @@ async function renderVideo(job, ctx) {
             '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-shortest', '-movflags', '+faststart', outFile]);
     }
 
+    // Брендування: логотип проєкту (водяний знак у кутку + фінальна заставка). Не критично: без лого/при збої лишаємо чисте відео.
+    let finalSec = totalSec;
+    if (job.logoUrl) {
+        onStep('brand');
+        try {
+            const logoPath = await download(job.logoUrl, path.join(dir, 'logo_src'));
+            const branded = path.join(dir, 'branded.mp4');
+            await applyBranding(outFile, logoPath, branded, dir);
+            fs.copyFileSync(branded, outFile);
+            finalSec = totalSec + OUTRO_SEC;
+        } catch (e) { console.error('[short-video] branding failed, keeping plain video:', e.message); warnings.push('branding failed: ' + String(e.message).slice(0, 80)); }
+    }
+
     const thumb = outFile.replace(/\.mp4$/, '.jpg');
     try { await run('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', '-ss', '0.8', '-i', outFile, '-frames:v', '1', '-q:v', '3', thumb]); } catch (e) { /* прев'ю не критичне */ }
 
-    return { file: outFile, thumb: fs.existsSync(thumb) ? thumb : null, durationSec: Number(totalSec.toFixed(1)), cost: Number(cost.toFixed(3)), music: !!musicPath, warnings };
+    return { file: outFile, thumb: fs.existsSync(thumb) ? thumb : null, durationSec: Number(finalSec.toFixed(1)), cost: Number(cost.toFixed(3)), music: !!musicPath, warnings };
 }
 
-module.exports = { renderVideo, wrapText, textLayout };
+const OUTRO_SEC = 1.8;
+
+/**
+ * Логотип у відео: (1) невеликий водяний знак зліва вгорі (нижче системної смуги TikTok/Shorts, не заважає підписам знизу й кнопкам справа);
+ * (2) фінальна заставка 1.8 с: лого по центру на темному тлі з плавною появою. Працює і для вже готових відео (скрипт бренду готових).
+ */
+async function applyBranding(videoPath, logoPath, outPath, dir) {
+    const wm = path.join(dir, 'wm.mp4');
+    // водяний знак поверх усього відео (аудіо без змін)
+    await run('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', '-i', videoPath, '-i', logoPath,
+        '-filter_complex', `[1:v]scale=150:-1,format=rgba,colorchannelmixer=aa=0.92[l];[0:v][l]overlay=44:230,format=yuv420p[v]`,
+        '-map', '[v]', '-map', '0:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-r', String(FPS), '-c:a', 'copy', '-movflags', '+faststart', wm]);
+    // заставка з лого + тиха доріжка того ж формату
+    const outro = path.join(dir, 'outro.mp4');
+    await run('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error',
+        '-f', 'lavfi', '-i', `color=c=0x12141c:s=${W}x${H}:r=${FPS}:d=${OUTRO_SEC}`,
+        '-loop', '1', '-framerate', String(FPS), '-t', String(OUTRO_SEC), '-i', logoPath,
+        '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo',
+        '-filter_complex', `[1:v]scale=760:-1,format=rgba,fade=t=in:st=0:d=0.5:alpha=1[l];[0:v][l]overlay=(W-w)/2:(H-h)/2-60,format=yuv420p[v]`,
+        '-map', '[v]', '-map', '2:a', '-t', String(OUTRO_SEC), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-r', String(FPS), '-c:a', 'aac', '-b:a', '160k', outro]);
+    // склейка (filter concat — працює і коли параметри аудіо трохи різняться)
+    await run('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', '-i', wm, '-i', outro,
+        '-filter_complex', '[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[v][a]',
+        '-map', '[v]', '-map', '[a]', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p', '-r', String(FPS), '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', outPath]);
+}
+
+module.exports = { renderVideo, wrapText, textLayout, applyBranding, download };

@@ -1,0 +1,9 @@
+{
+    "name": "@platform/short-video",
+    "version": "1.0.0",
+    "private": true,
+    "description": "Рендер коротких вертикальних відео без обличчя зі сценарію (fal.ai + ffmpeg)",
+    "main": "src/index.js",
+    "scripts": { "start": "node src/index.js" },
+    "license": "UNLICENSED"
+}

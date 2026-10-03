@@ -138,6 +138,21 @@ async function main() {
         }
     }
 
+    // 8) Parse Intent: відео-план шматками по 5 (а не 10). 2026-10-03: перший шматок із 10 відео-сценаріїв (~25 КБ JSON) закінчився
+    //    bulk-import 500 «Unexpected end of JSON input» (тіло запиту обірвалось) — 10 плейсхолдерів зависли й впали по таймауту.
+    {
+        let code = String(node(N.parse).data.code);
+        if (code.includes('__videoChunk')) console.log('parse chunk: already patched');
+        else {
+            const a = 'var CHUNK_MAX = 10;';
+            if (!code.includes(a)) throw new Error('parse chunk: маркер CHUNK_MAX не знайдено');
+            code = code.replace(a, "var __videoChunk = resolvedTasks.some(function(r){return /tiktok_video|youtube_short|instagram_reels/.test(String(r.format));});\nvar CHUNK_MAX = __videoChunk ? 5 : 10;");
+            new Function('context', code);
+            await callTool('update_node', { botId: CM, nodeId: N.parse, data: { code } });
+            console.log('parse chunk: patched');
+        }
+    }
+
     // 6) Chat text: для відео-постів показуємо сценарій по сценах (раніше в чат ішов лише підпис)
     {
         const cn = node('node_1781269102711');

@@ -24,7 +24,7 @@ const MARK = 'ВІДЕО-СЦЕНАРІЇ';
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
 const VIDEO_BLOCK = String.raw`ВІДЕО-СЦЕНАРІЇ (формати tiktok_video, youtube_short, instagram_reels — короткі вертикальні відео БЕЗ людини в кадрі, 12-18 с; збирає воронка content-short-video):
-Такий пост — це СЦЕНАРІЙ. У JSON: platform = tiktok | youtube | reels; post_type = video | short | reel; funnel_slug = "content-short-video"; content = ПІДПИС під відео (1-2 речення + заклик + 3-5 хештегів; для youtube — ще перший рядок-назва ≤100 символів); structure = одна зі структур vid_* зі списку СТРУКТУРИ ПОСТІВ (vid_cartoon_story, vid_kinetic_facts, vid_organizer_story, vid_pov_mini_film); hook = напис першої сцени. funnel_params:
+Такий пост — це СЦЕНАРІЙ. У JSON: platform = tiktok | youtube | reels; post_type = video | short | reel; funnel_slug = "content-short-video"; content = ПІДПИС під відео (1-2 речення + заклик + 3-5 хештегів; для youtube — ще перший рядок-назва ≤100 символів). ПІДПИС ПИШИ БЕЗ ТИРЕ (знак «—» і «-» між словами заборонені; став крапку, кому або двокрапку) і поділи на 2 короткі абзаци (речення; порожній рядок; заклик + хештеги), інакше його заблокує гейт якості; structure = одна зі структур vid_* зі списку СТРУКТУРИ ПОСТІВ (vid_cartoon_story, vid_kinetic_facts, vid_organizer_story, vid_pov_mini_film); hook = напис першої сцени. funnel_params:
 {"style":"<ДОСЛІВНО англійський рядок після STYLE: з правила «Стиль відео» у БАЗОВИХ ПРАВИЛАХ>","music":{"prompt":"<англійською: легка грайлива музика під настрій сюжету, 120 BPM, без вокалу>"},"scenes":[{"sec":3,"visual":"<англійською: що в кадрі; героя називай the character; без тексту, літер і брендів у кадрі>","text":"<напис на екрані: українською, ≤6 слів, без емодзі й тире>","motion":"zoom_in|zoom_out|pan_left|pan_right"}, ...]}
 ПРАВИЛА СЦЕНАРІЮ: 4-6 сцен, sec 2-4 (разом 12-18 с). Сцена 1 — ХУК за 3 с: конфлікт, який глядач впізнає (нудна субота, порожня зала, чати мовчать), + напис-питання/POV/цифра; жодних привітань і логотипів. Далі: ускладнення → поворот (додаток) → результат (компанія, подія) → останній напис = CTA. Сюжет має читатись БЕЗ звуку. Чергуй motion і плани (крупний/загальний). Один персонаж у всіх сценах. motion "ai" — максимум у ОДНІЙ сцені ролика і лише в структурі vid_pov_mini_film.
 CTA і всі факти про додаток (тестування, релізи, платформи, функції, умови) — ТІЛЬКИ з блоку АКТУАЛЬНІ ФАКТИ; нічого не вигадуй. Хук добирай під аудиторію: для користувачів — біль «нічого робити / не знаю куди піти / чати мовчать»; для організаторів — «прийшло 3 з 10 / ніхто не знав про подію» (структура vid_organizer_story).
@@ -82,8 +82,14 @@ async function main() {
     // 3) ST: Generate
     {
         let sp = String(node(N.st).data.systemPrompt);
-        if (sp.includes(MARK)) console.log('ST: already patched');
-        else {
+        if (sp.includes(MARK)) {
+            // оновлюємо вже вставлений блок до поточного тексту (правки формулювань застосовуються повторним запуском)
+            const i = sp.indexOf(MARK + ' (формати'), j = sp.indexOf('ТОЧНА КІЛЬКІСТЬ:');
+            if (i < 0 || j < i) throw new Error('ST: межі блоку ВІДЕО-СЦЕНАРІЇ не знайдено');
+            const next = sp.slice(0, i) + VIDEO_BLOCK + sp.slice(j);
+            if (next === sp) console.log('ST: already up to date');
+            else { await callTool('update_node', { botId: CM, nodeId: N.st, data: { systemPrompt: next } }); console.log('ST: video block refreshed'); }
+        } else {
             const enumOld = '"platform":"threads|instagram|stories|reels|linkedin|telegram"';
             const slugOld = '- instagram_reels → content-ai-bg або content-video-broll';
             const anchor = 'ТОЧНА КІЛЬКІСТЬ:';

@@ -120,6 +120,24 @@ async function main() {
         }
     }
 
+    // 7) Parse Intent: «14 днів від 06.10.2026» розкидалось від СЬОГОДНІ, бо явна дата початку ігнорувалась (startD завжди today/завтра).
+    //    Знайдено 2026-10-03 на плані відео для KIRO: пости лягли на 03.10-16.10 замість 06.10-19.10.
+    {
+        let code = String(node(N.parse).data.code);
+        if (code.includes('__exStart')) console.log('parse start-date: already patched');
+        else {
+            const a = "// «від завтра»";
+            if (!code.includes(a)) throw new Error('parse start-date: маркер «від завтра» не знайдено');
+            const add = String.raw`
+    var __exStart = String(t.date||'').match(/(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?/); // явна дата початку: «від 06.10.2026»
+    if (__exStart) { var __y = __exStart[3] ? parseInt(__exStart[3],10) : baseToday.getFullYear(); if (__y < 100) __y += 2000; startD = new Date(__y, parseInt(__exStart[2],10)-1, parseInt(__exStart[1],10)); }`;
+            code = code.replace(a, a + add);
+            new Function('context', code);
+            await callTool('update_node', { botId: CM, nodeId: N.parse, data: { code } });
+            console.log('parse start-date: patched');
+        }
+    }
+
     // 6) Chat text: для відео-постів показуємо сценарій по сценах (раніше в чат ішов лише підпис)
     {
         const cn = node('node_1781269102711');

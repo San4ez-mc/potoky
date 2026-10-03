@@ -16,13 +16,16 @@ async function findOrCreateReplayUser(realUserId) {
     return db.user.create({ data: { telegramId: tg, username: 'replay_' + Date.now().toString(36), firstName: 'Replay', metadata: { replay: true }, ...(realUser && realUser.projectId ? { projectId: realUser.projectId } : {}) } });
 }
 
-async function replaySession(realSessionId, { maxTurns = 30, keep = false, log = () => {} } = {}) {
+// dropAd: відтворити розмову так, як її бачив бот на першому ході, коли Zernio не передав рекламу (вона доходить пізніше
+// опитуванням і лежить у фінальному context — без цієї опції реплей «знає» більше, ніж знав бот).
+async function replaySession(realSessionId, { maxTurns = 30, keep = false, log = () => {}, dropAd = false } = {}) {
     const real = await db.session.findUnique({ where: { id: realSessionId } });
     if (!real) throw new Error('real session not found');
     const rc = real.context || {};
     const msgs = await db.message.findMany({ where: { sessionId: realSessionId }, orderBy: { createdAt: 'asc' }, select: { role: true, content: true, metadata: true, createdAt: true } });
     const user = await findOrCreateReplayUser(real.userId);
     const seed = { testMode: true, replayOf: realSessionId, psid: rc.psid, igUsername: rc.igUsername, senderName: rc.senderName, entryAdId: rc.entryAdId, entryAd: rc.entryAd, lastReferral: rc.lastReferral, adTitle: rc.adTitle, postId: rc.postId, commentProductArticle: rc.commentProductArticle, commentProductAt: rc.commentProductAt };
+    if (dropAd) { delete seed.entryAdId; delete seed.entryAd; delete seed.lastReferral; delete seed.adTitle; }
     for (const k of Object.keys(seed)) if (seed[k] === undefined) delete seed[k];
     const test = await db.session.create({ data: { userId: user.id, botId: real.botId, state: 'inbox', isTest: true, context: seed } });
     const lines = [];

@@ -30,7 +30,21 @@ return (async () => {
       break;
     }
     if(!cj || !cj.id) return { error:'CONTAINER_FAILED '+JSON.stringify(cj).slice(0,300) };
-    if(mt!=='TEXT'){ await new Promise(function(r){ setTimeout(r, mt==='VIDEO'?20000:3000); }); }
+    if(mt!=='TEXT'){
+      // Контейнер із медіа готується не миттєво: чекаємо статусу FINISHED (відео — до ~3 хв), а не фіксовану паузу.
+      var ready = false, perr = null;
+      for (var w = 0; w < (mt==='VIDEO' ? 40 : 10); w++) {
+        await sleep(mt==='VIDEO' ? 5000 : 2000);
+        try {
+          var sr = await fetch('https://graph.threads.net/v1.0/'+cj.id+'?fields=status,error_message&'+qs);
+          var sj = await sr.json();
+          if (sj && sj.status === 'FINISHED') { ready = true; break; }
+          if (sj && (sj.status === 'ERROR' || sj.status === 'EXPIRED')) { perr = sj.status+' '+(sj.error_message||''); break; }
+        } catch(e) {}
+      }
+      if (perr) return { error:'MEDIA_FAILED '+perr };
+      if (!ready) return { error:'MEDIA_NOT_READY (контейнер '+cj.id+' не став FINISHED вчасно)' };
+    }
     var p = await fetch(base+'/threads_publish?creation_id='+encodeURIComponent(cj.id)+'&'+qs, {method:'POST'});
     var pj = await p.json();
     if(!pj || !pj.id) return { error:'PUBLISH_FAILED '+JSON.stringify(pj).slice(0,300) };
@@ -60,6 +74,6 @@ return (async () => {
   }
 
   var publishError = err || (ids.length ? null : 'EMPTY_POST');
-  if(context.callbackUrl){ fetch(context.callbackUrl, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({status:publishError?'failed':'published', platform:'threads', threadId:ids[0]||null, postGroupId:context.postGroupId||null})}).catch(function(){}); }
+  if(context.callbackUrl){ await fetch(context.callbackUrl, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({status:publishError?'failed':'published', platform:'threads', threadId:ids[0]||null, externalId:ids[0]||null, url:permalink, error:publishError, postGroupId:context.postGroupId||null})}).catch(function(){}); }
   return { platform:'threads', threadId: ids[0]||null, threadIds: ids, permalink: permalink, publishError: publishError };
 })();

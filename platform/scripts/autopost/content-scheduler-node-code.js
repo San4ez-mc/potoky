@@ -32,6 +32,15 @@ async function tgPhoto(chatId, photo, caption) {
   return r.json();
 }
 
+async function tgVideo(chatId, video, caption) {
+  const r = await fetch('https://api.telegram.org/bot'+BOT_TOKEN+'/sendVideo',{
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({chat_id:chatId, video, caption, parse_mode:'HTML', supports_streaming:true})
+  });
+  return r.json();
+}
+function header1(label, day) { return '<b>'+label+'  |  '+day+'</b>'; }
+
 let sent = 0;
 let autoposted = 0;
 const errors = [];
@@ -50,7 +59,8 @@ if (mode === 'digest') {
         const msg = '<b>'+header+'</b>\n<pre>'+escaped+'</pre>';
         if (item.imagePath) {
           const url = item.imagePath.startsWith('http') ? item.imagePath : NEXTAUTH_URL+item.imagePath;
-          await tgPhoto(CHAT_ID, url, header);
+          if (item.mediaKind === 'video' || /\.(mp4|mov|webm|m4v)(\?|$)/i.test(url)) await tgVideo(CHAT_ID, url, header);
+          else await tgPhoto(CHAT_ID, url, header);
         }
         await tgMsg(CHAT_ID, msg);
         sent++;
@@ -64,6 +74,7 @@ if (mode === 'digest') {
 
     // Пряма автопублікація: одна пост-група = одна публікація (перший item — пост, наступні — відповіді-ланцюжок)
     const autoSlug = (post.postDirectly && post.autopostSlug) ? String(post.autopostSlug).replace(/[^a-zA-Z0-9_-]/g,'') : '';
+    let autoFailed = false;
     if (autoSlug) {
       try {
         const chain = [];
@@ -71,18 +82,29 @@ if (mode === 'digest') {
           const t = (item.content||'').trim();
           if (!t) continue;
           const one = { text: t };
-          if (item.imagePath) one.imageUrl = item.imagePath.startsWith('http') ? item.imagePath : NEXTAUTH_URL+item.imagePath;
+          if (item.imagePath) {
+            const u = item.imagePath.startsWith('http') ? item.imagePath : NEXTAUTH_URL+item.imagePath;
+            // відео зберігається в imagePath: без явного типу публікатор слав би mp4 як картинку
+            if (item.mediaKind === 'video' || /\.(mp4|mov|webm|m4v)(\?|$)/i.test(u)) one.videoUrl = u; else one.imageUrl = u;
+          }
           chain.push(one);
         }
         if (chain.length) {
+          const first = chain[0];
           const r = await fetch(AUTOPOST_BASE+autoSlug, {
             method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({ text: chain[0].text, imageUrl: chain[0].imageUrl || null, items: chain, postGroupId: post.id })
+            // callbackUrl + postGroupId: публікатор САМ повертає результат (published/failed + externalId) у content2
+            body: JSON.stringify({ text: first.text, content: first.text, imageUrl: first.imageUrl || null, videoUrl: first.videoUrl || null,
+              title: post.hook || null, hook: post.hook || null, formatKey: post.formatKey || null, items: chain, postGroupId: post.id, callbackUrl: callbackUrl || null })
           });
           if (!r.ok) throw new Error('HTTP '+r.status);
           autoposted++;
         }
-      } catch(e) { errors.push('autopost '+autoSlug+' '+post.id+': '+e.message); }
+      } catch(e) {
+        autoFailed = true;
+        errors.push('autopost '+autoSlug+' '+post.id+': '+e.message);
+        if (callbackUrl) { try { await fetch(callbackUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({postGroupId:post.id,status:'failed',platform:post.platform,error:'запуск публікатора '+autoSlug+': '+e.message})}); } catch(e2){} }
+      }
     }
 
     // Telegram — лише якщо для цієї мережі не вимкнено
@@ -95,7 +117,10 @@ if (mode === 'digest') {
           const msg = '<b>'+label+'  |  '+today+'</b>\n\n'+content+note+'\n\n<a href="'+NEXTAUTH_URL+'/calendar">📋 Платформа</a>';
           if (item.imagePath) {
             const url = item.imagePath.startsWith('http') ? item.imagePath : NEXTAUTH_URL+item.imagePath;
-            await tgPhoto(CHAT_ID, url, msg);
+            const isVideo = item.mediaKind === 'video' || /\.(mp4|mov|webm|m4v)(\?|$)/i.test(url);
+            // підпис до медіа в Telegram ≤1024 символів, тому довгий текст шлемо окремим повідомленням
+            if (isVideo) { await tgVideo(CHAT_ID, url, header1(label, today)); await tgMsg(CHAT_ID, msg); }
+            else await tgPhoto(CHAT_ID, url, msg);
           } else {
             await tgMsg(CHAT_ID, msg);
           }
@@ -104,7 +129,9 @@ if (mode === 'digest') {
         } catch(e) { errors.push('post '+post.id+': '+e.message); }
       }
     }
-    if (callbackUrl) {
+    // Результат прямої публікації повертає САМ публікатор (published/failed). Тут «published» ставимо лише
+    // постам без автопубліктора (доставка в Telegram) — інакше позначили б успішним те, що ще публікується або впало.
+    if (callbackUrl && !autoSlug) {
       try { await fetch(callbackUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({postGroupId:post.id,status:'published'})}); } catch(e){}
     }
   }

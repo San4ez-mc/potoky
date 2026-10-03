@@ -881,6 +881,45 @@ async function handleCallbackQuery(botId, callbackQuery) {
         }
     }
 
+    // ── Подія для СТОРОННЬОЇ сесії: evt:<telegramId>:<botSlug>:<eventKey> ───────
+    // Кнопка в адмін-сповіщенні (notifyTg.buttons): адмін підтверджує крок за користувача
+    // (напр. «Додано до тестувальників»). Ставить ctx[eventKey]=true у сесії користувача —
+    // wait(mode:event) у воронці продовжує, а відповідь іде користувачу, не адміну.
+    // Дозволено лише ADMIN_TELEGRAM_ID воронки-цілі.
+    if (data.startsWith('evt:') && from?.id) {
+        const [, targetTgId, botSlug, eventKey] = data.split(':');
+        if (!targetTgId || !botSlug || !eventKey) return;
+        try {
+            const targetBot = await db.bot.findFirst({ where: { slug: botSlug, isActive: true }, select: { id: true } });
+            if (!targetBot) return;
+            const adminRow = await db.funnelKey.findFirst({ where: { botId: targetBot.id, key: 'ADMIN_TELEGRAM_ID' }, select: { value: true } });
+            if (!adminRow || String(adminRow.value).trim() !== String(from.id)) {
+                logger.warn('[platformBotHandler] evt: clicker is not ADMIN_TELEGRAM_ID', { botSlug, from: from.id });
+                return;
+            }
+            const evUser = await db.user.findUnique({ where: { telegramId: BigInt(targetTgId) } }).catch(() => null);
+            const evSession = evUser && await db.session.findFirst({
+                where: { userId: evUser.id, botId: targetBot.id, state: { not: 'completed' } },
+                orderBy: { startedAt: 'desc' },
+            }).catch(() => null);
+            if (!evSession) {
+                await tgRequest(token, 'answerCallbackQuery', { callback_query_id: callbackQuery.id, text: 'Сесію користувача не знайдено', show_alert: true }).catch(() => {});
+                return;
+            }
+            await tgRequest(token, 'editMessageReplyMarkup', { chat_id: chatId, message_id: msgId, reply_markup: { inline_keyboard: [] } }).catch(() => {});
+            await tgRequest(token, 'sendMessage', { chat_id: chatId, text: '✅ Підтверджено — користувачу надіслано відповідь.', reply_to_message_id: msgId }).catch(() => {});
+            await db.session.update({ where: { id: evSession.id }, data: { context: { ...(evSession.context || {}), [eventKey]: true } } });
+            const sinceTime = new Date();
+            await executeFlowStep({ sessionId: evSession.id, incomingUserMessage: null }).catch(err => {
+                logger.error('[platformBotHandler] evt executeFlowStep failed', { error: err.message });
+            });
+            await deliverSessionMessages(targetBot.id, evSession.id, Number(targetTgId), sinceTime);
+        } catch (e) {
+            logger.error('[platformBotHandler] evt handler failed', { error: e.message });
+        }
+        return;
+    }
+
     if (!data.startsWith('cm_') || !from?.id) return;
 
     // Find the user

@@ -3374,7 +3374,7 @@ ${sourceContent || '(немає даних)'}
                 // First encounter — send a callback button so user can confirm homework done.
                 // Повторний показ теж — якщо клієнт написав текстом замість кнопки, раніше
                 // бот мовчав повністю; тепер нагадуємо про кнопку замість повної тиші.
-                if (runtime.waitEventNodeId !== node.id || runtime.lastUserMessage) {
+                if (data.silent !== true && (runtime.waitEventNodeId !== node.id || runtime.lastUserMessage)) {
                     const buttonLabel = renderTemplate(String(data.buttonText || '✅ Домашнє завдання виконано'), scope);
                     const waitMsg = renderTemplate(String(data.waitMessage || 'Виконай домашнє завдання і натисни кнопку нижче, коли буде готово 👇'), scope);
                     await persistAssistantMessage(session.id, waitMsg, {
@@ -3433,6 +3433,30 @@ ${sourceContent || '(немає даних)'}
             // "Привіт" і НЕ отримав відповіді). Якщо це genuine вхідне повідомлення
             // (не рутинна перевірка таймера воркером) — пропускаємо очікування й
             // одразу продовжуємо потік, бо клієнт явно повернувся сам.
+            // data.ignoreUserMessages: повідомлення клієнта НЕ скорочує паузу (нагадування «через 2 дні» не має спрацювати від будь-якої репліки).
+            // data.relayToKey: ім'я ключа воронки з Telegram-ID, куди переслати репліку клієнта (щоб питання не зникали в тиші).
+            if (runtime.lastUserMessage && data.ignoreUserMessages === true) {
+                if (data.relayToKey && !ctx.testMode) {
+                    try {
+                        const _rc = funnelEnv[String(data.relayToKey)] || '';
+                        const _rt = funnelEnv.TELEGRAM_BOT_TOKEN || '';
+                        if (_rc && /^\d+:[A-Za-z0-9_-]{20,}$/.test(_rt)) {
+                            const _who = (session.user && (session.user.username ? '@' + session.user.username : '')) || '';
+                            const _tid = session.user && session.user.telegramId ? String(session.user.telegramId) : '';
+                            const _rr = await fetch('https://api.telegram.org/bot' + _rt + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(_rc), text: renderTemplate(String(data.relayPrefix || '💬 Відповідь від користувача'), scope) + ' ' + _who + (_tid ? ' (tg://user?id=' + _tid + ')' : '') + ':\n\n' + String(runtime.lastUserMessage).slice(0, 1500), disable_web_page_preview: true }) }).catch(function () { return null; });
+                            const _rj = _rr ? await _rr.json().catch(function () { return {}; }) : {};
+                            pushDelivery(runtime, 'telegram_notify', !!_rj.ok, _rj.ok ? null : (_rj.description || 'fetch failed'), { nodeId: node.id, reason: 'wait_relay' });
+                        }
+                    } catch (_e) { /* релей не має ламати паузу */ }
+                }
+                if (data.relayAck) {
+                    await persistAssistantMessage(session.id, renderTemplate(String(data.relayAck), scope), { nodeId: node.id, nodeType: 'wait_relay_ack' });
+                    lastAssistant = renderTemplate(String(data.relayAck), scope);
+                }
+                runtime.lastUserMessage = '';
+                runtime.waitingForUser = false;
+                break;
+            }
             if (runtime.lastUserMessage) {
                 runtime.waitUntil = null;
                 runtime.waitNodeId = null;
@@ -4010,7 +4034,11 @@ ${sourceContent || '(немає даних)'}
                 }
                 const _msg = shopPrefix(funnelEnv) + renderTemplate(data.message || '', scope);
                 if (_chat && _tok && /^\d+:[A-Za-z0-9_-]{20,}$/.test(_tok) && _msg) {
-                    const _r = await fetch('https://api.telegram.org/bot' + _tok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(_chat), text: _msg, parse_mode: 'HTML', disable_web_page_preview: true }) }).catch(function(e){ console.error('[notifyTg] ' + e.message); return null; });
+                    const _r = await fetch('https://api.telegram.org/bot' + _tok + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ chat_id: String(_chat), text: _msg, parse_mode: 'HTML', disable_web_page_preview: true }, (function () {
+                        // data.buttons = [[{text, url|callback_data}]] — інлайн-кнопки під сповіщенням (напр. evt:<tgId>:<slug>:<eventKey> → підтвердження адміном).
+                        const _kb = (Array.isArray(data.buttons) ? data.buttons : []).map(function (row) { return (Array.isArray(row) ? row : [row]).map(function (b) { return Object.assign({ text: renderTemplate(String(b.text || b.label || ''), scope) }, b.url ? { url: renderTemplate(String(b.url), scope) } : {}, b.callback_data ? { callback_data: renderTemplate(String(b.callback_data), scope) } : {}); }).filter(function (b) { return b.text; }); }).filter(function (r) { return r.length; });
+                        return _kb.length ? { reply_markup: { inline_keyboard: _kb } } : {};
+                    })())) }).catch(function(e){ console.error('[notifyTg] ' + e.message); return null; });
                     const _j = _r ? await _r.json().catch(() => ({})) : {};
                     pushDelivery(runtime, 'telegram_notify', !!_j.ok, _j.ok ? null : (_j.description || 'fetch failed'), { nodeId: node.id, chatId: String(_chat) });
                 } else {

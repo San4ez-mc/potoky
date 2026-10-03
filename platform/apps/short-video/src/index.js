@@ -72,8 +72,14 @@ const server = http.createServer(async (req, res) => {
         if (req.method === 'POST' && url.pathname === '/render') {
             const payload = await readBody(req);
             if (!Array.isArray(payload.scenes) || !payload.scenes.length) return send(res, 400, { ok: false, error: 'scenes[] required' });
+            // ідемпотентність: повторний запит на ТОЙ САМИЙ пост, поки його рендер у черзі/в роботі, не ставить дубль
+            if (payload.postItemId) {
+                for (const j of jobs.values()) {
+                    if (j.postItemId === payload.postItemId && (j.status === 'queued' || j.status === 'processing')) return send(res, 202, { ok: true, jobId: j.jobId, duplicate: true });
+                }
+            }
             const jobId = payload.jobId && /^[a-zA-Z0-9_-]{4,64}$/.test(payload.jobId) ? payload.jobId : 'sv_' + crypto.randomBytes(6).toString('hex');
-            setJob(jobId, { status: 'queued', step: 'queued', createdAt: new Date().toISOString() });
+            setJob(jobId, { status: 'queued', step: 'queued', postItemId: payload.postItemId || null, createdAt: new Date().toISOString() });
             queue = queue.then(() => runJob(jobId, payload)).catch(() => {});
             return send(res, 202, { ok: true, jobId });
         }

@@ -426,6 +426,37 @@ function humanSetList(pp) { return (pp.setItems || []).map((it) => '• ' + it.n
  * налаштувань категорії): бот мав зайти в категорію КОЖНОГО товару в розмові й запитати РАЗОМ усі
  * потрібні параметри — а не хардкодити «зріст і вагу» незалежно від складу (set1112 містить
  * лофери з категорії «Взуття», якій потрібен окремий параметр «Розмір взуття», не зріст/вага). */
+/** Клієнт більший за найбільший розмір товару: що запропонувати — з каталогу CRM. Товари в наявності (не outOfStock, не
+ *  комплекти, не взуття), у яких є більші розміри, групуємо за категорією («костюми — до ХХХЛ»). Нічого — порожньо
+ *  (тоді чесне «такого розміру немає»). Розміри — Product.sizes, інакше sizeChartData.sizes. */
+async function oversizeAlternative(A, pp) {
+    const ORDER = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL', '4XL'];
+    const LABEL = { S: 'S', M: 'M', L: 'L', XL: 'ХЛ', XXL: 'ХХЛ', XXXL: 'ХХХЛ', '4XL': '4ХЛ' };
+    const nz = (x) => { const t = String(x || '').toUpperCase().trim(); return t === '2XL' ? 'XXL' : t === '3XL' ? 'XXXL' : t; };
+    const maxOf = (p) => {
+        const list = (Array.isArray(p.sizes) && p.sizes.length ? p.sizes : ((p.sizeChartData && p.sizeChartData.sizes) || [])).map(nz).filter((s) => ORDER.includes(s));
+        return list.reduce((m, s) => (ORDER.indexOf(s) > ORDER.indexOf(m) ? s : m), '');
+    };
+    try {
+        const cat = await loadCatalog(A.botId, A.keys);
+        const cur = cat.products.find((x) => String(x.sku).toUpperCase() === String(pp.sku).toUpperCase()) || pp;
+        const curMax = maxOf(cur);
+        if (!curMax) return '';
+        const byCat = new Map();
+        for (const p of cat.products) {
+            if (p.outOfStock || p.isSet || String(p.sku) === String(pp.sku)) continue;
+            const catName = String((p.category && p.category.name) || '').trim();
+            if (!catName || /взутт/i.test(catName)) continue;
+            const m = maxOf(p);
+            if (!m || ORDER.indexOf(m) <= ORDER.indexOf(curMax)) continue;
+            const prev = byCat.get(catName);
+            if (!prev || ORDER.indexOf(m) > ORDER.indexOf(prev)) byCat.set(catName, m);
+        }
+        if (!byCat.size) return '';
+        const offer = [...byCat.entries()].map(([c, m]) => c.toLowerCase() + ' — до ' + (LABEL[m] || m)).join(', ');
+        return 'На жаль, цей товар йде тільки до ' + (LABEL[curMax] || curMax) + ' розміру, і він вам буде малий. Можу запропонувати ' + offer + '.';
+    } catch (e) { return ''; }
+}
 /** Деталі повернення/обміну для менеджера (одним блоком у сповіщенні). */
 function returnDetails(rf) {
     rf = rf || {};
@@ -1774,6 +1805,9 @@ async function runPolicyInner(A, u) {
                 // в шаблоні) для обох випадків. Заразом: pause() раніше викликався БЕЗ extraDetails —
                 // адмінське сповіщення показувало порожнє "💬 Клієнту вже сказано:" (менеджер не
                 // бачив, що саме бот уже написав клієнту).
+                // Альтернатива — з каталогу CRM, а не зашитий у n_calc текст («флісові костюми… взуття до 46»: пропонував і те,
+                // чого немає в наявності — власник 03.10). n_calc вирішує, ЧИ клієнт більший за товар; ЩО запропонувати — тут.
+                if (ctx.sizeOorAlternative) ctx.sizeOorAlternative = await oversizeAlternative(A, pp);
                 const oorNode = ctx.sizeOorAlternative ? 'n_size_oor_msg' : 'n_size_oor_no_alt_msg';
                 const oorText = messageText(A.assets, oorNode, ctx, A.session.id);
                 A.out.push({ text: oorText, step: 'size_oor' });

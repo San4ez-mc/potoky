@@ -512,7 +512,8 @@ router.patch('/:id/flags',
                     const { scheduleFlowRun } = require('../services/zernioHandler');
                     const text = __pendingUnanswered.map((u) => String(u.text || '').trim()).filter(Boolean).join('\n');
                     const att = __pendingUnanswered.map((u) => (u.attachments || []).find((a) => a.type === 'photo' && a.url)).find(Boolean);
-                    if (text || att) scheduleFlowRun(session.id, { botId: session.botId, contactId: ctx.contactId || ctx.psid, conversationId: ctx.conversationId, contactName: ctx.senderName, text, imageUrl: att ? att.url : null });
+                    const shared = __pendingUnanswered.map((u) => (u.attachments || []).find((a) => a.type === 'share' && a.sharedPost)).find(Boolean);
+                    if (text || att || shared) scheduleFlowRun(session.id, { botId: session.botId, contactId: ctx.contactId || ctx.psid, conversationId: ctx.conversationId, contactName: ctx.senderName, text, imageUrl: att ? att.url : null, ...(shared ? { ctxPatch: { sharedPost: shared.sharedPost } } : {}) });
                 } catch (e) { /* best-effort — не блокуємо саму розпаузу */ }
             }
         }

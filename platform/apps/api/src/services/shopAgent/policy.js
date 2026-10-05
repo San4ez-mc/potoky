@@ -1591,7 +1591,12 @@ async function runPolicyInner(A, u) {
             }
         }
         if (u.productHint.article && !/артикул|арт\.|\b[a-z]\d{3,6}\b/i.test(text)) ctx.lastUserMessage = text + ' артикул ' + u.productHint.article;
+        const __presentedAtBefore = ctx.presentedAt;
         const r = await T.resolveProduct(A, u);
+        // Час показу картки ставить лише present() (або «картку вже показала автоматизація коментаря» — skipPresentation).
+        // matchProduct (код старого вузла) ставив presentedAt = зараз ще ДО показу — і policy вважала картку «щойно показаною»:
+        // картку не слала, а питання «які кольори?» знімала як уже відповідене (05.10, denya_7474: через 15 днів — лише «зріст і вага»).
+        if (!r.skipPresentation) { if (__presentedAtBefore) ctx.presentedAt = __presentedAtBefore; else delete ctx.presentedAt; }
         // Давня розмова: товар показано понад 24 год тому, клієнт прийшов із НОВИМ сигналом (реклама/пост/фото), а новий товар не
         // визначився — не продовжуємо про старий (03.10, andrew_stepanchuk: комплект set1112 з 09.09, 02.10 прийшов з реклами
         // флісового костюма → бот «Комплект 4 в 1 коштує 5290 ₴»). Забуваємо старий товар (параметри людини — зріст/вага — лишаються),

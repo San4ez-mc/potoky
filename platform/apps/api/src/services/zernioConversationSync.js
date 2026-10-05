@@ -75,7 +75,15 @@ async function fetchConversationMessages(keys, conversationId) {
                 senderName: String(m.senderName || ''),
                 text: String(m.message || m.text || ''),
                 createdAt,
-                attachments: atts.map((a) => ({ type: /video/i.test(String(a.type || '')) ? 'video' : 'photo', url: a.refreshUrl || a.url || null, refreshUrl: a.refreshUrl || null })).filter((a) => a.url),
+                // Тип вкладення — як у Zernio: пересланий пост/рілс (type 'share', originalType ig_post/ig_reel) — це НЕ фото клієнта,
+                // а пост магазину з підписом (payload.title = підпис з артикулом). Раніше все, що не відео, ставало 'photo' — і картинка
+                // поста йшла в хід як фото клієнта: розпізнавання за фото перекривало артикул із підпису (05.10, denya_7474).
+                attachments: atts.map((a) => {
+                    const t = String(a.type || '').toLowerCase(); const ot = String(a.originalType || '').toLowerCase(); const pl = a.payload || {};
+                    const url = a.refreshUrl || a.url || null;
+                    if (t === 'share' || /ig_post|ig_reel/.test(ot)) return { type: 'share', url, refreshUrl: a.refreshUrl || null, sharedPost: { kind: /reel/.test(ot) ? 'reel' : 'post', mediaId: pl.ig_post_media_id || pl.reel_video_id || pl.media_id || null, caption: pl.title || pl.caption || null, url: a.url || pl.url || null } };
+                    return { type: /video/.test(t) ? 'video' : 'photo', url, refreshUrl: a.refreshUrl || null };
+                }).filter((a) => a.url),
             };
         }).filter((m) => Number.isFinite(m.createdAt.getTime())).sort((a, b) => a.createdAt - b.createdAt);
         return { ok: true, msgs };
@@ -187,8 +195,11 @@ async function syncConversationTruth(botId, sessionId, conversationId, opts = {}
                 const att = rm.attachments[0] ? { type: rm.attachments[0].type, url: rm.attachments[0].url, refreshUrl: rm.attachments[0].refreshUrl } : null;
                 try {
                     if (it.cls === 'user') {
-                        await db.message.create({ data: { sessionId, role: 'user', content: rm.text || (att ? (att.type === 'video' ? '[відео]' : '[фото]') : '[порожнє повідомлення]'), createdAt: rm.createdAt,
-                            metadata: { source: 'zernio_sync', zernioRestId: rm.id, channelCreatedAt: rm.createdAt.toISOString(), ...(att ? { attachment: att, attachments: rm.attachments } : {}) } } });
+                        // Пересланий пост — тим самим форматом, що й вебхук (zernioHandler: «[переслав post] підпис…» + metadata.sharedPost).
+                        const sp = (rm.attachments.find((a) => a.type === 'share') || {}).sharedPost || null;
+                        const label = sp && sp.caption ? ('[переслав ' + sp.kind + '] ' + String(sp.caption).slice(0, 80).replace(/\s+/g, ' ')) : (att ? (att.type === 'video' ? '[відео]' : att.type === 'share' ? '[вкладення]' : '[фото]') : '[порожнє повідомлення]');
+                        await db.message.create({ data: { sessionId, role: 'user', content: rm.text || label, createdAt: rm.createdAt,
+                            metadata: { source: 'zernio_sync', zernioRestId: rm.id, channelCreatedAt: rm.createdAt.toISOString(), ...(att ? { attachment: att, attachments: rm.attachments } : {}), ...(sp ? { sharedPost: sp } : {}) } } });
                         insUser++;
                     } else {
                         const label = rm.text || (rm.attachments.length ? ('[' + (rm.attachments.length > 1 ? 'фото ×' + rm.attachments.length : (rm.attachments[0].type === 'video' ? 'відео' : 'фото')) + ' від менеджера]') : '[повідомлення від менеджера]');

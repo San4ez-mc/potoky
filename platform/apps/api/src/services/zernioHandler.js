@@ -1651,6 +1651,11 @@ async function runFlowAndDeliver(sessionId, entry) {
                 const _ph = sync.unanswered.map((u) => (u.attachments || []).find((a) => a.type === 'photo' && a.url)).find(Boolean);
                 if (_ph) runImageUrl = _ph.url;
             }
+            // Пересланий пост, який вебхук не доніс (або доніс без підпису), — з REST як ПОСТ (підпис з артикулом), а не як фото.
+            if (!(entry.ctxPatch && entry.ctxPatch.sharedPost)) {
+                const _sp = sync.unanswered.map((u) => (u.attachments || []).find((a) => a.type === 'share' && a.sharedPost)).find(Boolean);
+                if (_sp) entry.ctxPatch = { ...(entry.ctxPatch || {}), sharedPost: _sp.sharedPost };
+            }
         }
     }
     // Повторне накладання патчу контексту (пост/реклама/реферал) — попередній прогін у черзі міг перезаписати його.
@@ -2341,12 +2346,13 @@ async function retryMissedZernioTurns() {
                 const unanswered = (!sync.empty && !sync.managerLed && Array.isArray(sync.unanswered)) ? sync.unanswered : [];
                 const text = unanswered.map((u) => String(u.text || '').trim()).filter(Boolean).join('\n');
                 const att = unanswered.map((u) => (u.attachments || []).find((a) => a.type === 'photo' && a.url)).find(Boolean);
-                const found = !!(text || att); // якщо unanswered лише службові події без вмісту — це теж «нічого не зловили»
+                const shared = unanswered.map((u) => (u.attachments || []).find((a) => a.type === 'share' && a.sharedPost)).find(Boolean);
+                const found = !!(text || att || shared); // якщо unanswered лише службові події без вмісту — це теж «нічого не зловили»
                 const RECHECK_SOON_MS = 2 * 60 * 1000, RECHECK_LATER_MS = 10 * 60 * 1000;
                 await db.session.update({ where: { id: s.id }, data: { context: { ...ctx, zernioNextCheckAt: now + (found ? RECHECK_SOON_MS : RECHECK_LATER_MS) } } }).catch(() => {});
                 if (!found) continue;
                 logger.info('[zernioHandler] retryMissedZernioTurns: підхопив пропущене без нового вебхука', { botId: s.botId, sessionId: s.id, n: unanswered.length, textPreview: text.slice(0, 60) });
-                scheduleFlowRun(s.id, { botId: s.botId, contactId: ctx.contactId || ctx.psid, conversationId: ctx.conversationId, contactName: ctx.senderName, text, imageUrl: att ? att.url : null });
+                scheduleFlowRun(s.id, { botId: s.botId, contactId: ctx.contactId || ctx.psid, conversationId: ctx.conversationId, contactName: ctx.senderName, text, imageUrl: att ? att.url : null, ...(shared ? { ctxPatch: { sharedPost: shared.sharedPost } } : {}) });
             } catch (e) { logger.warn('[zernioHandler] retryMissedZernioTurns session error: ' + e.message, { sessionId: s.id }); }
         }
     } catch (e) { logger.warn('[zernioHandler] retryMissedZernioTurns error: ' + e.message); }

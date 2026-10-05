@@ -16,6 +16,7 @@
  * повний накладений платіж на свою суму) — рішення за замовчуванням, власник може скоригувати.
  */
 const { logger, nodeCode, runNodeCode, crmFetch, loadCatalog } = require('./lib');
+const { colorHasSize } = require('./catalogFacts');
 
 /** Ключ SUPPLIER_ORDERS_DISABLED=1 — автооформлення вимкнено: постачальнику йде лише після кнопки менеджера в Telegram. */
 function manualSupplierMode(keys) { return /^(1|true|on)$/i.test(String((keys && keys.SUPPLIER_ORDERS_DISABLED) || '').trim()); }
@@ -121,6 +122,8 @@ function missingVariant(line, prod) {
     const miss = [];
     if (colors.size > 1 && !String(line.color || '').trim()) miss.push('колір');
     if ((sizes.size > 1 || prodSizes.length > 1) && !String(line.size || '').trim()) miss.push('розмір');
+    // Колір, якого в цьому розмірі нема (CRM effectiveSizes; Edit 26658740) — постачальник узяв би неіснуючий варіант.
+    if (line.color && line.size && !colorHasSize(prod, line.color, line.size)) miss.push('інший колір (' + line.color + ' у розмірі ' + line.size + ' не шиється)');
     return miss;
 }
 

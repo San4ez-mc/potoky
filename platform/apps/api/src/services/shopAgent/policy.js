@@ -13,7 +13,7 @@ const { syncSetComponents } = require('./orderSource');
 const { hasCategoryWord, categoryWordIsUpsell, categoryWordIsSetComponent, categoryWordIsMain } = require('./signal');
 const { resolveColorMention } = require('./cart');
 const { classifyKbQuestion, kbSimilarity, kbSimilar } = require('./kbRules');
-const { catalogFacts, catalogProducts, otherCategoryProducts } = require('./catalogFacts');
+const { catalogFacts, catalogProducts, otherCategoryProducts, colorHasSize } = require('./catalogFacts');
 const { kbMatch, sameAsEscalated } = require('./kbMatch');
 const { extractHeightWeight } = require('./understand');
 const { matchProduct } = require('./productMatch');
@@ -255,7 +255,7 @@ async function applySetEdit(A, u, pp) {
             if (target && target !== nz(cur)) {
                 const label = avail.find((a) => nz(a) === target);
                 if (avail.length && !label) notes.push(hit.name + ' — розміру ' + target + ' немає (є ' + avail.join(', ') + ')');
-                else { hit.size = label || target; ctx.setSizeMap = { ...(ctx.setSizeMap || {}), [hit.article]: hit.size }; notes.push(hit.name + ' — розмір ' + hit.size); changed = true; }
+                else { hit.size = label || target; ctx.setSizeMap = { ...(ctx.setSizeMap || {}), [hit.article]: hit.size }; notes.push(hit.name + ' — розмір ' + hit.size); changed = true; delete ctx.agent.setColorsResolved; /* новий розмір — перевірити колір × розмір ще раз */ }
             }
         } else notes.push(u.changeRequest);
     }
@@ -324,6 +324,21 @@ function setItemsWantedArticles(ctx, u, p) {
     if (!arts.length) return null;
     if (arts.length === full.length && !missing.length) return { all: true, articles: arts, missing };
     return { all: false, articles: arts, missing };
+}
+
+/** Палітра товару в розмові = кольори, які є в підібраному розмірі (CRM effectiveSizes). Повна палітра лишається в colorsAll;
+ * зміна розміру перераховує з неї. Так питання про колір, звірка й шаблони n_agent_*color* (вони читають product.colors) показують
+ * лише реальні варіанти, а не оформлюють колір, якого в цьому розмірі нема (2026-10-05, Edit 26658740).
+ * Повертає кольори, що випали; [] — нічого не змінилось. Розміру нема в жодному кольорі — палітру не чіпаємо (це інша ситуація). */
+function narrowColorsToSize(prod, size) {
+    if (!prod || !Array.isArray(prod.offers) || !prod.offers.length) return [];
+    if (prod.colorsAll === undefined) { prod.colorsAll = prod.colors || ''; prod.colorsListAll = Array.isArray(prod.colorsList) ? prod.colorsList.slice() : undefined; }
+    const all = String(prod.colorsAll || '').split(',').map((c) => c.trim()).filter(Boolean);
+    const keep = size ? all.filter((c) => colorHasSize(prod, c, size)) : all;
+    const use = keep.length ? keep : all;
+    prod.colors = use.join(', ');
+    if (Array.isArray(prod.colorsListAll)) prod.colorsList = prod.colorsListAll.filter((c) => use.some((k) => k.toLowerCase() === String(c).toLowerCase()));
+    return all.filter((c) => !use.includes(c));
 }
 
 /** Одна річ, обрана з комплекту, — ЗВИЧАЙНИЙ товар із CRM, зібраний тим самим кодом, що й товар за артикулом (productMatch),
@@ -1960,6 +1975,8 @@ async function runPolicyInner(A, u) {
             if (u.wantsSizeChart && pp.sizeChartUrl && !A._chartSent) sendSizeChart(A, pp, u);
             await T.calcSize(A);
             ctx.agent.sizeCalcKey = sizeKeyOf(ctx.sizeInput);
+            // Питання про колір після розміру (n_calc будує його з повної палітри) — лише кольори, що є в цьому розмірі.
+            if (!pp.isSet && ctx.recommendedSize && narrowColorsToSize(pp, ctx.recommendedSize).length && ctx.sizeColorFollowup) ctx.sizeColorFollowup = '\n\n🎨 У розмірі ' + ctx.recommendedSize + ' є кольори: ' + pp.colors + ' — який вам більше до душі? 😊';
             await T.funnelStage(A, ...STAGES.params);
             if (ctx.sizeOutOfRange) {
                 // 2026-09-18 (власник): якщо n_calc не знайшов жодної альтернативи (sizeOorAlternative
@@ -2063,6 +2080,18 @@ async function runPolicyInner(A, u) {
         }
     }
 
+    // 5.0 Колір × розмір (2026-10-05, Edit 26658740): палітра товару — лише кольори підібраного розміру; уже обраний колір, якого
+    //     в цьому розмірі нема, знімаємо й чесно кажемо, що є (раніше графітові джинси XL пішли в замовлення, хоча шиються лише XS/L).
+    if (!pp.isSet && ctx.recommendedSize && !ctx.crmOrderId) {
+        narrowColorsToSize(pp, ctx.recommendedSize);
+        const chosen = ctx.colorChoice ? (Array.isArray(ctx.colorChoice.colors) && ctx.colorChoice.colors.length ? ctx.colorChoice.colors : [ctx.colorChoice.color]).filter(Boolean) : [];
+        const missingC = [...new Set(chosen.filter((c) => !colorHasSize(pp, c, ctx.recommendedSize)))];
+        if (missingC.length) {
+            ctx.colorChoice = null; delete ctx.agent.availKey;
+            A.out.push({ text: await answerThenAsk(A, u, (missingC.length > 1 ? 'Кольорів ' : 'Кольору ') + missingC.join(', ') + ' у розмірі ' + ctx.recommendedSize + ' зараз немає 😔 У ' + ctx.recommendedSize + ' є: ' + pp.colors + ' — який обираєте? 🎨'), step: 'color_size_unavailable' });
+            ctx.agent.lastAsk = 'колір'; return;
+        }
+    }
     // 5. Колір
     // 2026-09-18 (живий кейс, Oleksii Oleksii: "2 кофти по акції" + "Графітовий і світло сірий" /
     // "Давайте графітовий та світло-сірий" / "Графітовий та світло сіру" — бот перепитував колір
@@ -2244,6 +2273,23 @@ async function runPolicyInner(A, u) {
                     const c = matchColor({ colors: item.colors.join(',') }, seg) || matchColorByPosition(item, seg);
                     if (c) item.color = c;
                 }
+            }
+            // Колір × розмір речей комплекту (2026-10-05, Edit 26658740: графітові джинси j0032 шиються лише XS/L, а в комплекті
+            // пішли XL): палітра кожної речі — лише кольори її підібраного розміру (та сама colorHasSize, що й для окремого товару);
+            // обраний колір, якого в цьому розмірі нема, знімаємо й кажемо прямо.
+            {
+                const catCS = await loadCatalog(A.botId, A.keys);
+                const goneNotes = [];
+                for (const it of ctx.setSelection) {
+                    const sz = it.size || (ctx.setSizeMap || {})[it.article];
+                    const prC = sz && catCS.products.find((x) => (it.id && x.id === it.id) || String(x.sku).toUpperCase() === String(it.article).toUpperCase());
+                    if (!prC) continue;
+                    if (!Array.isArray(it.colorsAll)) it.colorsAll = Array.isArray(it.colors) ? it.colors.slice() : [];
+                    const keep = it.colorsAll.filter((c) => colorHasSize(prC, c, sz));
+                    it.colors = keep.length ? keep : it.colorsAll;
+                    if (it.color && !it.colors.includes(it.color)) { goneNotes.push(String(it.name).split('.')[0] + ': кольору ' + it.color + ' у розмірі ' + sz + ' немає'); it.color = ''; }
+                }
+                if (goneNotes.length) A.out.push({ text: goneNotes.join('\n') + ' 😔 Оберіть, будь ласка, інший — у списку нижче лише кольори, що є у вашому розмірі.', step: 'set_color_size_unavailable' });
             }
             for (const it of ctx.setSelection) { if (!it.color && Array.isArray(it.colors) && it.colors.length === 1) it.color = it.colors[0]; }
             // 2026-09-15 (живий кейс, власник: "як я чорний написав... а воно не поняло, це баг") —

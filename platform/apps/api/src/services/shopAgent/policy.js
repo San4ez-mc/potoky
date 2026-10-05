@@ -1043,14 +1043,11 @@ async function enforceInsistLimit(A) {
  * пропуск. */
 async function universalQuestionFallback(A, u) {
     if (!u || !u.questions || !u.questions.length || A._questionEngaged || A.ctx.funnelPaused || A.justPresented) return;
-    const { ctx } = A;
-    let kb = []; try { kb = await T.kbContext(A); } catch (e) { /* best-effort */ }
+    // 2026-10-05 (Edit f44b9da3): тепер через ТУ САМУ функцію відповіді, що й скрізь (answerThenAsk) — вид питання, розмірна
+    // сітка з цифрами, факти CRM, база знань. Окрема урізана копія передавала менеджеру навіть питання про заміри (урок 15.25).
     const textItems = A.out.filter((o) => o.text);
-    const existingText = textItems.map((o) => o.text).join(' ').trim();
-    const askText = existingText || String(ctx.agent.lastAsk || '');
-    const nextStep = askText ? 'скажи/спитай (можна своїми словами, зміст той самий): «' + askText + '»' : 'НІЧОГО більше не питай — просто дай коротку відповідь на питання клієнта.';
-    const { text, resolved } = await compose(A, { questions: u.questions, nextStep, kb, fallback: askText });
-    if (!resolved) await escalateUnresolved(A, u.questions[0]);
+    const askText = textItems.map((o) => o.text).join(' ').trim();
+    const text = await answerThenAsk(A, u, askText);
     if (!text) return;
     if (textItems.length) {
         A.out = A.out.filter((o) => !o.text || o === textItems[0]);

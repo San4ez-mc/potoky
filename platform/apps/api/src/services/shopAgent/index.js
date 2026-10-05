@@ -237,8 +237,9 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
         const hist = Array.isArray(A.history) ? A.history : [];
         const clientAt = Math.max(0, ...hist.filter((m) => m.who === 'client').map((m) => new Date(m.sentAt || m.at).getTime()));
         const nowT = Date.now();
-        // Бот говорив ПІСЛЯ того, як клієнт написав повідомлення цього ходу (клієнт його ще не бачив) — або щойно, < 90 с тому.
-        const recentBot = hist.filter((m) => m.who === 'bot' && (new Date(m.at).getTime() > clientAt || nowT - new Date(m.at).getTime() < 90 * 1000));
+        // Лише бот, що говорив ПІСЛЯ того, як клієнт написав повідомлення цього ходу (клієнт його ще не бачив, — пачка, дубль вебхука).
+        // Не «за останні 90 с»: клієнт відповів на картку («чорну і сіру») — повторне прохання зросту/ваги легітимне, інакше бот мовчить.
+        const recentBot = hist.filter((m) => m.who === 'bot' && new Date(m.at).getTime() > clientAt && nowT - new Date(m.at).getTime() < 10 * 60 * 1000);
         const askedRecently = (kd) => recentBot.some((m) => String(m.text || '').split(/(?<=[.!?…])\s+|\n/).some((snt) => kd.isAsk(snt)));
         const drop = ASK_KINDS.filter((kd) => known[kd.kind] || (!partial[kd.kind] && askedRecently(kd)));
         if (drop.length) {

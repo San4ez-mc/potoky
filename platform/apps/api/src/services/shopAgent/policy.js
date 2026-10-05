@@ -347,7 +347,15 @@ function captureColorChoice(A, u, pp) {
     if (pp.colors && !resolved()) {
         const c = u.colorMatched || matchColor(pp, u.color) || (ctx.sizeInput && ctx.sizeInput.color) || matchColor(pp, ctx.agent.pendingColor) || matchColor(pp, ctx.agent.pendingColorRaw) || null;
         if (c) { ctx.colorChoice = { color: c, qty: u.qty || undefined }; delete ctx.agent.pendingColor; delete ctx.agent.pendingColorRaw; }
+    } else if (pp.colors && ctx.colorChoice && ctx.colorChoice.color && !Array.isArray(ctx.colorChoice.colors) && (u.colorMatched || u.color)) {
+        // Клієнт передумав («ні, краще графітовий») — корекція теж тут, до розміру: секція 5c стоїть після розміру й не виконувалась,
+        // коли хід закінчувався питанням про зріст і вагу (FunnelTest 3, 05.10: «Графітовий — записала», а в замовленні лишався чорний).
+        // Лише точний збіг із палітрою цього товару; неоднозначне (колір іншої позиції) лишається секції 5c з її уточненням.
+        const corr = u.colorMatched && matchColor(pp, u.colorMatched) ? matchColor(pp, u.colorMatched) : matchColor(pp, u.color);
+        if (corr && corr !== ctx.colorChoice.color) { ctx.colorChoice = { color: corr, qty: ctx.colorChoice.qty }; delete ctx.agent.pendingColor; delete ctx.agent.pendingColorRaw; delete ctx.agent.availKey; }
     }
+    // Колір застосовано — сирі «на потім» більше не потрібні (інакше старий колір міг повернутись пізніше).
+    if (resolved() && ctx.agent.pendingColor && matchColor(pp, ctx.agent.pendingColor) === ctx.colorChoice.color) delete ctx.agent.pendingColor;
 }
 
 /** Палітра товару в розмові = кольори, які є в підібраному розмірі (CRM effectiveSizes). Повна палітра лишається в colorsAll;

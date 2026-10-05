@@ -2015,6 +2015,9 @@ async function runPolicyInner(A, u) {
             if (u.wantsSizeChart && pp.sizeChartUrl && !A._chartSent) sendSizeChart(A, pp, u);
             await T.calcSize(A);
             ctx.agent.sizeCalcKey = sizeKeyOf(ctx.sizeInput);
+            // n_calc додає «Тепер оберіть колір», дивлячись лише на один колір (colorChoice.color) — кілька кольорів (colors[]) теж
+            // означають, що колір обрано (тест 29.2).
+            if (ctx.colorChoice && Array.isArray(ctx.colorChoice.colors) && ctx.colorChoice.colors.length) ctx.sizeColorFollowup = '';
             // Питання про колір після розміру (n_calc будує його з повної палітри) — лише кольори, що є в цьому розмірі.
             if (!pp.isSet && ctx.recommendedSize && narrowColorsToSize(pp, ctx.recommendedSize).length && ctx.sizeColorFollowup) ctx.sizeColorFollowup = '\n\n🎨 У розмірі ' + ctx.recommendedSize + ' є кольори: ' + pp.colors + ' — який вам більше до душі? 😊';
             await T.funnelStage(A, ...STAGES.params);

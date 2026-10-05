@@ -19,7 +19,7 @@ const CAT_WORDS = [
 
 function colorOf(o) { const pr = (o.properties || []).find((q) => /кол|цвет/i.test(q.name || '')); return pr ? String(pr.value) : ''; }
 function sizesFromText(pr) { const m = String(pr.presentationText || '').match(/Розміри[^:]*:\s*([^\n]+)/i); return m ? m[1].replace(/[🍂🍁❄️]/g, '').trim() : ''; }
-function fmtProduct(pr, withDesc) {
+function fmtProduct(pr, withDesc, adsByProduct) {
     const name = String(pr.customerName || pr.name || '').split('\n')[0].replace(/\.?\s*Артикул:?.*$/i, '').trim();
     const offers = Array.isArray(pr.offers) ? pr.offers : [];
     const inStockOffers = offers.filter((o) => o.inStock !== false);
@@ -39,6 +39,11 @@ function fmtProduct(pr, withDesc) {
         const notes = String(pr.aiNotes || '').replace(/\s+/g, ' ').trim();
         if (desc) parts.push('опис: ' + desc.slice(0, 350));
         if (notes) parts.push('деталі: ' + notes.slice(0, 350));
+        // Власні тексти магазину — підписи постів/реклам, привʼязаних до цього товару в CRM (Edit e0cb8b5c: склад «80% акрил,
+        // 20% віскоза» є в пості, а в картці лише «ангора» — бот відповідав неповно). Лише рядки-характеристики, без закликів.
+        const caps = [...new Set((adsByProduct && adsByProduct.get(String(pr.id))) || [])];
+        const capFacts = [...new Set(caps.flatMap((c) => String(c).split('\n')).map((l) => l.replace(/^[\s✔️🧶🎨📏🍂⚡️💵👉❄️🍁📌📩•\-]+/u, '').trim()).filter((l) => l.length > 6 && /:/.test(l) && !/(щоб замовити|пишіть|direct|ціна|₴|грн|артикул|встигніть)/i.test(l)))];
+        if (capFacts.length) parts.push('з постів магазину: ' + capFacts.join(' / ').slice(0, 400));
     }
     return '• ' + parts.join('; ');
 }
@@ -68,7 +73,9 @@ async function catalogFacts(A, texts, opts = {}) {
         if (!inCat.length) missing.push(w);
         inCat.slice(0, 6).forEach(add);
     }
-    const lines = picked.slice(0, 14).map((pr) => fmtProduct(pr, !!opts.withDesc));
+    const adsByProduct = new Map();
+    if (opts.withDesc) for (const ad of (cat.ads || [])) { if (ad && ad.productId && ad.captionText) { const k = String(ad.productId); if (!adsByProduct.has(k)) adsByProduct.set(k, []); adsByProduct.get(k).push(ad.captionText); } }
+    const lines = picked.slice(0, 14).map((pr) => fmtProduct(pr, !!opts.withDesc, adsByProduct));
     if (missing.length) lines.push('• У каталозі НЕМАЄ товарів за словом: ' + missing.join(', ') + ' — так і скажи, запропонуй схоже з переліку, якщо доречно.');
     return lines.join('\n');
 }

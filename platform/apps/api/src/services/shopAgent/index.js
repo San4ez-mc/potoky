@@ -13,7 +13,7 @@ const { db, logger, loadAssets, cleanJsonDeep, mergeConsecutiveTextOutputs, runN
 const { geminiKeys } = require('../geminiKey');
 const { resolveIgLink, LINK_RE } = require('./igLink');
 const { understand } = require('./understand');
-const { runPolicy } = require('./policy');
+const { runPolicy, matchColor } = require('./policy');
 const { textFromJsonLike } = require('./compose');
 const _noCreditBotAlertAt = new Map(); // botId -> ts загального сигналу «кредити Claude закінчились»
 
@@ -36,6 +36,20 @@ function stripAskSentences(text, isAsk) {
         return kept.join(' ').trim();
     });
     return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+/** Довгий текст бота одним рядком → абзаци по реченнях (Edits f28a08a5, adc3eb0d, cef935e2/33d24987, f121b8c5: «так значно
+ * гарніше, ніж суцільним текстом»). Одне правило на виході для всіх джерел тексту (compose, шаблони, склеєні в коді відповіді),
+ * а не правка кожного шаблону окремо. Текст, що вже має переноси, не чіпаємо; «1. Кофта» не розриваємо; дуже коротке речення
+ * лишається з наступним. */
+function paragraphize(text) {
+    const s = String(text || '').trim();
+    if (s.length < 140 || s.includes('\n')) return s;
+    const parts = s.split(/(?<=[^\d\s][.!?…])\s+(?=[А-ЯІЇЄҐA-Z«"])|(?<=\p{Extended_Pictographic}️?)\s+(?=[А-ЯІЇЄҐA-Z«"])/u).map((x) => x.trim()).filter(Boolean);
+    const paras = [];
+    for (const p of parts) { if (paras.length && paras[paras.length - 1].length < 40) paras[paras.length - 1] += ' ' + p; else paras.push(p); }
+    // Нумерований перелік в одному реченні («1. Кофта … 2. Джинси …») — кожен пункт з нового рядка.
+    const out = paras.map((p) => ((p.match(/(^|\s)\d{1,2}\.\s/g) || []).length >= 2 ? p.replace(/\s(?=\d{1,2}\.\s)/g, '\n') : p));
+    return out.length < 2 && out[0] === s ? s : out.join('\n\n');
 }
 const isHwAsk = (s) => HW_ASK.h.test(s) && HW_ASK.w.test(s) && HW_ASK.verb.test(s) && !HW_ASK.keep.test(s);
 function stripKnownHwAsk(text) { return stripAskSentences(text, isHwAsk); }
@@ -246,6 +260,26 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
             return !dup;
         });
     }
+    // Інваріант «обіцяне фото = надіслане фото» (Edit 5283717f: «Ось фото сірого кольору», «Фото надішлю окремим повідомленням» —
+    // а фото не було; той самий клас, що й «надсилаю сітку» без сітки 18.09). Текст бота обіцяє фото, а фото в ході нема → додаємо
+    // фото товару (для названого кольору — фото саме цього кольору з офера CRM); нема жодного — прибираємо обіцянку.
+    {
+        const PHOTO_CLAIM = /(ось\s+(і\s+)?фото|надсилаю\s+(вам\s+)?фото|надішлю\s+(вам\s+)?фото|фото\s+надішлю|фото\s+надсилаю|зараз\s+надішлю\s+фото|ловіть\s+фото|показую\s+фото)/i;
+        const claimed = A.out.filter((o) => o.text && PHOTO_CLAIM.test(o.text));
+        if (claimed.length && !A.out.some((o) => Array.isArray(o.photoUrls) && o.photoUrls.length)) {
+            const pr = ctx.product || {};
+            const base = (A.keys.CRM_PUBLIC_BASE || 'https://pcrm.fineko.space').replace(/\/$/, '');
+            const abs = (u0) => (/^https?:/.test(String(u0)) ? String(u0) : base + (String(u0).charAt(0) === '/' ? u0 : '/' + u0));
+            let urls = [];
+            const col = pr.colors ? (matchColor(pr, String(A.turnText || '')) || matchColor(pr, claimed.map((o) => o.text).join(' '))) : null;
+            if (col) for (const of of (pr.offers || [])) { const pc = (of.properties || []).find((q) => /кол|цвет/i.test(q.name || '')); if (pc && String(pc.value).toLowerCase() === String(col).toLowerCase() && Array.isArray(of.images)) urls.push(...of.images.map(abs)); }
+            if (!urls.length) urls = (Array.isArray(pr.imageUrls) ? pr.imageUrls : []).filter((x) => /^https?:/.test(String(x)));
+            if (urls.length) { A.out.unshift({ photoUrls: [...new Set(urls)].slice(0, 5), caption: '', step: 'photo_promised' }); logger.info('[shopAgent] обіцяне фото додано', { sessionId, color: col || null }); }
+            else A.out = A.out.map((o) => (o.text && PHOTO_CLAIM.test(o.text) ? Object.assign({}, o, { text: stripAskSentences(o.text, (snt) => PHOTO_CLAIM.test(snt)) }) : o)).filter((o) => o.text || o.photoUrls);
+        }
+    }
+    // Абзаци замість суцільного рядка (paragraphize) — для всіх текстів, крім полів для копіювання (noMerge).
+    A.out = A.out.map((o) => (o.text && !o.noMerge ? Object.assign({}, o, { text: paragraphize(o.text) }) : o));
     // Одне й те саме фото (картка товару + прев'ю зі списку, обкладинка й фото кольору) не надсилаємо двічі за один хід.
     {
         const seenPhotos = new Set();

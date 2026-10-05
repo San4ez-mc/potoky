@@ -134,6 +134,10 @@ var STEMS = [
 ];
 var wants = [];
 for (var i = 0; i < STEMS.length; i++) { if (msg.indexOf(STEMS[i][0]) >= 0) { for (var j2 = 0; j2 < STEMS[i][1].length; j2++) { if (wants.indexOf(STEMS[i][1][j2]) < 0) wants.push(STEMS[i][1][j2]); } } }
+// Матеріал («шкіряні», «кожаные») — ознака товару, а не категорія, коли сам товар названо («лофери шкіряні»): інакше при
+// розкуплених лоферах лишалась «шкіряна» категорія → шкіряний бомбер і куртка (Edit 8a567d2c). Матеріал лишається для сортування.
+var __MATERIAL = ['шкір', 'кожан'];
+if (wants.some(function (w) { return __MATERIAL.indexOf(w) < 0; })) wants = wants.filter(function (w) { return __MATERIAL.indexOf(w) < 0; });
 // Без жодної категорії («Яка ціна товарів?», «Які кольори?») і без реклами (вона не прийшла від Zernio — Edits 3d2614c8, 22fd060e):
 // кандидати — усі товари, що ЗАРАЗ рекламуються (те саме правило активних реклам нижче: один/явний лідер → картка, інакше список
 // рекламованих), а не питання «що цікавить — костюми, куртки…». Без активних реклам — як раніше.
@@ -149,6 +153,17 @@ if (__catStems.length >= 3 && wants.indexOf('комплект') < 0) wants.push(
 function hay(p) { return (String(p.name || '') + ' ' + String(p.customerName || '') + ' ' + (cats[p.categoryId] || '')).toLowerCase(); }
 var pool = wants.indexOf('комплект') >= 0 ? all.filter(function (p) { return !p.outOfStock; }) : active;
 var hits = __noCatAds ? all.filter(function (p) { return !p.outOfStock && p.isActive !== false && !p.archived; }) : pool.filter(function (p) { var h = hay(p); return wants.some(function (w) { return h.indexOf(w) >= 0; }); });
+if (!hits.length && !__noCatAds) {
+  // Названа категорія в каталозі є, але вся «немає в наявності» (лофери з 03.10) — показуємо найближчий за словами товар цієї
+  // категорії: його картка чесно каже «немає в наявності» й пропонує інше. Не підміняємо іншою категорією й не мовчимо.
+  var __oos = all.filter(function (p) { return p.outOfStock && !p.isSet && wants.some(function (w) { return hay(p).indexOf(w) >= 0; }); });
+  if (__oos.length) {
+    var __ws = msg.replace(/[^a-zа-яіїєґ0-9\s]/gi, ' ').split(/\s+/).filter(function (w) { return w.length >= 4; }).map(function (w) { return w.slice(0, 5); });
+    var __score = function (p) { var h = hay(p) + ' ' + JSON.stringify((p.offers || []).map(function (o) { return (o.properties || []).map(function (q) { return q.value; }); })).toLowerCase(); return __ws.filter(function (w) { return h.indexOf(w) >= 0; }).length; };
+    __oos.sort(function (a, b) { return __score(b) - __score(a); });
+    if (__oos[0].sku) return { catalogHint: '', catalogHintCount: 0, catalogHintSkus: '', catalogHintPick: String(__oos[0].sku), hasProductSignal: true, hasFreshSignalThisTurn: true, catalogCategories: catList, unknownTurns: unknownTurns - 1 };
+  }
+}
 if (!hits.length) return out('', 0, catList);
 // 2026-09-12 (власник: "а є чорні лофери?" — колір і категорія в ОДНОМУ, ПЕРШОМУ повідомленні,
 // без попереднього списку): фільтр за кольором вище (рядки 58-68) працює лише коли клієнт називає

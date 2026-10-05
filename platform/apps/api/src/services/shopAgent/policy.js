@@ -427,6 +427,28 @@ function isRepeatOfEscalated(A, u) {
     return !!(u.questions && u.questions.length && prev.length && u.questions.some((q) => prev.some((e) => kbSimilar(q, e))));
 }
 
+/** Цифри розмірної сітки, коли в CRM є лише КАРТИНКА сітки (sizeChartData порожнє — так у більшості товарів): один раз
+ * розпізнаємо таблицю з картинки (Gemini) і кешуємо на 24 год за URL. Без цього на «яка довжина штанів / рукава?» бот не мав
+ * цифр і передавав менеджеру (Edit f44b9da3). Не вдалось — ''. */
+const _chartTextCache = new Map();
+async function chartTextFromImage(A, url) {
+    if (!url) return '';
+    const hit = _chartTextCache.get(url); if (hit && Date.now() - hit.at < 24 * 3600 * 1000) return hit.text;
+    let text = '';
+    try {
+        const { geminiFetch } = require('../geminiKey');
+        const keys = (A.keys && A.keys.__geminiKeys) || [A.keys && A.keys.GEMINI_API_KEY].filter(Boolean);
+        if (!keys.length) return '';
+        const r = await fetch(url); if (!r.ok || !/^image\//i.test(r.headers.get('content-type') || '')) return '';
+        const b64 = Buffer.from(await r.arrayBuffer()).toString('base64');
+        const g = await geminiFetch(keys, { contents: [{ parts: [{ text: 'Це розмірна сітка товару. Перепиши її текстом БЕЗ вигадок: для кожного розміру — усі заміри з таблиці з назвами й одиницями (напр. «M — груди 112 см, довжина штанів 104 см, рукав 61 см»). Лише те, що є на зображенні. Без вступу.' }, { inline_data: { mime_type: r.headers.get('content-type').split(';')[0], data: b64 } }] }], generationConfig: { temperature: 0, maxOutputTokens: 900, thinkingConfig: { thinkingBudget: 0 } } });
+        const j = await g.json().catch(() => ({}));
+        text = String(((((j.candidates || [])[0] || {}).content || {}).parts || []).map((x) => x.text || '').join('')).trim().slice(0, 1500);
+    } catch (e) { text = ''; }
+    _chartTextCache.set(url, { at: Date.now(), text });
+    return text;
+}
+
 async function answerThenAsk(A, u, askText, o = {}) {
     // askText — ГОТОВИЙ текст для клієнта (не інструкція). Без питань клієнта він іде як є;
     // з питаннями → факти (KB, наявність) → одна відповідь + той самий крок своїми словами.
@@ -505,7 +527,8 @@ async function answerThenAsk(A, u, askText, o = {}) {
         if (pp0.sizeChartUrl && A.ctx.agent.chartSentFor !== pp0.sku && !A._chartSent) { A._chartSent = true; A.out.push({ photoUrls: [pp0.sizeChartUrl], caption: messageText(A.assets, 'n_agent_size_chart_caption', A.ctx, A.session.id), step: 'size_chart' }); A.ctx.agent.chartSentFor = pp0.sku; }
         sizeNote = 'ПИТАННЯ ПРО РОЗМІР/ПОСАДКУ — його вирішуємо самі (resolved:true), НЕ кажи «передала менеджеру/уточню»: не вгадуй посадку й розмір. ' + (A._chartSent ? 'Розмірну сітку система щойно надіслала фото — згадай це одним словом. ' : '') + 'Розмір підбираємо за параметрами категорії' + (pp0.categoryParamsPrompt ? ' (' + String(pp0.categoryParamsPrompt).replace(/\n/g, '; ') + ')' : '') + ' — попроси їх, якщо ще не дано.';
         // Заміри товару («довжина штанів», «рукав», «на який зріст») — відповідь у цифрах сітки з CRM, а не «передала менеджеру» (Edit f44b9da3).
-        if (pp0.sizeChartText) sizeNote += '\nЦИФРИ РОЗМІРНОЇ СІТКИ З CRM (на питання про заміри відповідай саме ними, по розміру клієнта, якщо він відомий):\n' + String(pp0.sizeChartText).slice(0, 1500);
+        const chartNums = pp0.sizeChartText || (pp0.sizeChartUrl ? await chartTextFromImage(A, pp0.sizeChartUrl) : '');
+        if (chartNums) sizeNote += '\nЦИФРИ РОЗМІРНОЇ СІТКИ (на питання про заміри відповідай саме ними, по розміру клієнта, якщо він відомий):\n' + String(chartNums).slice(0, 1500);
     }
     if (kinds.has('compare')) {
         // «Чим відрізняються?» — фото кожного товару (перше фото, не мініатюра), щоб клієнт сам побачив, + описи у фактах.
@@ -2089,7 +2112,7 @@ async function runPolicyInner(A, u) {
             let colorNote = '';
             // «Колір записала» — лише для кольору, що справді є в палітрі товару (2026-09-29, ed8e3e06: «Колір Бежевий — записала», а бежевого нема).
             const cmOk = !!(u.colorMatched && colorsOf(pp) && matchColor(pp, u.colorMatched));
-            if ((u.color || u.colorMatched) && !cmOk && colorsOf(pp)) { ctx.agent.wantColorRaw = u.color || u.colorMatched; colorNote = messageText(A.assets, 'n_agent_color_note_mismatch', ctx, A.session.id) + ' '; }
+            if ((u.color || u.colorMatched) && !cmOk && colorsOf(pp) && !(ctx.colorChoice && (ctx.colorChoice.color || (Array.isArray(ctx.colorChoice.colors) && ctx.colorChoice.colors.length)))) { /* колір уже прийнято (captureColorChoice) — «Щодо кольору…» не потрібне */ ctx.agent.wantColorRaw = u.color || u.colorMatched; colorNote = messageText(A.assets, 'n_agent_color_note_mismatch', ctx, A.session.id) + ' '; }
             else if (cmOk) { ctx.agent.colorMatchedNote = matchColor(pp, u.colorMatched); colorNote = messageText(A.assets, 'n_agent_color_note_matched', ctx, A.session.id) + ' '; }
             // Живий кейс 2026-09-14 (Устим, Юлія): картка товару (n_welcome) сама ЗАКІНЧУЄТЬСЯ проханням
             // дати зріст/вагу — одразу після свіжої презентації друге, окреме повідомлення з тим самим

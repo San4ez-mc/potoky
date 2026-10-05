@@ -916,6 +916,12 @@ try {
     var cols = [...new Set((prod.offers || []).flatMap(function (o) { return (o.properties || []).filter(function (q) { return /кол|цвет/i.test(q.name || ''); }).map(function (q) { return q.value; }); }))];
     return nm + (up ? (' — ' + up + ' грн') : '') + (bp.length ? (' (' + bp.join(', ') + ')') : '') + (cols.length ? ('; кольори: ' + cols.join(', ')) : '');
   }
+  // Назва ТОВАРУ допродажу — для позиції CRM, алерту менеджеру й постачальника. Раніше тут лежав текст пропозиції з ціною й
+  // кольорами («Футболка … — 449 грн (2 шт — 799 грн); кольори: Білий, Чорний») і йшов у замовлення (Edit c43c25c1); пропозиція — offerText.
+  function upItemName(prod) {
+    var nm = (!looksLikeSpecLine(prod.customerName) && prod.customerName) || (!looksLikeSpecLine(prod.displayName) && prod.displayName) || prod.name || 'Товар';
+    return String(nm).split('\n')[0].replace(/\.?\s*Артикул:?.*$/i, '').trim() || 'Товар';
+  }
   var compIds = Array.isArray(found.companionProductIds) ? found.companionProductIds : [];
   // v2 (2026-09-04): ОДИН допродаж, не три — n_pay_amount/n_crm_order додають лише upsellItems[0],
   // а n_order_intent пропонував "ці аксесуари" списком: клієнт погоджувався на три, платив за один.
@@ -924,7 +930,7 @@ try {
     if (!cprod || cprod.outOfStock) continue; // «Немає в наявності» в CRM — не пропонуємо як допродаж (03.10)
     upsell.push(upname(cprod));
     var __cq = {}; (Array.isArray(cprod.bulkPricing) ? cprod.bulkPricing : []).forEach(function (b) { if (b && b.quantity && b.price) __cq[String(b.quantity)] = Number(b.price); });
-    upsellItems.push({ id: cprod.id, sku: cprod.sku || '', supplierArticle: cprod.supplierArticle || '', name: upname(cprod).replace(/\s—\s\d+ грн$/, ''), price: Number(cprod.price) || 0, qtyPrices: __cq, offers: cprod.offers || [], colors: [...new Set((cprod.offers || []).flatMap(function (o) { return (o.properties || []).filter(function (q) { return /кол|цвет/i.test(q.name || ''); }).map(function (q) { return q.value; }); }))].join(', ') });
+    upsellItems.push({ id: cprod.id, sku: cprod.sku || '', supplierArticle: cprod.supplierArticle || '', name: upItemName(cprod), offerText: upname(cprod), price: Number(cprod.price) || 0, qtyPrices: __cq, offers: cprod.offers || [], colors: [...new Set((cprod.offers || []).flatMap(function (o) { return (o.properties || []).filter(function (q) { return /кол|цвет/i.test(q.name || ''); }).map(function (q) { return q.value; }); }))].join(', ') });
     if (!__upsellPhoto) { __upsellPhoto = resolveUrl((cprod.images || [])[0] || ''); }
   }
   var __upsellPhotoNote = __upsellPhoto

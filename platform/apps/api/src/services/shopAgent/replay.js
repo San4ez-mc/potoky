@@ -45,6 +45,9 @@ async function replaySession(realSessionId, { maxTurns = 30, keep = false, log =
         lines.push('\n[' + ts + '] КЛІЄНТ: ' + (text || '[фото]').replace(/\n/g, ' ⏎ ').slice(0, 300) + (att ? ' [📷]' : '') + (sharedPost ? ' [пост: ' + String(sharedPost.caption || '').slice(0, 60) + ']' : ''));
         // що було насправді далі (до наступного повідомлення клієнта)
         const thenReal = []; for (let k = j; k < msgs.length && msgs[k].role !== 'user'; k++) { const md = msgs[k].metadata || {}; if (md.hidden) continue; thenReal.push((md.source === 'zernio_inbox' ? 'МЕНЕДЖЕР' : 'СТАРИЙ БОТ') + ': ' + String(msgs[k].content || '').replace(/\n/g, ' ⏎ ').slice(0, 220)); }
+        // Повідомлення клієнта — в історію тестової сесії, як це робить бойовий zernioHandler перед ходом (інакше history без
+        // клієнта, і правила, що дивляться на час його повідомлення, бачать неправдиву картину).
+        await db.message.create({ data: { sessionId: test.id, role: 'user', content: text || '[фото]', metadata: { source: 'replay', ...(att ? { attachment: att } : {}), ...(sharedPost ? { sharedPost } : {}) } } });
         const t0 = Date.now();
         let r;
         try { r = await handleTurn({ botId: real.botId, sessionId: test.id, text: text || '', imageUrl: att ? att.url : null, sharedPost, entryAdId }); }

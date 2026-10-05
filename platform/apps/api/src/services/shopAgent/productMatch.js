@@ -1255,7 +1255,9 @@ try {
   // розмір/колір, якщо це той самий товар.
   var __prevSku = String((context.product && context.product.sku) || context.lastPresentedSku || ''); var __prevAt = Number(context.presentedAt) || 0;
   result.skipPresentation = !!(__prevSku && found.sku && __prevSku.toUpperCase() === String(found.sku).toUpperCase() && (Date.now() - __prevAt) < 30 * 60 * 1000);
-  result.presentedAt = result.skipPresentation ? __prevAt : Date.now(); // для ignoreRightAfterPresentationRe у n_size
+  // Час показу картки ставить лише present() (policy) — пошук товару не знає, чи картку покажуть. Раніше тут було Date.now() «наперед»,
+  // і policy вважала картку щойно показаною: не слала її й знімала питання клієнта як відповідені (05.10, denya_7474, FunnelTest 125).
+  if (result.skipPresentation) result.presentedAt = __prevAt;
   try {
     var __snap = context.prevProductSnapshot;
     if (__snap && found.sku && String(__snap.sku || '').toUpperCase() === String(found.sku).toUpperCase() && (Date.now() - Number(__snap.at || 0)) < 6 * 3600 * 1000) {

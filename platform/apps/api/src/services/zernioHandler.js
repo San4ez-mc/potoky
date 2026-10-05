@@ -1645,7 +1645,11 @@ async function runFlowAndDeliver(sessionId, entry) {
             if (_texts.length) {
                 const _joined = _texts.join('\n').trim();
                 if (_joined !== mergedText) logger.info('[zernioHandler] truth-sync: merged unanswered client messages', { botId, sessionId, fromWebhook: String(mergedText).slice(0, 60), fromRest: _joined.slice(0, 60), n: _texts.length });
-                mergedText = _joined;
+                // Відновлення після тиші менеджера: текст уже зібрано з усього, що клієнт написав після останньої відповіді БОТА
+                // (включно з відповіддю на питання бота, яку менеджер перехопив). REST «без відповіді» рахує лише після менеджера —
+                // заміна губила, напр., «1» (спосіб оплати), і бот перепитував «напишіть 1 або 2» (05.10, boryalevad). Тут лише доповнюємо.
+                if (entry.resumeFromManagerSilence && mergedText) { const _miss = _texts.filter((t) => !mergedText.includes(t)); if (_miss.length) mergedText = (mergedText + '\n' + _miss.join('\n')).trim(); }
+                else mergedText = _joined;
             }
             if (!runImageUrl) {
                 const _ph = sync.unanswered.map((u) => (u.attachments || []).find((a) => a.type === 'photo' && a.url)).find(Boolean);

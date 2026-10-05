@@ -68,7 +68,8 @@ async function resolveShoppingIntent(A, u, tool) {
     // а не «що вас цікавить — костюми, куртки…». Зміст питання — від аналізатора (intent / вид питання), не ключові слова.
     const productAsk = !hadProduct && u && (u.intent === 'product_query' || u.intent === 'order_yes' || (Array.isArray(u.questions) && u.questions.some((q) => classifyKbQuestion(q).kind === 'catalog')));
     async function advertisedFallback() {
-        if (!productAsk || ctx.entryAdId || String(ctx.catalogHintSkus || '')) return null;
+        // Нерозпізнане фото клієнта — теж сигнал («ось ця річ»), не «сигналу нема»: рекламовані товари тут — чужа відповідь (aze111274).
+        if (!productAsk || ctx.entryAdId || String(ctx.catalogHintSkus || '') || (ctx.agent && ctx.agent.unknownPhotoAt && Date.now() - ctx.agent.unknownPhotoAt < 2 * 3600 * 1000)) return null;
         const cat0 = await loadCatalog(A.botId, keys);
         ctx.lookupProductsRaw = cat0.products; ctx.lookupAdsRaw = cat0.ads; ctx.lookupCategoriesRaw = cat0.categories || [];
         ctx.catalogHintCategoriesRaw = await loadCategories(A.botId, keys);

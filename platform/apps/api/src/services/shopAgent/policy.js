@@ -724,6 +724,41 @@ async function pause(A, reason, alertNode, extraDetails) {
     if (alertNode) await T.alert(A, alertNode, { details: extraDetails });
 }
 
+/**
+ * Запобіжник «зациклився» (05.10, скан 4271 розмови за 7 днів: 119 з ознаками петлі — «зріст і вага» ×9, «адреса НП» ×9 клієнту
+ * з Іспанії, «Оформляємо?» на кожне «дякую», «немає в наявності» тричі тим самим текстом, «оберіть номер» на нове фото). Кожен хід
+ * вирішує «що питати далі» окремо — нічого не бачило, що бот уже N-й хід поспіль стоїть на тому самому кроці без руху вперед.
+ * Тут — одне правило на вихід ходу: той самий крок (родина кроків) поспіль поріг разів → не повторюємо, а кличемо менеджера.
+ */
+const LOOP_FAMILIES = [
+    { fam: 'params', re: /^(ask_params|size_verify_ask)$/, limit: 4 },
+    { fam: 'address', re: /^(ask_address|order_reshow)$/, limit: 4 },
+    { fam: 'color', re: /^(set_color_ask|ask_color|color_size_unavailable|set_color_size_unavailable)$/, limit: 4 },
+    { fam: 'intent', re: /^(order_intent|order_intent_repeat)$/, limit: 4 },
+    { fam: 'pay', re: /^(pay_options|pay_options_repeat)$/, limit: 4 },
+    { fam: 'set', re: /^(set_ask|set_answer)$/, limit: 4 },
+    { fam: 'unknown', re: /^(unknown|hint|hint_repeat)$/, limit: 3 },
+    { fam: 'oos', re: /^(out_of_stock)$/, limit: 3 },
+];
+async function breakLoop(A) {
+    const { ctx } = A;
+    if (ctx.funnelPaused || !A.out.length) return false;
+    const main = [...A.out].reverse().find((o) => o.text && String(o.text).trim());
+    if (!main) return false;
+    const last = String(main.step || '').split('+').pop();
+    const f = LOOP_FAMILIES.find((x) => x.re.test(last));
+    const prev = ctx.agent.loopStreak || null;
+    if (!f) { delete ctx.agent.loopStreak; return false; }
+    const n = (prev && prev.fam === f.fam && Date.now() - Number(prev.at || 0) < 12 * 3600 * 1000) ? prev.n + 1 : 1;
+    ctx.agent.loopStreak = { fam: f.fam, n, at: Date.now(), step: last };
+    if (n < f.limit) return false;
+    delete ctx.agent.loopStreak;
+    A.out = [];
+    A.out.push({ text: messageText(A.assets, 'n_agent_loop_handoff', ctx, A.session.id) || 'Щоб не ганяти вас по колу 🙏 — підключаю менеджера, він напише вам тут найближчим часом.', step: 'loop_handoff' });
+    await pause(A, 'loop', 'n_agent_handoff_admin', '🔁 Бот зациклився: ' + n + ' ходи поспіль «' + last + '» (' + f.fam + ') без руху вперед. Останнє від клієнта: «' + String(A.turnText || '').slice(0, 150) + '» — підхопіть розмову.');
+    return true;
+}
+
 /** Презентація товару: альбом фото + картка (n_welcome) у тому ж ході. */
 async function present(A) {
     const { ctx } = A; const p = P(ctx);
@@ -1591,12 +1626,8 @@ async function runPolicyInner(A, u) {
             }
         }
         if (u.productHint.article && !/артикул|арт\.|\b[a-z]\d{3,6}\b/i.test(text)) ctx.lastUserMessage = text + ' артикул ' + u.productHint.article;
-        const __presentedAtBefore = ctx.presentedAt;
         const r = await T.resolveProduct(A, u);
-        // Час показу картки ставить лише present() (або «картку вже показала автоматизація коментаря» — skipPresentation).
-        // matchProduct (код старого вузла) ставив presentedAt = зараз ще ДО показу — і policy вважала картку «щойно показаною»:
-        // картку не слала, а питання «які кольори?» знімала як уже відповідене (05.10, denya_7474: через 15 днів — лише «зріст і вага»).
-        if (!r.skipPresentation) { if (__presentedAtBefore) ctx.presentedAt = __presentedAtBefore; else delete ctx.presentedAt; }
+        if (r.status === 'found' || r.status === 'hint') delete ctx.agent.unknownPhotoAt;
         // Давня розмова: товар показано понад 24 год тому, клієнт прийшов із НОВИМ сигналом (реклама/пост/фото), а новий товар не
         // визначився — не продовжуємо про старий (03.10, andrew_stepanchuk: комплект set1112 з 09.09, 02.10 прийшов з реклами
         // флісового костюма → бот «Комплект 4 в 1 коштує 5290 ₴»). Забуваємо старий товар (параметри людини — зріст/вага — лишаються),
@@ -1723,7 +1754,8 @@ async function runPolicyInner(A, u) {
             if (!hintResolved && u.questions.length) await escalateUnresolved(A, u.questions[0]);
             A.out.push({ text: txt, step: 'hint' }); ctx.agent.lastAsk = 'який із показаних товарів цікавить';
             return;
-        } else if (!P(ctx) && ctx.agent.hintList && /^[\s?!.…]*$|^\s*(ау|алло|ало|ей|еу|ну)[\s?!.]*$/i.test(text.trim())) {
+        } else if (!P(ctx) && ctx.agent.hintList && !A.turnImage && /^[\s?!.…]*$|^\s*(ау|алло|ало|ей|еу|ну)[\s?!.]*$/i.test(text.trim())) {
+            // (!A.turnImage: фото без тексту — це новий сигнал «ось цей товар», а не «?»; 05.10 aze111274 — «оберіть номер» на фото.)
             // 2026-09-24 (FunnelTest 41): «?»/«Ау» після показаного списку — нетерплячка, а не новий запит; показуємо
             // список ще раз замість скидання в «що вас цікавить».
             ctx.agent.hintRepeatCount = (ctx.agent.hintRepeatCount || 0) + 1;
@@ -1749,9 +1781,14 @@ async function runPolicyInner(A, u) {
             // і не питаємо категорію — передаємо менеджеру (рішення Олексія 29.09: «хай менеджеру передає — можливо буде
             // наявність, якщо ні — менеджер запропонує схожі, щоб не втратити клієнта»).
             const fromPostOrAd = !!(A.turnSharedPost || A.newEntryAd) && !A.turnImage;
-            if (fromPostOrAd) {
+            // Фото клієнта вже не впізнали, а він знову про нього (ще фото, «Такой есть?», «М и L есть?») — це той самий випадок, що й
+            // пост/реклама без товару в CRM: клієнт показує конкретну річ, якої бот не знає. Не ганяємо по категоріях і не підсовуємо
+            // рекламовані товари — менеджер (05.10, aze111274: давній пост, 9 ходів «що цікавить»/«оберіть номер», «Вы ненормальные»).
+            const photoStillUnknown = !!(ctx.agent.unknownPhotoAt && Date.now() - ctx.agent.unknownPhotoAt < 2 * 3600 * 1000);
+            if (A.turnImage && !photoStillUnknown) ctx.agent.unknownPhotoAt = Date.now();
+            if (fromPostOrAd || photoStillUnknown) {
                 A.out.push({ text: (A.botSpokeBefore ? '' : 'Вітаю! 💛 Я ' + (A.keys.PERSONA_NAME || 'Оля') + ' з ' + (A.keys.SHOP_TAG || 'магазину') + '.\n') + 'Дякую за інтерес до цієї моделі! Уточню її наявність у менеджера — він напише вам сюди найближчим часом 🙏', step: 'post_unknown_handoff' });
-                const src = A.turnSharedPost ? ('пост: ' + String((A.turnSharedPost.caption || '').split('\n')[0]).slice(0, 120) + (A.turnSharedPost.url ? ' ' + A.turnSharedPost.url : '')) : ('реклама ' + String(ctx.entryAdId || '') + (ctx.adTitle ? ' «' + String(ctx.adTitle).slice(0, 80) + '»' : ''));
+                const src = photoStillUnknown && !fromPostOrAd ? ('фото клієнта не впізнано' + (ctx.recentUserImageUrl ? ': ' + ctx.recentUserImageUrl : '')) : A.turnSharedPost ? ('пост: ' + String((A.turnSharedPost.caption || '').split('\n')[0]).slice(0, 120) + (A.turnSharedPost.url ? ' ' + A.turnSharedPost.url : '')) : ('реклама ' + String(ctx.entryAdId || '') + (ctx.adTitle ? ' «' + String(ctx.adTitle).slice(0, 80) + '»' : ''));
                 await pause(A, 'post_unknown', 'n_unknown_admin', 'Товар із посту/реклами не знайдено в CRM — перевірте наявність і напишіть клієнту (' + src + ')');
                 ctx.unknownNotifiedAt = Date.now();
                 return;
@@ -1819,7 +1856,11 @@ async function runPolicyInner(A, u) {
     // Пачка повідомлень клієнта («Як підібрати розмір?» + «Яка ціна товарів?» + пост) обробляється кількома ходами підряд:
     // картку показав перший, а наступний (за секунди) переказував ті самі ціни ще раз (03.10, zhenya8019). Картка цього
     // товару показана < 90 с тому — питання, на які вона вже відповіла, закриті й для цього ходу.
-    if (!A.justPresented && ctx.presentedAt && ctx.agent.presentedSku === p.sku && Date.now() - Number(ctx.presentedAt) < 90 * 1000) dropQuestionsAnsweredByCard(A, u);
+    // Лише якщо клієнт написав це ДО того, як побачив картку (пачка). Питання, поставлене ПІСЛЯ картки («Яка ціна?», «Як замовити?» —
+    // кнопки Instagram під постом), — справжнє питання, на нього відповідаємо (05.10: скан «зациклився» — 29 розмов, де бот на такі
+    // питання лише повторював «Мені ще потрібні зріст і вага»; FunnelTest 79/86/115/125).
+    const __clientAt = Math.max(0, ...(A.history || []).filter((m) => m.who === 'client').map((m) => new Date(m.sentAt || m.at).getTime() || 0));
+    if (!A.justPresented && ctx.presentedAt && ctx.agent.presentedSku === p.sku && Date.now() - Number(ctx.presentedAt) < 90 * 1000 && !(__clientAt > Number(ctx.presentedAt))) dropQuestionsAnsweredByCard(A, u);
     // 3. Комплект
     if (p.isSet && !ctx.setMode) {
         // 2026-09-18 (живий кейс, Roman/tovstanovskiy_, сесія 20af04a6: "Кофта и лоферы" / "5934
@@ -2785,4 +2826,4 @@ async function runPolicyInner(A, u) {
     }
 }
 
-module.exports = { runPolicy, addressComplete, matchColor, enforceInsistLimit, runSupplierDispatch, crmOrderEditUrl, shipTerms };
+module.exports = { runPolicy, breakLoop, LOOP_FAMILIES, addressComplete, matchColor, enforceInsistLimit, runSupplierDispatch, crmOrderEditUrl, shipTerms };

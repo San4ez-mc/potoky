@@ -13,7 +13,7 @@ const { db, logger, loadAssets, cleanJsonDeep, mergeConsecutiveTextOutputs, runN
 const { geminiKeys } = require('../geminiKey');
 const { resolveIgLink, LINK_RE } = require('./igLink');
 const { understand } = require('./understand');
-const { runPolicy, matchColor } = require('./policy');
+const { runPolicy, matchColor, breakLoop } = require('./policy');
 const { textFromJsonLike } = require('./compose');
 const _noCreditBotAlertAt = new Map(); // botId -> ts загального сигналу «кредити Claude закінчились»
 
@@ -126,7 +126,7 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
     const ctx = session.context || {};
     // Пауза від скарги/прохання менеджера, поставлена попереднім ходом, поки це повідомлення чекало в черзі.
     // 2026-09-29 (ed8e3e06): «Передала менеджеру» — і через 6 с бот знову питав колір, бо гейт у zernioHandler читав контекст ДО черги.
-    if (!dryRun && ctx.funnelPaused && /^(complaint|handoff|post_unknown|annoyed)$/.test(String(ctx.pausedBy || ''))) {
+    if (!dryRun && ctx.funnelPaused && /^(complaint|handoff|post_unknown|annoyed|loop)$/.test(String(ctx.pausedBy || ''))) {
         logger.info('[shopAgent] turn skipped — session paused', { botId, sessionId, pausedBy: ctx.pausedBy });
         return { replies: [], understanding: {}, trace: [], ctx, paused: true };
     }
@@ -194,6 +194,8 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
             try { await require('./tools').alert(A, { title: '💸 Кредити Claude закінчились — клієнт чекає, відповідайте вручну', main: 'Клієнт чекає відповіді: «' + String(text || '').slice(0, 200) + '»', details: 'Бот мовчить, поки не поповнять баланс Anthropic.' }); } catch (e) { /* best-effort */ }
         }
     }
+    // Запобіжник «зациклився»: той самий крок N ходів поспіль без руху вперед — менеджер замість N+1-го повтору (policy.breakLoop).
+    if (!A._noCredit && !dryRun) { try { await breakLoop(A); } catch (e) { logger.warn('[shopAgent] breakLoop failed: ' + e.message, { sessionId }); } }
     // Підтвердження зміни вибору («лише кофта») — перед першим текстом цього ходу, щоб клієнт бачив, що його почули.
     if (A._switchNote && !A._noCredit) { const firstText = A.out.find((o) => o.text && !o.photoUrls); if (firstText) firstText.text = A._switchNote + firstText.text; else A.out.push({ text: A._switchNote.trim(), step: 'set_switch' }); }
     // одноразові прапорці ходу

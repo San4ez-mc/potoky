@@ -26,7 +26,7 @@ if (require.main === module && !process.env.NODE_PATH) {
     require('module').Module._initPaths();
 }
 const { loadAssets } = require('../lib');
-const { runPolicy, matchColor, enforceInsistLimit } = require('../policy');
+const { runPolicy, matchColor, enforceInsistLimit, breakLoop } = require('../policy');
 
 const BOT = 'fcdee415-bef2-4a74-a650-e6e4b5a12322';
 let assets;
@@ -881,6 +881,25 @@ async function main() {
         // 31. Абзаци замість суцільного рядка.
         const p1 = paragraphize('Дякую за параметри 🙂 Ви називали M, але за вашим зростом і вагою краще підійде L 📏 Якщо все ж хочете M — напишіть, оформимо так. Тепер оберіть колір: Чорний, Графітовий — який вам більше до душі? 😊');
         check('31.1 Довгий текст одним рядком → абзаци', (p1.match(/\n\n/g) || []).length >= 2, JSON.stringify(p1).slice(0, 120));
+        // 32. Запобіжник «зациклився» (05.10, скан 119 розмов): той самий крок 4 ходи поспіль → менеджер, а не 5-й повтор.
+        {
+            const A = freshA({ turnText: 'Pero para que te hace falta la dirección' });
+            let broke = false;
+            for (let i = 0; i < 4; i++) { A.out = [{ text: 'Напишіть, будь ласка, для відправки Новою Поштою: ПІБ, телефон, № відділення 📦', step: 'ask_address' }]; broke = await breakLoop(A); }
+            check('32.1 4-те прохання адреси поспіль → передача менеджеру й пауза', broke && A.ctx.funnelPaused && A.ctx.pausedBy === 'loop' && A.out.length === 1 && A.out[0].step === 'loop_handoff', JSON.stringify(A.out).slice(0, 120));
+            const B = freshA({ turnText: 'Дякую' });
+            let b2 = false;
+            for (const st of ['ask_address', 'order_intent', 'ask_address', 'order_intent']) { B.out = [{ text: 'x'.repeat(30), step: st }]; b2 = await breakLoop(B); }
+            check('32.2 Різні кроки (рух уперед) — не петля', !b2 && !B.ctx.funnelPaused, JSON.stringify(B.ctx.agent.loopStreak));
+        }
+        // 33. Питання, поставлене ПІСЛЯ картки (кнопка Instagram «Яка вартість?»), не знімається як «відповіла картка» (FunnelTest 125).
+        if (kof && kof.sku) {
+            const A = freshA({ turnText: 'Яка ціна кофти?', history: [{ who: 'bot', text: 'картка', at: new Date(Date.now() - 20000) }, { who: 'client', text: 'Яка ціна кофти?', at: new Date(Date.now() - 3000), sentAt: new Date(Date.now() - 3000) }] });
+            A.ctx.product = JSON.parse(JSON.stringify(kof)); A.ctx.agent.presentedSku = kof.sku; A.ctx.presentedAt = Date.now() - 20000;
+            const u = freshU({ intent: 'question', questions: ['Яка ціна кофти?'] });
+            await runPolicy(A, u);
+            check('33.1 Питання після картки лишається для відповіді', u.questions.length === 1 || A.out.some((o) => /1279|ціна/i.test(String(o.text || ''))), JSON.stringify(A.out.map((o) => o.step)));
+        }
         check('31.2 Текст із переносами не чіпається', paragraphize('Рядок один.\nРядок два, досить довгий, щоб перевищити межу в сто сорок символів, і ще трохи тексту, щоб точно перевищити.') === 'Рядок один.\nРядок два, досить довгий, щоб перевищити межу в сто сорок символів, і ще трохи тексту, щоб точно перевищити.', '');
     }
 

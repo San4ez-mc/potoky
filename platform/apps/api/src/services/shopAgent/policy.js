@@ -130,7 +130,7 @@ function initSetSelection(pp) {
 /** Пари «позиція — колір» від аналізатора (u.itemColors), поки комплект збирається: секція кольорів іде ПІСЛЯ розміру,
  * тож кольори, названі разом із вибором речей, інакше губились (2026-10-02, живий кейс c6d03189). */
 function rememberSetItemColors(ctx, u) {
-    const pairs = (Array.isArray(u.itemColors) ? u.itemColors : []).filter((ic) => ic && ic.item && ic.color);
+    const pairs = (Array.isArray(u.itemColors) ? u.itemColors : []).filter((ic) => ic && ic.item && (ic.color || ic.size));
     if (pairs.length) ctx.agent.setItemColorHints = (ctx.agent.setItemColorHints || []).concat(pairs).slice(-8);
 }
 function stemsOf(name) {
@@ -504,6 +504,8 @@ async function answerThenAsk(A, u, askText, o = {}) {
         // Розмір/посадка: не база знань і не менеджер — розмірна сітка (якщо є) + параметри категорії для підбору.
         if (pp0.sizeChartUrl && A.ctx.agent.chartSentFor !== pp0.sku && !A._chartSent) { A._chartSent = true; A.out.push({ photoUrls: [pp0.sizeChartUrl], caption: messageText(A.assets, 'n_agent_size_chart_caption', A.ctx, A.session.id), step: 'size_chart' }); A.ctx.agent.chartSentFor = pp0.sku; }
         sizeNote = 'ПИТАННЯ ПРО РОЗМІР/ПОСАДКУ — його вирішуємо самі (resolved:true), НЕ кажи «передала менеджеру/уточню»: не вгадуй посадку й розмір. ' + (A._chartSent ? 'Розмірну сітку система щойно надіслала фото — згадай це одним словом. ' : '') + 'Розмір підбираємо за параметрами категорії' + (pp0.categoryParamsPrompt ? ' (' + String(pp0.categoryParamsPrompt).replace(/\n/g, '; ') + ')' : '') + ' — попроси їх, якщо ще не дано.';
+        // Заміри товару («довжина штанів», «рукав», «на який зріст») — відповідь у цифрах сітки з CRM, а не «передала менеджеру» (Edit f44b9da3).
+        if (pp0.sizeChartText) sizeNote += '\nЦИФРИ РОЗМІРНОЇ СІТКИ З CRM (на питання про заміри відповідай саме ними, по розміру клієнта, якщо він відомий):\n' + String(pp0.sizeChartText).slice(0, 1500);
     }
     if (kinds.has('compare')) {
         // «Чим відрізняються?» — фото кожного товару (перше фото, не мініатюра), щоб клієнт сам побачив, + описи у фактах.
@@ -1989,6 +1991,15 @@ async function runPolicyInner(A, u) {
             ctx.agent.lastAsk = 'зріст і вага';
             return;
         }
+        // Перевіряємо названий розмір, а клієнт дав лише зріст або лише вагу — це не відмова: один раз просимо відсутній параметр
+        // (Edit e7a3af14: «M» + «185 зріст» → бот одразу «записала M», менеджерка дописувала вагу сама).
+        if (isHW && !pp.isSet && ctx.agent.sizeClaim && !!si.height !== !!si.weight && !ctx.agent.sizeVerifyMissingAsked) {
+            ctx.agent.sizeVerifyMissingAsked = true; ctx.sizeInput = si;
+            ctx.agent.missingParam = si.height ? 'вагу' : 'зріст';
+            A.out.push({ text: await answerThenAsk(A, u, 'Дякую! Підкажіть ще ' + ctx.agent.missingParam + ', будь ласка — і я перевірю, чи ' + ctx.agent.sizeClaim + ' вам підійде 🙂'), step: 'size_verify_ask' });
+            ctx.agent.lastAsk = 'зріст і вага';
+            return;
+        }
         // Параметри для перевірки прийшли — рахуємо саме за зростом/вагою, а не за названим розміром.
         if (isHW && ctx.agent.sizeClaim && si.height && si.weight) delete si.clothingSize;
         ctx.sizeInput = si;
@@ -2103,7 +2114,8 @@ async function runPolicyInner(A, u) {
             ctx.agent.paramsAskCount = (ctx.agent.paramsAskCount || 0) + 1;
             // Для товарів із власним параметром (джинси — розмір за талією) перефраз не має просити зріст/вагу (FunnelTest 35).
             if (ask && !isHW && ctx.agent.paramsAskCount > 1 && ctx.agent.lastAsk === (paramsPrompt || 'зріст і вага')) ask = 'Підкажіть, будь ласка, ' + (humanizeParamsPrompt(paramsPrompt) || 'ваш розмір') + ' — і одразу рухаємось далі 🙂';
-            else if (ask && ctx.agent.paramsAskCount > 1 && ctx.agent.lastAsk === (paramsPrompt || 'зріст і вага')) ask = (ctx.agent.paramsAskCount % 2 ? 'Щоб підібрати розмір, лишилось дізнатись зріст і вагу 🙂 Напишіть, будь ласка, скільки у вас — і одразу рухаємось далі.' : 'Мені ще потрібні зріст і вага для підбору розміру 📏 Напишіть їх, будь ласка 🙂');
+            // Бракує лише одного параметра — перефраз «лишилось дізнатись зріст і вагу» не потрібен: n_agent_ask_size_missing просить саме його (Edit a0f32ec3).
+            else if (ask && !missing && ctx.agent.paramsAskCount > 1 && ctx.agent.lastAsk === (paramsPrompt || 'зріст і вага')) ask = (ctx.agent.paramsAskCount % 2 ? 'Щоб підібрати розмір, лишилось дізнатись зріст і вагу 🙂 Напишіть, будь ласка, скільки у вас — і одразу рухаємось далі.' : 'Мені ще потрібні зріст і вага для підбору розміру 📏 Напишіть їх, будь ласка 🙂');
             A.out.push({ text: chartJustSent ? (preNote + colorNote + ask) : await answerThenAsk(A, u, preNote + colorNote + ask), step: 'ask_params' }); ctx.agent.lastAsk = paramsPrompt || 'зріст і вага';
             return;
         }
@@ -2283,7 +2295,14 @@ async function runPolicyInner(A, u) {
             const curPairs = Array.isArray(u.itemColors) ? u.itemColors : [];
             for (const ic of [...(ctx.agent.setItemColorHints || []).map((x) => ({ ...x, __old: true })), ...curPairs]) {
                 const item = ic && ic.item && matchSetItem(String(ic.item), ctx.setSelection, catNamesSet);
-                if (!item || (ic.__old && item.color)) continue;
+                // Розмір саме цієї речі, названий поруч із кольором («кофта світло-сіра XL», Edit 27c53c42) — перекриває розрахований.
+                if (item && ic.size && !(ic.__old && item.sizeByClient)) {
+                    const nzS = (x) => String(x || '').toUpperCase().trim().replace(/^2XL$/, 'XXL').replace(/^3XL$/, 'XXXL');
+                    const availS = (Array.isArray(item.sizes) ? item.sizes : []).map((x) => String((x && (x.name || x.size || x.value)) || x || '').trim()).filter(Boolean);
+                    const lab = availS.find((x) => nzS(x) === nzS(ic.size));
+                    if (lab || !availS.length) { item.size = lab || nzS(ic.size); item.sizeByClient = true; ctx.setSizeMap = { ...(ctx.setSizeMap || {}), [item.article]: item.size }; }
+                }
+                if (!item || !ic.color || (ic.__old && item.color)) continue;
                 const c = Array.isArray(item.colors) && item.colors.length && ic.color ? matchColor({ colors: item.colors.join(',') }, String(ic.color)) : null;
                 if (c) item.color = c;
             }

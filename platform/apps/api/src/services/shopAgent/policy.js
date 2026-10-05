@@ -326,6 +326,30 @@ function setItemsWantedArticles(ctx, u, p) {
     return { all: false, articles: arts, missing };
 }
 
+/** Прийом кольору з повідомлення клієнта — ОДИН раз за хід, ДО секції розміру (раніше лише в секції кольору, яка виконується після
+ * розміру: коли хід закінчувався питанням про зріст і вагу, названі кольори губились і бот питав колір удруге — Edits 39dc3ff6,
+ * c83d677f). Кілька кольорів (units) і один колір; збережені з попередніх ходів (pendingUnits/pendingColor) теж. Лише точний збіг
+ * з палітрою товару — неоднозначне (відтінок, «темний») лишається секції кольору з її питаннями. */
+function captureColorChoice(A, u, pp) {
+    const { ctx } = A;
+    if (!pp || !pp.colors || pp.isSet) return;
+    const resolved = () => !!(ctx.colorChoice && (ctx.colorChoice.color || (Array.isArray(ctx.colorChoice.colors) && ctx.colorChoice.colors.length)));
+    const pu = ctx.agent.pendingUnits && Date.now() - Number(ctx.agent.pendingUnits.at || 0) < 6 * 3600 * 1000 ? ctx.agent.pendingUnits : null;
+    const units = (Array.isArray(u.units) && u.units.length > 1) ? u.units : (pu ? pu.units : null);
+    if (pp.colors && !resolved() && units) {
+        const matchedColors = units.map((x) => matchColor(pp, x.color) || matchColor(pp, x.colorMatched)).filter(Boolean);
+        // Відтінок не перевертаємо: клієнт писав «темно-сіру», а модель дала «Світло-сірий» (2026-09-30, тест a4421e30) — такий колір не приймаємо, спитаємо.
+        const tt = String(A.turnText || '').toLowerCase();
+        const flipped = matchedColors.some((c) => { const cl = c.toLowerCase(); return (/світл/.test(cl) && /темн/.test(tt) && !/світл/.test(tt)) || (/темн/.test(cl) && /світл/.test(tt) && !/темн/.test(tt)); });
+        if (matchedColors.length === units.length && !flipped) ctx.colorChoice = { colors: matchedColors, qty: u.qty || (pu && units === pu.units ? pu.qty : units.length) };
+        if (resolved()) delete ctx.agent.pendingUnits;
+    }
+    if (pp.colors && !resolved()) {
+        const c = u.colorMatched || matchColor(pp, u.color) || (ctx.sizeInput && ctx.sizeInput.color) || matchColor(pp, ctx.agent.pendingColor) || matchColor(pp, ctx.agent.pendingColorRaw) || null;
+        if (c) { ctx.colorChoice = { color: c, qty: u.qty || undefined }; delete ctx.agent.pendingColor; delete ctx.agent.pendingColorRaw; }
+    }
+}
+
 /** Палітра товару в розмові = кольори, які є в підібраному розмірі (CRM effectiveSizes). Повна палітра лишається в colorsAll;
  * зміна розміру перераховує з неї. Так питання про колір, звірка й шаблони n_agent_*color* (вони читають product.colors) показують
  * лише реальні варіанти, а не оформлюють колір, якого в цьому розмірі нема (2026-10-05, Edit 26658740).
@@ -1451,6 +1475,9 @@ async function runPolicyInner(A, u) {
         }
     }
     if (u.colorMatched) ctx.agent.pendingColor = u.colorMatched; else if (u.color) ctx.agent.pendingColorRaw = u.color;
+    // Кілька кольорів одразу («чорну і сіру», «один світло-сірий, другий чорний») теж памʼятаємо: хід міг завершитись питанням
+    // про зріст і вагу, і кольори губились — бот питав колір удруге (Edits 39dc3ff6, c83d677f, 03–04.10).
+    if (Array.isArray(u.units) && u.units.length > 1 && u.units.some((x) => x && (x.color || x.colorMatched))) ctx.agent.pendingUnits = { units: u.units, qty: u.qty || u.units.length, at: Date.now() };
     // Згадка ще одного товару («і ще лофери 44») — памʼятаємо текст: розмір із нього застосовується, коли модель оберуть наступним ходом.
     // addItem — поле для складу КОМПЛЕКТУ; поза комплектом «додайте лофери 44» — це ще один товар (extraProducts), інакше його ніхто
     // не шукав у каталозі й модель вигадувала «взуття у нас немає» (тест 162, 02.10).
@@ -1925,6 +1952,8 @@ async function runPolicyInner(A, u) {
         ctx.agent.lastAsk = 'що підібрати замість відсутнього товару';
         return;
     }
+    // Колір з цього (або попереднього) повідомлення — до розміру, щоб питання про колір не повторювалось (див. captureColorChoice).
+    if (!pp.isSet) captureColorChoice(A, u, pp);
     // 4. Розмір
     const needSize = (pp.isClothing || pp.isSet) && !ctx.recommendedSize && !ctx.isSetSizeCalc && !ctx.sizeOutOfRange;
     if (needSize) {
@@ -2100,18 +2129,10 @@ async function runPolicyInner(A, u) {
     // секція перевіряла ЛИШЕ colorMatched/color (одиничний вибір) — u.units для кількох різних
     // кольорів на кілька штук того самого товару НІКОЛИ тут не перевірявся, тож гейт "колір ще не
     // обрано" не знімався, і секція щоразу питала generic-питання про ОДИН колір заново.
-    const colorResolved = !!(ctx.colorChoice && (ctx.colorChoice.color || (Array.isArray(ctx.colorChoice.colors) && ctx.colorChoice.colors.length)));
-    if (pp.colors && !colorResolved && u.units && u.units.length > 1) {
-        const matchedColors = u.units.map((x) => matchColor(pp, x.color) || matchColor(pp, x.colorMatched)).filter(Boolean);
-        // Відтінок не перевертаємо: клієнт писав «темно-сіру», а модель дала «Світло-сірий» (2026-09-30, тест a4421e30) — такий колір не приймаємо, спитаємо.
-        const tt = String(A.turnText || '').toLowerCase();
-        const flipped = matchedColors.some((c) => { const cl = c.toLowerCase(); return (/світл/.test(cl) && /темн/.test(tt) && !/світл/.test(tt)) || (/темн/.test(cl) && /світл/.test(tt) && !/темн/.test(tt)); });
-        if (matchedColors.length === u.units.length && !flipped) ctx.colorChoice = { colors: matchedColors, qty: u.qty || u.units.length };
-    }
+    captureColorChoice(A, u, pp);
     if (pp.colors && !(ctx.colorChoice && (ctx.colorChoice.color || (Array.isArray(ctx.colorChoice.colors) && ctx.colorChoice.colors.length)))) {
-        const c = u.colorMatched || matchColor(pp, u.color) || (ctx.sizeInput && ctx.sizeInput.color) || matchColor(pp, ctx.agent.pendingColor) || matchColor(pp, ctx.agent.pendingColorRaw) || null;
-        if (c) { ctx.colorChoice = { color: c, qty: u.qty || undefined }; delete ctx.agent.pendingColor; delete ctx.agent.pendingColorRaw; }
-        else if (ctx.agent.softColorCount > 0 && /^\s*(ок|окей|добре|гуд|ясно|зрозуміло|угу|ага|👍|🙏|ok|okay|хорошо|ладно|понятно|ясно|договорились)[\s.!]*$/iu.test(String(text))) {
+        // Колір із повідомлення вже прийнято (captureColorChoice вище) — тут лише мʼякі відповіді й питання про колір.
+        if (ctx.agent.softColorCount > 0 && /^\s*(ок|окей|добре|гуд|ясно|зрозуміло|угу|ага|👍|🙏|ok|okay|хорошо|ладно|понятно|ясно|договорились)[\s.!]*$/iu.test(String(text))) {
             // Другий підряд «окей/хорошо» після м'якого закриття — мовчимо (природно: розмову вже закрито), щоб не давати зайвої відповіді.
             if (ctx.agent.softAckAt && Date.now() - ctx.agent.softAckAt < 30 * 60 * 1000) return;
             ctx.agent.softAckAt = Date.now();

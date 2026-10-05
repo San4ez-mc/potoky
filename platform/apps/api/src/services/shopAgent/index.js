@@ -19,12 +19,14 @@ const _noCreditBotAlertAt = new Map(); // botId -> ts загального си�
 
 /** Прибрати з ВЛАСНОГО тексту бота речення, що просять зріст і вагу (викликається, лише коли вони вже відомі). */
 const HW_ASK = { h: /(зріст|зросту|ріст|рост)/i, w: /(ваг|вес)/i, verb: /(підкажіть|напишіть|вкажіть|скажіть|надішліть|дайте|уточніть|потрібн|лишилось\s+дізнатись)/i, keep: /(підібрал|рекоменд|за вашими|беру ваш|для\s+(сина|доньк|дружин|чолові|другої|іншої|другого|іншого))/i };
-function stripKnownHwAsk(text) {
+/** Прибрати з ВЛАСНОГО тексту бота речення-питання певного виду (isAsk(речення) → true); решта повідомлення лишається.
+ * Спільне для всіх видів питань (зріст/вага, колір, адреса, комплект) — див. ASK_KINDS. */
+function stripAskSentences(text, isAsk) {
     const lines = String(text).split('\n').map((line) => {
         const parts = line.split(/(?<=[.!?…])\s+|(?<=\p{Extended_Pictographic}️?)\s+(?=[А-ЯІЇЄҐA-Z👉])/u);
         let dropped = false;
         let kept = parts.filter((s) => {
-            if (HW_ASK.h.test(s) && HW_ASK.w.test(s) && HW_ASK.verb.test(s) && !HW_ASK.keep.test(s)) { dropped = true; return false; }
+            if (isAsk(s)) { dropped = true; return false; }
             // «Напишіть їх, будь ласка» одразу після прибраного прохання — теж прохання.
             if (dropped && /^(напишіть|підкажіть|вкажіть|надішліть)\s+(їх|це)/i.test(s.trim())) return false;
             return true;
@@ -35,6 +37,17 @@ function stripKnownHwAsk(text) {
     });
     return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
+const isHwAsk = (s) => HW_ASK.h.test(s) && HW_ASK.w.test(s) && HW_ASK.verb.test(s) && !HW_ASK.keep.test(s);
+function stripKnownHwAsk(text) { return stripAskSentences(text, isHwAsk); }
+/** Види питань бота (розпізнаються за ВЛАСНИМИ текстами бота — це дані, не зміст клієнта). Що вже відоме — не питаємо; що бот уже
+ * спитав після повідомлення клієнта, на яке зараз відповідає (або менш як 90 с тому), — не повторюємо (2026-10-05, категорії
+ * «Дублює повідомлення» і «Памʼять діалогу»: раніше кожен шлях лікували окремо — картка+питання, сітка, допродаж, підтвердження). */
+const ASK_KINDS = [
+    { kind: 'hw', isAsk: isHwAsk },
+    { kind: 'color', isAsk: (s) => /(оберіть\s+колір|який\s+колір\s+обираєте|лишилось\s+(лише\s+)?обрати\s+колір|ще\s+раз\s+про\s+колір)/i.test(s) },
+    { kind: 'address', isAsk: (s) => /(ПІБ|дані\s+для\s+відправки|для\s+відправки\s+Новою\s+Поштою|відділення\s+або\s+поштомат)/i.test(s) && /(напишіть|можна\s+написати|надішліть|вкажіть|підкажіть)/i.test(s) },
+    { kind: 'set', isAsk: (s) => /весь\s+комплект,?\s+чи\s+окрем/i.test(s) },
+];
 
 const _engineCache = new Map();
 async function isAgentBot(botId) {
@@ -65,7 +78,7 @@ async function loadCustomerMemory(session) {
 
 async function buildHistory(sessionId, limit = 16) {
     const rows = await db.message.findMany({ where: { sessionId }, orderBy: { createdAt: 'desc' }, take: limit, select: { role: true, content: true, metadata: true, createdAt: true } });
-    return rows.reverse().filter((m) => m.role === 'user' || m.role === 'assistant').filter((m) => !(m.metadata && m.metadata.hidden)).map((m) => ({ who: m.role === 'user' ? 'client' : (((m.metadata || {}).source) === 'zernio_inbox' ? 'manager' : 'bot'), text: String(m.content || '').replace(/https?:\/\/(www\.)?instagram\.com\/\S+/gi, '').trim(), at: m.createdAt }));
+    return rows.reverse().filter((m) => m.role === 'user' || m.role === 'assistant').filter((m) => !(m.metadata && m.metadata.hidden)).map((m) => ({ who: m.role === 'user' ? 'client' : (((m.metadata || {}).source) === 'zernio_inbox' ? 'manager' : 'bot'), text: String(m.content || '').replace(/https?:\/\/(www\.)?instagram\.com\/\S+/gi, '').trim(), at: m.createdAt, sentAt: (m.metadata && m.metadata.channelCreatedAt) ? new Date(m.metadata.channelCreatedAt) : m.createdAt }));
 }
 
 /** Коментар під постом за керування агента: детермінована класифікація (нода n_comment_entry) → ctx.commentReplyText/commentCategory
@@ -195,6 +208,43 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
             logger.info('[shopAgent] прохання зросту/ваги прибрано — вже відомі', { sessionId, step: o.step });
             return t ? Object.assign({}, o, { text: t }) : (o.photoUrls ? Object.assign({}, o, { text: undefined }) : null);
         }).filter(Boolean);
+    }
+    // Інваріант «не питати відоме й не повторювати щойно поставлене» (див. ASK_KINDS) + дубль цілого повідомлення.
+    {
+        const pr = ctx.product || {};
+        const od = ctx.orderData || {};
+        const known = {
+            color: !pr.isSet && !!(ctx.colorChoice && (ctx.colorChoice.color || (Array.isArray(ctx.colorChoice.colors) && ctx.colorChoice.colors.length))),
+            address: !!(od.phone && od.fullName && od.city && od.branch),
+            set: !!(pr.isSet && ctx.setMode),
+        };
+        // Частково відомо (лише зріст / частина адреси) — дозапит легітимний, повтором не вважаємо.
+        const partial = { hw: !!(ctx.sizeInput && (!!ctx.sizeInput.height !== !!ctx.sizeInput.weight)), address: !!(od.phone || od.fullName || od.city || od.branch) && !known.address };
+        const hist = Array.isArray(A.history) ? A.history : [];
+        const clientAt = Math.max(0, ...hist.filter((m) => m.who === 'client').map((m) => new Date(m.sentAt || m.at).getTime()));
+        const nowT = Date.now();
+        // Бот говорив ПІСЛЯ того, як клієнт написав повідомлення цього ходу (клієнт його ще не бачив) — або щойно, < 90 с тому.
+        const recentBot = hist.filter((m) => m.who === 'bot' && (new Date(m.at).getTime() > clientAt || nowT - new Date(m.at).getTime() < 90 * 1000));
+        const askedRecently = (kd) => recentBot.some((m) => String(m.text || '').split(/(?<=[.!?…])\s+|\n/).some((snt) => kd.isAsk(snt)));
+        const drop = ASK_KINDS.filter((kd) => known[kd.kind] || (!partial[kd.kind] && askedRecently(kd)));
+        if (drop.length) {
+            A.out = A.out.map((o) => {
+                if (!o.text || o.noMerge) return o;
+                const t = stripAskSentences(o.text, (snt) => drop.some((kd) => kd.isAsk(snt)));
+                if (t === o.text) return o;
+                logger.info('[shopAgent] питання прибрано — вже відоме або щойно поставлене', { sessionId, step: o.step, kinds: drop.map((d) => d.kind) });
+                return t ? Object.assign({}, o, { text: t }) : (o.photoUrls ? Object.assign({}, o, { text: undefined }) : null);
+            }).filter(Boolean);
+        }
+        // Повідомлення, майже дослівно таке саме, як бот уже надіслав (після повідомлення клієнта або < 90 с тому), — не дублюємо.
+        const stems = (t) => new Set(String(t || '').toLowerCase().split(/[^a-zа-яіїєґ0-9]+/i).filter((w) => w.length >= 4).map((w) => w.slice(0, 6)));
+        const sim = (a, b) => { const x = stems(a), y = stems(b); if (!x.size || !y.size) return 0; let n = 0; for (const w of x) if (y.has(w)) n++; return n / Math.max(x.size, y.size); };
+        A.out = A.out.filter((o) => {
+            if (!o.text || o.photoUrls || o.noMerge || String(o.text).length < 25) return true;
+            const dup = recentBot.some((m) => sim(o.text, m.text) >= 0.85);
+            if (dup) logger.info('[shopAgent] дубль повідомлення не надіслано', { sessionId, step: o.step });
+            return !dup;
+        });
     }
     // Одне й те саме фото (картка товару + прев'ю зі списку, обкладинка й фото кольору) не надсилаємо двічі за один хід.
     {

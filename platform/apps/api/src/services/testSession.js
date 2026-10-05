@@ -309,6 +309,35 @@ function approxChars(m) {
     return typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content || '').length;
 }
 
+/**
+ * Стиснути результати інструментів перед записом в історію діалогу.
+ *
+ * Живий випадок (28.09, Digital Hiring): агент зібрав лонглист — пошук плюс кілька
+ * сторінок профілів, разом десятки тисяч символів. Наступний хід вичерпав бюджет
+ * історії і викинув ХІД ЦІЛКОМ, разом із самою розмовою. Через хвилину на «гарно
+ * цих 4 відібрала» асистент відповів, що не має доступу до попередньої розмови.
+ *
+ * Текст реплік лишаємо повністю — саме його людина й обговорює. Ріжемо тільки
+ * сирі видачі інструментів: вони потрібні в момент роботи, а не назавжди.
+ */
+const TOOL_RESULT_KEEP_CHARS = 1200;
+
+function compactToolResults(messages, keep = TOOL_RESULT_KEEP_CHARS) {
+    if (!Array.isArray(messages)) return messages;
+    return messages.map((m) => {
+        if (!m || !Array.isArray(m.content)) return m;
+        const content = m.content.map((block) => {
+            if (!block || block.type !== 'tool_result') return block;
+            const raw = typeof block.content === 'string'
+                ? block.content
+                : JSON.stringify(block.content ?? '');
+            if (raw.length <= keep) return block;
+            return { ...block, content: raw.slice(0, keep) + `…[обрізано ${raw.length - keep} символів]` };
+        });
+        return { ...m, content };
+    });
+}
+
 function trimDialogTurns(messages, budget = HISTORY_BUDGET_CHARS) {
     if (!Array.isArray(messages) || !messages.length) return [];
 
@@ -5020,7 +5049,7 @@ ${_baseUrl}/legal/terms — Правила використання`;
                 const budget = parseInt(data.historyBudgetChars, 10) || HISTORY_BUDGET_CHARS;
                 runtime.dialogHistory[node.id] = trimDialogTurns([
                     ...priorHistory,
-                    ...(thisTurn.length ? thisTurn : [{ role: 'user', content: histUser || 'Продовжуємо.' }]),
+                    ...(thisTurn.length ? compactToolResults(thisTurn) : [{ role: 'user', content: histUser || 'Продовжуємо.' }]),
                     { role: 'assistant', content: agentResponse || 'Ок.' },
                 ], budget);
             }

@@ -841,6 +841,49 @@ async function main() {
         check('27.3 Справжній успіх (номер + ТТН) → оформлено', g3.needsManual === false && g3.id === 555, JSON.stringify({ s: g3.status, m: g3.needsManual, id: g3.id }));
     }
 
+    // ── 28–31. Кореневі інваріанти 05.10 (категорії Edits: каталог, памʼять діалогу, дублі, UX).
+    {
+        const { matchProduct } = require('../productMatch');
+        const { loadCatalog } = require('../lib');
+        const { missingVariant } = require('../supplierDispatch');
+        const { stripAskSentences, ASK_KINDS, paragraphize } = require('../index');
+        const cat = await loadCatalog(BOT, assets.keys);
+        const load = async (sku) => { const tmp = { lookupProductsRaw: cat.products, lookupAdsRaw: cat.ads, lookupCategoriesRaw: cat.categories || [], agent: {} }; const r = await matchProduct(tmp, assets.keys, 'артикул ' + sku, { botId: BOT }); return (r && r.product) || tmp.product; };
+        // 28. Колір × розмір (26658740): графітові джинси j0032 шиються лише XS/L.
+        const jeans = await load('j0032');
+        if (jeans && jeans.sku) {
+            const A = freshA({ turnText: 'Графітовий' });
+            Object.assign(A.ctx, { product: JSON.parse(JSON.stringify(jeans)), recommendedSize: 'XL', colorChoice: { color: 'Графітовий' }, sizeInput: { height: 185, weight: 90 } });
+            A.ctx.agent.presentedSku = jeans.sku;
+            await runPolicy(A, freshU({ intent: 'give_color' }));
+            check('28.1 Колір, якого нема в підібраному розмірі (графітові XL) → знято й пояснено, палітра лише кольори XL', A.out.some((o) => o.step === 'color_size_unavailable') && !/Графіт/.test(String(A.ctx.product.colors)), 'steps ' + A.out.map((o) => o.step).join(',') + ' | colors ' + A.ctx.product.colors);
+            const jCat = cat.products.find((p) => String(p.sku).toLowerCase() === 'j0032');
+            check('28.2 Постачальнику рядок «графітові XL» не йде (missingVariant)', missingVariant({ sku: 'j0032', color: 'Графітовий', size: 'XL' }, jCat).length > 0, JSON.stringify(missingVariant({ sku: 'j0032', color: 'Графітовий', size: 'XL' }, jCat)));
+        } else check('28.0 j0032 завантажується', false, '');
+        // 29. Кольори, названі до розміру, не губляться (39dc3ff6, c83d677f).
+        const kof = await load('C0043');
+        if (kof && kof.sku) {
+            const A = freshA({ turnText: 'Черную и серую' });
+            A.ctx.product = JSON.parse(JSON.stringify(kof)); A.ctx.agent.presentedSku = kof.sku; A.ctx.presentedAt = Date.now() - 5 * 60 * 1000;
+            await runPolicy(A, freshU({ intent: 'give_color', qty: 2, units: [{ color: 'Чорний', size: '' }, { color: 'Сірий', size: '' }] }));
+            const cc = A.ctx.colorChoice || {};
+            check('29.1 «Чорну і сіру» до розміру → кольори записано, бот питає лише зріст і вагу', Array.isArray(cc.colors) && cc.colors.length === 2 && A.out.some((o) => o.step === 'ask_params'), JSON.stringify(cc) + ' | ' + A.out.map((o) => o.step).join(','));
+            A.turnText = '192см 96кг'; A.out = [];
+            await runPolicy(A, freshU({ intent: 'give_params', height: 192, weight: 96 }));
+            check('29.2 Після зросту й ваги колір удруге не питається', !A.out.some((o) => /оберіть колір|який колір/i.test(String(o.text || ''))), A.out.map((o) => o.step + ':' + String(o.text || '').slice(0, 40)).join(' | '));
+        } else check('29.0 C0043 завантажується', false, '');
+        // 30. Інваріант «не питати відоме / щойно поставлене» (ASK_KINDS).
+        const hw = ASK_KINDS.find((k) => k.kind === 'hw'); const addr = ASK_KINDS.find((k) => k.kind === 'address');
+        const t1 = stripAskSentences('Кофта з ангори 🧶 Підкажіть, будь ласка, ваш зріст і вагу — підберу розмір 📏', hw.isAsk);
+        check('30.1 Прохання зросту/ваги прибирається, відповідь лишається', /ангори/.test(t1) && !/зріст/.test(t1), t1);
+        const t2 = stripAskSentences('Номер накладної надішлемо сюди 📦 Дані для відправки (ПІБ, телефон, місто, № відділення або поштомата Нової Пошти) можна написати прямо зараз одним повідомленням 🙂', addr.isAsk);
+        check('30.2 Прохання адреси прибирається (383a2e7c)', /накладної/.test(t2) && !/ПІБ/.test(t2), t2);
+        // 31. Абзаци замість суцільного рядка.
+        const p1 = paragraphize('Дякую за параметри 🙂 Ви називали M, але за вашим зростом і вагою краще підійде L 📏 Якщо все ж хочете M — напишіть, оформимо так. Тепер оберіть колір: Чорний, Графітовий — який вам більше до душі? 😊');
+        check('31.1 Довгий текст одним рядком → абзаци', (p1.match(/\n\n/g) || []).length >= 2, JSON.stringify(p1).slice(0, 120));
+        check('31.2 Текст із переносами не чіпається', paragraphize('Рядок один.\nРядок два, досить довгий, щоб перевищити межу в сто сорок символів, і ще трохи тексту, щоб точно перевищити.') === 'Рядок один.\nРядок два, досить довгий, щоб перевищити межу в сто сорок символів, і ще трохи тексту, щоб точно перевищити.', '');
+    }
+
     console.log('');
     const failed = results.filter((r) => !r.ok);
     console.log(results.length + ' тестів, ' + failed.length + ' провалено.');

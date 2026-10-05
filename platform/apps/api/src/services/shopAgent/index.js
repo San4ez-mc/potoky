@@ -313,4 +313,4 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
     return { replies, understanding: u, trace: A.trace, ctx };
 }
 
-module.exports = { handleTurn, classifyComment, isCommentAgent, isAgentBot, loadCustomerMemory, buildHistory, stripKnownHwAsk };
+module.exports = { handleTurn, classifyComment, isCommentAgent, isAgentBot, loadCustomerMemory, buildHistory, stripKnownHwAsk, stripAskSentences, ASK_KINDS, paragraphize };

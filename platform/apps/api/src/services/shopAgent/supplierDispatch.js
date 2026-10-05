@@ -154,7 +154,12 @@ async function dispatchBrewdrop(A, group, alloc) {
     };
     const r = await runNodeCode(nodeCode(A.assets, 'n_supplier_order'), { ctx: scoped, keys: A.keys, user: A.user, session: A.session, input: '', label: 'n_supplier_order:' + group.name });
     A.trace.push({ tool: 'n_supplier_order:' + group.name, ok: r.ok, ms: r.ms, error: r.error || null });
-    return { supplier: group.name, mechanism: 'brewdrop', status: scoped.supplierOrderStatus || (A.ctx.testMode ? 'test_mock' : 'error'), result: scoped.supplierOrderResult || '', ttn: scoped.supplierTtn || '', id: scoped.supplierOrderId || '', needsManual: !!scoped.supplierNeedsManual };
+    // «Оформлено» — лише коли постачальник справді повернув замовлення (статус created + номер). Вузол упав винятком («fetch failed»),
+    // dry-run чи created без номера — це НЕ оформлено: needsManual + причина (05.10: GOVTUXUZ2I9/GOVM77QE028 показали «✅ оформлено»).
+    const status = scoped.supplierOrderStatus || (A.ctx.testMode ? 'test_mock' : 'error');
+    const ordered = status === 'test_mock' || (status === 'created' && !!(scoped.supplierOrderId || scoped.supplierTtn));
+    const result = scoped.supplierOrderResult || (r.ok ? '' : '❌ ' + (r.error || 'невідома помилка постачальника') + ' — оформіть вручну');
+    return { supplier: group.name, mechanism: 'brewdrop', status: ordered ? status : (status === 'created' ? 'error' : status), result, ttn: scoped.supplierTtn || '', id: scoped.supplierOrderId || '', needsManual: !!scoped.supplierNeedsManual || !ordered };
 }
 
 /** EasyDrop (offline/cart) не підтримує кількість &gt;1 і кілька товарів за один виклик (якщо
@@ -172,7 +177,7 @@ async function dispatchEasydrop(A, nodeId, group, alloc) {
             };
             const r = await runNodeCode(nodeCode(A.assets, nodeId), { ctx: scoped, keys: A.keys, user: A.user, session: A.session, input: '', label: nodeId + ':' + group.name });
             A.trace.push({ tool: nodeId + ':' + group.name, ok: r.ok, ms: r.ms, error: r.error || null });
-            results.push({ item: l.name, status: scoped.supplierOrderStatus || 'error', result: scoped.supplierOrderResult || '', needsManual: !!scoped.supplierNeedsManual });
+            results.push({ item: l.name, status: scoped.supplierOrderStatus || 'error', result: scoped.supplierOrderResult || (r.ok ? '' : '❌ ' + (r.error || 'невідома помилка постачальника')), needsManual: !!scoped.supplierNeedsManual || scoped.supplierOrderStatus !== 'created' });
         }
     }
     const anyFail = results.some((r) => r.needsManual || r.status === 'error');

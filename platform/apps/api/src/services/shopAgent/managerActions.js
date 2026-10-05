@@ -99,7 +99,7 @@ function blockedReason(session, ctx) {
     if (session.isTest || ctx.testMode) return 'Це тестова сесія — постачальнику не оформлюємо.';
     if (!ctx.crmOrderId || String(ctx.crmOrderId).startsWith('TEST-')) return 'Замовлення ще не створене в CRM.';
     if (ctx.managerDispatch) return 'Вже оформлено: ' + (ctx.managerDispatch.by || 'менеджер') + ', ' + (ctx.managerDispatch.atText || '') + '.';
-    if (ctx.supplierHandled && !/manual_disabled|incomplete/.test(String(ctx.supplierOrderStatus || ''))) return 'Постачальнику вже оформлено автоматично (' + String(ctx.supplierOrderStatus || '') + ').';
+    if (ctx.supplierHandled && !/manual_disabled|incomplete|error/.test(String(ctx.supplierOrderStatus || ''))) return 'Постачальнику вже оформлено автоматично (' + String(ctx.supplierOrderStatus || '') + ').';
     return null;
 }
 
@@ -169,9 +169,12 @@ async function handleAdminCallback({ secret, cq }) {
         const anyManual = dispatch.groups.some((g) => g.needsManual);
         // Нічого не пішло, бо в замовленні не вказано колір/розмір (missingVariant) — це не «оформлено»: менеджер виправляє
         // замовлення в CRM і натискає кнопку ще раз (кнопки під сповіщенням лишаються).
-        if (dispatch.groups.length && dispatch.groups.every((g) => g.status === 'incomplete')) {
+        // Жодна група не пішла постачальнику (incomplete, мережевий збій, помилка brewdrop) — це НЕ «оформлено»: не ставимо
+        // managerDispatch (інакше повторне натискання каже «Вже оформлено»), показуємо причину й лишаємо кнопку (05.10: GOVTUXUZ2I9).
+        if (dispatch.groups.length && dispatch.groups.every((g) => g.needsManual)) {
             await saveCtxDiff(sessionId, before, ctx);
-            const msg = ['<b>⛔ Не оформлено</b>' + (ctx.orderRef ? ' · <code>' + esc(ctx.orderRef) + '</code>' : ''), ''].concat(dispatch.groups.map((g) => esc(String(g.result || '').slice(0, 600))), ['', 'Натисніть «✏️ Редагувати», вкажіть колір/розмір, збережіть і натисніть «📦 Оформити постачальнику» ще раз.']);
+            const onlyIncomplete = dispatch.groups.every((g) => g.status === 'incomplete');
+            const msg = ['<b>⛔ Не оформлено</b>' + (ctx.orderRef ? ' · <code>' + esc(ctx.orderRef) + '</code>' : ''), ''].concat(dispatch.groups.map((g) => '<b>' + esc(g.supplier) + '</b>: ' + esc(String(g.result || g.status || '').slice(0, 600))), ['', onlyIncomplete ? 'Натисніть «✏️ Редагувати», вкажіть колір/розмір, збережіть і натисніть «📦 Оформити постачальнику» ще раз.' : 'Постачальнику НІЧОГО не відправлено. Виправте причину (за потреби — «✏️ Редагувати») і натисніть «📦 Оформити постачальнику» ще раз або оформіть вручну.']);
             await tg(tok, 'editMessageText', { chat_id: chatId, message_id: msgId, text: msg.join('\n'), parse_mode: 'HTML', disable_web_page_preview: true });
             return;
         }

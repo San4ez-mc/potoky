@@ -827,6 +827,20 @@ async function main() {
         } else check('26.0 C0043 з допродажем завантажується', false, (kof && kof.sku) + ' upsell ' + (up && up.sku));
     }
 
+    // ── 27. Збій постачальника ≠ «оформлено» (05.10: GOVTUXUZ2I9 / GOVM77QE028 — вузол brewdrop упав на «fetch failed», кнопка показала
+    // «✅ оформлено»). Вузол постачальника підмінено: (а) кидає виняток, (б) повертає created без номера, (в) справжній успіх.
+    {
+        const { dispatchOrder } = require('../supplierDispatch');
+        const withNode = (code) => { const nodes = new Map(assets.nodes); const base = nodes.get('n_supplier_order') || { id: 'n_supplier_order', data: {} }; nodes.set('n_supplier_order', { ...base, data: { ...base.data, code } }); const route = nodes.get('n_supplier_route') || { id: 'n_supplier_route', data: {} }; nodes.set('n_supplier_route', { ...route, data: { ...route.data, code: "return { supplierMechanism: 'brewdrop' };" } }); return { ...assets, nodes }; };
+        const run = async (code) => { const A = freshA(); A.assets = withNode(code); Object.assign(A.ctx, { testMode: false, product: { sku: 'A0187', id: 'x', name: 'Кофта', supplier: 'brewdrop.in.ua', upsellItems: [] }, orderUnits: [{ color: 'Чорний', size: 'L' }], orderUnitsTotal: 1279, orderData: { fullName: 'Тест Тест', phone: '0671234567', city: 'Київ', branch: '1' } }); return dispatchOrder(A, { force: true, lines: [{ sku: 'A0187', id: 'x', name: 'Кофта', price: 1279, qty: 1, color: 'Чорний', size: 'L', supplierName: 'brewdrop.in.ua' }] }); };
+        const g1 = (await run("throw new Error('fetch failed');")).groups[0] || {};
+        check('27.1 Вузол постачальника впав винятком → needsManual і причина в тексті (не «оформлено»)', g1.needsManual === true && /fetch failed/.test(String(g1.result)), JSON.stringify({ s: g1.status, m: g1.needsManual, r: String(g1.result).slice(0, 80) }));
+        const g2 = (await run("return { supplierOrderStatus: 'created', supplierOrderResult: 'ok' };")).groups[0] || {};
+        check('27.2 «created» без номера й ТТН → не вважається оформленим', g2.needsManual === true, JSON.stringify({ s: g2.status, m: g2.needsManual }));
+        const g3 = (await run("return { supplierOrderStatus: 'created', supplierOrderId: 555, supplierTtn: '20450000000000', supplierOrderResult: '✅ ID: 555' };")).groups[0] || {};
+        check('27.3 Справжній успіх (номер + ТТН) → оформлено', g3.needsManual === false && g3.id === 555, JSON.stringify({ s: g3.status, m: g3.needsManual, id: g3.id }));
+    }
+
     console.log('');
     const failed = results.filter((r) => !r.ok);
     console.log(results.length + ' тестів, ' + failed.length + ' провалено.');

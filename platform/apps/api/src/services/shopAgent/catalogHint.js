@@ -118,7 +118,7 @@ try {
     if (!__pick) {
       var __nh = __hitsBy(active.filter(function (p) { return __prev.indexOf(String(p.sku || '').toUpperCase()) >= 0; }));
       if (__nh.length === 1) __pick = __nh[0];
-      else if (!__nh.length) { var __na = __hitsBy(active); if (__na.length > 1 && __stem) __na = __na.filter(function (p) { return __nameOf(p).indexOf(__stem) >= 0 || String(cats[p.categoryId] || '').toLowerCase().indexOf(__stem) >= 0; }); if (__na.length === 1) __pick = __na[0]; }
+      else if (!__nh.length) { var __na = __hitsBy(active); /* категорія, яку назвав клієнт, обмежує вибір ЗАВЖДИ, не лише при кількох збігах (Edit 8a567d2c: «лофери шкіряні» → лофери розкуплені → «шкіряний бомбер» F0029) */ if (__stem) __na = __na.filter(function (p) { return __nameOf(p).indexOf(__stem) >= 0 || String(cats[p.categoryId] || '').toLowerCase().indexOf(__stem) >= 0; }); if (__na.length === 1) __pick = __na[0]; }
     }
     // hasFreshSignalThisTurn: інакше n_returning_check веде у n_welcome_back («на жаль, не можу надіслати фото») замість презентації.
     if (__pick && __pick.sku) return { catalogHint: '', catalogHintCount: 0, catalogHintSkus: '', catalogHintPick: String(__pick.sku), hasProductSignal: true, hasFreshSignalThisTurn: true, catalogCategories: catList, unknownTurns: unknownTurns - 1 };
@@ -134,14 +134,21 @@ var STEMS = [
 ];
 var wants = [];
 for (var i = 0; i < STEMS.length; i++) { if (msg.indexOf(STEMS[i][0]) >= 0) { for (var j2 = 0; j2 < STEMS[i][1].length; j2++) { if (wants.indexOf(STEMS[i][1][j2]) < 0) wants.push(STEMS[i][1][j2]); } } }
-if (!wants.length) return out('', 0, catList);
+// Без жодної категорії («Яка ціна товарів?», «Які кольори?») і без реклами (вона не прийшла від Zernio — Edits 3d2614c8, 22fd060e):
+// кандидати — усі товари, що ЗАРАЗ рекламуються (те саме правило активних реклам нижче: один/явний лідер → картка, інакше список
+// рекламованих), а не питання «що цікавить — костюми, куртки…». Без активних реклам — як раніше.
+var __noCatAds = false;
+if (!wants.length) {
+  if (context._hintNoRef !== true || context.entryAdId || String(context.catalogHintSkus || '')) return out('', 0, catList);
+  __noCatAds = true;
+}
 // 2026-09-08 (mykola: підпис поста «кофта, джинси, футболка, лофери» = три однакові комплекти в каталозі, n_lookup не обрав):
 // три і більше категорій в одному повідомленні/підписі — це комплект, показуємо й комплекти.
 var __catStems = ['кофт', 'джинс', 'футболк', 'лофер', 'бомбер', 'куртк', 'костюм', 'кросів', 'черевик', 'штан'].filter(function (st) { return msg.indexOf(st) >= 0; });
 if (__catStems.length >= 3 && wants.indexOf('комплект') < 0) wants.push('комплект');
 function hay(p) { return (String(p.name || '') + ' ' + String(p.customerName || '') + ' ' + (cats[p.categoryId] || '')).toLowerCase(); }
 var pool = wants.indexOf('комплект') >= 0 ? all.filter(function (p) { return !p.outOfStock; }) : active;
-var hits = pool.filter(function (p) { var h = hay(p); return wants.some(function (w) { return h.indexOf(w) >= 0; }); });
+var hits = __noCatAds ? all.filter(function (p) { return !p.outOfStock && p.isActive !== false && !p.archived; }) : pool.filter(function (p) { var h = hay(p); return wants.some(function (w) { return h.indexOf(w) >= 0; }); });
 if (!hits.length) return out('', 0, catList);
 // 2026-09-12 (власник: "а є чорні лофери?" — колір і категорія в ОДНОМУ, ПЕРШОМУ повідомленні,
 // без попереднього списку): фільтр за кольором вище (рядки 58-68) працює лише коли клієнт називає
@@ -188,11 +195,13 @@ try {
         return { catalogHint: '', catalogHintCount: 0, catalogHintSkus: '', catalogHintPick: String(__lead.sku), catalogHintAdGuess: String(__lead.sku), hasProductSignal: true, hasFreshSignalThisTurn: true, catalogCategories: catList, unknownTurns: unknownTurns - 1 };
       }
       var __advIdsSet = {}; __advHits.forEach(function (p) { __advIdsSet[p.id] = 1; });
-      hits = __advHits.concat(hits.filter(function (p) { return !__advIdsSet[p.id]; }));
+      // Без категорії — лише рекламовані (а не весь каталог після них).
+      hits = __noCatAds ? __advHits.slice(0, 3) : __advHits.concat(hits.filter(function (p) { return !__advIdsSet[p.id]; }));
       __advList = true;
     }
   }
 } catch (e) { /* best-effort: без реклам — звичайний список */ }
+if (__noCatAds && !__advList) return out('', 0, catList);
 var top = hits.slice(0, 4);
 // 2026-09-15 (власник: "тут теж можна додати нумерацію і гарний списочок") — нумерація тут же,
 // детерміновано (не лишаємо це на розсуд LLM-переказу нижче) — той самий принцип, що вже є для

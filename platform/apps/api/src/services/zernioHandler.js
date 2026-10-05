@@ -298,6 +298,18 @@ async function findOrCreateZernioSession(userId, botId, patch = {}) {
         },
     });
 }
+/** Реклама з метаданих розмови Zernio (meta_ad_id) — коли referral не прийшов у самому повідомленні. null — нема. */
+async function adFromConversationMeta(botId, conversationId) {
+    if (!conversationId) return null;
+    const zk = await getZernioKeys(botId);
+    if (!isReal(zk.ZERNIO_API_TOKEN)) return null;
+    // accountId обовʼязковий: без нього Zernio відповідає 400, і цей запасний шлях з 08.09 мовчки не працював (перевірено 2026-09-30).
+    const cr = await fetch('https://zernio.com/api/v1/inbox/conversations/' + encodeURIComponent(conversationId) + (isReal(zk.ZERNIO_ACCOUNT_ID) ? '?accountId=' + encodeURIComponent(zk.ZERNIO_ACCOUNT_ID) : ''), { headers: { Authorization: 'Bearer ' + zk.ZERNIO_API_TOKEN } });
+    if (!cr.ok) { logger.warn('[zernioHandler] conversation metadata HTTP ' + cr.status, { botId, conversationId }); return null; }
+    const cj = await cr.json().catch(() => ({})); const md = ((cj && cj.data) || {}).metadata || {};
+    return md.meta_ad_id ? { adId: String(md.meta_ad_id), adTitle: md.meta_ad_title || null } : null;
+}
+
 async function findSessionByConversation(botId, conversationId) {
     if (!conversationId) return null;
     return db.session.findFirst({ where: { botId, context: { path: ['conversationId'], equals: String(conversationId) } }, orderBy: { startedAt: 'desc' } });
@@ -1184,14 +1196,8 @@ async function handleIncomingMessage(botId, body) {
             const _prev = contactId ? await db.session.findFirst({ where: { botId, isActive: true, context: { path: ['psid'], equals: String(contactId) } }, orderBy: { lastActive: 'desc' }, select: { context: true } }) : null;
             const _pc = (_prev && _prev.context) || {};
             if (_pc.product || ((_pc.flowRuntime || {}).currentNodeId)) throw new Error('skip: session already has product/flow');
-            const zk = await getZernioKeys(botId);
-            if (isReal(zk.ZERNIO_API_TOKEN)) {
-                // accountId обовʼязковий: без нього Zernio відповідає 400, і цей запасний шлях з 08.09 мовчки не працював (перевірено 2026-09-30).
-                const cr = await fetch('https://zernio.com/api/v1/inbox/conversations/' + encodeURIComponent(conversationId) + (isReal(zk.ZERNIO_ACCOUNT_ID) ? '?accountId=' + encodeURIComponent(zk.ZERNIO_ACCOUNT_ID) : ''), { headers: { Authorization: 'Bearer ' + zk.ZERNIO_API_TOKEN } });
-                if (!cr.ok) logger.warn('[zernioHandler] conversation metadata HTTP ' + cr.status, { botId, conversationId });
-                const cj = await cr.json().catch(() => ({})); const md = ((cj && cj.data) || {}).metadata || {};
-                if (md.meta_ad_id) { adId = String(md.meta_ad_id); adTitleFromConv = md.meta_ad_title || null; logger.info('[zernioHandler] ad resolved from conversation metadata', { botId, conversationId, adId }); }
-            }
+            const meta = await adFromConversationMeta(botId, conversationId);
+            if (meta) { adId = meta.adId; adTitleFromConv = meta.adTitle; logger.info('[zernioHandler] ad resolved from conversation metadata', { botId, conversationId, adId }); }
         } catch (e) { logger.warn('[zernioHandler] conversation metadata lookup failed: ' + e.message, { botId, conversationId }); }
     }
     const storyId = storyReply?.storyId || storyReply?.story_id || null;
@@ -1331,17 +1337,27 @@ async function handleIncomingMessage(botId, body) {
     // (zernioConversationSync) дотягує повідомлення клієнта, яке вебхук ще не доставив, і хід його вже обробляє; за кілька секунд
     // те саме повідомлення приходить вебхуком і запускало ДРУГИЙ хід («весь комплект чи окремі речі?» удруге, картка вдруге).
     // REST-id повідомлення = platformMessageId вебхука (той самий Instagram mid) — це одне повідомлення: дотегуємо й не обробляємо.
+    // 2026-10-05 (регресія від цього ж фільтра, yuliostapyuk / 239 відкинутих вебхуків за 2 доби): REST віддає пересланий пост як
+    // голе «фото», а вебхук того самого повідомлення несе пост (підпис, mediaId), рекламу чи сторіз. Такий вебхук — НОВИЙ сигнал:
+    // вливаємо його в уже збережений рядок і запускаємо хід (без другого рядка повідомлення). Без нового сигналу — дубль, як і раніше.
+    let restSyncedRow = null;
     if (platformMessageId) {
         try {
             const synced = await db.message.findFirst({ where: { sessionId: session.id, role: 'user', metadata: { path: ['zernioRestId'], equals: String(platformMessageId) } }, select: { id: true, metadata: true } });
             if (synced) {
-                await db.message.update({ where: { id: synced.id }, data: { metadata: { ...(synced.metadata || {}), zernioMessageId: zMsgId || null, platformMessageId } } }).catch(() => {});
-                logger.info('[zernioHandler] inbound already ingested via REST sync — ignored', { botId, sessionId: session.id, zernioMessageId: zMsgId, platformMessageId: String(platformMessageId).slice(-16) });
-                return { ok: true, processed: 0, duplicate: 'rest_synced' };
+                const sm = synced.metadata || {};
+                const newSignal = !!((sharedPost && !sm.sharedPost) || (adId && !sm.adId) || (storyId && !sm.storyId));
+                if (!newSignal) {
+                    await db.message.update({ where: { id: synced.id }, data: { metadata: { ...sm, zernioMessageId: zMsgId || null, platformMessageId } } }).catch(() => {});
+                    logger.info('[zernioHandler] inbound already ingested via REST sync — ignored', { botId, sessionId: session.id, zernioMessageId: zMsgId, platformMessageId: String(platformMessageId).slice(-16) });
+                    return { ok: true, processed: 0, duplicate: 'rest_synced' };
+                }
+                restSyncedRow = synced;
+                logger.info('[zernioHandler] REST-synced inbound enriched by webhook (post/ad/story) — processing', { botId, sessionId: session.id, sharedPost: !!sharedPost, adId: adId || null, storyId: storyId || null });
             }
         } catch (e) { logger.warn('[zernioHandler] rest-sync dup check failed: ' + e.message, { botId, sessionId: session.id }); }
     }
-    if (text) {
+    if (text && !restSyncedRow) {
         try {
             const recentSame = await db.message.findMany({
                 where: { sessionId: session.id, role: 'user', content: text, createdAt: { gte: new Date(Date.now() - 4 * 3600 * 1000) } },
@@ -1371,8 +1387,7 @@ async function handleIncomingMessage(botId, body) {
         } catch (e) { logger.warn('[zernioHandler] retry-dup check failed: ' + e.message, { botId, sessionId: session.id }); }
     }
 
-    await db.message.create({
-        data: cleanJsonDeep({
+    const inboundRow = {
             sessionId: session.id, role: 'user', content: text || (sharedPost && sharedPost.caption ? ('[переслав ' + sharedPost.kind + '] ' + sharedPost.caption.slice(0, 80).replace(/\s+/g, ' ')) : mediaLabel),
             metadata: {
                 source: 'zernio', zernioMessageId: zMsgId, platformMessageId, messageId: zMsgId,
@@ -1384,9 +1399,11 @@ async function handleIncomingMessage(botId, body) {
                 ...(attachment ? { attachment, attachments: mappedAtts } : {}),
                 ...(voiceTranscript ? { voiceTranscript: true } : {}),
                 ...(sharedPost ? { sharedPost } : {}),
+                ...(storyId ? { storyId } : {}),
             },
-        }),
-    });
+    };
+    if (restSyncedRow) await db.message.update({ where: { id: restSyncedRow.id }, data: cleanJsonDeep({ content: inboundRow.content, metadata: { ...(restSyncedRow.metadata || {}), ...inboundRow.metadata } }) });
+    else await db.message.create({ data: cleanJsonDeep(inboundRow) });
 
     let ctxNow = session.context || {};
     // 2026-09-08 05:45 (рішення власника): пауза від менеджера (manager_message / бекфіл 594 розмов) — не назавжди.
@@ -1515,7 +1532,11 @@ async function handleIncomingMessage(botId, body) {
             else if (attachment && attachment.type !== 'photo') runText = '[вкладення]';
             else if (!attachment && unknownAtts.length) runText = '[вкладення]';
         }
-        scheduleFlowRun(session.id, { botId, contactId, conversationId, contactName, text: runText, imageUrl: inImageUrl, ctxPatch: patch });
+        // Перше повідомлення нової розмови без жодного сигналу товару (реклама/пост/фото/сторіз) — реклама від Zernio часто доходить
+        // наступним повідомленням за кілька секунд (05.10: 568 з 2309 розмов, медіана 2 с, 75% — до 16 с), а бот уже відповів
+        // «що вас цікавить». Чекаємо до 9 с; прийде реклама/пост раніше — хід запуститься одразу (звичайне вікно 2,5 с).
+        const waitForAd = !adId && !sharedPost && !inImageUrl && !storyId && !(ctxNow.product && ctxNow.product.sku) && !ctxNow.entryAdId && !((ctxNow.flowRuntime || {}).currentNodeId);
+        scheduleFlowRun(session.id, { botId, contactId, conversationId, contactName, text: runText, imageUrl: inImageUrl, ctxPatch: patch, waitForAd });
     }
     logger.info('[zernioHandler] Inbound stored', { botId, sessionId: session.id, hasAd: !!adId });
     return { ok: true, processed: 1 };
@@ -1526,6 +1547,8 @@ const _pendingFlowRuns = new Map();
 // 2026-09-07 (тест Олексія 11:14): «Так що? 😡» і «Буде відповідь?» за 3.2 с → два окремі прогони, дві майже
 // однакові відповіді. Вікно 2.5 с склеює такі «дуплети» в одне повідомлення; затримка для клієнта непомітна.
 const FLOW_DEBOUNCE_MS = 2500;
+// Перше повідомлення нової розмови без сигналу товару — чекаємо рекламу довше (див. waitForAd у processMessage).
+const AD_WAIT_MS = 9000;
 
 // Проблема Д (аудит 2026-09-01, живий кейс F0029 — фото+презентація надіслані
 // повторно кілька разів поспіль): дебаунс вище зливає повідомлення, що прийшли
@@ -1560,7 +1583,11 @@ function scheduleFlowRun(sessionId, msg) {
     if (msg.contactName) entry.contactName = msg.contactName;
     if (msg.commentId) entry.commentId = msg.commentId;
     if (msg.resumeFromManagerSilence) entry.resumeFromManagerSilence = true;
+    // Чекати рекламу — лише поки жодне повідомлення пачки не принесло сигналу товару.
+    entry.waitForAd = (entry.waitForAd === undefined ? !!msg.waitForAd : entry.waitForAd) && !!msg.waitForAd;
+    const hasSignal = !!(entry.imageUrl || (entry.ctxPatch && (entry.ctxPatch.entryAdId || entry.ctxPatch.sharedPost)));
     if (entry.timer) clearTimeout(entry.timer);
+    const delayMs = entry.waitForAd && !hasSignal ? AD_WAIT_MS : FLOW_DEBOUNCE_MS;
     entry.timer = setTimeout(() => {
         _pendingFlowRuns.delete(sessionId);
         const prevInQueue = _sessionRunQueue.get(sessionId) || Promise.resolve();
@@ -1570,11 +1597,21 @@ function scheduleFlowRun(sessionId, msg) {
             .catch((e) => logger.error('[zernioHandler] debounced flow run failed', { sessionId, error: e.message }));
         _sessionRunQueue.set(sessionId, thisRun);
         thisRun.finally(() => { if (_sessionRunQueue.get(sessionId) === thisRun) _sessionRunQueue.delete(sessionId); });
-    }, FLOW_DEBOUNCE_MS);
+    }, delayMs);
 }
 
 async function runFlowAndDeliver(sessionId, entry) {
     const { botId, contactId, conversationId, contactName, commentId } = entry;
+    // Чекали рекламу, а вона так і не прийшла повідомленням — ще раз дивимось метадані розмови Zernio перед відповіддю.
+    if (entry.waitForAd && !(entry.ctxPatch && (entry.ctxPatch.entryAdId || entry.ctxPatch.sharedPost)) && !entry.imageUrl) {
+        try {
+            const meta = await adFromConversationMeta(botId, conversationId);
+            if (meta) {
+                entry.ctxPatch = { ...(entry.ctxPatch || {}), entryAdId: meta.adId, ...(meta.adTitle ? { adTitle: meta.adTitle } : {}) };
+                logger.info('[zernioHandler] ad resolved after wait (conversation metadata)', { botId, sessionId, adId: meta.adId });
+            }
+        } catch (e) { logger.warn('[zernioHandler] ad wait lookup failed: ' + e.message, { botId, sessionId }); }
+    }
     const sendOpts = { sessionId, ...(commentId ? { commentId } : {}) };
     let mergedText = entry.texts.filter(Boolean).join('\n').trim();
     let runImageUrl = entry.imageUrl;
@@ -1634,7 +1671,7 @@ async function runFlowAndDeliver(sessionId, entry) {
         if ((!commentId && await shopAgent.isAgentBot(botId)) || (commentId && await shopAgent.isCommentAgent(botId))) {
             // Коментар: спершу детермінована класифікація для публічної відповіді, далі DM веде той самий агент (приватна відповідь на commentId).
             if (commentId) await shopAgent.classifyComment({ botId, sessionId, commentText: mergedText });
-            await shopAgent.handleTurn({ botId, sessionId, text: mergedText, imageUrl: runImageUrl, imageUrls: runImageUrls.length > 1 ? runImageUrls : undefined, sharedPost: entry.ctxPatch && entry.ctxPatch.sharedPost, entryAdId: entry.ctxPatch && entry.ctxPatch.entryAdId });
+            await shopAgent.handleTurn({ botId, sessionId, text: mergedText, imageUrl: runImageUrl, imageUrls: runImageUrls.length > 1 ? runImageUrls : undefined, sharedPost: entry.ctxPatch && entry.ctxPatch.sharedPost, entryAdId: entry.ctxPatch && entry.ctxPatch.entryAdId, storyId: entry.ctxPatch && entry.ctxPatch.storyId });
         } else {
             await executeFlowStep({ sessionId, incomingUserMessage: mergedText, incomingImageUrl: runImageUrl });
         }

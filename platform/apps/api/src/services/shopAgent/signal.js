@@ -45,7 +45,8 @@ function classifySignal(A, u, ctx) {
     const cleanText = text.replace(/\[переслав[^\]]*\][^\n]*/gi, ' ');
     const isReceiptLike = !!(u.receiptLink || u.claimsPaid || looksLikeReceiptLink(text));
 
-    const photoUrl = !isReceiptLike ? (A.turnImage || (ctx && ctx.lastUserImageUrl) || null) : null;
+    // Відповідь на сторіз цього ходу — той самий сигнал «ось цей товар», що й фото (кадри сторіз розпізнає productMatch; Edit ed71b715).
+    const photoUrl = !isReceiptLike ? (A.turnImage || (ctx && ctx.lastUserImageUrl) || (A.turnStory ? 'story' : null)) : null;
     const articleFromLLM = (u.productHint && u.productHint.article) || null;
     const articleFromText = ARTICLE_RE.test(cleanText) ? cleanText.match(ARTICLE_RE)[0] : null;
     const article = articleFromLLM || articleFromText || null;

@@ -14,6 +14,7 @@ const { matchProduct } = require('./productMatch');
 const { computeCatalogHint } = require('./catalogHint');
 const { ensureCart, reconcile } = require('./cart');
 const { loadCatalog, loadCategories } = require('./lib');
+const { classifyKbQuestion } = require('./kbRules');
 
 // А9 — довгий простій сесії: не успадковувати старий колір/розмір навіть при збігу sku,
 // бо клієнт міг вважати, що починає нову розмову (раніше такого порогу не було взагалі,
@@ -62,8 +63,27 @@ async function resolveShoppingIntent(A, u, tool) {
     // («Это же не кожа» після списку бомберів → пошук за назвою знаходив куртку D0005 за словом «кожа»; Edit e7457632, 03.10).
     const listOnScreen = !!String(ctx.catalogHintSkus || '').trim();
     const nameTry = !hadProduct && /[a-zа-яіїєґ]{4,}/i.test(text) && text.trim().split(/\s+/).length <= 4 && !/\d{2,}/.test(text) && !(listOnScreen && u && u.intent === 'question');
+    // Товару ще нема, жодного сигналу (реклама від Zernio не прийшла — ≈1/4 розмов), а клієнт питає про товар («Яка ціна товарів?»,
+    // «Які кольори доступні?», «Як оформити замовлення?») — кандидати з активних реклам (catalogHint, Edits 3d2614c8/22fd060e),
+    // а не «що вас цікавить — костюми, куртки…». Зміст питання — від аналізатора (intent / вид питання), не ключові слова.
+    const productAsk = !hadProduct && u && (u.intent === 'product_query' || u.intent === 'order_yes' || (Array.isArray(u.questions) && u.questions.some((q) => classifyKbQuestion(q).kind === 'catalog')));
+    async function advertisedFallback() {
+        if (!productAsk || ctx.entryAdId || String(ctx.catalogHintSkus || '')) return null;
+        const cat0 = await loadCatalog(A.botId, keys);
+        ctx.lookupProductsRaw = cat0.products; ctx.lookupAdsRaw = cat0.ads; ctx.lookupCategoriesRaw = cat0.categories || [];
+        ctx.catalogHintCategoriesRaw = await loadCategories(A.botId, keys);
+        ctx._hintNoRef = true; delete ctx.catalogHintPick;
+        Object.assign(ctx, await computeCatalogHint(ctx, keys, text));
+        delete ctx._hintNoRef;
+        let st = null;
+        if (ctx.catalogHintPick) { Object.assign(ctx, await matchProduct(ctx, keys, text, { botId: A.botId })); if (ctx.product && ctx.product.sku && !ctx.productUnknown) st = 'found'; }
+        else if (ctx.catalogHint) st = 'hint';
+        delete ctx.lookupProductsRaw; delete ctx.lookupAdsRaw; delete ctx.lookupCategoriesRaw; delete ctx.catalogHintCategoriesRaw;
+        return st ? { status: st, skipPresentation: !!ctx.skipPresentation, signal, action: 'SET_MAIN' } : null;
+    }
     if (!hasAnySignal(signal) && !nameTry) {
         // А6 — немає жодного сигналу про товар цього ходу: не чіпаємо активний товар.
+        const fb = await advertisedFallback(); if (fb) return fb;
         return { status: hadProduct ? 'kept' : 'none', skipPresentation: true, signal, action: 'NONE' };
     }
 
@@ -85,6 +105,7 @@ async function resolveShoppingIntent(A, u, tool) {
         // Пошук лише за назвою не дав точного збігу — нічого не підставляємо (жодних «найближчих» товарів на «Дякую» тощо).
         for (const k of Object.keys(ctx)) { if (!(k in ctxSnapshotBefore)) delete ctx[k]; }
         Object.assign(ctx, ctxSnapshotBefore);
+        const fb = await advertisedFallback(); if (fb) return fb;
         return { status: 'none', skipPresentation: true, signal, action: 'NONE' };
     }
     let status = (ctx.product && ctx.product.sku && !ctx.productUnknown) ? 'found' : 'none';

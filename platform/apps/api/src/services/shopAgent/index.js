@@ -105,7 +105,7 @@ async function isCommentAgent(botId) {
     try { const k = await db.funnelKey.findFirst({ where: { botId, key: 'COMMENT_AGENT' }, select: { value: true } }); return !(k && /^(0|false|off)$/i.test(String(k.value || '').trim())); } catch (e) { return true; }
 }
 
-async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedPost, entryAdId, dryRun }) {
+async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedPost, entryAdId, storyId, dryRun }) {
     const session = await db.session.findUnique({ where: { id: sessionId }, include: { user: true } });
     if (!session) throw new Error('session not found');
     const assets = await loadAssets(botId);
@@ -142,7 +142,7 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
     // Ключі Gemini по черзі (власний → конектор воронки) — щоб вичерпаний ключ воронки не клав розпізнавання фото (2026-09-29).
     let turnKeys = assets.keys;
     try { turnKeys = Object.assign({}, assets.keys, { __geminiKeys: await geminiKeys(botId, assets.keys) }); } catch (e) { /* лишаємо як є */ }
-    const A = { botId, session, ctx, keys: turnKeys, assets, user: session.user ? { id: session.user.id, firstName: session.user.firstName, username: session.user.username } : {}, trace: [], out: [], turnText: String(text || ''), turnImage: imageUrl || null, turnSharedPost: sharedPost || (ctx.sharedPost && ctx.hasFreshSignalThisTurn ? ctx.sharedPost : null), newEntryAd, history, botSpokeBefore };
+    const A = { botId, session, ctx, keys: turnKeys, assets, user: session.user ? { id: session.user.id, firstName: session.user.firstName, username: session.user.username } : {}, trace: [], out: [], turnText: String(text || ''), turnImage: imageUrl || null, turnSharedPost: sharedPost || (ctx.sharedPost && ctx.hasFreshSignalThisTurn ? ctx.sharedPost : null), newEntryAd, turnStory: storyId || null, history, botSpokeBefore };
     if (session.isTest || ctx.testMode) ctx.testMode = true;
     const t0 = Date.now();
     const u = await understand(A);

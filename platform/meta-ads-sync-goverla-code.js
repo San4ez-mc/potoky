@@ -82,7 +82,7 @@ async function syncAccount(acctInfo) {
     // набір полів, що вже перевірено ЖИВИМ викликом у n_lookup-crm-code.js (Пріоритет 1.7,
     // рядок ~259) для одиничного оголошення — тут той самий контракт, просто в пакетному запиті.
     var url = 'https://graph.facebook.com/v21.0/' + acct + '/ads'
-      + '?fields=id,name,effective_status,created_time,campaign{id,name},adset{id,name},creative{thumbnail_url,body,object_story_spec,effective_object_story_id}'
+      + '?fields=id,name,effective_status,created_time,campaign{id,name},adset{id,name},creative{thumbnail_url,body,object_story_spec,effective_object_story_id,effective_instagram_media_id,instagram_permalink_url}'
       + '&limit=50' + (after ? '&after=' + encodeURIComponent(after) : '')
       + '&access_token=' + encodeURIComponent(token);
     var metaRes;
@@ -123,7 +123,10 @@ async function syncAccount(acctInfo) {
         var body = {
           externalId: String(a.id),
           // 2026-10-06 (Edit 71b501a3): пост, який рекламується — CRM групує просування одного поста в один рядок звіту.
-          postId: creative.effective_object_story_id ? String(creative.effective_object_story_id) : null,
+          // effective_instagram_media_id — сам пост Instagram (однаковий для всіх його просувань; перевірено живим викликом);
+          // effective_object_story_id для кожного boost свій (Meta створює окремий допис сторінки) — лише запасний варіант.
+          postId: creative.effective_instagram_media_id ? String(creative.effective_instagram_media_id) : (creative.effective_object_story_id ? String(creative.effective_object_story_id) : null),
+          postUrl: creative.instagram_permalink_url ? String(creative.instagram_permalink_url) : null,
           name: String(a.name || '').slice(0, 200),
           campaignId: a.campaign && a.campaign.id ? String(a.campaign.id) : null,
           campaignName: a.campaign && a.campaign.name ? String(a.campaign.name).slice(0, 200) : null,

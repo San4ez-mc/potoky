@@ -122,6 +122,8 @@ async function syncAccount(acctInfo) {
         }
         var body = {
           externalId: String(a.id),
+          // 2026-10-06 (Edit 71b501a3): пост, який рекламується — CRM групує просування одного поста в один рядок звіту.
+          postId: creative.effective_object_story_id ? String(creative.effective_object_story_id) : null,
           name: String(a.name || '').slice(0, 200),
           campaignId: a.campaign && a.campaign.id ? String(a.campaign.id) : null,
           campaignName: a.campaign && a.campaign.name ? String(a.campaign.name).slice(0, 200) : null,

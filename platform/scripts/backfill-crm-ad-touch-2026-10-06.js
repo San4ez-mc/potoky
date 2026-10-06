@@ -21,12 +21,13 @@ const DRY = process.argv.includes('--dry');
 (async () => {
     const keys = Object.fromEntries((await db.funnelKey.findMany({ where: { botId: BOT } })).map((k) => [k.key, k.value]));
     if (!keys.CRM_API_KEY) { console.log('нема CRM_API_KEY у воронки'); process.exit(1); }
-    const sessions = await db.session.findMany({ where: { botId: BOT, isTest: false, startedAt: { gte: SINCE } }, select: { id: true, context: true } });
+    // Лише id (контексти тисяч розмов одним запитом не влазять у відповідь Prisma); контекст — поштучно, коли треба.
+    const sessions = await db.session.findMany({ where: { botId: BOT, isTest: false, startedAt: { gte: SINCE } }, select: { id: true } });
     let withAd = 0, sent = 0, updated = 0, noOrder = 0, failed = 0;
     for (const s of sessions) {
         const msgs = await db.message.findMany({ where: { sessionId: s.id, role: 'user' }, orderBy: { createdAt: 'asc' }, select: { metadata: true, createdAt: true } });
         const touches = msgs.filter((m) => m.metadata && m.metadata.adId).map((m) => ({ externalId: String(m.metadata.adId), at: m.createdAt.toISOString() }));
-        const c = s.context || {};
+        const c = ((await db.session.findUnique({ where: { id: s.id }, select: { context: true } })) || {}).context || {};
         if (!touches.length && c.entryAdId) touches.push({ externalId: String(c.entryAdId), at: (msgs[0] ? msgs[0].createdAt : new Date()).toISOString() });
         if (!touches.length) continue;
         withAd++;

@@ -151,6 +151,19 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
     if (Array.isArray(imageUrls) && imageUrls.length > 1) ctx.lastUserImageUrls = imageUrls.slice(0, 4); else delete ctx.lastUserImageUrls;
     const newEntryAd = !!(entryAdId && entryAdId !== ctx.agent.seenEntryAd);
     if (entryAdId) { ctx.entryAdId = entryAdId; ctx.agent.seenEntryAd = entryAdId; }
+    let adTouchChanged = false;
+    // Дотики реклами для CRM (2026-10-06): з 13.09 жодне замовлення не мало реклами — графовий рушій ставив firstEntryAdId на першому
+    // кроці, агент цього не робив. Перший дотик — реклама, з якої людина вперше прийшла (не змінюється); останній — найсвіжіша.
+    // Передаються з кожною подією картки (tools.funnelStage) — CRM сам знаходить оголошення за Meta-id.
+    {
+        const adNow = entryAdId || ctx.entryAdId;
+        if (adNow) {
+            const t = ctx.adTouch || {};
+            if (!t.first) { t.first = { externalId: String(adNow), at: new Date().toISOString(), name: ctx.adTitle || null }; adTouchChanged = true; }
+            if (!t.last || t.last.externalId !== String(adNow)) { t.last = { externalId: String(adNow), at: new Date().toISOString(), name: ctx.adTitle || null }; adTouchChanged = true; }
+            ctx.adTouch = t;
+        }
+    }
     const history = await buildHistory(sessionId);
     const botSpokeBefore = history.some((m) => m.who === 'bot');
     // Ключі Gemini по черзі (власний → конектор воронки) — щоб вичерпаний ключ воронки не клав розпізнавання фото (2026-09-29).
@@ -194,6 +207,7 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
             try { await require('./tools').alert(A, { title: '💸 Кредити Claude закінчились — клієнт чекає, відповідайте вручну', main: 'Клієнт чекає відповіді: «' + String(text || '').slice(0, 200) + '»', details: 'Бот мовчить, поки не поповнять баланс Anthropic.' }); } catch (e) { /* best-effort */ }
         }
     }
+    if (adTouchChanged && !dryRun) require('./tools').adTouchSync(A).catch(() => {});
     // Запобіжник «зациклився»: той самий крок N ходів поспіль без руху вперед — менеджер замість N+1-го повтору (policy.breakLoop).
     if (!A._noCredit && !dryRun) { try { await breakLoop(A); } catch (e) { logger.warn('[shopAgent] breakLoop failed: ' + e.message, { sessionId }); } }
     // Підтвердження зміни вибору («лише кофта») — перед першим текстом цього ходу, щоб клієнт бачив, що його почули.

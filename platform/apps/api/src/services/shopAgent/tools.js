@@ -200,11 +200,19 @@ async function monoStatement(A) {
 async function markConsumed(A) { const tx = String(A.ctx.payTxId || '').trim(); if (tx && !A.ctx.testMode) await markMonoConsumed({ redisClient, botId: A.botId, txId: tx }).catch(() => {}); }
 
 // ── CRM: етапи воронки (аналітика) ─────────────────────────────────────────────────────────────
+/** Реклама змінилась цього ходу, а подія етапу (з дотиками) не йшла — оновлюємо дотики картки окремо (CRM: firstTouch не перезаписує). */
+async function adTouchSync(A) {
+    const { ctx, keys, session } = A;
+    if (!ctx.adTouch || A._adTouchSent || ctx.testMode || session.isTest || !keys.CRM_API_KEY) return;
+    try { await crmFetch(keys, '/orders/attribution-by-session', { method: 'POST', body: JSON.stringify({ sessionId: session.id, firstTouch: ctx.adTouch.first || null, lastTouch: ctx.adTouch.last || null }) }, 5000); } catch (e) { /* best-effort */ }
+}
+
 async function funnelStage(A, stageName, stageOrder) {
     const { ctx, keys, session } = A;
     if (!stageName || ctx.testMode || session.isTest || !keys.CRM_API_KEY) return;
     try {
-        const r = await crmFetch(keys, '/funnel-events', { method: 'POST', body: JSON.stringify({ funnelSlug: A.assets.bot.slug || A.botId, sessionId: session.id, stageName, stageOrder: Number(stageOrder) || 0, igUsername: ctx.igUsername || null, senderName: ctx.senderName || null, psid: ctx.psid || null, product: ctx.product && (ctx.product.sku || ctx.product.name) ? { id: ctx.product.id || null, sku: ctx.product.sku || '', name: ctx.product.customerName || ctx.product.name || '', price: Number(ctx.product.price) || 0 } : null }) }, 6000);
+        const r = await crmFetch(keys, '/funnel-events', { method: 'POST', body: JSON.stringify({ funnelSlug: A.assets.bot.slug || A.botId, sessionId: session.id, stageName, stageOrder: Number(stageOrder) || 0, igUsername: ctx.igUsername || null, senderName: ctx.senderName || null, psid: ctx.psid || null, product: ctx.product && (ctx.product.sku || ctx.product.name) ? { id: ctx.product.id || null, sku: ctx.product.sku || '', name: ctx.product.customerName || ctx.product.name || '', price: Number(ctx.product.price) || 0 } : null, ...(ctx.adTouch ? { firstTouch: ctx.adTouch.first || null, lastTouch: ctx.adTouch.last || null } : {}) }) }, 6000);
+        A._adTouchSent = true;
         if (ctx.crmOrderId && !String(ctx.crmOrderId).startsWith('TEST-')) {
             const p = await crmFetch(keys, '/pipelines', {}, 4000);
             let stageId = null; const want = stageName.toLowerCase();
@@ -293,4 +301,4 @@ async function alert(A, nodeIdOrFields, extra = {}) {
     return !!j.ok;
 }
 
-module.exports = { tool, resolveProduct, setApply, calcSize, checkAvail, availSearch, extraResolve, orderPrefill, intlRoute, payAmount, npCheck, reconcile, crmOrder, supplierRoute, supplierOrder, confirmPrep, ttnSync, returnCrmUpdate, returnCreate, returnAttachTtn, kbContext, kbAsk, kbHit, createInvoice, deleteInvoice, monoStatement, markConsumed, funnelStage, alert, activeFop };
+module.exports = { adTouchSync, tool, resolveProduct, setApply, calcSize, checkAvail, availSearch, extraResolve, orderPrefill, intlRoute, payAmount, npCheck, reconcile, crmOrder, supplierRoute, supplierOrder, confirmPrep, ttnSync, returnCrmUpdate, returnCreate, returnAttachTtn, kbContext, kbAsk, kbHit, createInvoice, deleteInvoice, monoStatement, markConsumed, funnelStage, alert, activeFop };

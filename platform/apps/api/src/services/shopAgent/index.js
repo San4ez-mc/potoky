@@ -242,7 +242,9 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
         const pr = ctx.product || {};
         const od = ctx.orderData || {};
         const known = {
-            color: !pr.isSet && !!(ctx.colorChoice && (ctx.colorChoice.color || (Array.isArray(ctx.colorChoice.colors) && ctx.colorChoice.colors.length))),
+            // розмір клієнт обрав сам і параметрів не дав (подарунок тощо) — зріст і вага більше не потрібні (07.10 dianka1130)
+            hw: !!(ctx.recommendedSize && /^client/.test(String(ctx.sizeSource || '')) && !(ctx.sizeInput && ctx.sizeInput.height && ctx.sizeInput.weight)),
+            color:!pr.isSet && !!(ctx.colorChoice && (ctx.colorChoice.color || (Array.isArray(ctx.colorChoice.colors) && ctx.colorChoice.colors.length))),
             address: !!(od.phone && od.fullName && od.city && od.branch),
             set: !!(pr.isSet && ctx.setMode),
         };

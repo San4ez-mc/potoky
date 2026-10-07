@@ -34,6 +34,9 @@ function productFacts(ctx) {
         f.push('Ціни позицій комплекту окремо: ' + itemsLine + '. Якщо клієнт питає ціну комплекту БЕЗ якоїсь позиції, або лише за декілька позицій — сам порахуй суму потрібних позицій за цими цінами (не кажи "уточню окремо" і не клич менеджера — це проста арифметика).');
     }
     if (ctx.setSizesText) f.push('ПІДІБРАНІ СИСТЕМОЮ РОЗМІРИ ПО ПОЗИЦІЯХ КОМПЛЕКТУ: ' + String(ctx.setSizesText).replace(/\s+/g, ' ') + ' — називай лише їх, не перераховуй.');
+    else if (ctx.recommendedSize && /^client/.test(String(ctx.sizeSource || '')) && !(ctx.sizeInput && ctx.sizeInput.height && ctx.sizeInput.weight))
+        // 07.10 dianka1130 (подарунок, «точних розмірів не маю»): розмір прийнято, але модель двічі знову просила зріст і вагу.
+        f.push('РОЗМІР ' + ctx.recommendedSize + ' клієнт обрав сам (зросту й ваги не дав або не знає) — розмір ПРИЙНЯТО. НЕ проси зріст і вагу і не пропонуй «уточнити параметри»; рухайся далі з цим розміром.');
     else if (ctx.recommendedSize) f.push('ПІДІБРАНИЙ СИСТЕМОЮ РОЗМІР: ' + ctx.recommendedSize + ' — називай лише його, НІКОЛИ не рахуй розмір сам за сіткою/зростом/вагою і не пропонуй інший.');
     else if (ctx.sizeInput && (ctx.sizeInput.height || ctx.sizeInput.weight)) f.push('Розмір ще НЕ підібрано (рахує система) — не називай жодного розміру.');
     if (ctx.sizeInput && ctx.sizeInput.height && ctx.sizeInput.weight) f.push('Зріст і вага клієнта ВЖЕ відомі: ' + ctx.sizeInput.height + ' см / ' + ctx.sizeInput.weight + ' кг — НІКОЛИ не проси їх знову (навіть щоб «уточнити» чи «перевірити» розмір).');

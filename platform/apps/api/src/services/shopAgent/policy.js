@@ -2736,7 +2736,7 @@ async function runPolicyInner(A, u) {
             // двічі поспіль. Згоду/відмову від допродажу — коротко визнаємо; вдруге поспіль — показуємо сам список (n_pay), а не те саме.
             const ack = (u.claimsPaid || u.receiptLink || A.turnImage) ? 'Дякую, бачу квитанцію 🙏 ' : ((u.phone || u.fullName || u.city || u.branch) ? 'Дані записала 📝 ' : (u.addUpsell === false ? 'Добре, лише основний товар 👌 ' : (u.ready === 'yes' || /^\s*\+\s*$/.test(text) ? 'Так, оформлюємо 👌 ' : '')));
             
-            if (Asks.times(A, 'pay') % 2 === 0) { A.out.push({ text: ack + messageTextMultiline(A.assets, 'n_pay', ctx, A.session.id + ':pay'), step: 'pay_options_reshow' }); return; }
+            if (Asks.times(A, 'pay') > 0 && Asks.times(A, 'pay') % 2 === 0) { A.out.push({ text: ack + messageTextMultiline(A.assets, 'n_pay', ctx, A.session.id + ':pay'), step: 'pay_options_reshow' }); return; }
             A.out.push({ text: ack + messageText(A.assets, 'n_agent_pay_options_repeat', ctx, A.session.id), step: 'pay_options_repeat' });
             return;
         }

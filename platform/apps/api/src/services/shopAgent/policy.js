@@ -749,13 +749,20 @@ async function breakLoop(A) {
     const f = LOOP_FAMILIES.find((x) => x.re.test(last));
     const prev = ctx.agent.loopStreak || null;
     if (!f) { delete ctx.agent.loopStreak; return false; }
-    const n = (prev && prev.fam === f.fam && Date.now() - Number(prev.at || 0) < 12 * 3600 * 1000) ? prev.n + 1 : 1;
+    // Петля — коли клієнт ПОБАЧИВ попереднє прохання і знову написав не те. Ходи пачки (клієнт написав до того, як побачив відповідь —
+    // 07.10 tatiananepota: 5 пересилань поста за 14 с = 4 ходи) лічильник не збільшують.
+    const clientAt = Math.max(0, ...(A.history || []).filter((m) => m.who === 'client').map((m) => new Date(m.sentAt || m.at).getTime() || 0));
+    const same = prev && prev.fam === f.fam && Date.now() - Number(prev.at || 0) < 12 * 3600 * 1000;
+    if (same && !(clientAt > Number(prev.at || 0))) return false;
+    const n = same ? prev.n + 1 : 1;
     ctx.agent.loopStreak = { fam: f.fam, n, at: Date.now(), step: last };
     if (n < f.limit) return false;
     delete ctx.agent.loopStreak;
     A.out = [];
     A.out.push({ text: messageText(A.assets, 'n_agent_loop_handoff', ctx, A.session.id) || 'Щоб не ганяти вас по колу 🙏 — підключаю менеджера, він напише вам тут найближчим часом.', step: 'loop_handoff' });
-    await pause(A, 'loop', 'n_agent_handoff_admin', '🔁 Бот зациклився: ' + n + ' ходи поспіль «' + last + '» (' + f.fam + ') без руху вперед. Останнє від клієнта: «' + String(A.turnText || '').slice(0, 150) + '» — підхопіть розмову.');
+    await pause(A, 'loop', null);
+    const lastClient = String(A.turnText || '').trim() || (A.turnSharedPost ? '[переслав пост] ' + String(A.turnSharedPost.caption || '').split('\n')[0].slice(0, 80) : (A.turnImage ? '[фото]' : '—'));
+    await T.alert(A, { title: '🔁 Бот зациклився — підхопіть розмову', main: n + ' рази поспіль бот просив одне й те саме («' + last + '»), а клієнт після цього писав інше. Останнє від клієнта: «' + lastClient.slice(0, 150) + '»', details: 'Бот на паузі; повернути — іконкою в сесії.' });
     return true;
 }
 

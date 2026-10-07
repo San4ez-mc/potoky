@@ -208,8 +208,6 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
         }
     }
     if (adTouchChanged && !dryRun) require('./tools').adTouchSync(A).catch(() => {});
-    // Запобіжник «зациклився»: той самий крок N ходів поспіль без руху вперед — менеджер замість N+1-го повтору (policy.breakLoop).
-    if (!A._noCredit && !dryRun) { try { await breakLoop(A); } catch (e) { logger.warn('[shopAgent] breakLoop failed: ' + e.message, { sessionId }); } }
     // Підтвердження зміни вибору («лише кофта») — перед першим текстом цього ходу, щоб клієнт бачив, що його почули.
     if (A._switchNote && !A._noCredit) { const firstText = A.out.find((o) => o.text && !o.photoUrls); if (firstText) firstText.text = A._switchNote + firstText.text; else A.out.push({ text: A._switchNote.trim(), step: 'set_switch' }); }
     // одноразові прапорці ходу
@@ -318,6 +316,9 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
         }).filter((o) => !(o._hadPhotos && !o.photoUrls.length && !o.text && !o.caption));
         ctx.agent.sentPhotoKeys = recent;
     }
+    // Запобіжник «зациклився» — ОСТАННІМ, по тому, що клієнт реально отримає (після прибирання дублів/відомих питань): 07.10 він
+    // рахував прохання, які потім прибирались як дублі, і ходи пачки (5 пересилань поста за 14 с) — менеджер отримав хибне «зациклився».
+    if (!A._noCredit && !dryRun) { try { await breakLoop(A); } catch (e) { logger.warn('[shopAgent] breakLoop failed: ' + e.message, { sessionId }); } }
     const replies = [];
     if (!dryRun) {
         for (const o of A.out) {

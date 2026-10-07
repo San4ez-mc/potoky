@@ -885,12 +885,19 @@ async function main() {
         {
             const A = freshA({ turnText: 'Pero para que te hace falta la dirección' });
             let broke = false;
-            for (let i = 0; i < 4; i++) { A.out = [{ text: 'Напишіть, будь ласка, для відправки Новою Поштою: ПІБ, телефон, № відділення 📦', step: 'ask_address' }]; broke = await breakLoop(A); }
+            // клієнт щоразу пише ПІСЛЯ прохання бота (бачив його)
+            for (let i = 0; i < 4; i++) { A.history = [{ who: 'client', text: 'x', at: new Date(Date.now() + 1000), sentAt: new Date(Date.now() + 1000) }]; A.out = [{ text: 'Напишіть, будь ласка, для відправки Новою Поштою: ПІБ, телефон, № відділення 📦', step: 'ask_address' }]; broke = await breakLoop(A); }
             check('32.1 4-те прохання адреси поспіль → передача менеджеру й пауза', broke && A.ctx.funnelPaused && A.ctx.pausedBy === 'loop' && A.out.length === 1 && A.out[0].step === 'loop_handoff', JSON.stringify(A.out).slice(0, 120));
             const B = freshA({ turnText: 'Дякую' });
             let b2 = false;
             for (const st of ['ask_address', 'order_intent', 'ask_address', 'order_intent']) { B.out = [{ text: 'x'.repeat(30), step: st }]; b2 = await breakLoop(B); }
             check('32.2 Різні кроки (рух уперед) — не петля', !b2 && !B.ctx.funnelPaused, JSON.stringify(B.ctx.agent.loopStreak));
+            // 07.10 tatiananepota: 5 пересилань поста за 14 с — ходи пачки, клієнт ще не бачив відповіді → не петля.
+            const C = freshA({ turnText: '' });
+            const tClient = new Date(Date.now() - 5000);
+            let b3 = false;
+            for (let i = 0; i < 5; i++) { C.history = [{ who: 'client', text: '[переслав post]', at: tClient, sentAt: tClient }]; C.out = [{ text: 'Підкажіть, будь ласка, ваш зріст і вагу — підберу розмір 📏', step: 'ask_params' }]; b3 = await breakLoop(C) || b3; }
+            check('32.3 Пачка повідомлень, написана до відповіді бота, — не петля', !b3 && !C.ctx.funnelPaused, JSON.stringify(C.ctx.agent.loopStreak));
         }
         // 33. Питання, поставлене ПІСЛЯ картки (кнопка Instagram «Яка вартість?»), не знімається як «відповіла картка» (FunnelTest 125).
         if (kof && kof.sku) {

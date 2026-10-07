@@ -128,4 +128,21 @@ function colorHasSize(product, color, size) {
     return lists.some((l) => l.map(sizeKey).includes(sizeKey(size)));
 }
 
-module.exports = { catalogFacts, catalogProducts, otherCategoryProducts, colorHasSize };
+/**
+ * Розміри товару — ОДНЕ джерело (2026-10-07): офери CRM (effectiveSizes/availableSizes) → поле sizes → structuredSizes →
+ * розмірна сітка (sizeChartData.sizes) → рядок «Розміри:» в описі. Раніше policy брала лише p.sizes (у A0187 порожній — розміри є
+ * в оферах і сітці), тож «у цієї моделі розміри…» і «якщо все ж хочете M — напишіть» мовчки не показувались; ще одна копія з
+ * власним ланцюжком жила в перевірці «XXXL нема».
+ */
+function productSizes(p) {
+    if (!p) return [];
+    const norm = (z) => String((z && (z.name || z.size || z.value)) || z || '').trim().toUpperCase().replace(/\s*\(.*$/, '');
+    const uniq = (arr) => arr.map(norm).filter(Boolean).filter((z, i, a) => a.indexOf(z) === i);
+    const fromOffers = uniq([].concat(...(Array.isArray(p.offers) ? p.offers : []).map((o) => offerSizes(o) || [])));
+    if (fromOffers.length) return fromOffers;
+    for (const src of [p.sizes, p.structuredSizes, p.sizeChartData && p.sizeChartData.sizes]) if (Array.isArray(src) && src.length) return uniq(src);
+    const line = (String(p.desc || '').match(/Розміри:\s*([^\n]+)/i) || [])[1];
+    return line ? uniq(line.split(/[,;]+/)) : [];
+}
+
+module.exports = { catalogFacts, catalogProducts, otherCategoryProducts, colorHasSize, productSizes, sizeKey };

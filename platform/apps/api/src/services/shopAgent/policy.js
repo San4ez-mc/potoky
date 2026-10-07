@@ -13,7 +13,7 @@ const { syncSetComponents } = require('./orderSource');
 const { hasCategoryWord, categoryWordIsUpsell, categoryWordIsSetComponent, categoryWordIsMain } = require('./signal');
 const { resolveColorMention } = require('./cart');
 const { classifyKbQuestion, kbSimilarity, kbSimilar } = require('./kbRules');
-const { catalogFacts, catalogProducts, otherCategoryProducts, colorHasSize } = require('./catalogFacts');
+const { catalogFacts, catalogProducts, otherCategoryProducts, colorHasSize, productSizes, sizeKey } = require('./catalogFacts');
 const { kbMatch, sameAsEscalated } = require('./kbMatch');
 const { extractHeightWeight } = require('./understand');
 const { matchProduct } = require('./productMatch');
@@ -1125,8 +1125,7 @@ async function runPolicyInner(A, u) {
     {
         const big = text.match(/(?<![A-Za-z0-9])(2XXL|3XL|3XXL|XXXL|2XL|ХХХЛ)(?![A-Za-z])/i);
         const _pr = ctx.product || {};
-        const _rawSz = (_pr.sizes && _pr.sizes.length) ? _pr.sizes : ((_pr.structuredSizes && _pr.structuredSizes.length) ? _pr.structuredSizes : (((String(_pr.desc || '').match(/Розміри:\s*([^\n]+)/i) || [])[1]) || ''));
-        const szs = ctx.product ? (Array.isArray(_rawSz) ? _rawSz : String(_rawSz).split(/[,;]+/)).map((z) => String(z).trim().toUpperCase().replace(/\s*\(.*$/, '')).filter(Boolean) : [];
+        const szs = ctx.product ? productSizes(_pr) : []; // одне джерело розмірів (catalogFacts.productSizes)
         if (big && szs.length && !szs.includes('XXXL') && !ctx.crmOrderId) {
             A.out.push({ text: 'Для цієї моделі розміри: ' + szs.join(', ') + (/до\s*\d+\s*кг/i.test(String(ctx.product.desc || '')) ? ' (' + ((String(ctx.product.desc).match(/до\s*\d+\s*кг/i) || [''])[0]) + ')' : '') + ' — більших, на жаль, немає 🙏 Флісові костюми в нас йдуть до XXXL. Підкажіть зріст і вагу — підберу найкращий розмір з наявних 📏', step: 'size_beyond_range' });
             ctx.agent.lastAsk = 'параметри для розміру';
@@ -2057,7 +2056,7 @@ async function runPolicyInner(A, u) {
             ctx.sizeInput = si;
             if (A.justPresented) { const card = A.out.find((o) => o.step === 'present'); if (card && card.text) card.text = card.text.replace(/\n*👉[^\n]*(зріст|вага)[^\n]*/i, ''); }
             const catParams = String(paramsPrompt || '').trim();
-            const sizesHint = Array.isArray(pp.sizes) && pp.sizes.length ? ' (у цієї моделі розміри ' + pp.sizes.join(', ') + ')' : '';
+            const _ps = productSizes(pp); const sizesHint = _ps.length ? ' (у цієї моделі розміри ' + _ps.join(', ') + ')' : '';
             A.out.push({ text: catParams
                 ? 'Підберу розмір саме під вас' + sizesHint + ' 🙂 Напишіть, будь ласка, ' + humanizeParamsPrompt(catParams) + ' — і я перевірю, чи ' + ctx.agent.sizeClaim + ' вам підійде.'
                 : 'Підберу розмір саме під вас' + sizesHint + ' 🙂 ' + messageText(A.assets, 'n_agent_ask_size_both', ctx, A.session.id) + '\n— і я перевірю, чи ' + ctx.agent.sizeClaim + ' вам підійде.', step: 'size_verify_ask' });
@@ -2080,7 +2079,7 @@ async function runPolicyInner(A, u) {
         // (правка 800c1fb5, Олексій: «на 85 кг буде L–XL, S однозначно малий; інші параметри ігнорувати»). Бракує зросту — питаємо його.
         if (isHW && si.chest && !(si.height && si.weight)) delete si.chest;
         // Товар із числовими розмірами (взуття) — розмір за розміром взуття, не за зростом/вагою (зріст і вага тепер переживають зміну товару).
-        const numericSizes = Array.isArray(pp.sizes) && pp.sizes.length > 0 && pp.sizes.every((z) => /^\d/.test(String((z && (z.name || z.size || z.value)) || z)));
+        const _psz = productSizes(pp); const numericSizes = _psz.length > 0 && _psz.every((z) => /^\d/.test(String(z)));
         const complete = (si.height && si.weight && !numericSizes) || si.clothingSize || si.footLength || (si.shoeSize && (numericSizes || !isHW)) || (!isHW && si.chest && pp.sizeChartData);
         if (complete) {
             // Клієнт просить сітку в тому ж ході, коли розмір рахується (напр. після прохання перевірити розмір) — надсилаємо саме фото,
@@ -2124,12 +2123,13 @@ async function runPolicyInner(A, u) {
                 const rec = String(ctx.recommendedSize).toUpperCase();
                 claimNote = rec === ctx.agent.sizeClaim
                     ? '✅ Так, ' + rec + ' вам добре підійде. '
-                    : 'Ви називали ' + ctx.agent.sizeClaim + ', але за вашим зростом і вагою краще підійде ' + rec + ' 📏 ' + ((Array.isArray(pp.sizes) && pp.sizes.map((z) => String(z).toUpperCase()).includes(ctx.agent.sizeClaim)) ? 'Якщо все ж хочете ' + ctx.agent.sizeClaim + ' — напишіть, оформимо так. ' : '');
+                    : 'Ви називали ' + ctx.agent.sizeClaim + ', але за вашим зростом і вагою краще підійде ' + rec + ' 📏 ' + ((productSizes(pp).map(sizeKey).includes(sizeKey(ctx.agent.sizeClaim))) ? 'Якщо все ж хочете ' + ctx.agent.sizeClaim + ' — напишіть, оформимо так. ' : '');
                 delete ctx.agent.sizeClaim;
             } else if (ctx.agent.sizeClaim) delete ctx.agent.sizeClaim; // параметри не дали — приймаємо названий розмір без «перевірено»
             // Примітка про названий клієнтом розмір уже каже підібраний розмір — стандартне «За ними найкраще підійде розмір XL» після неї
             // дублює те саме (правка 89b80358, 01.10: «…краще підійде XL 📏 Дякую за параметри! За ними найкраще підійде розмір XL 📏»).
             let sizeBody = sizeTextClean;
+            if (claimNote) { const _th = sizeBody.match(/^\s*(Дякую[^.!?]*[.!?]+\s*(?:🙌\s*)?)/u); if (_th) { sizeBody = sizeBody.slice(_th[0].length); claimNote = _th[1].trim() + ' ' + claimNote; } }
             if (claimNote && !sizeTextClean.includes('\n') && ctx.recommendedSize) {
                 const recRe = new RegExp('(^|[^A-Za-zА-Яа-яІіЇїЄєҐґ])' + String(ctx.recommendedSize).toUpperCase() + '([^A-Za-zА-Яа-яІіЇїЄєҐґ]|$)');
                 sizeBody = sizeTextClean.split(/(?<=[.!?…👌📏])\s+/u).filter((s) => !recRe.test(s.toUpperCase()) && !/^[\s—–-]*(сяде|перевірено)/i.test(s)).join(' ').trim();

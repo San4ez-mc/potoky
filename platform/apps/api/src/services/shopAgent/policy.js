@@ -17,6 +17,7 @@ const { catalogFacts, catalogProducts, otherCategoryProducts, colorHasSize } = r
 const { kbMatch, sameAsEscalated } = require('./kbMatch');
 const { extractHeightWeight } = require('./understand');
 const { matchProduct } = require('./productMatch');
+const Q = require('./questions');
 
 // 2026-09-14 (власник: "я взагалі проти будь-якого хардкоду... все в ноди перенеси"): TRUST_STEP1/2,
 // HANDOFF_TEXT та решта клієнтських/менеджерських текстів цього файлу БУЛИ тут як JS-константи —
@@ -463,10 +464,14 @@ async function answerThenAsk(A, u, askText, o = {}) {
     if (u.intent === 'greeting' && !o.ack) o = { ...o, ack: 'коротко привітайся у відповідь (тим самим часом доби, якщо клієнт його назвав)' };
     // Питання клієнта вже отримали відповідь цього ходу (напр. у відповіді про розмір) — вдруге не відповідаємо
     // (01.10, сесія 0146ec01: «Так, накладений платіж доступний…» двічі в одному повідомленні).
-    if (A._qAnswered && !o.ack) return askText;
-    if (!u.questions.length && !o.ack) return askText;
-    if (u.questions.length) A._qAnswered = true;
-    A._questionEngaged = true;
+    // Реєстр питань (questions.js): відповідаємо лише на ВІДКРИТІ — не на ті, що вже бачить клієнт (картка, сітка) чи вже
+    // відповіла модель цього ходу (01.10, 0146ec01: «Так, накладений платіж доступний…» двічі в одному повідомленні).
+    if (!A.qs) Q.init(A, u);
+    const qsOpen = Q.open(A).map((q) => q.text);
+    if (!qsOpen.length && !o.ack) return askText;
+    u = { ...u, questions: qsOpen };
+    if (qsOpen.length) A._qAnswered = true;
+
     let kb = []; let availAnswer = '';
     try { kb = await T.kbContext(A); } catch (e) { /* best-effort */ }
     if (/наявн|є в наявн|залишил|є ще|маєте ще|чи є/i.test(String(A.turnText || ''))) { A.ctx.lastCustomerMessage = A.turnText; await T.availSearch(A); availAnswer = A.ctx.availAnswer || ''; }
@@ -700,7 +705,7 @@ function sendSizeChart(A, pp, u) {
     ctx.agent.chartSentFor = pp.sku;
     const lines = chartLinesFor(pp, A.turnText);
     if (lines) A.out.push({ text: lines, step: 'size_chart_numbers', noMerge: true });
-    if (Array.isArray(u.questions)) u.questions = u.questions.filter((q) => !/(сітк|замір|таблиц|обхват|довжин)/i.test(String(q)));
+    Q.coverTopics(A, u, ['size_chart'], 'size_chart'); // прохання сітки закрите фото; питання про заміри (fit) лишаються — на них відповідаємо цифрами
 }
 
 async function resolveSetParams(A, pp) {
@@ -821,19 +826,18 @@ async function present(A) {
  * переказував картку вдруге (2026-09-23 FunnelTest 6; правки 8577bd2d, 272c33d0, 0759abcb; тест 95). */
 function dropQuestionsAnsweredByCard(A, u) {
     const { ctx } = A; const p = P(ctx);
-    if (!p || !Array.isArray(u.questions) || !u.questions.length) return;
-    u.questions = u.questions.filter((q) => !/(ціна|ціну|цін[иі]|скільки\s+кошту|вартіст|почім|прайс)/i.test(String(q)));
-    // «Клієнт написав 234286 — уточнити, що це» — картка цього артикула щойно показана, питання закрите (правка 8577bd2d).
-    if (p.sku) u.questions = u.questions.filter((q) => !String(q).toUpperCase().includes(String(p.sku).toUpperCase()));
-    // «А є джинси?» — щойно показана картка джинсів і є відповіддю.
+    if (!p) return;
+    // Реєстр питань (questions.js, 07.10): що закриває картка — за ТЕМОЮ від аналізатора, не за словами. Картка показує ціну й
+    // кольори цього товару і сама є відповіддю на «а є цей товар?». Розміри НЕ закриває (на «чи є 4XL?» треба чесна відповідь),
+    // як і колір, якого нема в палітрі («а беж є?»). Назва/артикул товару — перевірка ДАНИХ (чи питання саме про цей товар).
     const pn = String((p.name || '') + ' ' + (p.customerName || '')).toLowerCase();
-    u.questions = u.questions.filter((q) => !(/(^|\s)(а\s+)?(у\s+вас\s+)?(чи\s+)?(є|маєте)\s/i.test(String(q)) && String(q).toLowerCase().split(/[^a-zа-яіїєґ]+/).some((w) => w.length >= 4 && pn.includes(w.slice(0, 5)))));
-    // «Які є кольори?» — картка щойно їх перелічила; окремий рядок «Кофта є у трьох кольорах…» — дубль (правки 272c33d0, 0759abcb).
-    // Питання про конкретний колір, якого нема в палітрі («а беж є?»), лишаємо — на нього треба чесна відповідь.
-    if (colorsOf(p)) u.questions = u.questions.filter((q) => !(/(кольор|колір|відтін)/i.test(String(q)) && !(u.color && !matchColor(p, u.color))));
-    // «Чи є костюм Гельсінкі?» — картка цього товару щойно показана, це і є відповідь (тест 95: бот дописав «такого немає»).
-    const nameStems = String((p.name || '') + ' ' + (p.customerName || '')).toLowerCase().split(/[^a-zа-яіїєґ0-9]+/i).filter((w) => w.length >= 5).map((w) => w.slice(0, 5));
-    u.questions = u.questions.filter((q) => !(/(є|наявн|існує|маєте|немає|нема)/i.test(String(q)) && String(q).toLowerCase().split(/[^a-zа-яіїєґ0-9]+/i).some((w) => w.length >= 5 && nameStems.includes(w.slice(0, 5)) && !/^(костю|кофта|кофти|куртк|джинс|футбо|лофер|бомбе|чолов)/.test(w))));
+    const nameStems = pn.split(/[^a-zа-яіїєґ0-9]+/i).filter((w) => w.length >= 5).map((w) => w.slice(0, 5));
+    const aboutThis = (q) => (p.sku && String(q.text).toUpperCase().includes(String(p.sku).toUpperCase())) || String(q.text).toLowerCase().split(/[^a-zа-яіїєґ0-9]+/i).some((w) => w.length >= 5 && nameStems.includes(w.slice(0, 5)) && !/^(костю|кофта|кофти|куртк|джинс|футбо|лофер|бомбе|чолов)/.test(w)); // загальне слово категорії («а є костюми?») — про всі такі товари, не лише показаний
+    const colorOutside = !!(u.color && colorsOf(p) && !matchColor(p, u.color));
+    Q.cover(A, u, (q) => q.topic === 'price'
+        || (q.topic === 'colors' && colorsOf(p) && !colorOutside)
+        || (q.topic === 'availability' && aboutThis(q))
+        || (q.topic === 'other' && p.sku && String(q.text).toUpperCase().includes(String(p.sku).toUpperCase())), 'card');
 }
 
 function resetForNewProduct(A, sku) {
@@ -1094,24 +1098,27 @@ async function enforceInsistLimit(A) {
  * дописувати поверх щойно показаної картки", а не намагатись вгадати, чи компенсувати рідкісний
  * пропуск. */
 async function universalQuestionFallback(A, u) {
-    if (!u || !u.questions || !u.questions.length || A._questionEngaged || A.ctx.funnelPaused || A.justPresented) return;
-    // 2026-10-05 (Edit f44b9da3): тепер через ТУ САМУ функцію відповіді, що й скрізь (answerThenAsk) — вид питання, розмірна
-    // сітка з цифрами, факти CRM, база знань. Окрема урізана копія передавала менеджеру навіть питання про заміри (урок 15.25).
-    const textItems = A.out.filter((o) => o.text);
-    const askText = textItems.map((o) => o.text).join(' ').trim();
-    const text = await answerThenAsk(A, u, askText);
+    // Інваріант реєстру питань (questions.js, 07.10): хід не закінчується з відкритим питанням клієнта. Що закрила картка/сітка/
+    // підсумок — уже covered (Q.cover), на що відповіла модель — answered; лишились лише ті, яких ніхто не торкнувся.
+    // Раніше тут були прапорці A._questionEngaged / A.justPresented: будь-яка секція, що викликала compose, «гасила» всі питання
+    // ходу, а свіжа картка — навіть ті, на які вона не відповідає (тканина, доставка) → «спитав — отримав лише зріст і вагу».
+    if (!u || A.ctx.funnelPaused) return;
+    if (!A.qs) Q.init(A, u);
+    if (!Q.open(A).length) return;
+    // Через ТУ САМУ функцію відповіді, що й скрізь (answerThenAsk: вид питання, сітка з цифрами, факти CRM, база знань; Edit f44b9da3).
+    // Готовий текст скрипту (картка, «Записала», підсумок, оплата, реквізити) НЕ переписуємо — відповідь окремим реченням перед
+    // ним, без власного заклику (askText ''); mergeConsecutiveTextOutputs склеїть в одне повідомлення.
+    const text = await answerThenAsk(A, u, '');
     if (!text) return;
-    if (textItems.length) {
-        A.out = A.out.filter((o) => !o.text || o === textItems[0]);
-        const idx = A.out.indexOf(textItems[0]);
-        A.out[idx] = { ...textItems[0], text };
-    } else {
-        A.out.push({ text, step: 'question_fallback' });
-    }
+    const firstText = A.out.findIndex((o) => o.text && !o.photoUrls);
+    const item = { text, step: A.justPresented ? 'question_after_card' : 'question_fallback' };
+    if (firstText < 0 || A.justPresented) A.out.push(item); // після картки — окремо після неї; без тексту скрипту — просто відповідь
+    else A.out.splice(firstText, 0, item);
 }
 
 async function runPolicyInner(A, u) {
     const { ctx } = A; ctx.agent = ctx.agent || {};
+    Q.init(A, u); // реєстр питань ходу (questions.js) — далі питання змінюються лише через Q.cover/Q.add/compose
     const text = String(A.turnText || '');
     // Голий номер («2») у відповідь на показаний список — це вибір пункту, а не кількість: детерміновано (LLM іноді читає як qty і картка не показується).
     if (ctx.agent.lastAsk === 'який із показаних товарів цікавить' && ctx.catalogHintSkus) {
@@ -1188,7 +1195,7 @@ async function runPolicyInner(A, u) {
             A.out.push({ text: 'Для цих джинсів розміри числові: ' + _szl.join(', ') + ' — літерні S/M/L бувають лише у футболки 🙂 Розмір джинсів у нас уже зафіксований. Додати футболку до замовлення (підберемо їй розмір окремо) чи оформляємо лише джинси?', step: 'letter_size_numeric' });
             return;
         }
-        if (!Array.isArray(u.questions) || !u.questions.length) u.questions = ['Чи є розмір ' + String(u.clothingSize).toUpperCase() + '? (у цього товару розміри числові: ' + _szl.join(', ') + ')'];
+        if (!u.questions.length) Q.add(A, u, 'Чи є розмір ' + String(u.clothingSize).toUpperCase() + '? (у цього товару розміри числові: ' + _szl.join(', ') + ')', 'sizes');
         u.clothingSize = null;
     }
     // 2026-09-25 (FunnelTest 32): фото БЕЗ тексту у відповідь на питання про колір — це зразок кольору, а не новий товар:
@@ -1237,13 +1244,13 @@ async function runPolicyInner(A, u) {
     }
     // «2,4» — вибір зі списку, а не порівняння і не питання (тест 34): аналізатор інколи додавав «чим відрізняються 2 і 4?».
     if (/^[\d\s,;.+іта-]+$/iu.test(String(text).trim()) && /\d/.test(text)) {
-        u.compare = false; u.questions = [];
+        u.compare = false; Q.cover(A, u, () => true, 'list_pick');
         // Аналізатор міг не заповнити fromList (прочитав «2,4» як порівняння) — номер зі щойно показаного списку і є вибором.
         const skusN = String(ctx.catalogHintSkus || '').split(',').map((s) => s.trim()).filter(Boolean);
         const firstN = Number((String(text).match(/\d+/) || [])[0]);
         if (!u.productHint.fromList && ctx.agent.lastAsk === 'який із показаних товарів цікавить' && skusN.length && firstN >= 1 && skusN[firstN - 1]) u.productHint = { ...u.productHint, fromList: skusN[firstN - 1] };
     }
-    if (u.compare) { u.productHint = { ...u.productHint, article: null, fromList: null }; if (!u.questions.length) u.questions = [String(text).trim()]; }
+    if (u.compare) { u.productHint = { ...u.productHint, article: null, fromList: null }; if (!u.questions.length) Q.add(A, u, String(text).trim(), 'compare'); }
     if (!u.productHint.article && !A.turnSharedPost && !u.compare) {
         try {
             const LAT = { 'А': 'A', 'В': 'B', 'С': 'C', 'Е': 'E', 'Н': 'H', 'І': 'I', 'К': 'K', 'М': 'M', 'О': 'O', 'Р': 'P', 'Т': 'T', 'Х': 'X', 'а': 'A', 'в': 'B', 'с': 'C', 'е': 'E', 'н': 'H', 'і': 'I', 'к': 'K', 'м': 'M', 'о': 'O', 'р': 'P', 'т': 'T', 'х': 'X' };
@@ -1299,7 +1306,7 @@ async function runPolicyInner(A, u) {
     const freshSignal = !!(ctx.storyRetry || A.turnSharedPost || A.newEntryAd || u.productHint.article || u.productHint.fromList || (A.turnImage && !u.claimsPaid && !u.receiptLink && !(ctx.paymentInfo && ctx.paymentInfo.method) ));
     // Каталожне питання («А є жилетки?», «Які кольори?») аналізатор інколи кладе лише в productHint, без questions — тоді
     // воно губилось і бот просив зріст/вагу (тест 131). Питання зі знаком «?», на яке є відповідь у CRM, завжди відповідаємо.
-    if (!u.questions.length && /\?/.test(text) && !A.turnSharedPost && classifyKbQuestion(text).kind === 'catalog') u.questions = [text.trim()];
+    if (!u.questions.length && /\?/.test(text) && !A.turnSharedPost && classifyKbQuestion(text).kind === 'catalog') Q.add(A, u, text.trim(), 'availability');
 
     // 2026-09-24 (FunnelTest 16): «Не відкривається посилання» LLM не завжди відносила до wantsManualReq —
     // детермінований страхувальний розбір: скарга на посилання оплати → одразу ручні реквізити.
@@ -1677,7 +1684,7 @@ async function runPolicyInner(A, u) {
         // «штани» — синонім категорії джинсів у CRM, тож пошук повертає той самий товар (found, той самий sku) — це теж «нового не знайдено».
         const sameAgain = r.status === 'found' && __setBeforeProduct && P(ctx) && P(ctx).sku === __setBeforeProduct.sku;
         if ((r.status === 'kept' || sameAgain) && categorySignal && !freshSignal && !u.questions.length && /\?|(^|\s)(є|маєте|нема\S*)(\s|$)/i.test(text)) {
-            u.questions = ['Чи є у вас ' + text.replace(/^\s*(а|і|ще|а\s+є|є)\s+/i, '').replace(/[?\s]+$/, '') + '? (окремо такого товару в каталозі не знайдено' + (sameAgain ? ', крім уже показаного' : '') + ' — чесно скажи це й назви, що є схоже, якщо є в ФАКТАХ/БАЗІ ЗНАНЬ)'];
+            Q.add(A, u, 'Чи є у вас ' + text.replace(/^\s*(а|і|ще|а\s+є|є)\s+/i, '').replace(/[?\s]+$/, '') + '? (окремо такого товару в каталозі не знайдено' + (sameAgain ? ', крім уже показаного' : '') + ' — чесно скажи це й назви, що є схоже, якщо є в ФАКТАХ/БАЗІ ЗНАНЬ)', 'availability');
         }
         // Активний комплект НЕ замінюється власною складовою, яку «знайшло» розпізнавання (фото образу, реклама, слова) — лише
         // явний вибір клієнта (аналізатор setChoice=item або артикул, який клієнт сам написав) переводить на одну річ
@@ -1746,7 +1753,7 @@ async function runPolicyInner(A, u) {
             if (u.height || u.weight) ctx.sizeInput = { ...(ctx.sizeInput || {}), ...(u.height ? { height: u.height } : {}), ...(u.weight ? { weight: u.weight } : {}) };
             const list = String(ctx.catalogHint || '');
             ctx.agent.hintList = list;
-            A._questionEngaged = true;
+
             // Розмір із показаних товарів: клієнт назвав розмір, якого нема — чесно одразу, з альтернативою.
             let sizeFact = '';
             try {
@@ -1806,7 +1813,7 @@ async function runPolicyInner(A, u) {
             // CRM взагалі не повернула жодної категорії (порожній каталог), не хардкод-заміна CRM.
             ctx.agent.categoriesList = ctx.catalogCategories || 'костюми, куртки, бомбери, кофти, футболки, джинси, взуття';
             const cats = ctx.catalogCategories ? ('Категорії в наявності: ' + ctx.catalogCategories) : 'Категорії: ' + ctx.agent.categoriesList;
-            A._questionEngaged = true;
+
             const { text: txt, resolved: unkResolved } = await compose(A, { questions: u.questions, noGreeting: A.botSpokeBefore, extraFacts: cats, nextStep: A.turnImage ? 'скажи, що по фото не змогла впізнати модель, і спитай, що саме цікавить: назви категорії; або попроси переслати пост/рілс' : 'спитай, що саме цікавить (назви категорії) або попроси переслати пост/рілс з Instagram', fallback: (A.botSpokeBefore ? '' : 'Вітаю! 💛 ') + messageText(A.assets, 'n_agent_unknown_fallback', ctx, A.session.id) });
             if (!unkResolved && u.questions.length) await escalateUnresolved(A, u.questions[0]);
             A.out.push({ text: txt, step: 'unknown' }); ctx.agent.lastAsk = 'що цікавить';
@@ -1826,7 +1833,7 @@ async function runPolicyInner(A, u) {
         const totalS = (p.isSet && ctx.agent.setPricing && ctx.agent.setPricing.total) || ctx.orderUnitsTotal || p.price;
         const usS = !(p.isSet && ctx.setMode === 'set') ? upsellSummary(ctx, p) : null;
         A.out.push({ text: 'Ваше замовлення 🙌\n' + String(p.customerName || p.name).split('\n')[0] + (unitsS ? ' — ' + unitsS.trim() : '') + ' — ' + totalS + ' грн' + (usS ? '\n+ ' + usS.text + '\nРазом: ' + (Number(totalS) + usS.sum) + ' грн' : '') + (ctx.extraItemsText ? '\n' + ctx.extraItemsText : ''), step: 'order_reshow' });
-        u.questions = (u.questions || []).filter((q) => !/(замовленн|підсум)/i.test(String(q)));
+        Q.coverTopics(A, u, ['order_summary'], 'order_summary');
     }
 
     // 3.0 Уже збираємо ВЕСЬ комплект, а клієнт каже «мені тільки кофта» (setChoice:item) — переходимо на цю позицію.
@@ -1986,7 +1993,7 @@ async function runPolicyInner(A, u) {
             if (nowArts !== prodArts) await narrowSetTo(A, ctx.setSelection.map((s) => s.article));
             if (edited && ctx.agent.setEditNote) {
                 A.out.push({ text: 'Записала: ' + ctx.agent.setEditNote + ' ✅', step: 'set_edit' });
-                u.questions = u.questions.filter((q) => !/(розмір|більш|менш|замість|колір|взутт|без)/i.test(String(q)));
+                Q.coverTopics(A, u, ['order_change'], 'set_edit'); // «Записала: …» і є відповіддю на прохання змінити склад/розмір/колір
             }
         }
     }
@@ -2009,7 +2016,7 @@ async function runPolicyInner(A, u) {
         sendSizeChart(A, pp, u); // відповідь уже пішла фото — compose не має «обіцяти» її вдруге
         // «Сітку кофти і футболки» — про другий товар відповідаємо окремо (тест 27: інакше частина прохання губиться).
         const _other = (_txt.match(/футболк\S*|джинс\S*|лофер\S*|взутт\S*|штан\S*|костюм\S*|кофт\S*|бомбер\S*|куртк\S*/gi) || []).filter((w) => !new RegExp(w.slice(0, 5), 'i').test(String(pp.name || '') + ' ' + String(pp.customerName || '')));
-        if (_other.length) u.questions = (u.questions || []).concat(['Чи є окрема розмірна сітка для «' + _other[0] + '»? (сітку поточного товару вже надіслано фото)']);
+        if (_other.length) Q.add(A, u, 'Чи є окрема розмірна сітка для «' + _other[0] + '»? (сітку поточного товару вже надіслано фото)', 'size_chart_other');
     }
 
     // 2026-09-18 (живий кейс, LaT1K/C0043: клієнт явно написав "мені потрібен M розмір
@@ -2181,10 +2188,9 @@ async function runPolicyInner(A, u) {
             // чекаємо, не питаємо вдруге.
             // 2026-09-28 (Edit 86c32ac7, «двічі питає зріст та вагу»): «Як підібрати розмір?» разом із свіжою карткою — картка вже
             // закінчується проханням зросту/ваги, тож таке питання вважаємо закритим і не віддаємо в compose (він дописував друге прохання).
-            const qsLeft = A.justPresented ? u.questions.filter((q) => !/розмір|сітк|підібр|підбер|замір|як обрат|який мені|яку мені/i.test(q)) : u.questions;
-            // u.questions змінюємо в тому ж обʼєкті — universalQuestionFallback наприкінці ходу читає саме його (інакше «доповідає» знятe питання).
-            if (qsLeft.length !== u.questions.length) u.questions = qsLeft;
-            if (A.justPresented && !qsLeft.length && !colorNote) { ctx.agent.lastAsk = paramsPrompt || 'зріст і вага'; return; }
+            // «Як підібрати розмір?» разом зі свіжою карткою — картка сама закінчується проханням параметрів, це і є відповідь.
+            if (A.justPresented) Q.coverTopics(A, u, ['size_how'], 'card');
+            if (A.justPresented && !u.questions.length && !colorNote) { ctx.agent.lastAsk = paramsPrompt || 'зріст і вага'; return; }
             const missing = isHW ? (si.height && !si.weight ? 'вагу' : (!si.height && si.weight ? 'зріст' : '')) : '';
             let ask = '';
             if (!A.justPresented) {
@@ -2369,7 +2375,7 @@ async function runPolicyInner(A, u) {
             A._setEditDone = true;
             if (editedEarly && ctx.agent.setEditNote) {
                 A.out.push({ text: 'Записала: ' + ctx.agent.setEditNote + ' ✅', step: 'set_edit' });
-                u.questions = u.questions.filter((q) => !/(розмір|більш|менш|замість|колір)/i.test(String(q)));
+                Q.coverTopics(A, u, ['order_change'], 'set_edit');
             }
         }
         if (!ctx.agent.setColorsResolved) {
@@ -2630,7 +2636,7 @@ async function runPolicyInner(A, u) {
                 return;
             }
             if (u.questions.length || hesitating) {
-                A._questionEngaged = true;
+
                 const summaryAlreadyShown = ctx.agent.lastAsk === 'оформляємо?';
                 // Підсумок уже показано: compose лише відповідає, без «переходу до підсумку» (FunnelTest 43: «підтверджуємо ваше замовлення:» — а підсумку далі нема).
                 const { text: pre, resolved: preResolved } = await compose(A, { questions: u.questions, nextStep: hesitating ? 'клієнт вагається — без тиску наведи ОДИН реальний аргумент оформити сьогодні (раніше отримає, черга на відправку) і заверши питанням «Оформляємо сьогодні?»' : (summaryAlreadyShown ? 'лише відповідь на питання; НЕ згадуй підсумок/замовлення, НЕ пиши «підтверджуємо», «підіб’ємо підсумок», «оформлюємо?» — завершальне питання додасть система' : 'заверши коротким переходом до підсумку (без самого підсумку — його додасть система)'), maxSentences: 3, fallback: '' });
@@ -2754,7 +2760,7 @@ async function runPolicyInner(A, u) {
         else {
             const payTpl = messageTextMultiline(A.assets, 'n_pay', ctx, A.session.id + ':pay');
             if (u.questions.length && !A._qAnswered) {
-                A._questionEngaged = true; A._qAnswered = true;
+                A._qAnswered = true;
                 const { text: payQTxt, resolved: payQResolved } = await compose(A, { questions: u.questions, nextStep: 'потім скажи, що лишилось обрати спосіб оплати (сам список дасть система)', maxSentences: 3, fallback: '' });
                 if (!payQResolved) await escalateUnresolved(A, u.questions[0]);
                 A.out.push({ text: payQTxt, step: 'pay_q' });

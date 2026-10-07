@@ -168,11 +168,13 @@ async function compose(A, o = {}) {
             return { text: noJargon(t === null ? (o.fallback || '') : t), resolved: true };
         }
         const parsed = extractJsonLoose(raw);
-        if (parsed && typeof parsed.text === 'string' && parsed.text.trim()) return { text: noJargon(parsed.text.trim()), resolved: parsed.resolved !== false };
+        // Реєстр питань: compose — єдине місце, де модель відповідає; тут і позначаємо (questions.js).
+        if (parsed && typeof parsed.text === 'string' && parsed.text.trim()) { require('./questions').markAnswered(A, o.questions, parsed.resolved !== false); return { text: noJargon(parsed.text.trim()), resolved: parsed.resolved !== false }; }
         // LLM не повернула валідний JSON (рідкісний збій формату) — не рвемо хід, беремо сирий текст
         // як відповідь, але resolved:false, щоб питання клієнта все одно пішло на ескалацію, а не загубилось.
         logger.warn('[shopAgent] compose: невалідний JSON, fallback на сирий текст', { sessionId: A.session.id });
         const t = textFromJsonLike(raw);
+        if (t) require('./questions').markAnswered(A, o.questions, false);
         return { text: noJargon(t || '') || (o.fallback || ''), resolved: false };
     } catch (e) {
         logger.warn('[shopAgent] compose failed: ' + e.message, { sessionId: A.session.id });

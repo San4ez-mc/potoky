@@ -31,6 +31,7 @@ const SCHEMA = `{
  "returnType": "return|exchange"|null, "returnReason": "<що не підійшло, словами клієнта коротко>"|null, "exchangeFor": "<на що обміняти: розмір/колір/товар>"|null,
  "productHint": {"article": "<A0187 тощо>"|null, "category": "<кофта|костюм|куртка|бомбер|футболка|джинси|лофери|...>"|null, "fromList": "<назва/артикул зі списку, який бот щойно показав>"|null},
  "questions": ["<питання клієнта, на які треба відповісти фактами>"],
+ "questionTopics": ["<тема КОЖНОГО питання з questions, по порядку: price|colors|sizes|size_chart|size_how|fit|availability|material|delivery|payment|order_process|order_summary|order_change|photo|compare|other>"],
  "sentiment": "neutral|positive|annoyed|angry",
  "summary": "<одне речення: що клієнт зробив цим повідомленням>"
 }`;
@@ -78,6 +79,7 @@ const RULES = `ПРАВИЛА РОЗБОРУ:
 - belly=true — клієнт згадує живіт/животик/пузо/«повний у талії» (навіть окремим коротким повідомленням після підбору розміру) — це параметр для підбору (розмір більше), а не питання.
 - clothingSize: розмір, як назвав клієнт, без «округлення» вниз: 2XL = XXL; 2XXL, 3XL, XXXL = XXXL; 4XL = 4XL. У questions теж пиши саме цей розмір.
 - questions: усі питання не про слоти (ціна, склад, доставка за кордон, чи є в наявності інший розмір/колір, гарантія…). Питання «яка ціна?» коли товар ЩЕ не показано — це product_query, не question. «Хочу замовити», «беру», «оформлюйте» — це НАМІР замовити (intent product_query/order_yes), НЕ questions. А «Як замовити?», «як оформити замовлення?», «що треба, щоб замовити?» — і намір (intent product_query/order_yes), І питання про порядок оформлення: додай у questions «Як оформити замовлення?» (клієнт просить пояснити кроки — це кнопка Instagram під кожним постом; 07.10 бот відповідав лише «напишіть зріст і вагу»). Кожне питання — словами клієнта; НЕ приписуй його товару в розмові, якщо клієнт питає про іншу річ (у розмові кофта, а клієнт питає «штани будуть звужені?» — питання про штани, не про кофту; артикул додавай лише той, що клієнт сам назвав або що очевидно стосується саме цієї речі).
+- questionTopics (по одній темі на кожне питання, той самий порядок): price — ціна/вартість цього товару; colors — які кольори є / чи є колір X; sizes — які розміри є / чи є розмір X; size_chart — прохання розмірної сітки/таблиці; size_how — як підібрати розмір / який мені розмір; fit — чи підійде/не буде мала/короткі, посадка, довжина, заміри; availability — чи є в наявності (цей чи інший товар, «а є джинси?»); material — склад, тканина, якість, чи колеться, температура; delivery — доставка, терміни, країни, вартість доставки; payment — способи оплати, передплата; order_process — як замовити/оформити; order_summary — показати/нагадати замовлення; order_change — змінити розмір/колір/склад замовлення («а кофту на розмір більше?»); photo — фото, реальні фото; compare — чим відрізняються товари; other — інше.
 - Пояснення, що клієнт НЕ ЗНАЄ або не може дати зріст і вагу («це подарунок», «точних розмірів не маю», «не знаю його ваги», «беру на чоловіка, параметрів не скажу») — це НЕ питання: questions порожні (система прийме розмір, який клієнт назвав). Питання лише якщо клієнт справді питає («який розмір брати на подарунок?»). (07.10 dianka1130: модель «відповідала» на це порадами про зріст і вагу.)
 - 2026-09-18 (живий кейс, Kolya Kolya: «Зі змійкою не під шию треба» — це ВИМОГА до товару, не граматичне питання, тож questions лишився порожнім, і бот жодного разу не відповів на неї — картка мала б чесно сказати "лише один варіант виконання", ця відповідь ВЖЕ була в CRM, просто ніхто не спитав): questions — це НЕ лише речення зі знаком питання. Якщо клієнт СТВЕРДЖУЄ вимогу, побажання чи заперечення щодо конкретної характеристики товару (фасон, деталь, матеріал, комплектація тощо — НЕ розмір/колір/кількість, для них є свої слоти), яку неможливо визначити з наявних дій бота — теж додай це до questions, сформулювавши як питання-факт («Зі змійкою не під шию треба» → «Чи є варіант без високої змійки на комірі?»). Порожнє нарікання без конкретики («не подобається», «якесь дивне») сюди НЕ йде.
 - productHint.fromList: якщо бот щойно показував список товарів, а клієнт відповів словом/кольором/номером, що вказує на один із них — назви його артикул зі списку.
@@ -163,7 +165,15 @@ async function understand(A) {
         const items = Array.isArray(u.setItemsWanted.items) ? u.setItemsWanted.items.map((x) => String(x || '').trim()).filter(Boolean).slice(0, 8) : [];
         u.setItemsWanted = (u.setItemsWanted.all === true || items.length) ? { all: u.setItemsWanted.all === true, items } : null;
     } else u.setItemsWanted = null;
-    u.questions = Array.isArray(u.questions) ? u.questions.filter((q) => q && String(q).trim()).map(String) : [];
+    {
+        // Тема кожного питання (реєстр питань, questions.js): яку відповідь клієнт уже бачить — картка, сітка, підсумок — вирішує
+        // тема від аналізатора, а не регулярки по словах (07.10, правило 15.17).
+        const QT = ['price', 'colors', 'sizes', 'size_chart', 'size_how', 'fit', 'availability', 'material', 'delivery', 'payment', 'order_process', 'order_summary', 'order_change', 'photo', 'compare', 'other'];
+        const rawQ = Array.isArray(u.questions) ? u.questions : []; const rawT = Array.isArray(u.questionTopics) ? u.questionTopics : [];
+        const qs = [], ts = [];
+        rawQ.forEach((q, i) => { if (q && String(q).trim()) { qs.push(String(q)); const t = String(rawT[i] || '').trim(); ts.push(QT.includes(t) ? t : 'other'); } });
+        u.questions = qs; u.questionTopics = ts;
+    }
     u.productHint = u.productHint && typeof u.productHint === 'object' ? u.productHint : { article: null, category: null, fromList: null };
     u.returnType = u.returnType === 'return' || u.returnType === 'exchange' ? u.returnType : null;
     for (const k of ['returnReason', 'exchangeFor']) u[k] = u[k] && String(u[k]).trim() ? String(u[k]).trim().slice(0, 200) : null;

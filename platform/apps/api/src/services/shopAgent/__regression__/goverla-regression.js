@@ -891,13 +891,13 @@ async function main() {
             const B = freshA({ turnText: 'Дякую' });
             let b2 = false;
             for (const st of ['ask_address', 'order_intent', 'ask_address', 'order_intent']) { B.out = [{ text: 'x'.repeat(30), step: st }]; b2 = await breakLoop(B); }
-            check('32.2 Різні кроки (рух уперед) — не петля', !b2 && !B.ctx.funnelPaused, JSON.stringify(B.ctx.agent.loopStreak));
+            check('32.2 Різні кроки (рух уперед) — не петля', !b2 && !B.ctx.funnelPaused, JSON.stringify(B.ctx.agent.asks));
             // 07.10 tatiananepota: 5 пересилань поста за 14 с — ходи пачки, клієнт ще не бачив відповіді → не петля.
             const C = freshA({ turnText: '' });
             const tClient = new Date(Date.now() - 5000);
             let b3 = false;
             for (let i = 0; i < 5; i++) { C.history = [{ who: 'client', text: '[переслав post]', at: tClient, sentAt: tClient }]; C.out = [{ text: 'Підкажіть, будь ласка, ваш зріст і вагу — підберу розмір 📏', step: 'ask_params' }]; b3 = await breakLoop(C) || b3; }
-            check('32.3 Пачка повідомлень, написана до відповіді бота, — не петля', !b3 && !C.ctx.funnelPaused, JSON.stringify(C.ctx.agent.loopStreak));
+            check('32.3 Пачка повідомлень, написана до відповіді бота, — не петля', !b3 && !C.ctx.funnelPaused, JSON.stringify(C.ctx.agent.asks));
         }
         // 33. Питання, поставлене ПІСЛЯ картки (кнопка Instagram «Яка вартість?»), не знімається як «відповіла картка» (FunnelTest 125).
         if (kof && kof.sku) {
@@ -906,6 +906,28 @@ async function main() {
             const u = freshU({ intent: 'question', questions: ['Яка ціна кофти?'] });
             await runPolicy(A, u);
             check('33.1 Питання після картки лишається для відповіді', u.questions.length === 1 || A.out.some((o) => /1279|ціна/i.test(String(o.text || ''))), JSON.stringify(A.out.map((o) => o.step)));
+        }
+        // 34. Реєстр питань (questions.js, 07.10): картка закриває ціну, але не тканину; compose позначає відповідь.
+        {
+            const Q = require('../questions');
+            const A = freshA(); const u = freshU({ questions: ['Яка ціна?', 'З чого тканина?'], questionTopics: ['price', 'material'] });
+            Q.init(A, u);
+            Q.coverTopics(A, u, ['price'], 'card');
+            check('34.1 Картка закрила ціну, питання про тканину лишилось відкритим', u.questions.length === 1 && u.questions[0] === 'З чого тканина?' && Q.open(A).length === 1, JSON.stringify(Q.summary(A)));
+            Q.markAnswered(A, ['З чого тканина?'], true);
+            check('34.2 Після відповіді моделі відкритих питань нема (інваріант кінця ходу не дублює)', Q.open(A).length === 0, JSON.stringify(Q.summary(A)));
+        }
+        // 35. Реєстр прохань (asks.js): заповнений слот скидає лічильник; бачене прохання рахується, пачка — ні.
+        {
+            const Asks = require('../asks');
+            const A = freshA(); A.ctx.agent.asks = { params: { n: 3, at: Date.now() - 60000, step: 'ask_params' } };
+            A.ctx.recommendedSize = 'L'; A.out = [{ text: 'Тепер оберіть колір 🎨', step: 'size_reply' }];
+            Asks.record(A);
+            check('35.1 Розмір підібрано — лічильник прохань параметрів скинуто', !A.ctx.agent.asks.params, JSON.stringify(A.ctx.agent.asks));
+            const B = freshA(); B.ctx.agent.asks = { color: { n: 1, at: Date.now() - 60000, step: 'ask_color' } };
+            B.history = [{ who: 'client', text: 'а яка тканина?', at: new Date(), sentAt: new Date() }]; B.out = [{ text: 'Яка тканина… Оберіть колір 🎨', step: 'ask_color' }];
+            Asks.record(B);
+            check('35.2 Клієнт бачив прохання кольору й написав інше — лічильник 2', B.ctx.agent.asks.color && B.ctx.agent.asks.color.n === 2 && Asks.times(B, 'color') === 2, JSON.stringify(B.ctx.agent.asks));
         }
         check('31.2 Текст із переносами не чіпається', paragraphize('Рядок один.\nРядок два, досить довгий, щоб перевищити межу в сто сорок символів, і ще трохи тексту, щоб точно перевищити.') === 'Рядок один.\nРядок два, досить довгий, щоб перевищити межу в сто сорок символів, і ще трохи тексту, щоб точно перевищити.', '');
     }

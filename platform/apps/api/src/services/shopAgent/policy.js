@@ -18,6 +18,7 @@ const { kbMatch, sameAsEscalated } = require('./kbMatch');
 const { extractHeightWeight } = require('./understand');
 const { matchProduct } = require('./productMatch');
 const Q = require('./questions');
+const Asks = require('./asks');
 
 // 2026-09-14 (власник: "я взагалі проти будь-якого хардкоду... все в ноди перенеси"): TRUST_STEP1/2,
 // HANDOFF_TEXT та решта клієнтських/менеджерських текстів цього файлу БУЛИ тут як JS-константи —
@@ -737,39 +738,21 @@ async function pause(A, reason, alertNode, extraDetails) {
  * вирішує «що питати далі» окремо — нічого не бачило, що бот уже N-й хід поспіль стоїть на тому самому кроці без руху вперед.
  * Тут — одне правило на вихід ходу: той самий крок (родина кроків) поспіль поріг разів → не повторюємо, а кличемо менеджера.
  */
-const LOOP_FAMILIES = [
-    { fam: 'params', re: /^(ask_params|size_verify_ask)$/, limit: 4 },
-    { fam: 'address', re: /^(ask_address|order_reshow)$/, limit: 4 },
-    { fam: 'color', re: /^(set_color_ask|ask_color|color_size_unavailable|set_color_size_unavailable)$/, limit: 4 },
-    { fam: 'intent', re: /^(order_intent|order_intent_repeat)$/, limit: 4 },
-    { fam: 'pay', re: /^(pay_options|pay_options_repeat)$/, limit: 4 },
-    { fam: 'set', re: /^(set_ask|set_answer)$/, limit: 4 },
-    { fam: 'unknown', re: /^(unknown|hint|hint_repeat)$/, limit: 3 },
-    { fam: 'oos', re: /^(out_of_stock)$/, limit: 3 },
-];
+// Слоти прохань і пороги — у реєстрі прохань (asks.js); LOOP_FAMILIES лишається експортом для сумісності.
+const LOOP_FAMILIES = Asks.SLOTS.map((s) => ({ fam: s.slot, re: s.re, limit: s.limit }));
 async function breakLoop(A) {
     const { ctx } = A;
     if (ctx.funnelPaused || !A.out.length) return false;
-    const main = [...A.out].reverse().find((o) => o.text && String(o.text).trim());
-    if (!main) return false;
-    const last = String(main.step || '').split('+').pop();
-    const f = LOOP_FAMILIES.find((x) => x.re.test(last));
-    const prev = ctx.agent.loopStreak || null;
-    if (!f) { delete ctx.agent.loopStreak; return false; }
-    // Петля — коли клієнт ПОБАЧИВ попереднє прохання і знову написав не те. Ходи пачки (клієнт написав до того, як побачив відповідь —
-    // 07.10 tatiananepota: 5 пересилань поста за 14 с = 4 ходи) лічильник не збільшують.
-    const clientAt = Math.max(0, ...(A.history || []).filter((m) => m.who === 'client').map((m) => new Date(m.sentAt || m.at).getTime() || 0));
-    const same = prev && prev.fam === f.fam && Date.now() - Number(prev.at || 0) < 12 * 3600 * 1000;
-    if (same && !(clientAt > Number(prev.at || 0))) return false;
-    const n = same ? prev.n + 1 : 1;
-    ctx.agent.loopStreak = { fam: f.fam, n, at: Date.now(), step: last };
-    if (n < f.limit) return false;
-    delete ctx.agent.loopStreak;
+    // Реєстр прохань (asks.js) пише ОДИН раз на хід, тут — по фінальному тексту; рахує лише прохання, які клієнт побачив і
+    // після яких написав не те (пачка — не рахується, 07.10 tatiananepota), і скидає слот, щойно його заповнено.
+    const r = Asks.record(A);
+    if (!r || !r.counted || r.n < r.limit) return false;
+    delete ctx.agent.asks[r.slot];
     A.out = [];
     A.out.push({ text: messageText(A.assets, 'n_agent_loop_handoff', ctx, A.session.id) || 'Щоб не ганяти вас по колу 🙏 — підключаю менеджера, він напише вам тут найближчим часом.', step: 'loop_handoff' });
     await pause(A, 'loop', null);
     const lastClient = String(A.turnText || '').trim() || (A.turnSharedPost ? '[переслав пост] ' + String(A.turnSharedPost.caption || '').split('\n')[0].slice(0, 80) : (A.turnImage ? '[фото]' : '—'));
-    await T.alert(A, { title: '🔁 Бот зациклився — підхопіть розмову', main: n + ' рази поспіль бот просив одне й те саме («' + last + '»), а клієнт після цього писав інше. Останнє від клієнта: «' + lastClient.slice(0, 150) + '»', details: 'Бот на паузі; повернути — іконкою в сесії.' });
+    await T.alert(A, { title: '🔁 Бот зациклився — підхопіть розмову', main: r.n + ' рази бот просив одне й те саме («' + r.step + '»), а клієнт після цього писав інше. Останнє від клієнта: «' + lastClient.slice(0, 150) + '»', details: 'Бот на паузі; повернути — іконкою в сесії.' });
     return true;
 }
 
@@ -847,7 +830,7 @@ function resetForNewProduct(A, sku) {
         // «бот знову питає зріст і вагу», 01.10: 38 — картка нового товару просила їх заново). Скидаємо лише розмір/заміри під товар.
         const body = ctx.sizeInput && ctx.sizeInput.height && ctx.sizeInput.weight ? { height: ctx.sizeInput.height, weight: ctx.sizeInput.weight, ...(ctx.sizeInput.belly ? { belly: true } : {}), ...(ctx.sizeInput.shoeSize ? { shoeSize: ctx.sizeInput.shoeSize } : {}) } : null;
         for (const k of ['sizeInput','recommendedSize', 'sizeSource', 'sizeReplyText', 'sizeColorFollowup', 'sizeOutOfRange', 'sizeOorReason', 'sizeOorAlternative', 'isSetSizeCalc', 'setSizesText', 'setSizeMap', 'setSizeOor', 'colorChoice', 'available', 'availReason', 'orderUnits', 'orderUnitsText', 'orderUnitsTotal', 'orderQty', 'orderIntent', 'setMode', 'setPick', 'setSelection', 'availChecked', 'extraItems', 'extraItemsText', 'extraUnresolved', 'orderExtras', 'unavailableColors', 'availableColorsNow']) delete ctx[k];
-        for (const k of ['setOriginal', 'setPricing', 'setStageSent', 'setEditNote', 'setParams', 'setItemsAll', 'setItemColorHints', 'setColorHints', 'upsellOffered', 'upsellDeclined', 'setGeneralQ', 'setNamedItem', 'payRepeatCount', 'upsellPhotoSent', 'availKey', 'sizeVerifyAsked', 'sizeClaim']) delete ctx.agent[k];
+        for (const k of ['setOriginal', 'setPricing', 'setStageSent', 'setEditNote', 'setParams', 'setItemsAll', 'setItemColorHints', 'setColorHints', 'upsellOffered', 'upsellDeclined', 'setGeneralQ', 'setNamedItem', 'payRepeatCount', 'asks', 'upsellPhotoSent', 'availKey', 'sizeVerifyAsked', 'sizeClaim']) delete ctx.agent[k];
         if (!ctx.crmOrderId) for (const k of ['paymentInfo', 'payAmount', 'payLabel', 'orderRef', 'orderRefAt', 'ibanPayUrl', 'ibanInvoiceUid', 'requisitesSentAt']) delete ctx[k];
         if (body) { ctx.sizeInput = body; if (!A.hwThisTurn) ctx.agent.hwCarried = true; }
     }
@@ -1203,7 +1186,7 @@ async function runPolicyInner(A, u) {
     if (ctx.product && ctx.product.sku && A.turnImage && /колір/i.test(String(ctx.agent.lastAsk || '')) && !ctx.crmOrderId && !String(text).replace(/\[фото\]/gi, '').trim() && ctx.product.colors) {
         A.out.push({ text: 'Дякую за фото! 🎨 У цієї моделі є кольори: ' + ctx.product.colors + '. Який із них найближчий до вашого зразка? Напишіть назву, і я одразу зафіксую 🙂', step: 'color_sample_ask' });
         ctx.agent.colorSampleAsked = true;
-        ctx.agent.colorAskCount = (ctx.agent.colorAskCount || 0) + 1;
+        
         ctx.agent.lastAsk = 'колір';
         return;
     }
@@ -1213,7 +1196,7 @@ async function runPolicyInner(A, u) {
         const t1 = 'За фото я не можу точно визначити відтінок 🙈 У цієї моделі є: ' + ctx.product.colors + '. Напишіть, будь ласка, який із них вам ближчий, — або я уточню у менеджера 🙂';
         const t2 = 'Точно порівняти відтінок за фото не вийде — орієнтуйтесь на назви: ' + ctx.product.colors + '. Якщо сумніваєтесь, передам питання менеджеру 💛';
         A.out.push({ text: ctx.agent.colorSampleReplies % 2 ? t1 : t2, step: 'color_sample_honest' });
-        ctx.agent.colorAskCount = (ctx.agent.colorAskCount || 0) + 1;
+        
         return;
     }
     // 2026-09-23 (FunnelTest 1): у відповіді на допродаж («так, 2 футболки…») understand() ставить
@@ -1774,8 +1757,8 @@ async function runPolicyInner(A, u) {
             // (!A.turnImage: фото без тексту — це новий сигнал «ось цей товар», а не «?»; 05.10 aze111274 — «оберіть номер» на фото.)
             // 2026-09-24 (FunnelTest 41): «?»/«Ау» після показаного списку — нетерплячка, а не новий запит; показуємо
             // список ще раз замість скидання в «що вас цікавить».
-            ctx.agent.hintRepeatCount = (ctx.agent.hintRepeatCount || 0) + 1;
-            A.out.push({ text: ctx.agent.hintRepeatCount % 2 ? ('Я тут 🙂 Оберіть, будь ласка, номер варіанту зі списку вище' + ((ctx.sizeInput && ctx.sizeInput.height && !ctx.sizeInput.weight) ? ' і напишіть вагу — підберу розмір.' : ' — і одразу підберу розмір.')) : 'Тут-тут 💛 Напишіть номер або колір із показаного списку, і рухаємось далі.', step: 'hint_repeat' });
+            
+            A.out.push({ text: (Asks.times(A, 'unknown') % 2) ? ('Я тут 🙂 Оберіть, будь ласка, номер варіанту зі списку вище' + ((ctx.sizeInput && ctx.sizeInput.height && !ctx.sizeInput.weight) ? ' і напишіть вагу — підберу розмір.' : ' — і одразу підберу розмір.')) : 'Тут-тут 💛 Напишіть номер або колір із показаного списку, і рухаємось далі.', step: 'hint_repeat' });
             ctx.agent.lastAsk = 'який із показаних товарів цікавить';
             return;
         } else if (!P(ctx)) {
@@ -2203,11 +2186,11 @@ async function runPolicyInner(A, u) {
             }
             // Повторне прохання тих самих параметрів (клієнт відповідає про інше) — інакше звучить як збій
             // (інваріант I2: дослівний повтор); перефразовуємо й лишаємо коротко.
-            ctx.agent.paramsAskCount = (ctx.agent.paramsAskCount || 0) + 1;
+            
             // Для товарів із власним параметром (джинси — розмір за талією) перефраз не має просити зріст/вагу (FunnelTest 35).
-            if (ask && !isHW && ctx.agent.paramsAskCount > 1 && ctx.agent.lastAsk === (paramsPrompt || 'зріст і вага')) ask = 'Підкажіть, будь ласка, ' + (humanizeParamsPrompt(paramsPrompt) || 'ваш розмір') + ' — і одразу рухаємось далі 🙂';
+            if (ask && !isHW && Asks.times(A, 'params') >= 1 && ctx.agent.lastAsk === (paramsPrompt || 'зріст і вага')) ask = 'Підкажіть, будь ласка, ' + (humanizeParamsPrompt(paramsPrompt) || 'ваш розмір') + ' — і одразу рухаємось далі 🙂';
             // Бракує лише одного параметра — перефраз «лишилось дізнатись зріст і вагу» не потрібен: n_agent_ask_size_missing просить саме його (Edit a0f32ec3).
-            else if (ask && !missing && ctx.agent.paramsAskCount > 1 && ctx.agent.lastAsk === (paramsPrompt || 'зріст і вага')) ask = (ctx.agent.paramsAskCount % 2 ? 'Щоб підібрати розмір, лишилось дізнатись зріст і вагу 🙂 Напишіть, будь ласка, скільки у вас — і одразу рухаємось далі.' : 'Мені ще потрібні зріст і вага для підбору розміру 📏 Напишіть їх, будь ласка 🙂');
+            else if (ask && !missing && Asks.times(A, 'params') >= 1 && ctx.agent.lastAsk === (paramsPrompt || 'зріст і вага')) ask = ((Asks.times(A, 'params') % 2) ? 'Щоб підібрати розмір, лишилось дізнатись зріст і вагу 🙂 Напишіть, будь ласка, скільки у вас — і одразу рухаємось далі.' : 'Мені ще потрібні зріст і вага для підбору розміру 📏 Напишіть їх, будь ласка 🙂');
             A.out.push({ text: chartJustSent ? (preNote + colorNote + ask) : await answerThenAsk(A, u, preNote + colorNote + ask), step: 'ask_params' }); ctx.agent.lastAsk = paramsPrompt || 'зріст і вага';
             return;
         }
@@ -2266,10 +2249,10 @@ async function runPolicyInner(A, u) {
                 } catch (e) { /* best-effort */ }
             }
             const ask = (shadeWish && shadeList.length) ? ('З ' + (/^темн/i.test(String(u.color)) ? 'темних' : 'світлих') + ' є' + (shadeExtra ? ' для ' + String(pp.customerName || pp.name || '').split('\n')[0].replace(/\.?\s*Артикул:?.*$/i, '').trim() + ' (' + pp.sku + ')' : '') + ': ' + shadeList.join(', ') + shadeExtra + ' 🎨 Які обираєте?') : u.color ? messageText(A.assets, 'n_agent_ask_color_specific', ctx, A.session.id) : messageText(A.assets, 'n_agent_ask_color_generic', ctx, A.session.id);
-            ctx.agent.colorAskCount = (ctx.agent.colorAskCount || 0) + 1;
-            const askVar = (ctx.agent.colorAskCount > 1 && ctx.agent.lastAsk === 'колір') ? (['Нагадаю: лишилось обрати колір 🎨 ', 'Ще раз про колір 🎨 ', 'Лишилось лише обрати колір 🎨 '][ctx.agent.colorAskCount % 3] + ask) : ask;
+            
+            const askVar = (Asks.times(A, 'color') >= 1 && ctx.agent.lastAsk === 'колір') ? (['Нагадаю: лишилось обрати колір 🎨 ', 'Ще раз про колір 🎨 ', 'Лишилось лише обрати колір 🎨 '][Asks.times(A, 'color') % 3] + ask) : ask;
             // Клієнт ставить уточнювальні питання про колір (зразок, відтінок) — після 2-го підряд питання лише відповідаємо, не тиснемо повтором.
-            const answerOnly = u.questions.length && ctx.agent.colorAskCount > 2 && ctx.agent.lastAsk === 'колір';
+            const answerOnly = u.questions.length && Asks.times(A, 'color') >= 2 && ctx.agent.lastAsk === 'колір';
             // Варіанти відтінку для кількох товарів — точний текст, без переписування моделлю (вона губила рядок другого товару, тест 34).
             if (shadeWish && shadeList.length && !u.questions.length) { A.out.push({ text: preNote + askVar, step: 'ask_color' }); ctx.agent.lastAsk = 'колір'; return; }
             A.out.push({ text: await answerThenAsk(A, u, answerOnly ? '' : preNote + askVar), step: 'ask_color' }); ctx.agent.lastAsk = 'колір'; return;
@@ -2356,13 +2339,13 @@ async function runPolicyInner(A, u) {
             { const pend = pendingSz(); if (pend.length === 1) { const hit = pend[0].sizes.map(sizeName).find((sz) => sz && new RegExp('(^|[^0-9A-Za-z])' + escRe(sz) + '($|[^0-9A-Za-z])', 'i').test(text)); if (hit) { pend[0].size = hit; ctx.setSizeMap = { ...(ctx.setSizeMap || {}), [pend[0].article]: hit }; } } }
             const needSz = pendingSz();
             if (needSz.length) {
-                ctx.agent.setSizeAskCount = (ctx.agent.setSizeAskCount || 0) + 1;
+                
                 // Рядок розміру щойно показав, що для цієї позиції треба обрати розмір (і які є) — окремий блок у тому ж ході був би
                 // дослівним дублем (тест 161, 02.10). Просто чекаємо відповіді.
                 if (A.out.some((o) => /size_reply/.test(String(o.step || '')))) { ctx.agent.lastAsk = 'розміри позицій комплекту'; applySetPricing(ctx, pp); return; }
-                if (ctx.agent.setSizeAskCount <= 2) {
+                if (Asks.times(A, 'params') < 2) {
                     const lines = needSz.map((it) => '📏 ' + it.name + '\nДоступні розміри: ' + it.sizes.map(sizeName).join(', ')).join('\n\n');
-                    A.out.push({ text: (ctx.agent.setSizeAskCount > 1 ? 'Нагадаю: лишилось обрати розмір 🙂\n\n' : 'Підкажіть, будь ласка, розмір для решти позицій 🙂\n\n') + lines, step: 'set_size_ask' });
+                    A.out.push({ text: (Asks.times(A, 'params') >= 1 ? 'Нагадаю: лишилось обрати розмір 🙂\n\n' : 'Підкажіть, будь ласка, розмір для решти позицій 🙂\n\n') + lines, step: 'set_size_ask' });
                     ctx.agent.lastAsk = 'розміри позицій комплекту'; applySetPricing(ctx, pp); return;
                 }
                 ctx.agent.setSizesAsked2 = true;
@@ -2460,10 +2443,10 @@ async function runPolicyInner(A, u) {
                 const colorPhotoUrls = askItem.colors.map((c) => askItem.colorPhotos && askItem.colorPhotos[c]).filter(Boolean);
                 // фото кольорів — один раз на позицію, не при кожному нагадуванні
                 if (colorPhotoUrls.length && ctx.agent.setColorPhotosFor !== askItem.article) { A.out.push({ photoUrls: colorPhotoUrls.slice(0, 10), caption: '', step: 'set_color_ask_photos' }); ctx.agent.setColorPhotosFor = askItem.article; }
-                ctx.agent.setColorAskCount = (ctx.agent.setColorAskCount || 0) + 1;
-                const _repeatSet = ctx.agent.setColorAskCount > 1 && ctx.agent.lastAsk === 'колір позицій комплекту';
+                
+                const _repeatSet = Asks.times(A, 'color') >= 1 && ctx.agent.lastAsk === 'колір позицій комплекту';
                 const _nm = String(askItem.name).split('\n')[0];
-                const _shortSet = _repeatSet && ctx.agent.setColorAskCount > 2 ? ['Ще лишилось обрати колір для «' + _nm + '» 🙂 Напишіть назву або номер зі списку вище.', 'Коли визначитесь із кольором для «' + _nm + '» — напишіть номер чи назву, і оформлюємо 💛'][ctx.agent.setColorAskCount % 2] : '';
+                const _shortSet = _repeatSet && Asks.times(A, 'color') >= 2 ? ['Ще лишилось обрати колір для «' + _nm + '» 🙂 Напишіть назву або номер зі списку вище.', 'Коли визначитесь із кольором для «' + _nm + '» — напишіть номер чи назву, і оформлюємо 💛'][Asks.times(A, 'color') % 2] : '';
                 A.out.push({ text: await answerThenAsk(A, u, _shortSet || ((_repeatSet ? 'Нагадаю, лишилось обрати колір 🙂\n\n' : '') + messageTextMultiline(A.assets, 'n_agent_set_color_ask', ctx, A.session.id))), step: 'set_color_ask' });
                 ctx.agent.lastAsk = 'колір позицій комплекту';
                 return;
@@ -2752,8 +2735,8 @@ async function runPolicyInner(A, u) {
             // 2026-09-30 (тести 143, f9076cb0): «+», «Так оформляємо кофту», «Без футболки!» отримували дослівно те саме нагадування
             // двічі поспіль. Згоду/відмову від допродажу — коротко визнаємо; вдруге поспіль — показуємо сам список (n_pay), а не те саме.
             const ack = (u.claimsPaid || u.receiptLink || A.turnImage) ? 'Дякую, бачу квитанцію 🙏 ' : ((u.phone || u.fullName || u.city || u.branch) ? 'Дані записала 📝 ' : (u.addUpsell === false ? 'Добре, лише основний товар 👌 ' : (u.ready === 'yes' || /^\s*\+\s*$/.test(text) ? 'Так, оформлюємо 👌 ' : '')));
-            ctx.agent.payRepeatCount = (ctx.agent.payRepeatCount || 0) + 1;
-            if (ctx.agent.payRepeatCount % 2 === 0) { A.out.push({ text: ack + messageTextMultiline(A.assets, 'n_pay', ctx, A.session.id + ':pay'), step: 'pay_options_reshow' }); return; }
+            
+            if (Asks.times(A, 'pay') % 2 === 0) { A.out.push({ text: ack + messageTextMultiline(A.assets, 'n_pay', ctx, A.session.id + ':pay'), step: 'pay_options_reshow' }); return; }
             A.out.push({ text: ack + messageText(A.assets, 'n_agent_pay_options_repeat', ctx, A.session.id), step: 'pay_options_repeat' });
             return;
         }

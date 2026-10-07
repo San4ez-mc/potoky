@@ -668,12 +668,14 @@ async function finishReturnCollect(A, opts = {}) {
 /** «Зріст (см), Вага (кг), Розмір взуття (EU)» (назви параметрів категорій CRM) → «ваш зріст і вагу, а також розмір взуття (EU)».
  * Власник 02.10: сирий перелік через кому звучав як анкета. Зріст і вага — одна фраза, решта — з малої літери після «а також». */
 function humanizeParamsPrompt(prompt) {
-    const parts = String(prompt || '').split(',').map((s) => s.trim()).filter(Boolean);
+    // Параметри категорії в CRM бувають і через кому, і списком з нових рядків («- Зріст (см): наприклад 178\n- Вага (кг): …») —
+    // раніше ділили лише по комі: обидва злипались в один пункт і бот писав «Напишіть ваш вагу» (07.10, без зросту й з помилкою роду).
+    const parts = String(prompt || '').split(/[,;\n]+/).map((s) => s.replace(/^\s*[-•*]\s*/, '').replace(/\s*\([^)]*\)/g, '').replace(/\s*:.*$/, '').trim()).filter(Boolean);
     if (!parts.length) return '';
     const isHW = (p) => /зріст|ріст|вага|height|weight/i.test(p);
     const lc = (s) => s.charAt(0).toLowerCase() + s.slice(1);
     const hw = parts.filter(isHW); const rest = parts.filter((p) => !isHW(p)).map(lc);
-    const hwPhrase = hw.length >= 2 ? 'ваш зріст і вагу' : (hw.length ? 'ваш ' + (/ваг/i.test(hw[0]) ? 'вагу' : 'зріст') : '');
+    const hwPhrase = hw.length >= 2 ? 'ваш зріст і вагу' : (hw.length ? (/ваг/i.test(hw[0]) ? 'вашу вагу' : 'ваш зріст') : '');
     if (!hwPhrase) return 'ваш ' + rest.join(', ');
     return hwPhrase + (rest.length ? ', а також ' + rest.join(', ') : '');
 }

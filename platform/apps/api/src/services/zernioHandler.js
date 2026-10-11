@@ -618,6 +618,8 @@ async function handleZernioEvent(webhookBotId, body) {
     if (!event) return { ok: true, skipped: 'no-event' };
     const botId = await resolveZernioTargetBot(webhookBotId);
     if (botId !== webhookBotId) logger.info('[zernioHandler] forward', { from: webhookBotId, to: botId, event });
+    // Воронка на прямому каналі Meta (INBOUND_CHANNEL=meta, metaChannel.js) — Zernio лише резерв, його події не обробляємо.
+    if ((await require('./metaChannel').channelOf(botId)) === 'meta') return { ok: true, skipped: 'meta-channel' };
     const convId = body?.conversation?.id || body?.conversation?.conversationId || body?.data?.conversationId || 'nc';
     return withConvLock(`${botId}:${convId}`, () =>
         (event === 'message.received' ? handleIncomingMessage(botId, body)
@@ -1602,6 +1604,9 @@ function scheduleFlowRun(sessionId, msg) {
 
 async function runFlowAndDeliver(sessionId, entry) {
     const { botId, contactId, conversationId, contactName, commentId } = entry;
+    if ((await require('./metaChannel').channelOf(botId)) === 'meta') {
+        return require('./metaChannel').runTurn(sessionId, { botId, contactId, texts: entry.texts || [], imageUrl: entry.imageUrl || null, imageUrls: entry.imageUrl ? [entry.imageUrl] : [], ctxPatch: entry.ctxPatch || {} });
+    }
     // Чекали рекламу, а вона так і не прийшла повідомленням — ще раз дивимось метадані розмови Zernio перед відповіддю.
     if (entry.waitForAd && !(entry.ctxPatch && (entry.ctxPatch.entryAdId || entry.ctxPatch.sharedPost)) && !entry.imageUrl) {
         try {
@@ -1915,6 +1920,117 @@ const EVENT_CONTENT = {
     'review.updated': '⭐ Відгук оновлено',
 };
 
+/**
+ * Повідомлення менеджера клієнту (не від бота): запис у розмову (source 'zernio_inbox' — так його розпізнають історія, реплеї,
+ * відновлення після тиші), пауза бота або виняток «розсилка першим» (15.21), артикул/ціна з готової відповіді, ТТН у CRM.
+ * Спільне для каналів: Zernio (message.sent) і прямий Meta (echo, metaChannel.js) — одна логіка, не копія (15.25).
+ */
+async function recordManagerMessage(botId, session, { text, attachments, ids = {} } = {}) {
+    const _sentText = text || '';
+    const _sentAtts = Array.isArray(attachments) ? attachments : [];
+    const _norm = (x) => String(x || '').replace(/\s+/g, ' ').trim();
+    const _label = _sentText || (_sentAtts.length ? ('[' + (_sentAtts.length > 1 ? 'фото ×' + _sentAtts.length : ((_sentAtts[0] && /video/i.test(String(_sentAtts[0].type || ''))) ? 'відео' : 'фото')) + ' від менеджера]') : '[повідомлення від менеджера]');
+    // 2026-09-13 (свіжий аудит сесій, e9c51c2b: той самий текст менеджера/canned-reply "Підкажіть,
+    // ... куртка з реклами?" прийшов через message.sent 6 РАЗІВ поспіль за ~2.5 хв, різні
+    // zernioMessageId/platformMessageId кожного разу — НЕ echo нашого ж боту (перевірка _ourEcho
+    // вище цього не ловить, бо шукає лише серед НАШИХ message, не серед інших zernio_inbox).
+    // Схоже на повторну доставку з боку Zernio/Meta (retry вебхука чи дубльований quick-reply клік) —
+    // не можемо виправити джерело (стороння система), але МОЖЕМО не плодити видимі дублі в сесії:
+    // якщо останнє повідомлення в сесії (будь-якої ролі) — той самий нормалізований текст менше
+    // ніж 3 хв тому, це вже показано клієнту (і нам) — новий видимий запис не створюємо, лише
+    // дотегуємо zernioMessageId для трасування.
+    const _lastAny = await db.message.findFirst({ where: { sessionId: session.id }, orderBy: { createdAt: 'desc' }, select: { id: true, content: true, metadata: true, createdAt: true } });
+    if (_lastAny && _norm(_lastAny.content) === _norm(_label) && (Date.now() - new Date(_lastAny.createdAt).getTime()) < 180000) {
+        const _lc = _lastAny.metadata || {};
+        await db.message.update({ where: { id: _lastAny.id }, data: { metadata: { ..._lc, repeatedDeliveryIds: (_lc.repeatedDeliveryIds || []).concat([ids.zernioMessageId || null]).filter(Boolean) } } }).catch(() => {});
+        return { ok: true, processed: 0, dedupedRepeat: true };
+    }
+    await db.message.create({ data: cleanJsonDeep({ sessionId: session.id, role: 'assistant', content: _label, metadata: { source: 'zernio_inbox', zernioMessageId: ids.zernioMessageId || null, platformMessageId: ids.platformMessageId || null, ...(ids.channel ? { channel: ids.channel, metaMessageId: ids.metaMessageId || null } : {}), status: 'sent', ...(_sentAtts.length ? { attachments: _sentAtts.slice(0, 10) } : {}) } }) });
+    // 2026-09-07 20:05 (рішення власника, бойовий старт): менеджер написав клієнту з інбокса → сесія стає на
+    // ЗВИЧАЙНУ паузу (funnelPaused — та сама іконка в адмінці). Бот мовчить, доки менеджер сам не зніме паузу.
+    try {
+        const _fresh = await db.session.findUnique({ where: { id: session.id }, select: { context: true } });
+        const _pc = (_fresh && _fresh.context) || {};
+        // 2026-09-08 (Maltsev): у «готовій відповіді» менеджера є «Артикул: A0187» — запамʼятовуємо, щоб після відновлення бот знав товар.
+        const _artM = String(_sentText || '').match(/Артикул:?\s*([A-Za-z]{1,4}\d{3,8}|set\d{3,6}|\d{5,8})/i);
+        if (_artM) {
+            _pc.managerArticleHint = _artM[1]; _pc.managerArticleAt = new Date().toISOString();
+            if (_pc.funnelPaused) await db.session.update({ where: { id: session.id }, data: { context: _pc } }).catch(() => {});
+        } else if (_sentText) {
+            // 2026-09-13 (тікети cc024108/668b9cab — «Фінальний розпродаж бомберів»/«...кофт»: канцелярні
+            // "готові відповіді" менеджера часто НЕ мають рядка "Артикул:" взагалі (продажний текст-шаблон
+            // без коду товару) — Maltsev-фікс вище на них не спрацьовує, бот після 10-хв auto-resume не знає
+            // товару і перепитує "костюми, взуття, кофти?" — це саме та "зайва відповідь", на яку скаржився
+            // власник. Фолбек: та сама категорія-стем + точна ціна з тексту («1279 ₴») — якщо в каталозі
+            // РІВНО один товар цієї категорії з такою ціною, це майже напевно він (best-effort, не критичний
+            // шлях — як і managerArticleHint вище, лише підказка для відновлення діалогу).
+            try {
+                const _stemM = String(_sentText).toLowerCase().match(/(кофт|светр|футболк|джинс|бомбер|куртк|вітровк|костюм|штан|лофер|кросівк|черевик|худі|шапк|туфл|кед|накидк|підголівник)/);
+                const _priceM = String(_sentText).match(/(\d{3,6})\s*(?:₴|грн)/i);
+                if (_stemM && _priceM) {
+                    const _crmBaseRow2 = await db.funnelKey.findFirst({ where: { botId, key: 'CRM_API_BASE' }, select: { value: true } });
+                    const _crmKeyRow2 = await db.funnelKey.findFirst({ where: { botId, key: 'CRM_API_KEY' }, select: { value: true } });
+                    const _crmBase2 = (_crmBaseRow2?.value || 'http://127.0.0.1:4700/api').replace(/\/$/, '');
+                    const _crmKey2 = (_crmKeyRow2?.value || '').trim();
+                    if (_crmKey2) {
+                        const _pr = await fetch(_crmBase2 + '/products?take=300', { headers: { Authorization: 'Bearer ' + _crmKey2, Accept: 'application/json' } });
+                        const _pj = _pr.ok ? await _pr.json().catch(() => ({})) : {};
+                        const _all = Array.isArray(_pj.data) ? _pj.data : [];
+                        const _price = Number(_priceM[1]);
+                        const _cand = _all.filter((p) => Number(p.price) === _price && new RegExp(_stemM[1], 'i').test(String(p.name || '') + ' ' + String(p.customerName || '')));
+                        if (_cand.length === 1) {
+                            _pc.managerArticleHint = _cand[0].sku; _pc.managerArticleAt = new Date().toISOString();
+                            if (_pc.funnelPaused) await db.session.update({ where: { id: session.id }, data: { context: _pc } }).catch(() => {});
+                            logger.info('[zernioHandler] managerArticleHint via category+price fallback', { botId, sessionId: session.id, sku: _cand[0].sku });
+                        }
+                    }
+                }
+            } catch (_hintErr) { logger.warn('[zernioHandler] managerArticleHint category+price fallback failed: ' + _hintErr.message); }
+        }
+        // 2026-09-13 (власник: "по АПІ НП щоб це перевірялось" — крон статусів ТТН потребує
+        // ТТН у CRM, а менеджер зараз пише його ПРЯМО в Instagram, повз бота й CRM повністю).
+        // Той самий детект-патерн, що managerArticleHint вище — 14-цифрове число, формат
+        // ТТН Нової пошти (перевірено живими прикладами, не вигадано). Best-effort: не має
+        // ламати паузу/збереження контексту вище через помилку CRM.
+        const _ttnM = String(_sentText || '').match(/(?<!\d)\d{14}(?!\d)/);
+        if (_ttnM && _pc.crmOrderId && String(_pc.crmOrderId).indexOf('TEST-') !== 0) {
+            try {
+                const _crmBaseRow = await db.funnelKey.findFirst({ where: { botId, key: 'CRM_API_BASE' }, select: { value: true } });
+                const _crmKeyRow = await db.funnelKey.findFirst({ where: { botId, key: 'CRM_API_KEY' }, select: { value: true } });
+                const _crmBase = (_crmBaseRow?.value || 'http://127.0.0.1:4700/api').replace(/\/$/, '');
+                const _crmKey = (_crmKeyRow?.value || '').trim();
+                if (_crmKey) {
+                    const _hdr = { Authorization: 'Bearer ' + _crmKey, Accept: 'application/json' };
+                    const _orr = await fetch(_crmBase + '/orders/' + _pc.crmOrderId, { headers: _hdr });
+                    const _orj = _orr.ok ? await _orr.json().catch(() => ({})) : {};
+                    const _existingTtn = Array.isArray(_orj && _orj.data && _orj.data.ttn) ? _orj.data.ttn : [];
+                    if (_existingTtn.indexOf(_ttnM[0]) === -1) {
+                        await fetch(_crmBase + '/orders/' + _pc.crmOrderId, { method: 'PATCH', headers: Object.assign({ 'Content-Type': 'application/json' }, _hdr), body: JSON.stringify({ ttn: _existingTtn.concat([_ttnM[0]]) }) });
+                        logger.info('[zernioHandler] captured customer TTN from manager message', { botId, sessionId: session.id, ttn: _ttnM[0] });
+                    }
+                }
+            } catch (_ttnErr) { logger.warn('[zernioHandler] TTN capture from manager message failed: ' + _ttnErr.message); }
+        }
+        // 2026-09-30 (правки 0392dffb, c84eb872 та ін. «Бот не відписав»): менеджер ПЕРШИМ пише клієнту промо («Фінальний розпродаж
+        // бомберів🔥» + фото), клієнт відповідає «Яка ціна бомбера?» — бот мовчав, бо розмова вважалась «менеджерською», а
+        // resumeAfterManagerSilence такі розмови свідомо не відновлює. Розсилка першим — не ведення діалогу: якщо клієнт за добу
+        // нічого не писав, бота на паузу не ставимо (відповідає на відповідь клієнта). Далі менеджер у живій розмові — пауза як завжди.
+        let _outreach = false;
+        if (!_pc.funnelPaused) {
+            try { _outreach = !(await db.message.findFirst({ where: { sessionId: session.id, role: 'user', createdAt: { gte: new Date(Date.now() - 24 * 3600 * 1000) } }, select: { id: true } })); } catch (e) { _outreach = false; }
+        }
+        if (_outreach) {
+            await db.session.update({ where: { id: session.id }, data: { context: { ..._pc, managerOutreachAt: new Date().toISOString() } } }).catch(() => {});
+            logger.info('[zernioHandler] manager outreach (client silent 24h) — bot NOT paused', { botId, sessionId: session.id });
+        } else if (!_pc.funnelPaused) {
+            await db.session.update({ where: { id: session.id }, data: { context: { ..._pc, funnelPaused: true, pausedBy: 'manager_message', pausedAt: new Date().toISOString() } } });
+            await logDelivery(session.id, botId, 'zernio_inbound', true, null, { reason: 'manager_message → funnelPaused (бот на паузі, зняти можна в адмінці)' });
+            logger.info('[zernioHandler] manager wrote — session paused', { botId, sessionId: session.id });
+        }
+    } catch (_e) { logger.warn('[zernioHandler] pause on manager message failed: ' + _e.message); }
+    return { ok: true, processed: 1 };
+}
+
 async function handleSideEvent(botId, event, body) {
     const { msg, conversationId, contactId, contactName } = extractCommon(body);
     const eventId = body.id || `${event}_${conversationId || contactId}_${body.timestamp || Date.now()}`;
@@ -2053,106 +2169,7 @@ async function handleSideEvent(botId, event, body) {
             const _ourMedia = _recentM.find((r) => { const c = r.metadata || {}; return c.source !== 'zernio_inbox' && !c.zernioMessageId && (c.attachment || c.nodeType === 'sendPhoto' || /photo/.test(String(c.nodeType || '')) || (Array.isArray(c.attachments) && c.attachments.length)); });
             if (_ourMedia) { const _c = _ourMedia.metadata || {}; await db.message.update({ where: { id: _ourMedia.id }, data: { metadata: { ..._c, zernioMessageId: msg.id || null, platformMessageId: msg.platformMessageId || _c.platformMessageId || null, status: 'sent' } } }).catch(() => {}); return { ok: true, processed: 0 }; }
         }
-        const _label = _sentText || (_sentAtts.length ? ('[' + (_sentAtts.length > 1 ? 'фото ×' + _sentAtts.length : ((_sentAtts[0] && /video/i.test(String(_sentAtts[0].type || ''))) ? 'відео' : 'фото')) + ' від менеджера]') : '[повідомлення від менеджера]');
-        // 2026-09-13 (свіжий аудит сесій, e9c51c2b: той самий текст менеджера/canned-reply "Підкажіть,
-        // ... куртка з реклами?" прийшов через message.sent 6 РАЗІВ поспіль за ~2.5 хв, різні
-        // zernioMessageId/platformMessageId кожного разу — НЕ echo нашого ж боту (перевірка _ourEcho
-        // вище цього не ловить, бо шукає лише серед НАШИХ message, не серед інших zernio_inbox).
-        // Схоже на повторну доставку з боку Zernio/Meta (retry вебхука чи дубльований quick-reply клік) —
-        // не можемо виправити джерело (стороння система), але МОЖЕМО не плодити видимі дублі в сесії:
-        // якщо останнє повідомлення в сесії (будь-якої ролі) — той самий нормалізований текст менше
-        // ніж 3 хв тому, це вже показано клієнту (і нам) — новий видимий запис не створюємо, лише
-        // дотегуємо zernioMessageId для трасування.
-        const _lastAny = await db.message.findFirst({ where: { sessionId: session.id }, orderBy: { createdAt: 'desc' }, select: { id: true, content: true, metadata: true, createdAt: true } });
-        if (_lastAny && _norm(_lastAny.content) === _norm(_label) && (Date.now() - new Date(_lastAny.createdAt).getTime()) < 180000) {
-            const _lc = _lastAny.metadata || {};
-            await db.message.update({ where: { id: _lastAny.id }, data: { metadata: { ..._lc, repeatedDeliveryIds: (_lc.repeatedDeliveryIds || []).concat([msg.id || null]).filter(Boolean) } } }).catch(() => {});
-            return { ok: true, processed: 0, dedupedRepeat: true };
-        }
-        await db.message.create({ data: cleanJsonDeep({ sessionId: session.id, role: 'assistant', content: _label, metadata: { source: 'zernio_inbox', zernioMessageId: msg.id || null, platformMessageId: msg.platformMessageId || null, status: 'sent', ...(_sentAtts.length ? { attachments: _sentAtts.slice(0, 10) } : {}) } }) });
-        // 2026-09-07 20:05 (рішення власника, бойовий старт): менеджер написав клієнту з інбокса → сесія стає на
-        // ЗВИЧАЙНУ паузу (funnelPaused — та сама іконка в адмінці). Бот мовчить, доки менеджер сам не зніме паузу.
-        try {
-            const _fresh = await db.session.findUnique({ where: { id: session.id }, select: { context: true } });
-            const _pc = (_fresh && _fresh.context) || {};
-            // 2026-09-08 (Maltsev): у «готовій відповіді» менеджера є «Артикул: A0187» — запамʼятовуємо, щоб після відновлення бот знав товар.
-            const _artM = String(_sentText || '').match(/Артикул:?\s*([A-Za-z]{1,4}\d{3,8}|set\d{3,6}|\d{5,8})/i);
-            if (_artM) {
-                _pc.managerArticleHint = _artM[1]; _pc.managerArticleAt = new Date().toISOString();
-                if (_pc.funnelPaused) await db.session.update({ where: { id: session.id }, data: { context: _pc } }).catch(() => {});
-            } else if (_sentText) {
-                // 2026-09-13 (тікети cc024108/668b9cab — «Фінальний розпродаж бомберів»/«...кофт»: канцелярні
-                // "готові відповіді" менеджера часто НЕ мають рядка "Артикул:" взагалі (продажний текст-шаблон
-                // без коду товару) — Maltsev-фікс вище на них не спрацьовує, бот після 10-хв auto-resume не знає
-                // товару і перепитує "костюми, взуття, кофти?" — це саме та "зайва відповідь", на яку скаржився
-                // власник. Фолбек: та сама категорія-стем + точна ціна з тексту («1279 ₴») — якщо в каталозі
-                // РІВНО один товар цієї категорії з такою ціною, це майже напевно він (best-effort, не критичний
-                // шлях — як і managerArticleHint вище, лише підказка для відновлення діалогу).
-                try {
-                    const _stemM = String(_sentText).toLowerCase().match(/(кофт|светр|футболк|джинс|бомбер|куртк|вітровк|костюм|штан|лофер|кросівк|черевик|худі|шапк|туфл|кед|накидк|підголівник)/);
-                    const _priceM = String(_sentText).match(/(\d{3,6})\s*(?:₴|грн)/i);
-                    if (_stemM && _priceM) {
-                        const _crmBaseRow2 = await db.funnelKey.findFirst({ where: { botId, key: 'CRM_API_BASE' }, select: { value: true } });
-                        const _crmKeyRow2 = await db.funnelKey.findFirst({ where: { botId, key: 'CRM_API_KEY' }, select: { value: true } });
-                        const _crmBase2 = (_crmBaseRow2?.value || 'http://127.0.0.1:4700/api').replace(/\/$/, '');
-                        const _crmKey2 = (_crmKeyRow2?.value || '').trim();
-                        if (_crmKey2) {
-                            const _pr = await fetch(_crmBase2 + '/products?take=300', { headers: { Authorization: 'Bearer ' + _crmKey2, Accept: 'application/json' } });
-                            const _pj = _pr.ok ? await _pr.json().catch(() => ({})) : {};
-                            const _all = Array.isArray(_pj.data) ? _pj.data : [];
-                            const _price = Number(_priceM[1]);
-                            const _cand = _all.filter((p) => Number(p.price) === _price && new RegExp(_stemM[1], 'i').test(String(p.name || '') + ' ' + String(p.customerName || '')));
-                            if (_cand.length === 1) {
-                                _pc.managerArticleHint = _cand[0].sku; _pc.managerArticleAt = new Date().toISOString();
-                                if (_pc.funnelPaused) await db.session.update({ where: { id: session.id }, data: { context: _pc } }).catch(() => {});
-                                logger.info('[zernioHandler] managerArticleHint via category+price fallback', { botId, sessionId: session.id, sku: _cand[0].sku });
-                            }
-                        }
-                    }
-                } catch (_hintErr) { logger.warn('[zernioHandler] managerArticleHint category+price fallback failed: ' + _hintErr.message); }
-            }
-            // 2026-09-13 (власник: "по АПІ НП щоб це перевірялось" — крон статусів ТТН потребує
-            // ТТН у CRM, а менеджер зараз пише його ПРЯМО в Instagram, повз бота й CRM повністю).
-            // Той самий детект-патерн, що managerArticleHint вище — 14-цифрове число, формат
-            // ТТН Нової пошти (перевірено живими прикладами, не вигадано). Best-effort: не має
-            // ламати паузу/збереження контексту вище через помилку CRM.
-            const _ttnM = String(_sentText || '').match(/(?<!\d)\d{14}(?!\d)/);
-            if (_ttnM && _pc.crmOrderId && String(_pc.crmOrderId).indexOf('TEST-') !== 0) {
-                try {
-                    const _crmBaseRow = await db.funnelKey.findFirst({ where: { botId, key: 'CRM_API_BASE' }, select: { value: true } });
-                    const _crmKeyRow = await db.funnelKey.findFirst({ where: { botId, key: 'CRM_API_KEY' }, select: { value: true } });
-                    const _crmBase = (_crmBaseRow?.value || 'http://127.0.0.1:4700/api').replace(/\/$/, '');
-                    const _crmKey = (_crmKeyRow?.value || '').trim();
-                    if (_crmKey) {
-                        const _hdr = { Authorization: 'Bearer ' + _crmKey, Accept: 'application/json' };
-                        const _orr = await fetch(_crmBase + '/orders/' + _pc.crmOrderId, { headers: _hdr });
-                        const _orj = _orr.ok ? await _orr.json().catch(() => ({})) : {};
-                        const _existingTtn = Array.isArray(_orj && _orj.data && _orj.data.ttn) ? _orj.data.ttn : [];
-                        if (_existingTtn.indexOf(_ttnM[0]) === -1) {
-                            await fetch(_crmBase + '/orders/' + _pc.crmOrderId, { method: 'PATCH', headers: Object.assign({ 'Content-Type': 'application/json' }, _hdr), body: JSON.stringify({ ttn: _existingTtn.concat([_ttnM[0]]) }) });
-                            logger.info('[zernioHandler] captured customer TTN from manager message', { botId, sessionId: session.id, ttn: _ttnM[0] });
-                        }
-                    }
-                } catch (_ttnErr) { logger.warn('[zernioHandler] TTN capture from manager message failed: ' + _ttnErr.message); }
-            }
-            // 2026-09-30 (правки 0392dffb, c84eb872 та ін. «Бот не відписав»): менеджер ПЕРШИМ пише клієнту промо («Фінальний розпродаж
-            // бомберів🔥» + фото), клієнт відповідає «Яка ціна бомбера?» — бот мовчав, бо розмова вважалась «менеджерською», а
-            // resumeAfterManagerSilence такі розмови свідомо не відновлює. Розсилка першим — не ведення діалогу: якщо клієнт за добу
-            // нічого не писав, бота на паузу не ставимо (відповідає на відповідь клієнта). Далі менеджер у живій розмові — пауза як завжди.
-            let _outreach = false;
-            if (!_pc.funnelPaused) {
-                try { _outreach = !(await db.message.findFirst({ where: { sessionId: session.id, role: 'user', createdAt: { gte: new Date(Date.now() - 24 * 3600 * 1000) } }, select: { id: true } })); } catch (e) { _outreach = false; }
-            }
-            if (_outreach) {
-                await db.session.update({ where: { id: session.id }, data: { context: { ..._pc, managerOutreachAt: new Date().toISOString() } } }).catch(() => {});
-                logger.info('[zernioHandler] manager outreach (client silent 24h) — bot NOT paused', { botId, sessionId: session.id });
-            } else if (!_pc.funnelPaused) {
-                await db.session.update({ where: { id: session.id }, data: { context: { ..._pc, funnelPaused: true, pausedBy: 'manager_message', pausedAt: new Date().toISOString() } } });
-                await logDelivery(session.id, botId, 'zernio_inbound', true, null, { reason: 'manager_message → funnelPaused (бот на паузі, зняти можна в адмінці)' });
-                logger.info('[zernioHandler] manager wrote — session paused', { botId, sessionId: session.id });
-            }
-        } catch (_e) { logger.warn('[zernioHandler] pause on manager message failed: ' + _e.message); }
-        return { ok: true, processed: 1 };
+        return recordManagerMessage(botId, session, { text: _sentText, attachments: _sentAtts, ids: { zernioMessageId: msg.id || null, platformMessageId: msg.platformMessageId || null } });
     }
 
     // ── Інші події → рядок-подія (comment.received іде окремим шляхом, handleCommentReceived) ──
@@ -2387,6 +2404,7 @@ async function pollZernioConversations(opts = {}) {
             // Один Zernio-акаунт підключений до кількох воронок (клон/форвард) — опитуємо раз, цільовою воронкою.
             const target = await resolveZernioTargetBot(botId).catch(() => botId);
             if (target !== botId || seenAccounts.has(k.ZERNIO_ACCOUNT_ID)) continue;
+            if ((await require('./metaChannel').channelOf(target)) === 'meta') continue;
             seenAccounts.add(k.ZERNIO_ACCOUNT_ID);
             bots.push({ botId, keys: k, minutes });
         }
@@ -2473,5 +2491,7 @@ if (__runsBackground) setTimeout(() => { pollZernioConversations(); setInterval(
 // живий кейс mediaId без артикулу; Проблема Д — race condition у серіалізації
 // runFlowAndDeliver) і майбутніх регресійних тестів — не викликаються поза
 // handleZernioEvent у нормальному потоці.
-module.exports = { pollZernioConversations, handleZernioEvent, sendZernioMessage, ensurePostAutomation, scheduleFlowRun, pickCommentPublicReply };
+module.exports = { pollZernioConversations, handleZernioEvent, sendZernioMessage, ensurePostAutomation, scheduleFlowRun, pickCommentPublicReply,
+    // спільне з прямим каналом Meta (metaChannel.js)
+    recordManagerMessage, findOrCreateZernioUser, findOrCreateZernioSession, sendMetaPhoto, sendMetaPhotoAlbum, logDelivery, sendTelegramAlert, transcribeVoice, getReelVideoFramesForVision, resolveZernioTargetBot, cleanJsonDeep };
 

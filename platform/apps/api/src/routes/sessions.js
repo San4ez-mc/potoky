@@ -309,6 +309,17 @@ router.post('/:id/send',
             return res.json({ ok: true });
         }
 
+        // ── Прямий канал Meta (metaChannel.js): відповідь через Instagram API; її «луну» metaChannel упізнає як нашу ──
+        if (session.context?.channel === 'meta') {
+            if (!text) return res.status(422).json({ ok: false, error: { message: 'Для Instagram поки підтримується лише текстова відповідь.' } });
+            let mid = null;
+            try { mid = await require('../services/metaChannel').sendText(session.botId, session.context?.psid, text); }
+            catch (e) { return res.status(422).json({ ok: false, error: { message: e.message } }); }
+            await db.message.create({ data: { sessionId: session.id, role: 'assistant', content: text, metadata: { source: 'admin_manual', channel: 'meta', metaMessageId: mid, status: 'sent' } } });
+            await db.session.update({ where: { id: session.id }, data: { context: { ...(session.context || {}), adminEngaged: true, funnelPaused: true } } });
+            return res.json({ ok: true });
+        }
+
         // ── Instagram-сесія: відповідь через Meta Send API (не Telegram) ──────────
         // Ізольована гілка — Telegram-логіка нижче лишається без змін.
         if (session.context?.channel === 'instagram') {
@@ -503,6 +514,12 @@ router.patch('/:id/flags',
                     // «Підкажіть зріст і вагу». Якщо останнім клієнту писав менеджер — накопичене не чіпаємо, бот чекає нового повідомлення.
                     var __pendingUnanswered = (preSync.ok && !preSync.empty && !preSync.managerLed && Array.isArray(preSync.unanswered)) ? preSync.unanswered : [];
                 } catch (e) { var __pendingUnanswered = []; }
+            }
+            if (ctx.channel === 'meta') {
+                // Прямий канал: невідповідане — з нашої бази (REST-звірка лише для Zernio). Останнім писав менеджер — не чіпаємо.
+                const last = await db.message.findMany({ where: { sessionId: session.id, role: { in: ['user', 'assistant'] } }, orderBy: { createdAt: 'desc' }, take: 15, select: { role: true, content: true, metadata: true } });
+                const un = []; for (const m of last) { if (m.role === 'assistant' && !(m.metadata || {}).hidden) break; if (m.role === 'user') un.unshift(m); }
+                var __pendingUnanswered = un.map((m) => ({ text: m.content, attachments: [...((m.metadata || {}).attachment ? [m.metadata.attachment] : []), ...((m.metadata || {}).sharedPost ? [{ type: 'share', sharedPost: m.metadata.sharedPost }] : [])] }));
             }
             await db.message.create({
                 data: { sessionId: session.id, role: 'assistant', content: '🔄 Бота запущено вручну (адмін-панель).', metadata: { source: 'manual_resume', hidden: true } },

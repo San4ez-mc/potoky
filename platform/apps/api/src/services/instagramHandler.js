@@ -149,6 +149,14 @@ async function handleInstagramEvent(botId, body) {
         return { ok: true, skipped: 'not-instagram' };
     }
 
+    // Прямий канал (2026-10-11): цільова воронка з INBOUND_CHANNEL=meta обробляє подію в metaChannel.js (shopAgent),
+    // а не старим двигуном. Ціль — за ZERNIO_FORWARD_BOT_ID, як і для Zernio (вебхук Meta підписаний на архівний 5bdb3e38).
+    try {
+        const metaChannel = require('./metaChannel');
+        const target = await require('./zernioHandler').resolveZernioTargetBot(botId);
+        if ((await metaChannel.channelOf(target)) === 'meta') return await metaChannel.handleMetaEvent(botId, body);
+    } catch (e) { logger.error('[instagramHandler] metaChannel routing failed', { botId, error: e.message }); }
+
     let processed = 0;
     // Неактивний (архівний) бот лише записує вхідні, воронку не запускає й не відповідає (2026-10-11: після вмикання поля
     // messages у Meta архівний goverla 5bdb3e38 за день згенерував 2060 відповідей старою воронкою і 1076 викликів API —

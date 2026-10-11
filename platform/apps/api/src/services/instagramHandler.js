@@ -155,6 +155,13 @@ async function handleInstagramEvent(botId, body) {
     // клієнтам не дійшли лише тому, що відправка ламалась на токені).
     const botRow = await db.bot.findUnique({ where: { id: botId }, select: { isActive: true } }).catch(() => null);
     const botActive = !!(botRow && botRow.isActive);
+    // Тимчасово (перехід з Zernio на прямий канал, 2026-10-11): сирі події-повідомлення у файл — реальні формати вкладень,
+    // пересланих постів, реклами, сторіз і echo від Meta. «Прочитано» не пишемо. Ліміт 20 МБ.
+    try {
+        const fs = require('fs'); const f = '/var/log/flows-ig-raw.jsonl';
+        const hasMsg = (body.entry || []).some((e) => (e.messaging || []).some((m) => m.message || m.postback || m.referral));
+        if (hasMsg && (!fs.existsSync(f) || fs.statSync(f).size < 20 * 1024 * 1024)) fs.appendFileSync(f, JSON.stringify({ at: new Date().toISOString(), botId, body }) + '\n');
+    } catch (e) { /* діагностика — не ламає обробку */ }
     for (const entry of body.entry || []) {
         let events = entry.messaging || entry.standby || [];
         // Частина IG-подій приходить у форматі changes[] (field: "messages") замість messaging[].

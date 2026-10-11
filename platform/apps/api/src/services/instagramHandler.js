@@ -150,6 +150,11 @@ async function handleInstagramEvent(botId, body) {
     }
 
     let processed = 0;
+    // Неактивний (архівний) бот лише записує вхідні, воронку не запускає й не відповідає (2026-10-11: після вмикання поля
+    // messages у Meta архівний goverla 5bdb3e38 за день згенерував 2060 відповідей старою воронкою і 1076 викликів API —
+    // клієнтам не дійшли лише тому, що відправка ламалась на токені).
+    const botRow = await db.bot.findUnique({ where: { id: botId }, select: { isActive: true } }).catch(() => null);
+    const botActive = !!(botRow && botRow.isActive);
     for (const entry of body.entry || []) {
         let events = entry.messaging || entry.standby || [];
         // Частина IG-подій приходить у форматі changes[] (field: "messages") замість messaging[].
@@ -200,7 +205,7 @@ async function handleInstagramEvent(botId, body) {
                 //    Флоу сам паузиться на claude/wait-нодах, тож спаму вітань немає.
                 //    Оператор може перехопити: adminEngaged / funnelPaused ставлять флоу на паузу.
                 const ctxNow = session.context || {};
-                if (!ctxNow.adminEngaged && !ctxNow.funnelPaused) {
+                if (botActive && !ctxNow.adminEngaged && !ctxNow.funnelPaused) {
                     const sinceTime = new Date();
                     // Вхідне зображення (скрін/квитанція оплати) → context.lastReceiptImageUrl.
                     let inImageUrl = null;

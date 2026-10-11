@@ -1890,6 +1890,11 @@ async function runFlowAndDeliver(sessionId, entry) {
             }
         } catch (e) { logger.warn('[zernioHandler] comment reply block: ' + e.message); }
     }
+    await postTurnChecks(botId, sessionId, contactName, mergedText);
+}
+
+/** Після ходу (обидва канали): сигнал менеджеру «бот не визначив товар» (був сигнал — реклама/пост — а товар за замовчуванням) і привʼязка клієнта CRM до користувача. */
+async function postTurnChecks(botId, sessionId, contactName, mergedText) {
     try {
         const _fr = await db.session.findUnique({ where: { id: sessionId }, select: { context: true } });
         const _c = (_fr && _fr.context) || {};
@@ -2493,5 +2498,5 @@ if (__runsBackground) setTimeout(() => { pollZernioConversations(); setInterval(
 // handleZernioEvent у нормальному потоці.
 module.exports = { pollZernioConversations, handleZernioEvent, sendZernioMessage, ensurePostAutomation, scheduleFlowRun, pickCommentPublicReply,
     // спільне з прямим каналом Meta (metaChannel.js)
-    recordManagerMessage, findOrCreateZernioUser, findOrCreateZernioSession, sendMetaPhoto, sendMetaPhotoAlbum, logDelivery, sendTelegramAlert, transcribeVoice, getReelVideoFramesForVision, resolveZernioTargetBot, cleanJsonDeep };
+    recordManagerMessage, postTurnChecks, findOrCreateZernioUser, findOrCreateZernioSession, sendMetaPhoto, sendMetaPhotoAlbum, logDelivery, sendTelegramAlert, transcribeVoice, getReelVideoFramesForVision, resolveZernioTargetBot, cleanJsonDeep };
 

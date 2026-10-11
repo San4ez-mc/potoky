@@ -91,12 +91,13 @@ function splitText(text) {
     if (cur) out.push(cur);
     return out;
 }
-async function sendText(botId, igsid, text) {
+async function sendText(botId, igsid, text, opts = {}) {
     const tok = await token(botId); let lastId = null;
-    for (const part of splitText(text)) {
+    const recipient = opts.commentId ? { comment_id: String(opts.commentId) } : { id: String(igsid) };
+    for (const part of (opts.commentId ? [String(text || '').trim().slice(0, TEXT_LIMIT)] : splitText(text))) {
         let r, j;
         for (let attempt = 0; attempt < 3; attempt++) {
-            r = await fetch(GRAPH + '/me/messages?access_token=' + encodeURIComponent(tok), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipient: { id: String(igsid) }, message: { text: part } }) });
+            r = await fetch(GRAPH + '/me/messages?access_token=' + encodeURIComponent(tok), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipient, message: { text: part } }) });
             j = await r.json().catch(() => ({}));
             if (r.ok && !j.error) break;
             const code = j && j.error && j.error.code;
@@ -108,6 +109,13 @@ async function sendText(botId, igsid, text) {
         if (lastId) rememberSent(lastId);
     }
     return lastId;
+}
+
+async function replyToComment(botId, commentId, text) {
+    const r = await fetch(GRAPH + '/' + encodeURIComponent(commentId) + '/replies?access_token=' + encodeURIComponent(await token(botId)), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: String(text || '') }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || j.error) throw new Error((j.error && j.error.message) || ('HTTP ' + r.status));
+    return j.id || null;
 }
 
 // Свої відправлення — щоб echo від Meta не сприйняти як повідомлення менеджера.
@@ -125,6 +133,7 @@ async function isOurSent(mid, sessionId, text) {
     return recent.some((m) => { const md = m.metadata || {}; if (md.source === 'zernio_inbox') return false; const c = String(m.content || '').replace(/\s+/g, ' ').trim(); const cap = String((md.attachment && md.attachment.caption) || '').replace(/\s+/g, ' ').trim(); return (c && c.includes(t)) || (cap && cap.includes(t)); });
 }
 const ECHO_SETTLE_MS = 6000;
+const _echoes = new Set(); // фонові перевірки «луни» (для тестів — дочекатись)
 
 // Збій відправки → менеджеру одразу (05–07.10: 81 збій Zernio за 2,5 год без жодного сигналу). Не частіше разу на 15 хв на бота.
 const _sendAlertAt = new Map();
@@ -173,6 +182,13 @@ function scheduleTurn(sessionId, msg) {
     }, DEBOUNCE_MS);
 }
 
+function enqueue(sessionId, e) {
+    const prev = _queue.get(sessionId) || Promise.resolve();
+    const run = prev.catch(() => {}).then(() => runTurn(sessionId, e)).catch((err) => logger.error('[metaChannel] turn failed', { sessionId, error: err.message }));
+    _queue.set(sessionId, run);
+    run.finally(() => { if (_queue.get(sessionId) === run) _queue.delete(sessionId); });
+}
+
 async function runTurn(sessionId, e) {
     const { botId } = e;
     const sess0 = await db.session.findUnique({ where: { id: sessionId }, select: { context: true } });
@@ -188,6 +204,7 @@ async function runTurn(sessionId, e) {
     const text = e.texts.filter(Boolean).join('\n').trim();
     const sinceTime = new Date();
     try {
+        if (e.commentId) await shopAgent.classifyComment({ botId, sessionId, commentText: text });
         await shopAgent.handleTurn({ botId, sessionId, text, imageUrl: e.imageUrl, imageUrls: e.imageUrls.length > 1 ? e.imageUrls : undefined, sharedPost: e.ctxPatch.sharedPost, entryAdId: e.ctxPatch.entryAdId, storyId: e.ctxPatch.storyId });
     } catch (err) { logger.error('[metaChannel] handleTurn failed', { botId, sessionId, error: err.message }); }
     const outMsgs = await db.message.findMany({ where: { sessionId, role: 'assistant', createdAt: { gt: sinceTime } }, orderBy: { createdAt: 'asc' } });
@@ -201,7 +218,127 @@ async function runTurn(sessionId, e) {
             else { om.metadata = { ...(om.metadata || {}), hidden: true, supersededBy: 'newer_client_message' }; await db.message.update({ where: { id: om.id }, data: { metadata: om.metadata } }).catch(() => {}); }
         }
     }
-    await deliver(botId, sessionId, contactId, outMsgs);
+    let dmSent = 0, dmFailed = 0;
+    // Клієнт лише лишив коментар і не писав у директ за добу: Meta дозволяє ОДНУ приватну відповідь (лише текст). Усі тексти ходу —
+    // одним повідомленням; фото відкладаємо, вони підуть першими, щойно клієнт відповість у директ (як у zernioHandler).
+    const commentOnly = !!e.commentId && !(await dmWindowOpen(sessionId));
+    if (commentOnly) {
+        const pending = []; const texts = []; const ids = [];
+        for (const om of outMsgs) {
+            const m = om.metadata || {};
+            if (m.hidden || m.source === 'zernio_inbox' || m.status === 'sent') continue;
+            const att = m.attachment;
+            const urls = att && (att.type === 'photo' || att.type === 'image') ? (Array.isArray(att.urls) && att.urls.length ? att.urls : [att.url]).filter((u) => u && /^https?:/.test(String(u))) : [];
+            if (urls.length) pending.push({ urls, caption: att.caption || om.content || '' });
+            else if (String(om.content || '').trim() && !/^\[повідомлення\]$/.test(String(om.content).trim())) { texts.push(String(om.content).trim()); ids.push(om.id); }
+        }
+        if (texts.length) {
+            const dmText = texts.join('\n\n');
+            try {
+                const mid = await sendText(botId, contactId, dmText, { commentId: e.commentId });
+                dmSent++;
+                await Z.logDelivery(sessionId, botId, 'meta_comment_dm', true, null, { commentId: e.commentId, text: dmText.slice(0, 160), messageId: mid });
+                for (const id of ids) { const om = outMsgs.find((x) => x.id === id); await db.message.update({ where: { id }, data: { metadata: { ...(om.metadata || {}), metaMessageId: mid || null, status: 'sent', channel: 'meta', commentDm: true } } }).catch(() => {}); }
+            } catch (err) {
+                dmFailed++;
+                await Z.logDelivery(sessionId, botId, 'meta_comment_dm', false, err.message, { commentId: e.commentId });
+                await Z.sendTelegramAlert(botId, '⚠️ Приватну відповідь на коментар не доставлено (' + String(err.message).slice(0, 120) + ') — у публічній відповіді попросили написати самим.\nСесія: https://flows.fineko.space/sessions/' + sessionId, sessionId).catch(() => {});
+            }
+        }
+        if (pending.length) {
+            const s2 = await db.session.findUnique({ where: { id: sessionId }, select: { context: true } });
+            await db.session.update({ where: { id: sessionId }, data: { context: Z.cleanJsonDeep({ ...((s2 && s2.context) || {}), commentPendingPhotos: pending.slice(0, 5) }) } }).catch(() => {});
+        }
+    } else {
+        if (!e.commentId) await flushPendingCommentPhotos(botId, sessionId, contactId, outMsgs);
+        await deliver(botId, sessionId, contactId, outMsgs);
+    }
+    if (e.commentId) await postPublicReply(botId, sessionId, e.commentId, dmSent, dmFailed);
+    await Z.postTurnChecks(botId, sessionId, ((sess0 && sess0.context) || {}).senderName, text);
+}
+
+/** Чи писав клієнт нам у директ за останні 23 год (будь-яким каналом — це та сама розмова Instagram; коментар — роль event, не user) (тоді відповідаємо звичайним повідомленням, а не приватною відповіддю на коментар). */
+async function dmWindowOpen(sessionId) {
+    const m = await db.message.findFirst({ where: { sessionId, role: 'user', createdAt: { gte: new Date(Date.now() - 23 * 3600 * 1000) } }, select: { id: true } }).catch(() => null);
+    return !!m;
+}
+
+/** Клієнт відповів у директ після коментаря: спершу відкладені фото; те саме фото в цьому ж ході вдруге не шлемо. */
+async function flushPendingCommentPhotos(botId, sessionId, igsid, outMsgs) {
+    try {
+        const s = await db.session.findUnique({ where: { id: sessionId }, select: { context: true } });
+        const c = (s && s.context) || {};
+        const pend = Array.isArray(c.commentPendingPhotos) ? c.commentPendingPhotos : [];
+        if (!pend.length) return;
+        await db.session.update({ where: { id: sessionId }, data: { context: Z.cleanJsonDeep({ ...c, commentPendingPhotos: [] }) } });
+        const key = (u) => { try { const x = new URL(String(u)); return x.searchParams.get('asset_id') || x.pathname.split('/').pop(); } catch (er) { return String(u).split('?')[0].split('/').pop(); } };
+        const flushed = new Set();
+        for (const p of pend) {
+            try {
+                const mid = await Z.sendMetaPhotoAlbum(botId, igsid, p.urls); if (mid) rememberSent(mid);
+                p.urls.forEach((u) => flushed.add(key(u)));
+                await Z.logDelivery(sessionId, botId, 'ig_photo_album', true, null, { deferredFromComment: true, count: p.urls.length, channel: 'meta' });
+                if (p.caption) await sendText(botId, igsid, p.caption);
+            } catch (er) { await Z.logDelivery(sessionId, botId, 'ig_photo_album', false, er.message, { deferredFromComment: true, channel: 'meta' }); }
+        }
+        for (const om of outMsgs) {
+            const att = (om.metadata || {}).attachment;
+            const urls = att ? (Array.isArray(att.urls) && att.urls.length ? att.urls : [att.url]).filter(Boolean) : [];
+            if (urls.length && urls.every((u) => flushed.has(key(u)))) { om.metadata = { ...(om.metadata || {}), hidden: true, dupOfDeferred: true }; await db.message.update({ where: { id: om.id }, data: { metadata: om.metadata } }).catch(() => {}); }
+        }
+    } catch (er) { logger.warn('[metaChannel] deferred photos: ' + er.message, { sessionId }); }
+}
+
+/** Публічна відповідь під коментарем (текст готує класифікатор — ctx.commentReplyText), один раз на коментар. */
+async function postPublicReply(botId, sessionId, commentId, dmSent, dmFailed) {
+    try {
+        const s = await db.session.findUnique({ where: { id: sessionId }, select: { context: true } });
+        const c = (s && s.context) || {};
+        if (!c.commentReplyText || c.commentReplyPosted) return;
+        const name = String(c.senderName || '').trim().split(/\s+/)[0] || 'друже';
+        const pub = Z.pickCommentPublicReply(c.commentReplyText, dmSent, dmFailed, name);
+        let rid = null, rerr = null;
+        try { rid = await replyToComment(botId, commentId, pub); }
+        catch (er) { rerr = er.message; logger.warn('[metaChannel] публічна відповідь на коментар не пройшла: ' + er.message, { sessionId }); }
+        await Z.logDelivery(sessionId, botId, 'meta_comment_reply', !!rid, rerr, { commentId, dmSent, dmFailed, text: pub.slice(0, 160) });
+        await db.message.create({ data: { sessionId, role: 'assistant', content: pub, metadata: { source: 'comment_public_reply', eventType: 'comment.reply', commentId, ok: !!rid, channel: 'meta', ...(rerr ? { error: rerr } : {}) } } }).catch(() => {});
+        await db.session.update({ where: { id: sessionId }, data: { context: { ...c, commentReplyText: pub, commentReplyPosted: true } } }).catch(() => {});
+    } catch (er) { logger.warn('[metaChannel] comment reply block: ' + er.message, { sessionId }); }
+}
+
+/** Коментар під постом (Meta changes[field=comments]). Свої відповіді (від нашого акаунта) пропускаємо. */
+async function handleComment(botId, own, v) {
+    const from = v.from || {}; const commentId = v.id; const mediaId = (v.media && v.media.id) || null;
+    if (!commentId || !from.id) return 'skip';
+    if (own && String(from.id) === own) return 'skip';
+    const ownName = String((await db.funnelKey.findFirst({ where: { botId, key: 'INSTAGRAM_USERNAME' }, select: { value: true } }).catch(() => null) || {}).value || '').trim().toLowerCase();
+    if (ownName && String(from.username || '').toLowerCase() === ownName) return 'skip';
+    if (!(await dedup(botId, 'cm_' + commentId))) return 'skip';
+    const commentText = String(v.text || '');
+    // Підпис поста — там артикул (коментар «🔥» товару не називає), як пересланий пост у директі.
+    let postCaption = null;
+    if (mediaId) {
+        try {
+            const r = await fetch(GRAPH + '/' + encodeURIComponent(mediaId) + '?fields=caption&access_token=' + encodeURIComponent(await token(botId)));
+            const j = await r.json().catch(() => ({}));
+            if (r.ok && j.caption) postCaption = String(j.caption); else if (!r.ok) logger.warn('[metaChannel] media caption fetch failed', { botId, mediaId, error: j.error && j.error.message });
+        } catch (er) { /* best-effort */ }
+    }
+    const patch = {
+        commentId: String(commentId), commentText, commentMediaId: mediaId ? String(mediaId) : null, entryAd: mediaId ? String(mediaId) : undefined,
+        ...(postCaption ? { sharedPost: { kind: 'post', mediaId: String(mediaId), caption: postCaption } } : {}),
+        commentReplyPosted: false, commentCategory: '',
+        ...(from.username ? { igUsername: from.username } : {}),
+    };
+    const { session, profile: prof } = await sessionFor(botId, String(from.id), patch);
+    const name = prof.name || from.username || 'друже';
+    await db.message.create({ data: Z.cleanJsonDeep({ sessionId: session.id, role: 'event', content: '💬 Коментар від ' + name + ': ' + commentText.slice(0, 200), metadata: { source: 'meta', channel: 'meta', eventType: 'comment.received', authorName: name, commentText, commentId: String(commentId), mediaId, raw: v } }) });
+    if (await isBlockedByTestMode(botId, [from.username, prof.username, prof.name])) return 'stored';
+    const ctx = session.context || {};
+    if (ctx.adminEngaged || ctx.funnelPaused) return 'stored';
+    if (!(await shopAgent.isCommentAgent(botId))) { logger.info('[metaChannel] коментарі не веде агент (COMMENT_AGENT=0) — лише записано', { botId }); return 'stored'; }
+    enqueue(session.id, { botId, contactId: String(from.id), commentId: String(commentId), texts: [commentText], imageUrl: null, imageUrls: [], ctxPatch: patch });
+    return 'processed';
 }
 
 async function deliver(botId, sessionId, igsid, outMsgs) {
@@ -253,6 +390,10 @@ async function handleMetaEvent(webhookBotId, body) {
     for (const entry of body.entry || []) {
         let events = (entry.messaging && entry.messaging.length ? entry.messaging : entry.standby) || [];
         if (!events.length && Array.isArray(entry.changes)) events = entry.changes.filter((c) => c && c.value && (c.field === 'messages' || c.field === 'message')).map((c) => c.value);
+        for (const ch of (Array.isArray(entry.changes) ? entry.changes : []).filter((c) => c && c.field === 'comments' && c.value)) {
+            try { const r = await handleComment(botId, own, ch.value); if (r === 'skip') skipped++; else processed++; }
+            catch (err) { logger.error('[metaChannel] comment failed', { botId, error: err.message }); }
+        }
         for (const m of events) {
             try {
                 if (m.read || m.reaction || m.message_edit || (!m.message && !m.postback)) { skipped++; continue; }
@@ -264,11 +405,16 @@ async function handleMetaEvent(webhookBotId, body) {
                     const session = user ? await db.session.findFirst({ where: { userId: user.id, botId }, orderBy: { startedAt: 'desc' } }) : null;
                     if (!session) { skipped++; continue; } // менеджер пише людині, якої бот не знає — розмови тут нема
                     if (_sent.has(String(msg.mid))) { skipped++; continue; }
-                    await new Promise((res) => setTimeout(res, ECHO_SETTLE_MS)); // дати нашій відправці записати свій id
-                    if (await isOurSent(msg.mid, session.id, msg.text)) { skipped++; continue; }
-                    if (!(await dedup(botId, 'echo_' + msg.mid))) { skipped++; continue; }
+                    // Чекаємо, поки наша відправка запише свій id, — у фоні, щоб не тримати решту подій пачки.
                     const atts = (Array.isArray(msg.attachments) ? msg.attachments : []).map((a) => ({ type: a.type, url: a.payload && a.payload.url }));
-                    await Z.recordManagerMessage(botId, session, { text: msg.text || '', attachments: atts, ids: { channel: 'meta', metaMessageId: msg.mid } });
+                    const echoDone = (async () => {
+                        await new Promise((res) => setTimeout(res, ECHO_SETTLE_MS));
+                        if (await isOurSent(msg.mid, session.id, msg.text)) return;
+                        if (!(await dedup(botId, 'echo_' + msg.mid))) return;
+                        const fresh = await db.session.findUnique({ where: { id: session.id } });
+                        await Z.recordManagerMessage(botId, fresh || session, { text: msg.text || '', attachments: atts, ids: { channel: 'meta', metaMessageId: msg.mid } });
+                    })().catch((err) => logger.error('[metaChannel] echo failed', { botId, error: err.message }));
+                    _echoes.add(echoDone); echoDone.finally(() => _echoes.delete(echoDone));
                     processed++; continue;
                 }
                 // ── вхідне від клієнта ──
@@ -297,7 +443,8 @@ async function handleMetaEvent(webhookBotId, body) {
                 } }) });
                 await db.session.update({ where: { id: session.id }, data: { lastActive: new Date() } }).catch(() => {});
                 processed++;
-                if (await isBlockedByTestMode(botId, [prof.username, prof.name])) continue;
+                const _sc = session.context || {}; // профіль від Meta міг не прийти — нікнейм, збережений раніше
+                if (await isBlockedByTestMode(botId, [prof.username, prof.name, _sc.igUsername, _sc.senderName])) continue;
                 const ctx = (await db.session.findUnique({ where: { id: session.id }, select: { context: true } })).context || {};
                 // Менеджер веде розмову: бот мовчить (знімає resumeAfterManagerSilence / вручну). Виняток — клієнт за добу
                 // повернувся з НОВОЮ рекламою чи постом (той самий принцип, що в zernioHandler).
@@ -349,4 +496,4 @@ async function retryUnanswered() {
 const __runsBackground = !process.env.name || process.env.name === 'platform-api';
 if (__runsBackground) setTimeout(() => { retryUnanswered(); setInterval(retryUnanswered, 60 * 1000).unref(); }, 150 * 1000).unref();
 
-module.exports = { handleMetaEvent, scheduleTurn, runTurn, sendText, channelOf, channelOfSync, splitText };
+module.exports = { handleMetaEvent, scheduleTurn, runTurn, sendText, replyToComment, channelOf, channelOfSync, splitText, _echoes };

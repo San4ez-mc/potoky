@@ -117,5 +117,11 @@ return (async () => {
 
   var publishError = err || (ids.length ? null : 'EMPTY_POST');
   if(context.callbackUrl){ await fetch(context.callbackUrl, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({status:publishError?'failed':'published', platform:'threads', threadId:ids[0]||null, externalId:ids[0]||null, url:permalink, error:publishError, postGroupId:context.postGroupId||null})}).catch(function(){}); }
-  return { platform:'threads', threadId: ids[0]||null, threadIds: ids, permalink: permalink, publishError: publishError };
+  // Повідомлення власнику в Telegram (parse_mode HTML): посилання сховане за словами «Опубліковано в Threads», під ним — текст поста.
+  function esc(t) { return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+  var shownText = items.slice(0, ids.length).map(function (x) { return String((x && x.text) || '').trim(); }).filter(Boolean).join('\n\n');
+  var head = permalink ? '✅ <a href="' + String(permalink).replace(/"/g, '&quot;') + '">Опубліковано в Threads</a>' : '✅ Опубліковано в Threads';
+  if (ids.length > 1) head += ' (ланцюжок: ' + ids.length + ' пости)';
+  var publishedMessage = head + (shownText ? '\n\n' + esc(shownText).slice(0, 3500) : '');
+  return { platform:'threads', threadId: ids[0]||null, threadIds: ids, permalink: permalink, publishError: publishError, publishedMessage: publishedMessage };
 })();

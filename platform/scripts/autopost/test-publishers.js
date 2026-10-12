@@ -124,6 +124,18 @@ async function t(name, fn) { try { await fn(); passed++; console.log('✅', name
         assert.ok(/threads_manage_insights/.test(r.threadsInsightsMessage), r.threadsInsightsMessage);
         assert.strictEqual(has(calls, '/api/webhooks/post-metrics', 'POST').length, 0);
     });
+    await t('threads: повідомлення в Telegram — текст поста + посилання сховане в <a>, спецсимволи екрануються', async () => {
+        mockFetch([
+            { when: (u, o) => u.includes('/threads?') && o.method === 'POST', reply: resp({ id: 'cm1' }) },
+            { when: (u) => u.includes('?fields=status'), reply: resp({ status: 'FINISHED' }) },
+            { when: (u) => u.includes('/threads_publish'), reply: resp({ id: 'pm1' }) },
+            { when: (u) => u.includes('fields=permalink'), reply: resp({ permalink: 'https://www.threads.com/@kiro/post/ABC' }) },
+        ]);
+        const r = await run('publish-threads-node-code.js', { items: [{ text: 'Подія <b>2 & 3</b>: чи варто?' }] }, { THREADS_USER_ID: 'u', THREADS_ACCESS_TOKEN: 't' });
+        assert.ok(r.publishedMessage.startsWith('✅ <a href="https://www.threads.com/@kiro/post/ABC">Опубліковано в Threads</a>'), r.publishedMessage);
+        assert.ok(r.publishedMessage.includes('Подія &lt;b&gt;2 &amp; 3&lt;/b&gt;: чи варто?'), 'текст екранований');
+        assert.ok(!r.publishedMessage.replace(/<a href="[^"]+">/, '').includes('https://'), 'голого посилання в тексті немає');
+    });
     await t('threads: ERROR контейнера → failed без публікації', async () => {
         const calls = mockFetch([
             { when: (u, o) => u.includes('/threads?') && o.method === 'POST', reply: resp({ id: 'c2' }) },

@@ -177,6 +177,17 @@ async function main() {
         check('"Дякую" після оформлення НЕ шле сповіщення менеджеру (нема чого ескалювати)', !alerted, JSON.stringify(A.trace.filter((t) => t.alert)));
     }
 
+    // 12.10 (Edits 3ff8f727/255e3d4d/0dc66ed5): замовлення оформив менеджер вручну (бот його не бачить) — «коли відправка?»
+    // → бот питав колір/зріст і вагу. Тепер: терміни відправки + менеджер, без продажу заново.
+    {
+        const A = freshA({ turnText: 'Доброго вечора, коли буде відправка мого костюма?' });
+        A.ctx.product = { sku: 'A0188', name: 'Костюм', price: 1999 }; A.ctx.agent.presentedSku = 'A0188';
+        const u = freshU({ intent: 'question', statusQuestion: true, questions: ['Коли буде відправка?'] });
+        await runPolicy(A, u);
+        const steps = A.out.map((o) => o.step).join(',');
+        check('38.1 «Коли відправка?» без замовлення в розмові — терміни + менеджер, не продаж', steps === 'post_status_unknown_order' && /5 робочих днів/.test(A.out[0].text) && A.ctx.funnelPaused && A.ctx.pausedBy === 'handoff', 'steps: ' + steps + ' paused ' + A.ctx.pausedBy);
+    }
+
     // ── 4. Повторний показ способів оплати — живий кейс Владус, 14.09: другий хід без нового
     // способу оплати показував ПОВНИЙ список 1/2 ще раз, а не коротке нагадування.
     {

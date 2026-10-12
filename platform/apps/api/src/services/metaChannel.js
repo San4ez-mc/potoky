@@ -452,10 +452,12 @@ async function handleMetaEvent(webhookBotId, body) {
                 // Менеджер веде розмову: бот мовчить (знімає resumeAfterManagerSilence / вручну). Виняток — клієнт за добу
                 // повернувся з НОВОЮ рекламою чи постом (той самий принцип, що в zernioHandler).
                 if (ctx.funnelPaused) {
-                    const strong = !!(patch.entryAdId || sharedPost);
+                    // Пауза менеджера сплила (менеджер не писав клієнту понад добу — pausedAt оновлюється з кожним його повідомленням):
+                    // клієнт пише — бот відповідає одразу, не чекаючи фонового зняття (12.10, tanyayaremo: пауза з 11.10 12:58, наступного
+                    // дня «Можна замовити чорного L» / «Ціна» / «Передплата» / «Реквізити» — без відповіді). Те саме правило 24 год, що в hardExpirePauses.
                     const old = ctx.pausedAt && Date.now() - new Date(ctx.pausedAt).getTime() > 24 * 3600 * 1000;
-                    if (!(strong && old && /^manager_message/.test(String(ctx.pausedBy || '')))) continue;
-                    await db.session.update({ where: { id: session.id }, data: { context: Z.cleanJsonDeep({ ...ctx, funnelPaused: false, pausedBy: null, resumedBy: 'client_return_24h', resumedAt: new Date().toISOString() }) } });
+                    if (!(old && /^(manager_message|manual)/.test(String(ctx.pausedBy || '')))) continue;
+                    await db.session.update({ where: { id: session.id }, data: { context: Z.cleanJsonDeep({ ...ctx, funnelPaused: false, pausedBy: null, adminEngaged: false, resumedBy: 'client_return_24h', resumedAt: new Date().toISOString() }) } });
                 }
                 scheduleTurn(session.id, { botId, contactId: String(igsid), text, imageUrl: photo ? photo.url : null, ctxPatch: { ...(sharedPost ? { sharedPost, hasFreshSignalThisTurn: true } : {}), ...(patch.entryAdId ? { entryAdId: patch.entryAdId } : {}), ...(p.story && p.story.id ? { storyId: String(p.story.id) } : {}) } });
             } catch (err) {

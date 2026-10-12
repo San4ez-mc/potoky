@@ -2260,18 +2260,20 @@ const PAUSE_24H_MS = 24 * 3600 * 1000;
 async function hardExpirePauses() {
     try {
         const cutoff = Date.now() - PAUSE_24H_MS;
-        const sessions = await db.session.findMany({
-            where: { isActive: true, context: { path: ['funnelPaused'], equals: true } },
-            select: { id: true, botId: true, context: true },
-            take: 500,
-        });
+        // 12.10: раніше брались 500 БУДЬ-ЯКИХ сесій на паузі з усієї платформи — 4520 прострочених пауз менеджера так і висіли
+        // (клієнт наступного дня писав — тиша). Тепер вибірка — лише прострочені паузи менеджера, свіжіші розмови першими.
+        const ids = await db.$queryRawUnsafe(`select id from sessions where "isActive" and context->>'funnelPaused' = 'true'
+            and context->>'pausedBy' in ('manager_message', 'manual') and (context->>'pausedAt')::timestamptz < $1
+            order by "lastActive" desc limit 500`, new Date(cutoff)).catch((e) => { logger.warn('[zernioHandler] hardExpirePauses query: ' + e.message); return []; });
+        if (!ids.length) return;
+        const sessions = await db.session.findMany({ where: { id: { in: ids.map((r) => r.id) } }, select: { id: true, botId: true, context: true } });
         for (const s of sessions) {
             try {
                 const ctx = s.context || {};
                 if (ctx.pausedBy !== 'manager_message' && ctx.pausedBy !== 'manual') continue; // test_mode/user_locked — ніколи автоматично
                 const pausedAt = ctx.pausedAt ? new Date(ctx.pausedAt).getTime() : 0;
                 if (!pausedAt || pausedAt > cutoff) continue;
-                await db.session.update({ where: { id: s.id }, data: { context: { ...ctx, funnelPaused: false, pausedBy: null, pausedAt: null, resumedBy: 'auto_24h', resumedAt: new Date().toISOString() } } });
+                await db.session.update({ where: { id: s.id }, data: { context: { ...ctx, funnelPaused: false, pausedBy: null, pausedAt: null, adminEngaged: false, resumedBy: 'auto_24h', resumedAt: new Date().toISOString() } } });
                 logger.info('[zernioHandler] auto-resumed after 24h pause ceiling', { sessionId: s.id, wasPausedBy: ctx.pausedBy });
             } catch (e) { logger.warn('[zernioHandler] hardExpirePauses session error', { sessionId: s.id, error: e.message }); }
         }

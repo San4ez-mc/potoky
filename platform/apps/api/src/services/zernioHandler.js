@@ -2290,7 +2290,7 @@ const _silenceAlertAt = {};
 async function checkBotSilence() {
     try {
         const since = new Date(Date.now() - 30 * 60 * 1000);
-        const sessions = await db.session.findMany({ where: { isTest: false, startedAt: { gte: since } }, select: { id: true, botId: true, context: true } });
+        const sessions = await db.session.findMany({ where: { isTest: false, startedAt: { gte: since }, bot: { isActive: true } }, select: { id: true, botId: true, context: true } }); // неактивна (архівна) воронка не відповідає за задумом — не тривога
         if (!sessions.length) return;
         const msgs = await db.message.findMany({ where: { sessionId: { in: sessions.map((s) => s.id) } }, select: { sessionId: true, role: true, createdAt: true, metadata: true } });
         const bySess = {}; for (const m of msgs) (bySess[m.sessionId] ||= []).push(m);
@@ -2411,8 +2411,12 @@ async function pollZernioConversations(opts = {}) {
             // Один Zernio-акаунт підключений до кількох воронок (клон/форвард) — опитуємо раз, цільовою воронкою.
             const target = await resolveZernioTargetBot(botId).catch(() => botId);
             if (target !== botId || seenAccounts.has(k.ZERNIO_ACCOUNT_ID)) continue;
-            if ((await require('./metaChannel').channelOf(target)) === 'meta') continue;
+            // Акаунт позначаємо опитаним ДО пропуску meta-воронки: інакше той самий акаунт Zernio опитувався через іншу воронку з
+            // тими ж ключами (12.10: архівний бекап cf839c19 — 182 зайві сесії і хибні «БОТ МОВЧИТЬ»). Неактивні воронки не опитуємо.
+            const _active = await db.bot.findUnique({ where: { id: target }, select: { isActive: true } }).catch(() => null);
+            if (!(_active && _active.isActive)) continue; // неактивна не «займає» акаунт — його опитає робоча воронка
             seenAccounts.add(k.ZERNIO_ACCOUNT_ID);
+            if ((await require('./metaChannel').channelOf(target)) === 'meta') continue;
             bots.push({ botId, keys: k, minutes });
         }
     } catch (e) { logger.warn('[zernioHandler] poll: keys load failed: ' + e.message); return; }

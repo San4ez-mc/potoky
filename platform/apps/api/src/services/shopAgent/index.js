@@ -15,6 +15,7 @@ const { resolveIgLink, LINK_RE } = require('./igLink');
 const { understand } = require('./understand');
 const { runPolicy, matchColor, breakLoop } = require('./policy');
 const { textFromJsonLike } = require('./compose');
+const SessionReset = require('../sessionReset');
 const _noCreditBotAlertAt = new Map(); // botId -> ts загального сигналу «кредити Claude закінчились»
 
 /** Прибрати з ВЛАСНОГО тексту бота речення, що просять зріст і вагу (викликається, лише коли вони вже відомі). */
@@ -190,6 +191,19 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
         }
         await db.session.update({ where: { id: sessionId }, data: { context: cleanJsonDeep(ctx) } }).catch(() => {});
         return { replies: [], understanding: u, trace: A.trace, ctx, aiDown: true };
+    }
+    // Минуле замовлення вже не актуальне (давнє або клієнт прийшов з новим товаром) — забуваємо стан того продажу, а не людину,
+    // і цей хід іде як нова покупка (12.10, Олексій: замовлення 35 днів тому → «додатковий товар передаю менеджеру» замість ціни).
+    {
+        const ph = u.productHint || {};
+        const otherArticle = !!(ph.article && !(ctx.product && ctx.product.sku && String(ctx.product.sku).trim().toLowerCase() === String(ph.article).trim().toLowerCase()));
+        const why = SessionReset.shouldArchiveOrder(ctx, { newProductSignal: !!(A.turnSharedPost || A.newEntryAd || otherArticle || ph.fromList) });
+        if (why) {
+            const order = ctx.crmOrderId;
+            SessionReset.archiveOrderInPlace(ctx, { reason: why, signals: { sharedPost: !!A.turnSharedPost, entryAd: A.newEntryAd, story: !!A.turnStory, comment: !!(ctx.commentId && ctx.commentReplyPosted === false) } });
+            A.trace.push({ step: 'order_archived', reason: why, order });
+            logger.info('[shopAgent] минуле замовлення архівовано — нова покупка', { botId, sessionId, reason: why, order });
+        }
     }
     try { await runPolicy(A, u); }
     catch (e) {

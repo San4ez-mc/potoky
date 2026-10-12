@@ -187,11 +187,16 @@ router.post('/instagram/:botId',
         const botId = req.params.botId;
         const body = req.body;
 
-        // TODO(security): коли клієнт віддасть INSTAGRAM_APP_SECRET — додати перевірку
-        // підпису X-Hub-Signature-256 над сирим тілом (потрібен rawBody-мідлвар лише
-        // для цього маршруту, щоб не чіпати глобальний body-parser інших воронок).
+        // Підпис X-Hub-Signature-256 (services/metaSignature.js): секрети — у цільовій воронці (ZERNIO_FORWARD_BOT_ID).
+        // Без ключа META_SIGNATURE_ENFORCE=1 лише записуємо результат, нічого не блокуємо.
+        const rawBuffer = req.rawBuffer; const sigHeader = req.get('x-hub-signature-256');
         setImmediate(async () => {
             try {
+                const sig = require('../services/metaSignature');
+                const target = await require('../services/zernioHandler').resolveZernioTargetBot(botId);
+                const v = await sig.verify(target, rawBuffer, sigHeader);
+                sig.record(target, v);
+                if (!v.ok && v.enforce) return;
                 const { handleInstagramEvent } = require('../services/instagramHandler');
                 const result = await handleInstagramEvent(botId, body);
                 logger.info('Instagram webhook event processed', { botId, object: body?.object, ...result });

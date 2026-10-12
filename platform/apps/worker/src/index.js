@@ -454,53 +454,64 @@ const VOLATILE_CONTEXT_KEYS = [
     'returningCustomerData', 'hasFreshSignalThisTurn', 'hasProductSignal', 'productJustPresented',
     'catalogHint', 'catalogHintCount', 'catalogHintTotal', 'catalogCategories', 'unknownTurns',
 ];
+// 2026-10-12: (1) вибірка — лише сесії, які справді треба скинути (раніше take:300 з усієї платформи без фільтра: ~273 з 300 уже
+// скинуті, до решти черга не доходила — на goverla лишилось 460 сесій зі старим замовленням); (2) після покупки — спільне правило
+// sessionReset.js (той самий, що перевіряє хід агента): замовлення архівується, коли воно старше 30 днів. Раніше — через 1 год після
+// покупки, і разом із ним зникали питання «де посилка / коли відправка», на які агент відповідає з даних замовлення.
+const SessionReset = require('../../api/src/services/sessionReset');
 async function resetStaleOrCompletedSessions() {
     try {
         const now = Date.now();
-        const sessions = await db.session.findMany({
-            where: { isActive: true, isTest: false, lastActive: { lte: new Date(now - SESSION_RESET_MIN_IDLE_MS) } },
-            select: { id: true, botId: true, context: true, lastActive: true },
-            take: 300,
-        });
         // Скидання — логіка магазину: «мовчить добу без покупки → почнемо з вітання».
         // Для довгої розмови це руйнівно: разом з flowRuntime зникає історія діалогу,
         // і клієнтка, що відклала опитування на день, наступного разу почала б його
         // з першого питання. Тому вмикається ключем воронки SESSION_AUTO_RESET.
-        const allowed = new Set(
-            (await db.funnelKey.findMany({
-                where: { key: 'SESSION_AUTO_RESET', value: { in: ['1', 'true', 'on', 'yes'] } },
-                select: { botId: true },
-            })).map((k) => k.botId),
-        );
-
+        const allowed = (await db.funnelKey.findMany({
+            where: { key: 'SESSION_AUTO_RESET', value: { in: ['1', 'true', 'on', 'yes'] } },
+            select: { botId: true },
+        })).map((k) => k.botId);
+        if (!allowed.length) return;
+        const staleOrderBefore = now - SessionReset.ORDER_STALE_MS;
+        const ids = await db.$queryRawUnsafe(`
+            select id from sessions
+            where "botId"::text = any($1::text[]) and "isActive" and not "isTest"
+              and "lastActive" <= $2 and context ? 'flowRuntime'
+              and coalesce(context->>'adminEngaged','false') <> 'true' and coalesce(context->>'funnelPaused','false') <> 'true'
+              and (context->>'resetAt' is null or (context->>'resetAt')::bigint < (extract(epoch from "lastActive") * 1000)::bigint)
+              and (
+                (context->>'crmOrderId' is null and "lastActive" <= $3)
+                or (context->>'crmOrderId' is not null and coalesce((context->>'orderRefAt')::bigint, (context->>'requisitesSentAt')::bigint, 0) between 1 and $4)
+              )
+            order by "lastActive" desc limit 300`, allowed, new Date(now - SESSION_RESET_MIN_IDLE_MS), new Date(now - 24 * 3600 * 1000), staleOrderBefore);
+        if (!ids.length) return;
+        const sessions = await db.session.findMany({ where: { id: { in: ids.map((r) => r.id) } }, select: { id: true, botId: true, context: true, lastActive: true } });
+        let done = 0;
         for (const s of sessions) {
             try {
-                if (!allowed.has(s.botId)) continue;
                 const ctx = (typeof s.context === 'object' ? s.context : JSON.parse(s.context || '{}')) || {};
-                if (!ctx.flowRuntime) continue; // не flow-сесія (напр. курс/контент-бот) — не чіпаємо
-                if (ctx.adminEngaged || ctx.funnelPaused) continue; // людина зараз веде розмову — не втручаємось
-                const lastActiveMs = new Date(s.lastActive).getTime();
-                if (ctx.resetAt && lastActiveMs <= ctx.resetAt) continue; // вже скинуто, нової активності після скидання не було
-
-                const ageHours = (now - lastActiveMs) / 3600000;
-                const purchased = !!ctx.crmOrderId;
-                const silentTooLong = ageHours >= 24;
-                if (!purchased && !silentTooLong) continue;
-
-                const cleanCtx = { ...ctx };
-                // v3 (2026-09-04): тихе скидання (24h без покупки) лишає товарний скоуп — наступне "доброго дня"
-                // піде через n_welcome_back ("ви цікавились X, ще актуально?"), а не "покажіть товар" з нуля.
-                // Після ПОКУПКИ — повне очищення, як і було.
-                const KEEP_ON_SILENT = new Set(['product', 'colorChoice', 'sizeInput', 'recommendedSize', 'sizeSource', 'orderData', 'np', 'entryAd', 'sizeAskedFor']);
-                for (const k of VOLATILE_CONTEXT_KEYS) { if (!purchased && KEEP_ON_SILENT.has(k)) continue; delete cleanCtx[k]; }
-                cleanCtx.flowRuntime = {}; // engine сам знайде start-ноду на наступному кроці
-                cleanCtx.resetAt = now;
-                cleanCtx.resetReason = purchased ? 'purchased' : 'silent_24h';
-
+                const ageHours = (now - new Date(s.lastActive).getTime()) / 3600000;
+                let cleanCtx, reason;
+                if (ctx.crmOrderId) {
+                    reason = SessionReset.shouldArchiveOrder(ctx, { now });
+                    if (!reason) continue;
+                    cleanCtx = SessionReset.archiveOrderInPlace({ ...ctx }, { reason, now });
+                } else {
+                    if (ageHours < 24) continue;
+                    cleanCtx = { ...ctx };
+                    // v3 (2026-09-04): тихе скидання (24h без покупки) лишає товарний скоуп — наступне "доброго дня"
+                    // піде через n_welcome_back ("ви цікавились X, ще актуально?"), а не "покажіть товар" з нуля.
+                    const KEEP_ON_SILENT = new Set(['product', 'colorChoice', 'sizeInput', 'recommendedSize', 'sizeSource', 'orderData', 'np', 'entryAd', 'sizeAskedFor']);
+                    for (const k of VOLATILE_CONTEXT_KEYS) { if (KEEP_ON_SILENT.has(k)) continue; delete cleanCtx[k]; }
+                    reason = 'silent_24h';
+                    cleanCtx.resetAt = now; cleanCtx.resetReason = reason;
+                }
+                cleanCtx.flowRuntime = { ...(cleanCtx.flowRuntime && cleanCtx.flowRuntime.deliveryLog ? { deliveryLog: cleanCtx.flowRuntime.deliveryLog } : {}) }; // engine сам знайде start-ноду; лог доставки лишаємо
                 await db.session.update({ where: { id: s.id }, data: { context: cleanCtx } });
-                logger.info('[session-reset] сесію скинуто до старту воронки', { sessionId: s.id, reason: cleanCtx.resetReason, ageHours: Math.round(ageHours) });
+                done++;
+                logger.info('[session-reset] сесію скинуто до старту воронки', { sessionId: s.id, reason, ageHours: Math.round(ageHours) });
             } catch (e) { logger.warn('[session-reset] session error', { sessionId: s.id, error: e.message }); }
         }
+        if (done) logger.info('[session-reset] прохід', { candidates: ids.length, reset: done });
     } catch (err) { logger.error('[session-reset] checker error', { error: err.message }); }
 }
 setTimeout(() => { resetStaleOrCompletedSessions(); setInterval(resetStaleOrCompletedSessions, SESSION_RESET_INTERVAL_MS); }, 4 * 60 * 1000);

@@ -108,6 +108,8 @@ function mcpRequestLogger(req, res, next) {
 }
 
 function captureRawBody(req, _res, buffer) {
+    // Вебхук Instagram: підпис X-Hub-Signature-256 рахується від сирих байтів тіла (services/metaSignature.js).
+    if (String(req.originalUrl || '').startsWith('/webhook/instagram/')) { req.rawBuffer = Buffer.from(buffer); return; }
     if (!isMcpRequestPath(req.originalUrl)) return;
     req.rawBody = buffer.toString('utf8');
 }

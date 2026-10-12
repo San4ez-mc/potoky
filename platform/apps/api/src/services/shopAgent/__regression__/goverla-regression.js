@@ -929,6 +929,22 @@ async function main() {
             Asks.record(B);
             check('35.2 Клієнт бачив прохання кольору й написав інше — лічильник 2', B.ctx.agent.asks.color && B.ctx.agent.asks.color.n === 2 && Asks.times(B, 'color') === 2, JSON.stringify(B.ctx.agent.asks));
         }
+        // 36. Минуле замовлення (sessionReset.js, 12.10 — Олексій: замовлення 35 днів тому → «додатковий товар передаю менеджеру»).
+        {
+            const R = require('../../sessionReset');
+            const now = Date.now(); const day = 86400000;
+            const order = (ageDays, extra) => ({ crmOrderId: 'o1', orderRef: 'R1', orderRefAt: now - ageDays * day, product: { sku: 'A0165', name: 'Бомбер' }, payStatus: 'confirmed', supplierTtn: '2045', sizeInput: { height: 180, weight: 85, size: 'L' }, orderData: { fullName: 'Олексій С', phone: '0671112233', city: 'Харків', branch: '12' }, igUsername: 'oleksii', psid: '111', channel: 'meta', funnelPaused: false, adTouch: { first: { externalId: 'ad1' } }, entryAdId: 'oldAd', agent: { version: 2, turns: 9, lastAsk: 'оформляємо?', presentedSku: 'A0165', seenEntryAd: 'oldAd' }, ...(extra || {}) });
+            check('36.1 Замовлення 35 днів — архівується навіть без нового товару', R.shouldArchiveOrder(order(35), { now }) === 'order_older_30d', '');
+            check('36.2 Замовлення 3 дні + новий товар — архівується', R.shouldArchiveOrder(order(3), { newProductSignal: true, now }) === 'new_product_after_48h', '');
+            check('36.3 Замовлення 3 дні без нового товару — НЕ чіпаємо (питання про посилку)', R.shouldArchiveOrder(order(3), { now }) === null, '');
+            check('36.4 Свіже замовлення (1 день) + новий артикул — НЕ архівуємо («додати до посилки»)', R.shouldArchiveOrder(order(1), { newProductSignal: true, now }) === null, '');
+            check('36.5 Повернення в процесі — не архівуємо', R.shouldArchiveOrder(order(40, { returnFlow: { stage: 'await_ttn' } }), { now }) === null, '');
+            const c = order(35, { sharedPost: { kind: 'reel', caption: 'Кофта A0187' } });
+            const same = c; R.archiveOrderInPlace(c, { reason: 'order_older_30d', signals: { sharedPost: true }, now });
+            check('36.6 Стан продажу забуто (замовлення, товар, крок агента, стара реклама)', same === c && !c.crmOrderId && !c.product && !c.payStatus && !c.supplierTtn && !c.agent.lastAsk && !c.agent.presentedSku && !c.entryAdId, JSON.stringify(c));
+            check('36.7 Людину не забуто (id, нікнейм, зріст/вага, ПІБ/телефон/адреса, рекламний дотик)', c.psid === '111' && c.igUsername === 'oleksii' && c.sizeInput.height === 180 && !c.sizeInput.size && c.customer.phone === '0671112233' && c.customer.branch === '12' && c.adTouch.first.externalId === 'ad1', JSON.stringify(c));
+            check('36.8 Сигнал цього ходу (пересланий рілс) лишився, замовлення — в історії', c.sharedPost && /A0187/.test(c.sharedPost.caption) && c.previousOrders.length === 1 && c.previousOrders[0].crmOrderId === 'o1' && c.previousOrders[0].ttn === '2045', JSON.stringify(c.previousOrders));
+        }
         check('31.2 Текст із переносами не чіпається', paragraphize('Рядок один.\nРядок два, досить довгий, щоб перевищити межу в сто сорок символів, і ще трохи тексту, щоб точно перевищити.') === 'Рядок один.\nРядок два, досить довгий, щоб перевищити межу в сто сорок символів, і ще трохи тексту, щоб точно перевищити.', '');
     }
 

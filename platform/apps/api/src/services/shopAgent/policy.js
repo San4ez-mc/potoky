@@ -13,7 +13,7 @@ const { syncSetComponents } = require('./orderSource');
 const { hasCategoryWord, categoryWordIsUpsell, categoryWordIsSetComponent, categoryWordIsMain } = require('./signal');
 const { resolveColorMention } = require('./cart');
 const { classifyKbQuestion, kbSimilarity, kbSimilar } = require('./kbRules');
-const { catalogFacts, catalogProducts, otherCategoryProducts, colorHasSize, productSizes, sizeKey } = require('./catalogFacts');
+const { catalogFacts, catalogProducts, otherCategoryProducts, colorHasSize, productSizes, sizeKey, sizeTokens } = require('./catalogFacts');
 const { kbMatch, sameAsEscalated } = require('./kbMatch');
 const { extractHeightWeight } = require('./understand');
 const { matchProduct } = require('./productMatch');
@@ -690,7 +690,7 @@ function humanizeParamsPrompt(prompt) {
 function chartLinesFor(pp, text) {
     const table = String((pp && pp.sizeChartText) || ''); if (!table) return '';
     const canon = (x) => { const t = String(x).toUpperCase().trim(); return t === 'XXL' ? '2XL' : (t === 'XXXL' ? '3XL' : t); };
-    const want = (String(text || '').toUpperCase().match(/(?<![A-Z0-9])(XXXL|XXL|3XL|2XL|XL|XS|S|M|L)(?![A-Z0-9])/g) || []).map(canon);
+    const want = sizeTokens(text).map(canon); // одне джерело розмірів у тексті, з кириличними «М», «Л», «ХЛ» (catalogFacts.sizeTokens)
     if (!want.length) return '';
     const [head, ...rows] = table.split('\n');
     const hit = rows.filter((r) => want.includes(canon(r.split(' — ')[0])));

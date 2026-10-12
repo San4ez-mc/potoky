@@ -477,7 +477,19 @@ async function retryUnanswered() {
                 if (ctx.funnelPaused || ctx.adminEngaged) continue;
                 if ((await channelOf(s.botId)) !== 'meta') continue;
                 if (await isBlockedByTestMode(s.botId, [ctx.igUsername, ctx.senderName])) continue;
-                const last = await db.message.findMany({ where: { sessionId: s.id, role: { in: ['user', 'assistant'] } }, orderBy: { createdAt: 'desc' }, take: 15, select: { role: true, content: true, createdAt: true, metadata: true } });
+                const last = await db.message.findMany({ where: { sessionId: s.id, role: { in: ['user', 'assistant'] } }, orderBy: { createdAt: 'desc' }, take: 15, select: { id: true, role: true, content: true, createdAt: true, metadata: true } });
+                // Відповідь бота збережена, але не відправлена (процес перезапустився між «готово» і «надіслано» — 12.10, v_khanenko25:
+                // колір джинсів так і не дійшов, розмову підхопив менеджер). Доставляємо її, якщо після неї клієнт нічого не писав.
+                const undelivered = []; for (const m of last) { const md = m.metadata || {}; if (m.role !== 'assistant' || md.hidden || md.status || !(md.nodeId || md.source === 'shop_agent') || (md.source && md.source !== 'shop_agent')) break; undelivered.unshift(m); }
+                if (undelivered.length && now - undelivered[0].createdAt.getTime() > 60 * 1000) {
+                    const dkey = 'deliver:' + undelivered[0].id;
+                    const dr = ctx.metaRetry && ctx.metaRetry.key === dkey ? ctx.metaRetry : { key: dkey, n: 0, next: 0 };
+                    if (dr.n >= 2 || now < dr.next) continue;
+                    await db.session.update({ where: { id: s.id }, data: { context: { ...ctx, metaRetry: { key: dkey, n: dr.n + 1, next: now + 3 * 60 * 1000 } } } }).catch(() => {});
+                    logger.info('[metaChannel] доставка відповіді, що не пішла', { sessionId: s.id, n: undelivered.length, attempt: dr.n + 1 });
+                    await deliver(s.botId, s.id, String(ctx.psid || ''), undelivered);
+                    continue;
+                }
                 const unanswered = []; for (const m of last) { if (m.role === 'assistant' && !(m.metadata || {}).hidden) break; if (m.role === 'user') unanswered.unshift(m); }
                 if (!unanswered.length) continue;
                 const lastAt = unanswered[unanswered.length - 1].createdAt.getTime();

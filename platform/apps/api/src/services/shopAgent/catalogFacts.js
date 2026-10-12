@@ -145,4 +145,15 @@ function productSizes(p) {
     return line ? uniq(line.split(/[,;]+/)) : [];
 }
 
-module.exports = { catalogFacts, catalogProducts, otherCategoryProducts, colorHasSize, productSizes, sizeKey };
+/**
+ * Розміри одягу, названі в тексті (дані, не зміст — 15.17), з кириличними позначеннями: «М і L», «ХЛ», «ХХЛ» → M, L, XL, XXL.
+ * 12.10 (natalisigetii): «заміри розміру М і L» з кириличною «М» → бот дав заміри лише для L. «С» не беремо (російське «с»),
+ * «м» після числа — метри («1.8 м»), не розмір.
+ */
+const CYR_SIZE = { 'ХХХЛ': 'XXXL', 'ХХЛ': 'XXL', 'ХЛ': 'XL', 'ХС': 'XS', 'Л': 'L', 'М': 'M' };
+function sizeTokens(text) {
+    const t = String(text || '').toUpperCase().replace(/(?<![A-ZА-ЯІЇЄҐ0-9])(?<!\d[.,]?\s?)(ХХХЛ|ХХЛ|ХЛ|ХС|Л|М)(?![A-ZА-ЯІЇЄҐ0-9])/g, (m) => CYR_SIZE[m]);
+    return t.match(/(?<![A-Z0-9])(XXXL|XXL|3XL|2XL|XL|XS|S|M|L)(?![A-Z0-9])/g) || [];
+}
+
+module.exports = { catalogFacts, catalogProducts, otherCategoryProducts, colorHasSize, productSizes, sizeKey, sizeTokens };

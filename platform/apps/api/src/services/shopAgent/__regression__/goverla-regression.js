@@ -954,6 +954,13 @@ async function main() {
             check('36.7 Людину не забуто (id, нікнейм, зріст/вага, ПІБ/телефон/адреса, рекламний дотик)', c.psid === '111' && c.igUsername === 'oleksii' && c.sizeInput.height === 180 && !c.sizeInput.size && c.customer.phone === '0671112233' && c.customer.branch === '12' && c.adTouch.first.externalId === 'ad1', JSON.stringify(c));
             check('36.8 Сигнал цього ходу (пересланий рілс) лишився, замовлення — в історії', c.sharedPost && /A0187/.test(c.sharedPost.caption) && c.previousOrders.length === 1 && c.previousOrders[0].crmOrderId === 'o1' && c.previousOrders[0].ttn === '2045', JSON.stringify(c.previousOrders));
         }
+        // 37. Розміри в тексті з кириличними позначеннями (12.10 natalisigetii: «заміри розміру М і L» → лише L).
+        {
+            const { sizeTokens } = require('../catalogFacts');
+            check('37.1 «М і L» (кирилична М) → M і L', JSON.stringify(sizeTokens('Надішліть будь ласка заміри розміру М і L')) === '["M","L"]', JSON.stringify(sizeTokens('Надішліть будь ласка заміри розміру М і L')));
+            check('37.2 «хл і ххл» → XL, XXL', JSON.stringify(sizeTokens('заміри на хл і ххл')) === '["XL","XXL"]', '');
+            check('37.3 «1.8 м» — метри, не розмір M', sizeTokens('зріст 1.8 м, вага 80').length === 0, JSON.stringify(sizeTokens('зріст 1.8 м, вага 80')));
+        }
         check('31.2 Текст із переносами не чіпається', paragraphize('Рядок один.\nРядок два, досить довгий, щоб перевищити межу в сто сорок символів, і ще трохи тексту, щоб точно перевищити.') === 'Рядок один.\nРядок два, досить довгий, щоб перевищити межу в сто сорок символів, і ще трохи тексту, щоб точно перевищити.', '');
     }
 

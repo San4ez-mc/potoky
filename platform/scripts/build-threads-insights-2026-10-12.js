@@ -29,7 +29,7 @@ async function main() {
     let bot = await db.bot.findFirst({ where: { slug: SLUG } });
     if (!bot) {
         await callTool('new_bot', {
-            projectSlug: 'content-social', name: 'Threads: збір метрик і оновлення токена', slug: SLUG,
+            projectSlug: 'kiro', name: 'Threads: збір метрик і оновлення токена', slug: SLUG,
             description: 'Щодоби збирає метрики опублікованих постів Threads (перегляди, лайки, відповіді, репости) у content2 і оновлює токен Threads.',
             goal: 'Дати контент-менеджеру реальні цифри ефективності постів і не втратити доступ до Threads через спливання токена.', trigger: 'webhook', isActive: true,
         });

@@ -327,6 +327,9 @@ async function handleComment(botId, own, v) {
     const patch = {
         commentId: String(commentId), commentText, commentMediaId: mediaId ? String(mediaId) : null, entryAd: mediaId ? String(mediaId) : undefined,
         ...(postCaption ? { sharedPost: { kind: 'post', mediaId: String(mediaId), caption: postCaption } } : {}),
+        // Товар коментаря — тривка підказка на 72 год (productMatch: commentProductArticle). sharedPost живе лише один хід: якщо
+        // ходу на коментар не було (тестовий режим, відповів менеджер), наступне «Доброго дня» його вже не бачило (12.10, dk.ukr).
+        ...(postCaption && /Артикул\s*:?\s*[^\s,;]+/i.test(postCaption) ? { commentProductArticle: postCaption.match(/Артикул\s*:?\s*([^\s,;]+)/i)[1].replace(/[.]+$/, ''), commentProductName: postCaption.split('\n')[0].slice(0, 120), commentProductAt: new Date().toISOString() } : {}),
         commentReplyPosted: false, commentCategory: '',
         ...(from.username ? { igUsername: from.username } : {}),
     };

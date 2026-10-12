@@ -70,8 +70,12 @@ function record(A) {
     const clientAt = Math.max(0, ...(A.history || []).filter((m) => m.who === 'client').map((m) => new Date(m.sentAt || m.at).getTime() || 0));
     // Пачка: клієнт написав ДО того, як побачив попереднє прохання (07.10 tatiananepota: 5 пересилань поста за 14 с) — не рахуємо.
     if (prev && !(clientAt > Number(prev.at || 0))) { prev.at = Date.now(); return { slot: f.slot, n: prev.n, limit: f.limit, step, counted: false }; }
-    const n = prev ? prev.n + 1 : 1;
-    asks[f.slot] = { n, at: Date.now(), step };
+    // Звужене питання — це рух уперед, а не повтор (12.10, dk.ukr: «що цікавить?» ×2 → «Така кофта» → бот показав би 3 кофти, а
+    // лічильник дорахував до 3 і «зациклився»). Слот «товар»: перехід із «що цікавить» до списку або НОВИЙ список — лічба з початку.
+    const key = f.slot === 'unknown' && /^hint/.test(step) ? String(ctx.catalogHintSkus || '') : '';
+    const progressed = !!prev && f.slot === 'unknown' && /^hint/.test(step) && (!/^hint/.test(String(prev.step || '')) || (key && key !== String(prev.key || '')));
+    const n = prev && !progressed ? prev.n + 1 : 1;
+    asks[f.slot] = { n, at: Date.now(), step, ...(key ? { key } : {}) };
     return { slot: f.slot, n, limit: f.limit, step, counted: true };
 }
 

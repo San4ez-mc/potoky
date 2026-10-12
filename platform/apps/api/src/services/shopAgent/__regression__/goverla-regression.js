@@ -928,6 +928,15 @@ async function main() {
             B.history = [{ who: 'client', text: 'а яка тканина?', at: new Date(), sentAt: new Date() }]; B.out = [{ text: 'Яка тканина… Оберіть колір 🎨', step: 'ask_color' }];
             Asks.record(B);
             check('35.2 Клієнт бачив прохання кольору й написав інше — лічильник 2', B.ctx.agent.asks.color && B.ctx.agent.asks.color.n === 2 && Asks.times(B, 'color') === 2, JSON.stringify(B.ctx.agent.asks));
+            // 12.10 dk.ukr: «що цікавить?» ×2 → «Така кофта» → список із 3 кофт — це рух уперед, а не 3-й повтор (без «зациклився»).
+            const C = freshA(); C.ctx.agent.asks = { unknown: { n: 2, at: Date.now() - 60000, step: 'unknown' } }; C.ctx.catalogHintSkus = 'C0043,A0187,D0050';
+            C.history = [{ who: 'client', text: 'Така кофта', at: new Date(), sentAt: new Date() }]; C.out = [{ text: '1. Кофта C0043… Яка цікавить?', step: 'hint' }];
+            const rc = Asks.record(C);
+            check('35.3 Після «що цікавить» показано список — лічба з початку (1), не 3', rc && rc.n === 1 && rc.n < rc.limit, JSON.stringify(rc));
+            const D = freshA(); D.ctx.agent.asks = { unknown: { n: 2, at: Date.now() - 60000, step: 'hint', key: 'C0043,A0187,D0050' } }; D.ctx.catalogHintSkus = 'C0043,A0187,D0050';
+            D.history = [{ who: 'client', text: 'а що є?', at: new Date(), sentAt: new Date() }]; D.out = [{ text: 'Оберіть номер зі списку вище', step: 'hint_repeat' }];
+            const rd = Asks.record(D);
+            check('35.4 Той самий список утретє без вибору — це справжній повтор (3)', rd && rd.n === 3, JSON.stringify(rd));
         }
         // 36. Минуле замовлення (sessionReset.js, 12.10 — Олексій: замовлення 35 днів тому → «додатковий товар передаю менеджеру»).
         {

@@ -50,6 +50,80 @@ async function t(name, fn) { try { await fn(); passed++; console.log('✅', name
         const cb = JSON.parse(has(calls, '/cb')[0].body);
         assert.strictEqual(cb.status, 'published'); assert.strictEqual(cb.externalId, 'p1'); assert.strictEqual(cb.postGroupId, 'g1');
     });
+    await t('threads: довгий текст (740) не обрізається, а ділиться на частини ≤500 ланцюжком відповідей', async () => {
+        let n = 0;
+        const calls = mockFetch([
+            { when: (u, o) => u.includes('/threads?') && o.method === 'POST', reply: () => resp({ id: 'c' + (++n) }) },
+            { when: (u) => u.includes('?fields=status'), reply: resp({ status: 'FINISHED' }) },
+            { when: (u) => u.includes('/threads_publish'), reply: (u) => resp({ id: 'p' + u.match(/creation_id=c(\d+)/)[1] }) },
+            { when: (u) => u.includes('fields=permalink'), reply: resp({ permalink: 'https://threads.net/x' }) },
+        ]);
+        const sent = []; for (let i = 0; i < 12; i++) sent.push('Це речення номер ' + i + ' для перевірки довгого тексту у Threads.');
+        const text = sent.join(' ');
+        assert.ok(Array.from(text).length > 500);
+        const r = await run('publish-threads-node-code.js', { items: [{ text }] }, { THREADS_USER_ID: 'u', THREADS_ACCESS_TOKEN: 't' });
+        assert.strictEqual(r.publishError, null);
+        const posts = has(calls, '/threads?').map((c) => decodeURIComponent(String(c.body).match(/text=([^&]*)/)[1]));
+        assert.ok(posts.length >= 2, 'мав поділити на 2+ частини, а не обрізати');
+        posts.forEach((x) => assert.ok(Array.from(x).length <= 500, 'частина ≤500: ' + Array.from(x).length));
+        assert.strictEqual(posts.join(' ').replace(/\s+/g, ' '), text, 'жодної втрати тексту');
+        assert.ok(String(has(calls, '/threads?')[1].body).includes('reply_to_id='), 'друга частина — відповідь на першу');
+    });
+    await t('threads: тимчасовий «Media Not Found» (24/4279009) при публікації повторюється', async () => {
+        let tries = 0;
+        const calls = mockFetch([
+            { when: (u, o) => u.includes('/threads?') && o.method === 'POST', reply: resp({ id: 'c9' }) },
+            { when: (u) => u.includes('?fields=status'), reply: resp({ status: 'FINISHED' }) },
+            { when: (u) => u.includes('/threads_publish'), reply: () => ++tries < 3 ? resp({ error: { code: 24, error_subcode: 4279009, message: 'The requested resource does not exist' } }) : resp({ id: 'p9' }) },
+            { when: (u) => u.includes('fields=permalink'), reply: resp({ permalink: 'https://threads.net/x' }) },
+        ]);
+        const r = await run('publish-threads-node-code.js', { items: [{ text: 'короткий пост' }] }, { THREADS_USER_ID: 'u', THREADS_ACCESS_TOKEN: 't' });
+        assert.strictEqual(r.threadId, 'p9'); assert.strictEqual(r.publishError, null); assert.strictEqual(tries, 3);
+    });
+    // ── Threads: збір метрик (threads-insights) ──────────────────────────────────────
+    const INS_KEYS = { THREADS_USER_ID: 'u1', THREADS_ACCESS_TOKEN: 'tok', CONTENT2_TOKEN: 'c2t', MCP_SECRET: 'mcp', PUBLISH_THREADS_BOT_ID: 'pb', SELF_BOT_ID: 'sb' };
+    const farFuture = Math.floor(Date.now() / 1000) + 50 * 86400;
+    await t('insights: метрики постів → content2, підписники; без повідомлення власнику', async () => {
+        const calls = mockFetch([
+            { when: (u) => u.includes('debug_token'), reply: resp({ data: { is_valid: true, expires_at: farFuture } }) },
+            { when: (u) => u.includes('/api/webhooks/post-metrics') && u.includes('platform=threads'), reply: resp({ ok: true, posts: [{ postGroupId: 'g1', externalId: 'e1' }, { postGroupId: 'g2', externalId: 'e2' }] }) },
+            { when: (u) => u.includes('/e1/insights'), reply: resp({ data: [{ name: 'views', values: [{ value: 100 }] }, { name: 'likes', values: [{ value: 5 }] }, { name: 'replies', values: [{ value: 2 }] }] }) },
+            { when: (u) => u.includes('/e2/insights'), reply: resp({ error: { message: 'deleted' } }, { status: 400 }) },
+            { when: (u, o) => u.includes('/api/webhooks/post-metrics') && o.method === 'POST', reply: resp({ ok: true, updated: 1 }) },
+            { when: (u) => u.includes('threads_insights'), reply: resp({ data: [{ name: 'followers_count', total_value: { value: 321 } }] }) },
+        ]);
+        const r = await run('threads-insights-node-code.js', {}, INS_KEYS);
+        assert.strictEqual(r.collected, 2); assert.strictEqual(r.updated, 1); assert.strictEqual(r.skipped, 1); assert.strictEqual(r.followers, 321);
+        assert.strictEqual(r.threadsInsightsMessage, '');
+        const body = JSON.parse(has(calls, '/api/webhooks/post-metrics', 'POST')[0].body);
+        assert.deepStrictEqual(body.metrics, [{ postGroupId: 'g1', views: 100, likes: 5, replies: 2 }]);
+        assert.strictEqual(has(calls, 'refresh_access_token').length, 0, 'токен ще довго живе — без оновлення');
+    });
+    await t('insights: токен спливає < 30 днів → refresh, новий токен записано в обидві воронки, повідомлення власнику', async () => {
+        const soon = Math.floor(Date.now() / 1000) + 5 * 86400;
+        const calls = mockFetch([
+            { when: (u) => u.includes('debug_token'), reply: resp({ data: { is_valid: true, expires_at: soon } }) },
+            { when: (u) => u.includes('refresh_access_token'), reply: resp({ access_token: 'NEWTOK', expires_in: 5184000 }) },
+            { when: (u) => u.includes('/api/mcp-edit'), reply: resp({ result: {} }) },
+            { when: (u) => u.includes('/api/webhooks/post-metrics') && u.includes('platform=threads'), reply: resp({ ok: true, posts: [] }) },
+            { when: (u) => u.includes('threads_insights'), reply: resp({ data: [] }) },
+        ]);
+        const r = await run('threads-insights-node-code.js', {}, INS_KEYS);
+        assert.strictEqual(r.refreshed, true); assert.ok(/оновлено/.test(r.threadsInsightsMessage));
+        const writes = has(calls, '/api/mcp-edit').map((c) => JSON.parse(c.body).params.arguments);
+        assert.deepStrictEqual(writes.map((w) => w.botId).sort(), ['pb', 'sb']);
+        assert.ok(writes.every((w) => w.key === 'THREADS_ACCESS_TOKEN' && w.value === 'NEWTOK' && w.isSecret === true));
+    });
+    await t('insights: Threads відмовляє у метриках (403) → зрозуміла помилка власнику, нічого не пишемо', async () => {
+        const calls = mockFetch([
+            { when: (u) => u.includes('debug_token'), reply: resp({ data: { is_valid: true, expires_at: farFuture } }) },
+            { when: (u) => u.includes('/api/webhooks/post-metrics') && u.includes('platform=threads'), reply: resp({ ok: true, posts: [{ postGroupId: 'g1', externalId: 'e1' }] }) },
+            { when: (u) => u.includes('/e1/insights'), reply: resp({ error: { message: 'Application does not have permission for this action' } }, { status: 403 }) },
+        ]);
+        const r = await run('threads-insights-node-code.js', {}, INS_KEYS);
+        assert.ok(/threads_manage_insights/.test(r.threadsInsightsMessage), r.threadsInsightsMessage);
+        assert.strictEqual(has(calls, '/api/webhooks/post-metrics', 'POST').length, 0);
+    });
     await t('threads: ERROR контейнера → failed без публікації', async () => {
         const calls = mockFetch([
             { when: (u, o) => u.includes('/threads?') && o.method === 'POST', reply: resp({ id: 'c2' }) },

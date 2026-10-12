@@ -12,8 +12,41 @@ return (async () => {
 
   function sleep(ms) { return new Promise(function(r){ setTimeout(r, ms); }); }
 
+  // Ліміт Threads — 500 символів (кодових точок) на пост. Раніше текст мовчки різався .slice(0,500) посеред речення.
+  // Тепер довгий текст ділиться на частини ≤ LIMIT по абзацах → реченнях → словах, а частини йдуть ланцюжком відповідей.
+  var LIMIT = 490;
+  function clen(t) { return Array.from(String(t)).length; }
+  function splitText(text) {
+    text = String(text || '').trim();
+    if (clen(text) <= 500) return [text];
+    var parts = [], cur = '';
+    function push(piece, sep) {
+      if (!cur) { cur = piece; return; }
+      if (clen(cur + sep + piece) <= LIMIT) cur += sep + piece; else { parts.push(cur); cur = piece; }
+    }
+    text.split(/\n\s*\n/).forEach(function (para) {
+      para = para.trim(); if (!para) return;
+      if (clen(para) <= LIMIT) { push(para, '\n\n'); return; }
+      (para.match(/[^.!?…]+[.!?…]+["»”)]*\s*|[^.!?…]+$/g) || [para]).forEach(function (sent) {
+        sent = sent.trim(); if (!sent) return;
+        if (clen(sent) <= LIMIT) { push(sent, ' '); return; }
+        sent.split(/\s+/).forEach(function (w) { push(Array.from(w).slice(0, LIMIT).join(''), ' '); });
+      });
+    });
+    if (cur) parts.push(cur);
+    return parts;
+  }
+  // розгортаємо items: довгий текст → кілька елементів ланцюжка (медіа лише в першому)
+  var expanded = [];
+  items.forEach(function (it) {
+    it = it || {};
+    var chunks = splitText(it.text);
+    chunks.forEach(function (c, i) { expanded.push(i === 0 ? { text: c, imageUrl: it.imageUrl, videoUrl: it.videoUrl } : { text: c }); });
+  });
+  items = expanded;
+
   async function postOne(it, replyTo) {
-    var text = String(it.text||'').slice(0,500);
+    var text = String(it.text||'');   // довжину вже обмежено splitText (≤490); обрізання не потрібне
     var mt = it.videoUrl ? 'VIDEO' : (it.imageUrl ? 'IMAGE' : 'TEXT');
     var body = 'media_type='+mt+'&text='+encodeURIComponent(text);
     if(mt==='IMAGE') body += '&image_url='+encodeURIComponent(it.imageUrl);
@@ -30,11 +63,12 @@ return (async () => {
       break;
     }
     if(!cj || !cj.id) return { error:'CONTAINER_FAILED '+JSON.stringify(cj).slice(0,300) };
-    if(mt!=='TEXT'){
-      // Контейнер із медіа готується не миттєво: чекаємо статусу FINISHED (відео — до ~3 хв), а не фіксовану паузу.
+    {
+      // Контейнер готується не миттєво: чекаємо статусу FINISHED (відео — до ~3 хв, картинка ~20 с, текст ~10 с).
+      // Для тексту це теж потрібно: без паузи threads_publish інколи падав «Media Not Found» (4279009) — пост лишався неопублікованим.
       var ready = false, perr = null;
-      for (var w = 0; w < (mt==='VIDEO' ? 40 : 10); w++) {
-        await sleep(mt==='VIDEO' ? 5000 : 2000);
+      for (var w = 0; w < (mt==='VIDEO' ? 40 : (mt==='IMAGE' ? 10 : 8)); w++) {
+        await sleep(mt==='VIDEO' ? 5000 : (mt==='IMAGE' ? 2000 : 1500));
         try {
           var sr = await fetch('https://graph.threads.net/v1.0/'+cj.id+'?fields=status,error_message&'+qs);
           var sj = await sr.json();
@@ -45,8 +79,16 @@ return (async () => {
       if (perr) return { error:'MEDIA_FAILED '+perr };
       if (!ready) return { error:'MEDIA_NOT_READY (контейнер '+cj.id+' не став FINISHED вчасно)' };
     }
-    var p = await fetch(base+'/threads_publish?creation_id='+encodeURIComponent(cj.id)+'&'+qs, {method:'POST'});
-    var pj = await p.json();
+    var pj = null;
+    for (var pa = 0; pa < 3; pa++) {
+      var p = await fetch(base+'/threads_publish?creation_id='+encodeURIComponent(cj.id)+'&'+qs, {method:'POST'});
+      pj = await p.json();
+      if (pj && pj.id) break;
+      var pe = pj && pj.error;
+      // 24 / 4279009 «Media Not Found» і 1/2 — тимчасові: контейнер ще не побачила публікація; повторюємо з паузою
+      if (pe && (pe.code === 24 || pe.error_subcode === 4279009 || pe.code === 1 || pe.code === 2)) { await sleep(5000); continue; }
+      break;
+    }
     if(!pj || !pj.id) return { error:'PUBLISH_FAILED '+JSON.stringify(pj).slice(0,300) };
     return { id: pj.id };
   }

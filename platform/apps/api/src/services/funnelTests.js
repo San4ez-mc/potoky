@@ -110,7 +110,19 @@ function normalizeStep(step) {
     };
 }
 
-async function resolveJudgeApiKey(connectorId) {
+// Суддя за замовчуванням — Claude-конектор самої воронки (ключ CLAUDE_CONNECTOR_ID), а не системний ключ платформи:
+// ключі живуть у воронках (CLAUDE.md §3). 12.10: тест, створений скриптом без connectorId, впав на недійсному системному ключі.
+async function funnelJudgeConnector(botId) {
+    if (!botId) return null;
+    const k = await db.funnelKey.findFirst({ where: { botId, key: 'CLAUDE_CONNECTOR_ID' }, select: { value: true } }).catch(() => null);
+    const id = String((k && k.value) || '').trim();
+    if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
+    const c = await db.savedConnector.findUnique({ where: { id }, select: { id: true } }).catch(() => null);
+    return c ? c.id : null;
+}
+
+async function resolveJudgeApiKey(connectorId, botId) {
+    if (!connectorId) connectorId = await funnelJudgeConnector(botId);
     if (connectorId) {
         const c = await db.savedConnector.findUnique({ where: { id: connectorId }, select: { config: true } }).catch(() => null);
         const k = c?.config?.apiKey || c?.config?.api_key || c?.config?.key;
@@ -159,7 +171,7 @@ async function createTest({ botId, name, description, steps, expectedOutcome, co
             description: description || null,
             steps: normSteps,
             expectedOutcome: expectedOutcome.trim(),
-            connectorId: connectorId || null,
+            connectorId: connectorId || (await funnelJudgeConnector(botId)) || null,
             sourceSessionId: sourceSessionId || null,
             createdBy: createdBy || null,
         },
@@ -412,7 +424,7 @@ async function runTest(testId, onProgress = () => {}) {
         }
 
         onProgress({ phase: 'judge', sessionId });
-        const apiKey = await resolveJudgeApiKey(test.connectorId);
+        const apiKey = await resolveJudgeApiKey(test.connectorId, test.botId);
         let verdict;
         if (!apiKey) {
             verdict = { passed: false, reasoning: 'Немає доступного Claude API ключа для судді тесту (ні обраний конектор, ні системний ключ).', failingNodeId: null, nodeVerdicts: [] };

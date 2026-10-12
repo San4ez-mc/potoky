@@ -1804,6 +1804,14 @@ async function runPolicyInner(A, u) {
     }
     let p = P(ctx);
 
+    // Фото товару ДОПРОДАЖУ (12.10, Олексій: «Є футболки?» → бот назвав футболку L0056; «Скинь фото» / «Фото футболок!!!» → тричі фото
+    // кофти й «інших фото немає», далі «ганяю по колу» → менеджер). Про який товар фото — каже аналізатор (wantsUpsellPhoto), не регулярка.
+    if (u.wantsUpsellPhoto && p && !A.turnImage && !A.out.some((o) => o.photoUrls)) {
+        const up = Array.isArray(p.upsellItems) && p.upsellItems[0];
+        const urlsU = ((up && Array.isArray(up.photoUrls) && up.photoUrls.length) ? up.photoUrls : (p.upsellPhotoUrl ? [p.upsellPhotoUrl] : [])).filter(Boolean).slice(0, 5);
+        if (urlsU.length) { A.out.push({ photoUrls: urlsU, caption: '', step: 'upsell_photo_on_request' }); ctx.agent.upsellPhotoSent = true; u.wantsPhoto = false; }
+        else Q.add(A, u, 'Чи можна побачити фото «' + String((up && up.name) || 'товару допродажу').split(/\n/)[0] + '»?', 'upsell_photo_missing'); // фото в каталозі нема — відповість compose або менеджер
+    }
     // «Дайте фото цієї кофти» на будь-якому етапі (навіть під час вибору оплати) — надсилаємо фото товару (сесія f9c2ae98: ігнорувалось).
     if (u.wantsPhoto && !A.turnImage && !A.out.some((o) => o.photoUrls) && !p.isSet) {
         const urlsW = firstPhotoUrls(p);

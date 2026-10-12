@@ -930,7 +930,7 @@ try {
     if (!cprod || cprod.outOfStock) continue; // «Немає в наявності» в CRM — не пропонуємо як допродаж (03.10)
     upsell.push(upname(cprod));
     var __cq = {}; (Array.isArray(cprod.bulkPricing) ? cprod.bulkPricing : []).forEach(function (b) { if (b && b.quantity && b.price) __cq[String(b.quantity)] = Number(b.price); });
-    upsellItems.push({ id: cprod.id, sku: cprod.sku || '', supplierArticle: cprod.supplierArticle || '', name: upItemName(cprod), offerText: upname(cprod), price: Number(cprod.price) || 0, qtyPrices: __cq, offers: cprod.offers || [], colors: [...new Set((cprod.offers || []).flatMap(function (o) { return (o.properties || []).filter(function (q) { return /кол|цвет/i.test(q.name || ''); }).map(function (q) { return q.value; }); }))].join(', ') });
+    upsellItems.push({ id: cprod.id, sku: cprod.sku || '', supplierArticle: cprod.supplierArticle || '', name: upItemName(cprod), offerText: upname(cprod), price: Number(cprod.price) || 0, qtyPrices: __cq, offers: cprod.offers || [], photoUrls: (cprod.images || []).slice(0, 5).map(function (x) { return resolveUrl(x || ''); }).filter(Boolean), colors: [...new Set((cprod.offers || []).flatMap(function (o) { return (o.properties || []).filter(function (q) { return /кол|цвет/i.test(q.name || ''); }).map(function (q) { return q.value; }); }))].join(', ') });
     if (!__upsellPhoto) { __upsellPhoto = resolveUrl((cprod.images || [])[0] || ''); }
   }
   var __upsellPhotoNote = __upsellPhoto

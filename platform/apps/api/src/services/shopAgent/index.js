@@ -323,7 +323,7 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
         // (2026-09-30, правки e1755083/080559bb: у картці A0187 не було світло-сірої — її «з'їв» 30-хвилинний фільтр після прев'ю).
         // photo_on_request — «надішліть ще фото» (агент; photo_on_demand — назва старого графа, якої агент не ставить: 06.10 lyudkaaa_
         // тричі просила фото, а фільтр вирізав їх як «надіслані 8 хв тому» в картці); photo_promised — текст обіцяв фото.
-        const RESEND_OK = /^(photo_again|size_chart|photo_on_demand|photo_on_request|photo_promised|present_photo)/;
+        const RESEND_OK = /^(photo_again|size_chart|photo_on_demand|photo_on_request|upsell_photo_on_request|photo_promised|present_photo)/;
         A.out = A.out.map((o) => {
             if (!o.photoUrls || !o.photoUrls.length) return o;
             const resend = RESEND_OK.test(String(o.step || ''));

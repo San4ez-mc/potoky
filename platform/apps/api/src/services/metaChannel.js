@@ -510,7 +510,63 @@ async function retryUnanswered() {
         }
     } catch (e) { logger.warn('[metaChannel] retry error: ' + e.message); }
 }
+/**
+ * Опитувач розмов Meta (12.10): вебхук Instagram губить частину повідомлень — ~20% перших повідомлень із реклами («Яка ціна
+ * кофти?», innabogovid / mike_gorone / mishakibish): подій не було взагалі, а в API розмов повідомлення є. Раз на 2 хв дивимось
+ * свіжі розмови й пропускаємо через той самий вхід (handleMetaEvent) повідомлення клієнта, якого нема в нас, якщо: йому 1,5–30 хв
+ * (вебхук мав шанс), після нього ніхто з нашого боку не писав (менеджер міг відповісти з телефона), і його нема в базі ні за id,
+ * ні тим самим текстом ±3 хв. Реклама в API розмов не віддається — такий хід іде без товару з реклами (бот спитає/покаже список).
+ */
+const _convPollAt = new Map();
+async function pollConversations() {
+    const now = Date.now();
+    for (const [botId, c] of _channel) {
+        if (!c || c.v !== 'meta') continue;
+        try {
+            const bot = await db.bot.findUnique({ where: { id: botId }, select: { isActive: true } });
+            if (!bot || !bot.isActive) continue;
+            const tok = await token(botId); const own = await ownIgId(botId);
+            const ownName = String(((await db.funnelKey.findFirst({ where: { botId, key: 'INSTAGRAM_USERNAME' }, select: { value: true } })) || {}).value || '').trim().toLowerCase();
+            const since = (_convPollAt.get(botId) || now - 20 * 60 * 1000) - 5 * 60 * 1000;
+            const lr = await fetch(GRAPH + '/me/conversations?platform=instagram&fields=id,updated_time&limit=25&access_token=' + encodeURIComponent(tok));
+            const lj = await lr.json().catch(() => ({}));
+            if (!lr.ok || lj.error) { logger.warn('[metaChannel] poll: список розмов ' + ((lj.error && lj.error.message) || lr.status), { botId }); continue; }
+            _convPollAt.set(botId, now);
+            let picked = 0;
+            for (const conv of lj.data || []) {
+                if (new Date(conv.updated_time).getTime() < since) continue;
+                const mr = await fetch(GRAPH + '/' + conv.id + '?fields=messages.limit(10){id,created_time,from,message,attachments,shares}&access_token=' + encodeURIComponent(tok));
+                const mj = await mr.json().catch(() => ({}));
+                const msgs = (((mj.messages || {}).data) || []).slice().sort((a, b) => new Date(a.created_time) - new Date(b.created_time));
+                const isOwn = (m) => { const f = m.from || {}; return (own && String(f.id) === own) || (ownName && String(f.username || '').toLowerCase() === ownName); };
+                for (let i = 0; i < msgs.length; i++) {
+                    const m = msgs[i]; if (isOwn(m) || !(m.from && m.from.id)) continue;
+                    const at = new Date(m.created_time).getTime(); const age = now - at;
+                    if (age < 90 * 1000 || age > 30 * 60 * 1000) continue;
+                    if (msgs.slice(i + 1).some(isOwn)) continue; // уже відповіли (бот чи менеджер)
+                    if (await db.processedMessage.findFirst({ where: { botId, updateId: 'meta_in_' + m.id }, select: { id: true } }).catch(() => null)) continue;
+                    const text = String(m.message || '').trim();
+                    if (text) {
+                        const dup = await db.message.findFirst({ where: { role: 'user', createdAt: { gte: new Date(at - 180 * 1000), lte: new Date(at + 180 * 1000) }, content: { startsWith: text.slice(0, 60) }, session: { botId, context: { path: ['psid'], equals: String(m.from.id) } } }, select: { id: true } }).catch(() => null);
+                        if (dup) continue;
+                    }
+                    const atts = [];
+                    for (const a of ((m.attachments || {}).data || [])) { if (a.image_data && a.image_data.url) atts.push({ type: 'image', payload: { url: a.image_data.url } }); else if (a.video_data && a.video_data.url) atts.push({ type: 'video', payload: { url: a.video_data.url } }); }
+                    const links = (((m.shares || {}).data) || []).map((s) => s.link).filter(Boolean);
+                    const fullText = [text, ...links].filter(Boolean).join('\n');
+                    if (!fullText && !atts.length) continue;
+                    logger.info('[metaChannel] poll: повідомлення без вебхука — обробляю', { botId, from: m.from.username || m.from.id, textPreview: fullText.slice(0, 60), ageMin: Math.round(age / 60000) });
+                    await handleMetaEvent(botId, { object: 'instagram', entry: [{ id: own, messaging: [{ sender: { id: String(m.from.id) }, recipient: { id: own }, timestamp: at, message: { mid: m.id, ...(fullText ? { text: fullText } : {}), ...(atts.length ? { attachments: atts } : {}) } }] }] });
+                    picked++;
+                }
+            }
+            if (picked) logger.info('[metaChannel] poll: підхоплено без вебхука', { botId, picked });
+        } catch (e) { logger.warn('[metaChannel] poll error: ' + e.message, { botId }); }
+    }
+}
+
 const __runsBackground = !process.env.name || process.env.name === 'platform-api';
+if (__runsBackground) setTimeout(() => { pollConversations(); setInterval(pollConversations, 2 * 60 * 1000).unref(); }, 100 * 1000).unref();
 if (__runsBackground) setTimeout(() => { retryUnanswered(); setInterval(retryUnanswered, 60 * 1000).unref(); }, 150 * 1000).unref();
 
-module.exports = { handleMetaEvent, scheduleTurn, runTurn, sendText, replyToComment, channelOf, channelOfSync, splitText, _echoes };
+module.exports = { handleMetaEvent, scheduleTurn, runTurn, sendText, replyToComment, channelOf, channelOfSync, splitText, _echoes, _pollConversations: pollConversations };

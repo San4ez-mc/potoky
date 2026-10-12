@@ -459,6 +459,16 @@ async function handleMetaEvent(webhookBotId, body) {
                     if (!(old && /^(manager_message|manual)/.test(String(ctx.pausedBy || '')))) continue;
                     await db.session.update({ where: { id: session.id }, data: { context: Z.cleanJsonDeep({ ...ctx, funnelPaused: false, pausedBy: null, adminEngaged: false, resumedBy: 'client_return_24h', resumedAt: new Date().toISOString() }) } });
                 }
+                // Точний повтор попереднього повідомлення клієнта за 2 хв, на яке бот уже відповів (подвійне натискання кнопки-питання
+                // реклами, 12.10 _marian28_06_: «Яка ціна кофти?» ×2 → картка, а потім ще раз ціна) — записали, окремо не відповідаємо.
+                if (text && !photo && !sharedPost && !patch.entryAdId) {
+                    const prevU = await db.message.findFirst({ where: { sessionId: session.id, role: 'user', createdAt: { lt: p.at, gte: new Date(p.at.getTime() - 120 * 1000) } }, orderBy: { createdAt: 'desc' }, select: { content: true, createdAt: true } });
+                    const norm = (x) => String(x || '').toLowerCase().replace(/\s+/g, ' ').replace(/[?!.…\s]+$/, '').trim();
+                    if (prevU && norm(prevU.content) === norm(text)) {
+                        const answered = await db.message.findFirst({ where: { sessionId: session.id, role: 'assistant', createdAt: { gt: prevU.createdAt } }, select: { id: true } });
+                        if (answered) { logger.info('[metaChannel] повтор того самого питання за 2 хв — бот уже відповів, окремо не відповідаємо', { sessionId: session.id }); continue; }
+                    }
+                }
                 scheduleTurn(session.id, { botId, contactId: String(igsid), text, imageUrl: photo ? photo.url : null, ctxPatch: { ...(sharedPost ? { sharedPost, hasFreshSignalThisTurn: true } : {}), ...(patch.entryAdId ? { entryAdId: patch.entryAdId } : {}), ...(p.story && p.story.id ? { storyId: String(p.story.id) } : {}) } });
             } catch (err) {
                 logger.error('[metaChannel] event failed', { botId, error: err.message, stack: String(err.stack || '').slice(0, 800) });

@@ -188,6 +188,27 @@ async function main() {
         check('38.1 «Коли відправка?» без замовлення в розмові — терміни + менеджер, не продаж', steps === 'post_status_unknown_order' && /5 робочих днів/.test(A.out[0].text) && A.ctx.funnelPaused && A.ctx.pausedBy === 'handoff', 'steps: ' + steps + ' paused ' + A.ctx.pausedBy);
     }
 
+    // 14.10 (Edits 74433552/1b45cdc7, sv.etlana6372): оформлення веде менеджер (у розмові його посилання на оплату),
+    // клієнтка надіслала квитанцію — бот не обробляє сам («Оформляємо?» / способи оплати), а передає менеджеру.
+    {
+        const A = freshA({ turnText: '', turnImage: 'https://example.com/receipt.jpg' });
+        A.ctx.product = { sku: 'A0187', name: 'Кофта', price: 1279 }; A.ctx.agent.presentedSku = 'A0187';
+        A.history = [{ who: 'manager', text: '💳 Найзручніший спосіб оплати — за посиланням. https://ibanoplata.com/iban-qr/abc', at: new Date(Date.now() - 20 * 3600e3) },
+            { who: 'manager', text: 'Після оплати (200 грн) надішліть, будь ласка, квитанцію або скріншот оплати', at: new Date(Date.now() - 20 * 3600e3) }];
+        const u = freshU({ intent: 'other' });
+        await runPolicy(A, u);
+        const steps = A.out.map((o) => o.step).join(',');
+        check('39.1 Квитанція в оформленні менеджера — передаємо менеджеру, не «Оформляємо?»/способи оплати', steps === 'manager_checkout_handoff' && A.ctx.funnelPaused, 'steps: ' + steps);
+        const B = freshA({ turnText: 'Скільки коштує кофта?' }); B.ctx.product = { sku: 'A0187', name: 'Кофта', price: 1279 }; B.history = A.history;
+        await runPolicy(B, freshU({ intent: 'question', questions: ['Скільки коштує кофта?'] }));
+        check('39.2 Звичайне питання в такій розмові — не перехоплюється', !B.out.some((o) => o.step === 'manager_checkout_handoff'), B.out.map((o) => o.step).join(','));
+    }
+    // 14.10 (Edit 4498bdbb, gerbeeer): BrewDrop приймає в ПІБ лише кирилицю — апостроф «Кірʼяк» ламав оформлення.
+    {
+        const { brewdropFullName } = require('../supplierDispatch');
+        check('40.1 ПІБ для BrewDrop без апострофів', brewdropFullName('Кірʼяк  Валерія Сергіївна') === 'Кіряк Валерія Сергіївна' && brewdropFullName("Мар'яна О’Ніл") === 'Маряна ОНіл', brewdropFullName('Кірʼяк  Валерія Сергіївна'));
+    }
+
     // ── 4. Повторний показ способів оплати — живий кейс Владус, 14.09: другий хід без нового
     // способу оплати показував ПОВНИЙ список 1/2 ще раз, а не коротке нагадування.
     {

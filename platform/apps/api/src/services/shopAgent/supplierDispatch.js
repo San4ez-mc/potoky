@@ -142,12 +142,22 @@ async function groupBySupplier(A, lines) {
     return [...groups.values()];
 }
 
+/**
+ * ПІБ для BrewDrop: їхній кабінет приймає в імені лише кириличні літери («Разрещена только кириллица», 13.10 gerbeeer:
+ * «Кірʼяк» → замовлення не оформлено, клієнт без відповіді; за 14 днів — 5 замовлень з апострофом). Прибираємо апострофи
+ * (’ ' ` ʼ) і зайві пробіли; посилку Нова Пошта видає за телефоном, тож «Кіряк» замість «Кірʼяк» видачі не заважає.
+ */
+function brewdropFullName(name) {
+    return String(name || '').replace(/[’'`ʼ‘]/g, '').replace(/\s+/g, ' ').trim();
+}
+
 async function dispatchBrewdrop(A, group, alloc) {
     const first = group.lines[0];
+    const od = A.ctx.orderData ? { ...A.ctx.orderData, fullName: brewdropFullName(A.ctx.orderData.fullName) } : A.ctx.orderData;
     const scoped = {
         testMode: A.ctx.testMode,
         product: { id: first.id, name: first.name, article: first.sku, supplierArticle: first.supplierArticle, supplier: group.name, price: first.price, upsellItems: [] },
-        orderData: A.ctx.orderData, np: A.ctx.np,
+        orderData: od, np: A.ctx.np,
         orderUnits: Array.from({ length: Math.max(1, first.qty) }, () => ({ color: first.color, size: first.size })),
         colorChoice: { color: first.color }, recommendedSize: first.size,
         paymentInfo: A.ctx.paymentInfo, orderTotal: alloc.total, payAmount: alloc.prepay,
@@ -161,7 +171,11 @@ async function dispatchBrewdrop(A, group, alloc) {
     // dry-run чи created без номера — це НЕ оформлено: needsManual + причина (05.10: GOVTUXUZ2I9/GOVM77QE028 показали «✅ оформлено»).
     const status = scoped.supplierOrderStatus || (A.ctx.testMode ? 'test_mock' : 'error');
     const ordered = status === 'test_mock' || (status === 'created' && !!(scoped.supplierOrderId || scoped.supplierTtn));
-    const result = scoped.supplierOrderResult || (r.ok ? '' : '❌ ' + (r.error || 'невідома помилка постачальника') + ' — оформіть вручну');
+    // Вузол завершився без статусу й без пояснення — раніше менеджер бачив голе «brewdrop.in.ua: error» (3 випадки 11–13.10).
+    const result = scoped.supplierOrderResult || (r.ok
+        ? (ordered ? '' : '❌ постачальник не повернув ні номера замовлення, ні причини відмови (вузол n_supplier_order завершився без статусу) — перевірте кабінет BrewDrop і оформіть вручну')
+        : '❌ ' + (r.error || 'невідома помилка постачальника') + ' — оформіть вручну');
+    if (!ordered && r.ok && !scoped.supplierOrderResult) logger.warn('[supplierDispatch] BrewDrop: вузол без статусу', { sessionId: A.session.id, supplier: group.name, status: scoped.supplierOrderStatus || null, needsManual: !!scoped.supplierNeedsManual });
     return { supplier: group.name, mechanism: 'brewdrop', status: ordered ? status : (status === 'created' ? 'error' : status), result, ttn: scoped.supplierTtn || '', id: scoped.supplierOrderId || '', needsManual: !!scoped.supplierNeedsManual || !ordered };
 }
 
@@ -243,4 +257,4 @@ async function planOrder(A, lines) {
     return groups;
 }
 
-module.exports = { dispatchOrder, buildLines, groupBySupplier, manualSupplierMode, planOrder, missingVariant };
+module.exports = { brewdropFullName, dispatchOrder, buildLines, groupBySupplier, manualSupplierMode, planOrder, missingVariant };

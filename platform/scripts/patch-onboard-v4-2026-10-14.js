@@ -53,7 +53,12 @@ async function main() {
     // 1. агент
     const fn = await callTool('get_funnel', { botId: ONBOARD });
     const agent = fn.nodes.find((n) => n.id === 'n_agent');
-    const tools = (agent.data.tools || []).map((t) => (t.name === 'query_vector' ? { ...t, description: QUERY_VECTOR_DESC } : t));
+    const SAVE_NOTE = ' ВАЖЛИВО: data — JSON-обʼєкт, не рядок; відповідь не ok:true (або created:0) — повтори виправлений виклик і не повідомляй клієнту про збереження.';
+    const tools = (agent.data.tools || []).map((t) => {
+        if (t.name === 'query_vector') return { ...t, description: QUERY_VECTOR_DESC };
+        if (t.name === 'save' && !String(t.description).includes('data — JSON-обʼєкт')) return { ...t, description: t.description + SAVE_NOTE };
+        return t;
+    });
     if (!tools.some((t) => t.name === 'fetch_page')) tools.push(FETCH_PAGE_TOOL);
     const prompt = read('system-prompt.md').trim();
     await callTool('update_node', { botId: ONBOARD, nodeId: 'n_agent', data: { systemPrompt: prompt, tools, qaExpectation: QA_EXPECTATION } });

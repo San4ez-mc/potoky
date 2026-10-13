@@ -659,7 +659,7 @@ function returnDetails(rf) {
         '💬 Причина: ' + (rf.reason || ('«' + String(rf.firstText || '—') + '»')),
         rf.type === 'exchange' ? '↔️ Обмін на: ' + (rf.exchangeFor || 'не уточнено') : '',
         rf.orderRef ? '🧾 Замовлення: ' + rf.orderRef : '',
-        rf.crmReturnId && !String(rf.crmReturnId).startsWith('TEST-') ? '📋 Запис у CRM «Повернення» створено' : (rf.noOrder ? '⚠️ Замовлення клієнта не знайдено — створіть повернення в CRM вручну' : ''),
+        rf.crmReturnId && !String(rf.crmReturnId).startsWith('TEST-') ? ('📋 Запис у CRM «Повернення» створено' + (rf.noOrder ? ' (замовлення в CRM не знайдено — запис привʼязано до картки розмови; оформлювали в чаті?)' : '')) : (rf.noOrder ? '⚠️ Замовлення клієнта не знайдено — створіть повернення в CRM вручну' : ''),
         rf.returnTtn ? '📦 ТТН повернення: ' + rf.returnTtn : '',
     ].filter(Boolean).join('\n');
 }

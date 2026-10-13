@@ -242,9 +242,12 @@ async function returnCreate(A) {
     const { ctx, keys } = A; const rf = ctx.returnFlow || {};
     if (ctx.testMode) { rf.crmReturnId = 'TEST-RETURN'; A.trace.push({ tool: 'returnCreate', skipped: 'testMode' }); return true; }
     const ord = await returnOrderId(A);
-    if (!ord) { rf.noOrder = true; return false; }
-    rf.orderId = ord.orderId; if (ord.orderRef) rf.orderRef = ord.orderRef;
-    const r = await crmFetch(keys, '/returns', { method: 'POST', body: JSON.stringify({ orderId: ord.orderId, type: rf.type || 'return', reason: rf.reason || rf.firstText || null, exchangeFor: rf.exchangeFor || null, source: 'bot' }) }, 8000);
+    // Замовлення не знайдено (оформлював менеджер у чаті — у CRM його нема) — обмін/повернення все одно фіксуємо, привʼязавши
+    // до картки цієї розмови (CRM створить її з нікнеймом, якщо нема). 14.10: розділ «Повернення/обміни» був порожній — 9 справжніх
+    // обмінів/повернень за 11–13.10 мали noOrder і не записувались узагалі.
+    if (!ord) rf.noOrder = true; else { rf.orderId = ord.orderId; if (ord.orderRef) rf.orderRef = ord.orderRef; }
+    const target = ord ? { orderId: ord.orderId } : { funnelSessionId: A.session.id, igUsername: ctx.igUsername || null, senderName: ctx.senderName || null };
+    const r = await crmFetch(keys, '/returns', { method: 'POST', body: JSON.stringify({ ...target, type: rf.type || 'return', reason: rf.reason || rf.firstText || null, exchangeFor: rf.exchangeFor || null, source: 'bot' }) }, 8000);
     A.trace.push({ tool: 'returnCreate', ok: r.ok, status: r.status });
     if (r.ok && r.data && r.data.id) { rf.crmReturnId = r.data.id; return true; }
     logger.warn('[shopAgent] returnCreate failed', { sessionId: A.session.id, status: r.status, error: r.json && r.json.error });

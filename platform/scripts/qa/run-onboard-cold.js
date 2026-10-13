@@ -62,7 +62,7 @@ function snapshot(projectId) {
  'products',(select coalesce(json_agg(json_build_object('name',name,'description',${nz('description')},'price',${nz('price')},'audience',${nz('audience')},'pains',${nz('pains')},'transformation',${nz('transformation')},'benefits',${nz('benefits')})),'[]'::json) from products where project_id='${id}'),
  'personas',(select coalesce(json_agg(json_build_object('name',name,'pains',${nz('pains')},'goals',${nz('goals')},'triggers',${nz('triggers')},'objections',${nz('objections')},'language',${nz('language')},'tone',${nz('tone')})),'[]'::json) from personas where project_id='${id}'),
  'cases',(select count(*) from cases where project_id='${id}'),
- 'founder',(select json_build_object('core',${nz('core')},'diff',coalesce(jsonb_array_length(differentiators::jsonb),0),'selfPres',coalesce(jsonb_array_length(self_presentation::jsonb),0)) from founder_profiles where project_id='${id}'),
+ 'founder',(select json_build_object('core',${nz('core')},'diff',coalesce(jsonb_array_length(differentiators::jsonb),0),'selfPres',coalesce(jsonb_array_length("selfPresentation"::jsonb),0)) from founder_profiles where project_id='${id}'),
  'strategy',(select count(*) from smm_strategies where project_id='${id}'),
  'topics',(select json_build_object('n',count(*),'objection',count(*) filter (where content_type='objection')) from content_topics where project_id='${id}'),
  'leadmagnets',(select count(*) from lead_magnets where project_id='${id}'),

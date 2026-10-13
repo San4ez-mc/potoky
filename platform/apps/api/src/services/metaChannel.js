@@ -189,6 +189,14 @@ function enqueue(sessionId, e) {
     run.finally(() => { if (_queue.get(sessionId) === run) _queue.delete(sessionId); });
 }
 
+/** Плавна зупинка процесу: ходи, що чекали склеювання пачки, — одразу; далі чекаємо, поки черга спорожніє (до timeoutMs). */
+async function drain(timeoutMs = 25000) {
+    for (const [sid, e] of [..._pending]) { if (e.timer) clearTimeout(e.timer); _pending.delete(sid); enqueue(sid, e); }
+    const until = Date.now() + timeoutMs;
+    while ((_queue.size || _echoes.size) && Date.now() < until) await Promise.race([Promise.allSettled([..._queue.values(), ..._echoes]), new Promise((r) => setTimeout(r, 500))]);
+    if (_queue.size) logger.warn('[metaChannel] drain: не встигли завершити ходів: ' + _queue.size);
+}
+
 async function runTurn(sessionId, e) {
     const { botId } = e;
     const sess0 = await db.session.findUnique({ where: { id: sessionId }, select: { context: true } });
@@ -579,4 +587,4 @@ const __runsBackground = !process.env.name || process.env.name === 'platform-api
 if (__runsBackground) setTimeout(() => { pollConversations(); setInterval(pollConversations, 2 * 60 * 1000).unref(); }, 100 * 1000).unref();
 if (__runsBackground) setTimeout(() => { retryUnanswered(); setInterval(retryUnanswered, 60 * 1000).unref(); }, 150 * 1000).unref();
 
-module.exports = { handleMetaEvent, scheduleTurn, runTurn, sendText, replyToComment, channelOf, channelOfSync, splitText, _echoes, _pollConversations: pollConversations };
+module.exports = { handleMetaEvent, scheduleTurn, runTurn, drain, sendText, replyToComment, channelOf, channelOfSync, splitText, _echoes, _pollConversations: pollConversations };

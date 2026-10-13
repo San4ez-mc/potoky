@@ -3,6 +3,7 @@
 const { Router } = require('express');
 const { z } = require('zod');
 const { db } = require('@platform/db');
+const logger = require('@platform/logger');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const { validateParams } = require('../middleware/validateParams');
 const { NotFoundError } = require('@platform/errors');
@@ -859,6 +860,22 @@ router.patch('/:id/messages/:msgId/flag',
                 flaggedAt: req.body.flagged ? new Date() : null,
             },
         });
+        // Позначка ⚠ → правка в Edits із посиланням на розмову (етап 0 «правки → нуль», 13.10.2026): замість скріншота в групі,
+        // який доводилось шукати за аватаркою. Ключі EDITS_API_URL/EDITS_API_TOKEN/EDITS_SOURCE — у воронці. Best-effort.
+        if (req.body.flagged && !msg.flagged) {
+            (async () => {
+                const session = await db.session.findUnique({ where: { id: req.params.id }, select: { botId: true, context: true } });
+                const km = Object.fromEntries((await db.funnelKey.findMany({ where: { botId: session.botId, key: { in: ['EDITS_API_URL', 'EDITS_API_TOKEN', 'EDITS_SOURCE'] } }, select: { key: true, value: true } })).map((k) => [k.key, String(k.value || '').trim()]));
+                if (!km.EDITS_API_URL) return;
+                const prevClient = await db.message.findFirst({ where: { sessionId: msg.sessionId, role: 'user', createdAt: { lte: msg.createdAt } }, orderBy: { createdAt: 'desc' }, select: { content: true } });
+                const c = session.context || {};
+                const link = 'https://flows.fineko.space/sessions/' + req.params.id;
+                const text = '⚠ Позначено в сесії Flows' + (req.body.note ? ': ' + req.body.note : '') + '\n'
+                    + 'Клієнт: ' + (c.igUsername || c.senderName || '—') + (prevClient ? ' — «' + String(prevClient.content || '').slice(0, 300) + '»' : '') + '\n'
+                    + 'Бот (' + String((msg.metadata || {}).nodeId || '').replace(/^agent:/, '') + '): «' + String(msg.content || '').slice(0, 600) + '»\n' + link;
+                await fetch(km.EDITS_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(km.EDITS_API_TOKEN ? { Authorization: 'Bearer ' + km.EDITS_API_TOKEN } : {}) }, body: JSON.stringify({ text, source: km.EDITS_SOURCE || 'flows', sourceRef: link, reporterName: 'Позначка в сесії Flows' }), signal: AbortSignal.timeout(8000) });
+            })().catch((e) => logger.warn('[sessions] flag → Edits: ' + e.message, { sessionId: req.params.id }));
+        }
         res.json({ ok: true, data: updated });
     })
 );

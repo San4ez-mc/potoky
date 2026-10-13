@@ -240,8 +240,26 @@ redisConnectPromise.catch(() => {
     // Connection errors are already logged by the client; the app can still start and retry.
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
     logger.info(`Platform API started`, { port: PORT, env: process.env.NODE_ENV });
 });
+
+// Етап 0 плану «правки → нуль»: щоденний звіт якості й сторож «клієнт чекає менеджера» (services/quality/cron.js).
+if (!process.env.name || process.env.name === 'platform-api') require('./services/quality/cron').start();
+
+// Плавна зупинка (13.10.2026): перезапуск під час деплою обривав хід посеред відправки — відповідь лишалась у базі, але клієнт
+// її не отримував (v_khanenko25, 12.10). Тепер: не приймаємо нових запитів, одразу запускаємо ходи, що чекали склеювання пачки,
+// і чекаємо, поки черга ходів прямого каналу спорожніє (до 25 с; pm2 kill_timeout — 30 с у scripts/deploy.sh).
+let _shuttingDown = false;
+async function gracefulShutdown(sig) {
+    if (_shuttingDown) return; _shuttingDown = true;
+    logger.info('[shutdown] ' + sig + ' — завершую ходи перед зупинкою');
+    try { server.close(); } catch (e) { /* ок */ }
+    try { await require('./services/metaChannel').drain(25 * 1000); } catch (e) { logger.warn('[shutdown] drain: ' + e.message); }
+    logger.info('[shutdown] готово');
+    process.exit(0);
+}
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
 module.exports = app;

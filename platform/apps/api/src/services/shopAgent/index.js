@@ -125,6 +125,9 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
     if (!session) throw new Error('session not found');
     const assets = await loadAssets(botId);
     const ctx = session.context || {};
+    // Знімок памʼяті ДО ходу (етап 0 «правки → нуль»): з ним новий код проганяється на реальних ходах, а детектори бачать, що бот зрозумів.
+    const _ctxBefore = dryRun ? null : JSON.stringify(session.context || {});
+    const _input = { text: String(text || ''), imageUrl: imageUrl || null, imageUrls: imageUrls || null, sharedPost: sharedPost || null, entryAdId: entryAdId || null, storyId: storyId || null };
     // Пауза від скарги/прохання менеджера, поставлена попереднім ходом, поки це повідомлення чекало в черзі.
     // 2026-09-29 (ed8e3e06): «Передала менеджеру» — і через 6 с бот знову питав колір, бо гейт у zernioHandler читав контекст ДО черги.
     if (!dryRun && ctx.funnelPaused && /^(complaint|handoff|post_unknown|annoyed|loop)$/.test(String(ctx.pausedBy || ''))) {
@@ -190,6 +193,7 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
             try { await require('./tools').alert(A, { title: u._noCredit ? '💸 Кредити Claude закінчились — клієнт чекає, відповідайте вручну' : '⚠️ ШІ недоступний — бот не може відповісти', main: 'Клієнт чекає відповіді: «' + String(text || '').slice(0, 200) + '»', details: (u._noCredit ? 'Бот мовчить, поки не поповнять баланс Anthropic.' : 'Причина: ' + String(u._error).slice(0, 200) + '\nБот повторить відповідь сам, щойно ШІ відновиться; якщо терміново — відпишіть вручну.') }); } catch (e) { /* best-effort */ }
         }
         await db.session.update({ where: { id: sessionId }, data: { context: cleanJsonDeep(ctx) } }).catch(() => {});
+        await recordTurn({ sessionId, botId, input: _input, ctxBefore: _ctxBefore, u, qs: [], out: [], ms: Date.now() - t0 });
         return { replies: [], understanding: u, trace: A.trace, ctx, aiDown: true };
     }
     // Минуле замовлення вже не актуальне (давнє або клієнт прийшов з новим товаром) — забуваємо стан того продажу, а не людину,
@@ -345,9 +349,20 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
             replies.push(o);
         }
         await db.session.update({ where: { id: sessionId }, data: { context: cleanJsonDeep(ctx), lastActive: new Date(), state: ctx.crmOrderId ? 'ordered' : (ctx.product && ctx.product.sku ? 'consulting' : 'inbox') } });
+        await recordTurn({ sessionId, botId, input: _input, ctxBefore: _ctxBefore, u, qs: A.qs || [], out: A.out, ms: Date.now() - t0 });
     } else replies.push(...A.out);
     logger.info('[shopAgent] turn', { botId, sessionId, ms: Date.now() - t0, intent: u.intent, out: A.out.map((o) => o.step), paused: !!ctx.funnelPaused });
     return { replies, understanding: u, trace: A.trace, ctx };
 }
 
-module.exports = { handleTurn, classifyComment, isCommentAgent, isAgentBot, loadCustomerMemory, buildHistory, stripKnownHwAsk, stripAskSentences, ASK_KINDS, paragraphize };
+/** Знімок ходу в agent_turns (best-effort — збій запису не має ламати відповідь клієнту). */
+async function recordTurn({ sessionId, botId, input, ctxBefore, u, qs, out, ms }) {
+    if (!ctxBefore) return;
+    try {
+        const outRows = (out || []).map((o) => ({ step: o.step || null, text: o.text ? String(o.text).slice(0, 1500) : (o.caption ? String(o.caption).slice(0, 500) : null), photos: o.photoUrls ? o.photoUrls.length : 0 }));
+        await db.$executeRawUnsafe('INSERT INTO agent_turns ("id","sessionId","botId","input","ctxBefore","understanding","questions","out","ms") VALUES ($1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,$7::jsonb,$8::jsonb,$9)',
+            require('crypto').randomUUID(), sessionId, botId, JSON.stringify(cleanJsonDeep(input || {})), ctxBefore, JSON.stringify(cleanJsonDeep(u || {})), JSON.stringify(cleanJsonDeep(qs || [])), JSON.stringify(cleanJsonDeep(outRows)), Number(ms) || null);
+    } catch (e) { logger.warn('[shopAgent] recordTurn: ' + e.message, { sessionId }); }
+}
+
+module.exports = { handleTurn, recordTurn, classifyComment, isCommentAgent, isAgentBot, loadCustomerMemory, buildHistory, stripKnownHwAsk, stripAskSentences, ASK_KINDS, paragraphize };

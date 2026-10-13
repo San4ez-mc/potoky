@@ -335,6 +335,37 @@ model GlobalKey {
 // APP ERRORS
 // ============================================================
 
+/// Знімок ходу агента (етап 0 плану «правки → нуль», 13.10.2026): памʼять до ходу + що зрозуміло + що відповіли.
+/// Для прогону нового коду на реальних ходах і для детекторів якості. Таблиця створена SQL-скриптом scripts/2026-10-13-quality-tables.sql.
+model AgentTurn {
+  id            String   @id @default(uuid())
+  sessionId     String
+  botId         String
+  createdAt     DateTime @default(now())
+  input         Json     @default("{}")
+  ctxBefore     Json     @default("{}")
+  understanding Json     @default("{}")
+  questions     Json     @default("[]")
+  out           Json     @default("[]")
+  ms            Int?
+
+  @@index([botId, createdAt])
+  @@index([sessionId])
+  @@map("agent_turns")
+}
+
+/// Щоденна статистика якості розмов бота (детектори класів помилок).
+model QualityDaily {
+  id        String   @id @default(uuid())
+  botId     String
+  day       DateTime @db.Date
+  stats     Json     @default("{}")
+  createdAt DateTime @default(now())
+
+  @@unique([botId, day])
+  @@map("quality_daily")
+}
+
 model AppError {
   id        String   @id @default(uuid())
   sessionId String?

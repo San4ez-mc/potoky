@@ -61,7 +61,7 @@ async function main() {
     });
     if (!tools.some((t) => t.name === 'fetch_page')) tools.push(FETCH_PAGE_TOOL);
     const prompt = read('system-prompt.md').trim();
-    await callTool('update_node', { botId: ONBOARD, nodeId: 'n_agent', data: { systemPrompt: prompt, tools, qaExpectation: QA_EXPECTATION } });
+    await callTool('update_node', { botId: ONBOARD, nodeId: 'n_agent', data: { systemPrompt: prompt, tools, qaExpectation: QA_EXPECTATION, maxTokens: 8192 } });
     out.agent = 'prompt ' + prompt.length + ' chars, tools: ' + tools.map((t) => t.name).join(',');
 
     // 3. resolve

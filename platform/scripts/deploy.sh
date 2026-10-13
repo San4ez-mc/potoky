@@ -19,7 +19,7 @@ OLD=$(git rev-parse --short HEAD)
 git pull -q origin main
 NEW=$(git rev-parse --short HEAD)
 if [ "$OLD" = "$NEW" ]; then echo "Нових змін нема ($NEW)"; exit 0; fi
-CHANGED=$(git diff --name-only "$OLD" "$NEW")
+CHANGED=$(git diff --name-only --relative "$OLD" "$NEW") # шляхи від platform/ (apps/..., scripts/...)
 echo "$(date -Is) $OLD → $NEW ${MODE:+[critical: $REASON]}" >> "$LOG"
 echo "$CHANGED" | sed 's/^/    /' >> "$LOG"
 # Нові SQL-міграції — не автоматично: показуємо, щоб застосувати свідомо (cd apps/api && node ../../scripts/apply-sql.js ../../scripts/<файл>.sql)

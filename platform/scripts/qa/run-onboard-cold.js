@@ -29,7 +29,7 @@ const SITE_TEXT = [
 
 const SCENARIOS = [
     { id: 'S1', title: 'Психологиня (сесія 08.10, одним словом)', replies: ['Психолог', 'з жінками над виходом зі стосунків', 'не знаю', 'вона чіткіше доносить свої бажання до чоловіка', 'я за чесність і екологічність', 'я сама була в токсичних стосунках, пішла в психологію, вийшла з них, тепер допомагаю іншим', 'так', 'індивідуальні консультації', '50 євро за годину, є менторинг за 500 євро', 'так', 'фейсбук, телеграм, тредс', 'підходить', 'нема', 'так', 'так', 'так', 'так', 'так'] },
-    { id: 'S2', title: 'Мінімум слів: так / не знаю / нема', replies: ['Коуч з продажів', 'так', 'не знаю', 'так', 'нема', 'так', 'не знаю', 'так', 'інстаграм', 'так', 'нема', 'так', 'так'] },
+    { id: 'S2', noPrice: true, title: 'Мінімум слів: так / не знаю / нема', replies: ['Коуч з продажів', 'так', 'не знаю', 'так', 'нема', 'так', 'не знаю', 'так', 'інстаграм', 'так', 'нема', 'так', 'так'] },
     { id: 'S3', title: 'Спрощений шлях: вставлений текст сайту', replies: [SITE_TEXT, 'так', 'так', 'нема кейсів', 'інстаграм і телеграм', 'так', 'підходить', 'так', 'так'] },
 ];
 
@@ -69,11 +69,11 @@ function snapshot(projectId) {
  'brand',(select coalesce(json_agg(title),'[]'::json) from knowledge_entries where project_id='${id}' and category='brand'))`;
     return JSON.parse(psql(sql));
 }
-function grade(s) {
+function grade(s, opts = {}) {
     const fails = [];
     if (!s.products.length) fails.push('нема жодного продукту');
     for (const p of s.products) {
-        const miss = ['description', 'price', 'audience', 'pains', 'transformation', 'benefits'].filter((f) => !p[f]);
+        const miss = ['description', ...(opts.noPrice ? [] : ['price']), 'audience', 'pains', 'transformation', 'benefits'].filter((f) => !p[f]);
         if (miss.length) fails.push(`продукт «${p.name}»: порожні ${miss.join(',')}`);
     }
     if (!s.personas.length) fails.push('нема персони');
@@ -85,7 +85,7 @@ function grade(s) {
     if (!s.cases && !hasNoCasesMark) fails.push('нема ні кейсу, ні позначки «кейсів поки нема»');
     if (!s.founder || !s.founder.core) fails.push('нема профілю засновника (core)');
     else { if (s.founder.diff < 3) fails.push('засновник: <3 відмінностей'); if (!s.founder.selfPres) fails.push('засновник: нема самопредставлення'); }
-    if (!(s.brand || []).some((t) => /тон|tov|голос/i.test(t))) fails.push('нема запису про тон голосу');
+    if (!(s.brand || []).some((t) => /тон|tone|tov|голос/i.test(t))) fails.push('нема запису про тон голосу');
     if (!s.strategy) fails.push('нема стратегії');
     if (s.topics.n < 18) fails.push(`тем лише ${s.topics.n} (<18)`);
     else if (s.topics.objection / s.topics.n < 0.2) fails.push(`тем про заперечення ${s.topics.objection}/${s.topics.n} (<20%)`);
@@ -109,7 +109,7 @@ async function runScenario(sc, projectId) {
     const bot = msgs.filter((m) => m.role === 'assistant');
     const bannedHits = bot.filter((m) => BANNED.test(m.content || '')).map((m) => (m.content || '').slice(0, 160));
     const snap = snapshot(projectId);
-    const fails = grade(snap);
+    const fails = grade(snap, { noPrice: !!sc.noPrice });
     return { id: sc.id, title: sc.title, sessionId, turns, botMessages: bot.length, bannedHits, snapshot: snap, fails, transcript: msgs.map((m) => ({ role: m.role, content: m.content })) };
 }
 

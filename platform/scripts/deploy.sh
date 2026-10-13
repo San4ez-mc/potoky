@@ -22,7 +22,7 @@ if [ "$OLD" = "$NEW" ]; then echo "Нових змін нема ($NEW)"; exit 0;
 CHANGED=$(git diff --name-only "$OLD" "$NEW")
 echo "$(date -Is) $OLD → $NEW ${MODE:+[critical: $REASON]}" >> "$LOG"
 echo "$CHANGED" | sed 's/^/    /' >> "$LOG"
-# Нові SQL-міграції — не автоматично: показуємо, щоб застосувати свідомо (npx prisma db execute --file ...)
+# Нові SQL-міграції — не автоматично: показуємо, щоб застосувати свідомо (cd apps/api && node ../../scripts/apply-sql.js ../../scripts/<файл>.sql)
 NEWSQL=$(echo "$CHANGED" | grep -E '^scripts/.*\.sql$' || true)
 [ -n "$NEWSQL" ] && echo "⚠ Нові SQL-скрипти (застосуйте вручну, якщо ще ні): $NEWSQL"
 # API — з плавною зупинкою (index.js чекає завершення ходів до 25 с)

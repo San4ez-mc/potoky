@@ -1,6 +1,6 @@
 -- Етап 0 плану «правки → нуль» (13.10.2026): знімки ходів агента (для прогону нового коду на реальних ходах і детекторів)
--- і щоденна статистика якості. Застосування на проді: npx prisma db execute --file scripts/2026-10-13-quality-tables.sql
--- (не db push — урок 15.14).
+-- і щоденна статистика якості. ЗАСТОСОВАНО на проді 13.10.2026.
+-- (не db push — урок 15.14). Застосування: cd apps/api && node ../../scripts/apply-sql.js ../../scripts/2026-10-13-quality-tables.sql
 
 CREATE TABLE IF NOT EXISTS agent_turns (
   "id"            TEXT PRIMARY KEY,

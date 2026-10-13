@@ -25,7 +25,11 @@ const { db } = require('@platform/db');
 
 const ASK_STEPS = /^(ask_params|ask_color|set_color_ask|set_size_ask|pay_options|pay_options_repeat|order_intent|order_intent_repeat|ask_address|unknown|hint|hint_repeat)$/;
 const SALE_STEPS = /^(ask_params|ask_color|set_color_ask|pay_options|present|order_intent|hint|unknown|size_reply)/;
-const THANKS_ONLY = /^[\s\p{Extended_Pictographic}️!.,)(]*(дякую|дякуємо|спасибі|спасибо|благодарю|ок|окей|ok|добре|гаразд|супер|чудово|зрозуміло|ясно|понятно|хорошо|👍|❤️?)?[\s\p{Extended_Pictographic}️!.,)(]*$/iu;
+// Закриття розмови, що не потребує відповіді: лише слова-подяки/згоди («Дякую, чекаю», «Дякую вам», «Ок, гарного дня», емодзі).
+const CLOSING_WORDS = new Set(['дякую', 'дякуємо', 'дякі', 'спасибі', 'спасибо', 'благодарю', 'вам', 'і', 'и', 'ок', 'окей', 'ok', 'добре', 'гаразд', 'супер', 'чудово', 'зрозуміло', 'зрозумів', 'зрозуміла', 'ясно', 'понятно', 'хорошо', 'чекаю', 'чекатиму', 'жду', 'буду', 'чекати', 'ждать', 'домовились', 'гарного', 'хорошого', 'дня', 'вечора', 'вечера', 'дуже', 'велике', 'большое', 'ага']);
+const isClosing = (t) => { if (String(t || '').includes('?')) return false; /* «??» — нетерплячка, не закриття */ const w = String(t || '').toLowerCase().replace(/[\p{Extended_Pictographic}️!.,)(?:;"'«»\-]/gu, ' ').split(/\s+/).filter(Boolean); return !w.length || w.every((x) => CLOSING_WORDS.has(x)); };
+// Кроки, якими бот сам передає розмову людині — далі відповідати має менеджер.
+const HANDOFF_STEPS = /(handoff|post_status_unknown_order|complaint|annoyed|insist|post_unknown|escalat)/;
 
 const CLASS_LABEL = {
     no_reply_bot: 'клієнт без відповіді (бот не на паузі)',
@@ -70,15 +74,19 @@ function detectSession(msgs, turns, { from, to, now = Date.now() }) {
     for (let i = 0; i < msgs.length; i++) {
         const m = msgs[i]; if (m.role !== 'user' || !inWin(m.createdAt)) continue;
         const c = String(m.content || '').trim();
-        if (!c || /^\[порожнє/.test(c) || THANKS_ONLY.test(c)) continue;
+        if (!c || /^\[порожнє/.test(c) || isClosing(c)) continue;
         const t = m.createdAt.getTime();
-        if (now - t < 10 * 60 * 1000) continue; // ще рано судити
-        const nextUser = msgs.slice(i + 1).find((x) => x.role === 'user');
+        // Наступне ЗМІСТОВНЕ повідомлення клієнта (а не «Дякую, чекаю» після питання — інакше питання ховалось).
+        const nextUser = msgs.slice(i + 1).find((x) => x.role === 'user' && !isClosing(String(x.content || '').trim()));
         if (nextUser && nextUser.createdAt.getTime() - t < 3 * 60 * 1000) continue; // не останнє в пачці
-        const reply = msgs.slice(i + 1).find((x) => x.role === 'assistant' && !md(x).hidden && x.createdAt.getTime() - t <= 10 * 60 * 1000);
+        // Хто мав відповідати: останнє наше повідомлення до клієнта — від менеджера, або бот сам передав розмову → менеджер.
+        const lastOurs = msgs.slice(0, i).reverse().find((x) => x.role === 'assistant' && !md(x).hidden);
+        const managerLed = !!lastOurs && (isManager(lastOurs) || (isBot(lastOurs) && HANDOFF_STEPS.test(step(lastOurs))));
+        const waitMs = (managerLed ? 20 : 10) * 60 * 1000; // менеджер — людина, бот — 10 хв
+        if (now - t < waitMs) continue; // ще рано судити
+        const reply = msgs.slice(i + 1).find((x) => x.role === 'assistant' && !md(x).hidden && x.createdAt.getTime() - t <= waitMs);
         if (reply) continue;
-        const managerRecent = msgs.some((x) => isManager(x) && x.createdAt.getTime() <= t && t - x.createdAt.getTime() < 24 * 3600 * 1000);
-        out.push({ cls: managerRecent ? 'no_reply_manager' : 'no_reply_bot', at: m.createdAt, detail: c.slice(0, 80) });
+        out.push({ cls: managerLed ? 'no_reply_manager' : 'no_reply_bot', at: m.createdAt, detail: c.slice(0, 80) });
     }
     // repeat_ask: те саме прохання 3+ рази
     const counts = {};
@@ -168,4 +176,4 @@ function formatReport(res, prev, { shopTag = '', dayLabel = '' } = {}) {
     return lines.join('\n');
 }
 
-module.exports = { detectSession, qualityForPeriod, formatReport, CLASS_LABEL, BOT_CLASSES, pct };
+module.exports = { detectSession, qualityForPeriod, formatReport, CLASS_LABEL, BOT_CLASSES, pct, isClosing };

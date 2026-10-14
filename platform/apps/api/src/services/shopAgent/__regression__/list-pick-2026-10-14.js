@@ -11,7 +11,7 @@
 if (!process.env.name) process.env.name = 'list-pick-test';
 if (require.main === module && !process.env.NODE_PATH) { process.env.NODE_PATH = '/var/www/flows.fineko.space/platform/node_modules'; require('module').Module._initPaths(); }
 const fs = require('fs');
-const { loadAssets, loadCatalog } = require('../lib');
+const { loadAssets, loadCatalog, db } = require('../lib');
 const { runPolicy } = require('../policy');
 const { understand } = require('../understand');
 const { computeCatalogHint } = require('../catalogHint');
@@ -24,6 +24,9 @@ const check = (name, ok, detail) => { results.push({ name, ok }); console.log((o
 
 (async () => {
     const assets = await loadAssets(BOT, { force: true });
+    // Ключ ШІ береться за сесією (resolveFunnelClaudeKey) — потрібна справжня ТЕСТОВА сесія цього бота; стан тесту — лише в памʼяті.
+    const ts = await db.session.findFirst({ where: { botId: BOT, isTest: true }, orderBy: { lastActive: 'desc' }, select: { id: true } });
+    if (!ts) throw new Error('нема тестової сесії бота для ключа ШІ');
     const cat = await loadCatalog(BOT, assets.keys, { force: true });
     const by = (s) => cat.products.find((p) => String(p.sku).toUpperCase() === s);
 
@@ -47,7 +50,7 @@ const check = (name, ok, detail) => { results.push({ name, ok }); console.log((o
     check('1.2 опис розрізняє кофти: A0187 — блискавка на всю довжину, C0043 — до грудей', /всю довжину|до самого низу/i.test(dA) && /до грудей|півзамок/i.test(dC), 'A0187: ' + dA.slice(0, 90) + ' | C0043: ' + dC.slice(0, 90));
 
     const mkA = (turnText, history, extraCtx) => ({
-        botId: BOT, session: { id: 'list-pick-' + Math.random().toString(36).slice(2), state: 'inbox' },
+        botId: BOT, session: { id: ts.id, state: 'inbox' },
         ctx: { testMode: true, agent: { lastAsk: 'який із показаних товарів цікавить', hintPhotosFor: SK.join(',') }, ...JSON.parse(JSON.stringify(listCtx)), ...(extraCtx || {}) },
         keys: assets.keys, assets, user: {}, trace: [], out: [], turnText, turnImage: null, history: history || [], botSpokeBefore: true,
     });
@@ -64,6 +67,7 @@ const check = (name, ok, detail) => { results.push({ name, ok }); console.log((o
     for (const sc of scen) {
         const A = mkA(sc.text, sc.hist);
         let u; try { u = await understand(A); } catch (e) { check(sc.name, false, 'understand: ' + e.message); continue; }
+        if (u._error) { check(sc.name, false, 'ШІ недоступний: ' + u._error); continue; }
         await runPolicy(A, u);
         const sku = A.ctx.product && A.ctx.product.sku;
         check(sc.name, String(sku || '').toUpperCase() === sc.want, 'fromList=' + (u.productHint && u.productHint.fromList) + ' → товар ' + (sku || '—') + ' | кроки: ' + A.out.map((o) => o.step).join(','));

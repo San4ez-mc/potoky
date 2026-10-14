@@ -168,6 +168,16 @@ app.use('/webhook', webhookLimiter, webhookRouter);
 app.use('/api/projects', authMiddleware, projectsRouter);
 app.use('/api/bots', authMiddleware, botsRouter);
 app.use('/api/sessions', authMiddleware, sessionsRouter);
+// Копії фото/відео з розмов (services/mediaStore.js) — лише для залогінених (cookie), файли в закритій папці.
+{
+    const mediaStore = require('./services/mediaStore');
+    app.get('/api/media/:sid/:file', authMiddleware, (req, res) => {
+        const fp = mediaStore.filePath(req.params.sid + '/' + req.params.file);
+        if (!fp || !require('fs').existsSync(fp)) return res.status(404).end();
+        res.set('Cache-Control', 'private, max-age=604800');
+        return res.sendFile(fp);
+    });
+}
 app.use('/api/users', authMiddleware, usersRouter);
 app.use('/api/funnels', authMiddleware, funnelsRouter);
 app.use('/api/connectors', authMiddleware, requireSuperadmin, connectorsRouter);

@@ -144,8 +144,10 @@ function MessageContent({ content, metadata }) {
     const atts = ((Array.isArray(metadata?.attachments) && metadata.attachments.length)
         ? metadata.attachments
         : (att ? [att] : [])).flatMap(expand);
-    const imgs = atts.filter((a) => a?.url && (a.type === 'photo' || a.type === 'image'));
-    const vids = atts.filter((a) => a?.url && (a.type === 'video' || a.type === 'animation'));
+    // Копія на нашому сервері (mediaStore: attachment.stored) — посилання Meta протухають, Zernio без ключа не відкривається.
+    const srcOf = (a) => (a?.stored ? `/api/media/${a.stored}` : a?.url);
+    const imgs = atts.filter((a) => a?.url && (a.type === 'photo' || a.type === 'image')).map((a) => ({ ...a, url: srcOf(a) }));
+    const vids = atts.filter((a) => a?.url && (a.type === 'video' || a.type === 'animation')).map((a) => ({ ...a, url: srcOf(a) }));
 
     const renderTextPart = (text, prefix) => {
         const parts = parseMessageContent(text);

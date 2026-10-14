@@ -223,6 +223,16 @@ async function funnelStage(A, stageName, stageOrder) {
     } catch (e) { return false; }
 }
 
+/** Оформлене замовлення клієнта в CRM (бот чи менеджер): за розмовою, нікнеймом Instagram, телефоном. null — нема; undefined — CRM недоступна. */
+async function clientOrder(A) {
+    const { ctx } = A;
+    const phone = (ctx.orderData && ctx.orderData.phone) || (ctx.customer && ctx.customer.phone) || '';
+    const qs = new URLSearchParams({ funnelSessionId: A.session.id, ...(ctx.igUsername ? { ig: String(ctx.igUsername) } : {}), ...(phone ? { phone: String(phone) } : {}) });
+    const r = await crmFetch(A.keys, '/orders/lookup-client?' + qs.toString(), {}, 5000);
+    A.trace.push({ tool: 'clientOrder', ok: r.ok, found: !!(r.data) });
+    return r.ok ? (r.data || null) : undefined;
+}
+
 // ── Повернення/обмін у CRM (2026-10-03, власник: «нехай збирає») ───────────────────────────────
 /** Замовлення, яке повертають: цієї розмови, інакше — останнє оформлене цим клієнтом в інших розмовах (повертаються часто
  *  через дні, нерідко новою розмовою). */
@@ -304,4 +314,4 @@ async function alert(A, nodeIdOrFields, extra = {}) {
     return !!j.ok;
 }
 
-module.exports = { adTouchSync, tool, resolveProduct, setApply, calcSize, checkAvail, availSearch, extraResolve, orderPrefill, intlRoute, payAmount, npCheck, reconcile, crmOrder, supplierRoute, supplierOrder, confirmPrep, ttnSync, returnCrmUpdate, returnCreate, returnAttachTtn, kbContext, kbAsk, kbHit, createInvoice, deleteInvoice, monoStatement, markConsumed, funnelStage, alert, activeFop };
+module.exports = { adTouchSync, tool, resolveProduct, setApply, calcSize, checkAvail, availSearch, extraResolve, orderPrefill, intlRoute, payAmount, npCheck, reconcile, crmOrder, supplierRoute, supplierOrder, confirmPrep, ttnSync, returnCrmUpdate, returnCreate, returnAttachTtn, kbContext, kbAsk, kbHit, createInvoice, deleteInvoice, monoStatement, markConsumed, funnelStage, alert, activeFop, clientOrder };

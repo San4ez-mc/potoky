@@ -881,13 +881,18 @@ function managerCheckoutInHistory(A) {
         && /ibanoplata\.|pay\.monobank|send\.monobank|UA\d{27}|\bIBAN\b|квитанц|скріншот оплати|номер карт|реквізит/i.test(String(m.text || '')));
 }
 
-/** Є в ДАНИХ ознака, що клієнт має замовлення: CRM, оплата/спосіб оплати, оформлення менеджером у чаті, ТТН чи «оформлено» від
- *  менеджера або бота. Не тлумачення слів клієнта — лише те, що бот/менеджер/CRM реально зробили. */
-function orderEvidence(A) {
-    const { ctx } = A;
-    if (ctx.crmOrderId || ctx.payStatus === 'confirmed' || (ctx.paymentInfo && ctx.paymentInfo.method) || ctx.supplierOrderId || managerCheckoutInHistory(A)) return true;
-    return (A.history || []).some((m) => (m.who === 'manager' || m.who === 'bot') && /ТТН|накладн|(^|\D)20\d{12}(\D|$)|замовлення (оформлено|прийнято|відправлено)|оформила замовлення|відправили ваше/i.test(String(m.text || '')));
+/** Замовлення з CRM живе (не відмова, не скасування, без повернення) — про нього бот відповідає сам. */
+function orderIsLive(o) { return !!o && !o.isRefused && !(Array.isArray(o.returns) && o.returns.length) && !/скасов|відмов|отмен/i.test(String((o.stage && o.stage.name) || '')); }
+/** Відповідь про статус замовлення лише з даних CRM: ТТН і статус Нової пошти, інакше — етап і стандартні терміни. */
+function crmOrderStatusText(o) {
+    const names = [...new Set((o.items || []).map((it) => String((it.product && (it.product.customerName || it.product.name)) || it.name || '').split(NL)[0].replace(/\.?\s*Артикул:?.*$/i, '').trim()).filter(Boolean))].slice(0, 3);
+    const what = names.length ? ' (' + names.join(', ') + ')' : '';
+    const ttn = (Array.isArray(o.ttn) ? o.ttn : []).filter(Boolean);
+    if (ttn.length) return 'Ваше замовлення' + what + ' вже відправлено 📦 ТТН: ' + ttn.join(', ') + (o.ttnStatus ? NL + 'Статус у Новій пошті: ' + o.ttnStatus : '') + NL + 'Відстежити можна в застосунку Нової пошти 🙂';
+    const date = new Date(o.createdAt).toLocaleDateString('uk-UA', { day: 'numeric', month: 'long', timeZone: 'Europe/Kyiv' });
+    return 'Бачу ваше замовлення від ' + date + what + (o.stage && o.stage.name ? ' — зараз етап «' + o.stage.name + '»' : '') + ' 🙌' + NL + 'Одяг шиється під замовлення: відправка протягом 5 робочих днів з моменту оформлення (субота й неділя — вихідні). Номер ТТН надішлю сюди одразу після відправки 📦';
 }
+const NL = String.fromCharCode(10);
 
 async function sendCard(A) {
     const { ctx } = A;
@@ -1488,9 +1493,15 @@ async function runPolicyInner(A, u) {
             await T.alert(A, 'n_agent_post_extra_admin', { details: '📏 Клієнт просить змінити розмір на ' + String(u.clothingSize).toUpperCase() + ' після оформлення: «' + text.slice(0, 200) + '»' });
             return;
         }
-        if (u.statusQuestion && !ctx.supplierTtn && !ctx.ttn) {
-            // 2026-09-24 (FunnelTest 44): «коли відправка / чому не відправили» до ТТН — стандартні терміни, а не вигадана причина.
-            A.out.push({ text: 'Одяг шиється під замовлення: відправка протягом 5 робочих днів з моменту оформлення (субота й неділя — вихідні). Номер накладної (ТТН) надішлемо сюди одразу після відправки 📦', step: 'post_status_terms' });
+        let statusFromCrm = false;
+        if (u.statusQuestion) {
+            // Статус — із CRM (власник 14.10: «якщо замовлення є в СРМ — сама дивиться статус»): етап, ТТН, статус Нової пошти.
+            const o = await T.clientOrder(A);
+            if (o && orderIsLive(o)) { A.out.push({ text: crmOrderStatusText(o), step: 'post_status_crm' }); statusFromCrm = true; }
+            else if (!ctx.supplierTtn && !ctx.ttn) {
+                // CRM недоступна / замовлення там не видно — стандартні терміни (FunnelTest 44), менеджер отримає сповіщення нижче.
+                A.out.push({ text: 'Одяг шиється під замовлення: відправка протягом 5 робочих днів з моменту оформлення (субота й неділя — вихідні). Номер накладної (ТТН) надішлемо сюди одразу після відправки 📦', step: 'post_status_terms' });
+            }
         } else if (u.questions.length && !u.statusQuestion) {
             A.out.push({ text: await answerThenAsk(A, u, 'Ваше замовлення в роботі 💛'), step: 'post_q' });
         } else if (since > 30 * 60 * 1000) {
@@ -1509,7 +1520,7 @@ async function runPolicyInner(A, u) {
             A.out.push({ text: 'Дякую! 🙌 Чекаю на оплату за посиланням вище — щойно побачу її, одразу передам замовлення у відправку 💛', step: 'post_pay_reminder' });
         }
         // Що САМЕ бот відповів — у сповіщення (власник 03.10: приходило «бот лише подякував», хоча бот відповів на питання про відправку).
-        if (since > 30 * 60 * 1000 || u.statusQuestion) {
+        if (since > 30 * 60 * 1000 || (u.statusQuestion && !statusFromCrm)) {
             const botReply = A.out.map((o) => String(o.text || '').trim()).filter(Boolean).join(' ').slice(0, 400);
             await T.alert(A, 'n_post_order_admin', { details: botReply ? '🤖 Бот відповів: «' + botReply + '»' : '🤖 Бот нічого не відповів — відповідайте в чаті.' });
         }
@@ -1519,32 +1530,15 @@ async function runPolicyInner(A, u) {
     // 1a. Питання про СВОЄ замовлення, якого бот не бачить (12.10, Edits 3ff8f727/255e3d4d/0dc66ed5: «замовляв вчора — коли
     // відправка?» → бот «який колір цікавить?» / «зріст і вага?»). У тестовому режимі 08–12.10 замовлення оформлювали менеджери
     // вручну, тож у розмові й CRM-привʼязці його нема. Не продаємо заново: терміни відправки + менеджер, який бачить замовлення.
-    if (u.statusQuestion && !u.returnRequest && !orderEvidence(A)) {
-        // Клас I (14.10, Edits 8208ba61 yurev_yu — «По блискавці чекаю відповідь» після відмови; 7e08f82d alla_p0910 — повернення):
-        // аналізатор бачив «питання про замовлення», а замовлення не було — бот називав терміни відправки чужого замовлення.
-        // Без жодної ознаки замовлення в даних — нейтрально: менеджер відповість, терміни відправки не обіцяємо.
+    // Власник 14.10: замовлення є в CRM (оформив бот чи менеджер — шукаємо за розмовою, нікнеймом, телефоном) — бот сам відповідає
+    // статусом із CRM; нема — кличе менеджера, терміни відправки не обіцяє (клас I: yurev_yu «По блискавці чекаю відповідь» після відмови).
+    if (u.statusQuestion && !u.returnRequest) {
+        const o = await T.clientOrder(A);
+        if (o && orderIsLive(o)) { A.out.push({ text: crmOrderStatusText(o), step: 'post_status_crm' }); return; }
         A.out.push({ text: 'Зараз уточню в менеджера — він напише вам тут найближчим часом 🙏', step: 'question_waiting_handoff' });
         await pause(A, 'handoff', null);
-        await T.alert(A, { title: '❓ Клієнт чекає відповіді — замовлення в розмові не видно', main: 'Клієнт: «' + text.slice(0, 300) + '»', details: 'Аналізатор прочитав це як питання про статус замовлення, але ні в CRM, ні в розмові (оплата, оформлення менеджером, ТТН) замовлення немає. Бот став на паузу — відповідайте в чаті.' });
-        return;
-    }
-    if (u.statusQuestion && !u.returnRequest) {
-        A.out.push({ text: 'Одяг шиється під замовлення: відправка протягом 5 робочих днів з моменту оформлення (субота й неділя — вихідні). Номер накладної (ТТН) надішлемо сюди одразу після відправки 📦 Зараз уточню статус саме вашого замовлення в менеджера — він напише вам тут 🙏', step: 'post_status_unknown_order' });
-        await pause(A, 'handoff', null);
-        await T.alert(A, { title: '📦 Клієнт питає про своє замовлення — бот його не бачить', main: 'Клієнт: «' + text.slice(0, 200) + '»', details: (ctx.crmOrderId ? 'У розмові є замовлення ' + ctx.crmOrderId + ', але клієнт прийшов із новим товаром — перевірте, про яке він питає.' : 'Замовлення, схоже, оформлено вручну (не через бота). Бот назвав терміни відправки і став на паузу — напишіть клієнту статус/ТТН.') });
-        return;
-    }
-
-    // 1a2. Оформлення веде МЕНЕДЖЕР (13.10, Edits 74433552/1b45cdc7, sv.etlana6372): 12.10 менеджер погодив накладений платіж і
-    // надіслав посилання на оплату; 13.10 пауза менеджера сплила, клієнтка надіслала квитанцію й дані — бот прийняв квитанцію за
-    // фото товару («Оформляємо?») і запропонував способи оплати. Ознака — ДАНІ, не тлумачення: менеджер у розмові вже надсилав
-    // посилання на оплату / IBAN / прохання квитанції, а в бота свого оформлення нема. Тоді квитанцію і дані доставки не обробляємо
-    // самі — дякуємо, менеджеру сигнал, пауза.
-    if (!ctx.crmOrderId && !(ctx.paymentInfo && ctx.paymentInfo.method) && managerCheckoutInHistory(A)
-        && (A.turnImage || u.claimsPaid || u.receiptLink || u.phone || u.branch || u.fullName)) {
-        A.out.push({ text: 'Дякую! 🙏 Передаю менеджеру — він перевірить оплату й оформить відправку, напише вам тут найближчим часом 💛', step: 'manager_checkout_handoff' });
-        await pause(A, 'handoff', null);
-        await T.alert(A, { title: '💳 Клієнт надіслав оплату/дані в оформленні, яке веде менеджер', main: 'Клієнт: «' + (text || (A.turnImage ? '[фото — можливо, квитанція]' : '')).slice(0, 200) + '»', details: 'Менеджер раніше надсилав у цій розмові посилання на оплату / реквізити, а бот свого оформлення тут не має — бот не обробляв, став на паузу. Перевірте оплату й оформіть.', photoUrl: A.turnImage || '' });
+        const why = o === undefined ? 'CRM не відповіла — статус перевірити не вдалося.' : o ? 'Знайдене в CRM замовлення ' + String(o.id).slice(0, 8) + ' скасоване/з поверненням (' + ((o.stage && o.stage.name) || '') + ') — потрібна ваша відповідь.' : 'У CRM замовлення цього клієнта не знайдено (ні за розмовою, ні за нікнеймом, ні за телефоном).';
+        await T.alert(A, { title: '❓ Клієнт питає про замовлення — бот передав вам', main: 'Клієнт: «' + text.slice(0, 300) + '»', details: why + ' Бот став на паузу — відповідайте в чаті.' });
         return;
     }
 
@@ -2456,25 +2450,42 @@ async function runPolicyInner(A, u) {
             // Збережені пари лише заповнюють порожнє (не повертають колір, який клієнт потім змінив); пари цього ходу — перекривають.
             const curPairs = Array.isArray(u.itemColors) ? u.itemColors : [];
             // Клас G (14.10, Балаба Микола fbb6087b: «2 кофти, 2 джинси, 3 футболки» різних кольорів — бот лишив по одному кольору на
-            // позицію й порахував 4 597 грн замість 6 388, менеджер добирав 1 791): модель комплекту — ОДИН колір на позицію. Кілька
-            // різних кольорів однієї речі мовчки не стискаємо — до оплати передаємо менеджеру.
-            if (!(ctx.paymentInfo && ctx.paymentInfo.method)) {
+            // позицію й порахував 4 597 грн замість 6 388, менеджер добирав 1 791). Власник: оформлює бот, не менеджер. Кілька кольорів
+            // однієї речі = кілька штук цієї речі, кожна свого кольору: перший колір — позиції комплекту, кожен наступний — ще одна
+            // позиція. Склад змінено → ціна сумою позицій (рішення власника 14.09, applySetPricing), підсумок покаже склад і суму.
+            let pairsLeft = curPairs;
+            if (!(ctx.paymentInfo && ctx.paymentInfo.method) && !ctx.crmOrderId) {
                 const byArt = new Map();
                 for (const ic of curPairs) {
                     const item = ic && ic.item && ic.color && matchSetItem(String(ic.item), ctx.setSelection, catNamesSet);
                     if (!item) continue;
-                    const s = byArt.get(item.article) || { name: String(item.name).split('\n')[0], colors: new Set() };
-                    s.colors.add(String(ic.color).toLowerCase().trim()); byArt.set(item.article, s);
+                    const pal = (Array.isArray(item.colorsAll) && item.colorsAll.length ? item.colorsAll : item.colors) || [];
+                    const c = pal.length ? matchColor({ colors: pal.join(',') }, String(ic.color)) : null;
+                    const e = byArt.get(item.article) || { item, colors: [], pairs: [] };
+                    e.pairs.push(ic); if (c && !e.colors.includes(c)) e.colors.push(c);
+                    byArt.set(item.article, e);
                 }
-                const multi = [...byArt.values()].filter((s) => s.colors.size > 1);
+                const multi = [...byArt.values()].filter((e) => e.colors.length > 1);
                 if (multi.length) {
-                    A.out.push({ text: 'Записала 🙏 Кілька кольорів однієї речі в комплекті порахую не я — передаю менеджеру, він уточнить кількість і суму та напише вам тут найближчим часом 💛', step: 'set_multicolor_handoff' });
-                    await pause(A, 'handoff', null);
-                    await T.alert(A, { title: '🎨 Комплект: кілька кольорів однієї речі — оформіть вручну', main: 'Клієнт: «' + String(text || '').slice(0, 300) + '»', details: 'Бот рахує один колір на позицію комплекту, тому склад і суму не рахував:\n' + multi.map((s) => s.name + ': ' + [...s.colors].join(', ')).join('\n') });
-                    return;
+                    const notes = [];
+                    for (const e of multi) {
+                        const units = ctx.setSelection.filter((x) => x.article === e.item.article);
+                        e.colors.forEach((c, k) => {
+                            if (units.some((u2) => u2.color === c)) return; // цей колір уже є (повтор того самого прохання)
+                            const free = units.find((u2) => !u2.color);
+                            if (free) { free.color = c; return; }
+                            if (k === 0) { units[0].color = c; return; }
+                            const add = { ...units[0], color: c, qty: 1 }; ctx.setSelection.push(add); units.push(add);
+                        });
+                        notes.push(String(e.item.name).split('\n')[0] + ': ' + e.colors.join(', ') + ' — ' + ctx.setSelection.filter((x) => x.article === e.item.article).length + ' шт');
+                    }
+                    delete ctx.agent.setColorsResolved;
+                    ctx.agent.setEditNote = notes.join('; ');
+                    A.out.push({ text: 'Записала: ' + notes.join('; ') + ' ✅', step: 'set_multicolor' });
+                    pairsLeft = curPairs.filter((ic) => !multi.some((e) => e.pairs.includes(ic)));
                 }
             }
-            for (const ic of [...(ctx.agent.setItemColorHints || []).map((x) => ({ ...x, __old: true })), ...curPairs]) {
+            for (const ic of [...(ctx.agent.setItemColorHints || []).map((x) => ({ ...x, __old: true })), ...pairsLeft]) {
                 const item = ic && ic.item && matchSetItem(String(ic.item), ctx.setSelection, catNamesSet);
                 // Розмір саме цієї речі, названий поруч із кольором («кофта світло-сіра XL», Edit 27c53c42) — перекриває розрахований.
                 if (item && ic.size && !(ic.__old && item.sizeByClient)) {

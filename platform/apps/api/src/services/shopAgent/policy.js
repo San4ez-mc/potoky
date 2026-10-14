@@ -2462,10 +2462,10 @@ async function runPolicyInner(A, u) {
             // Спершу пари з попередніх ходів (сказані до підбору розміру), потім цього — новіше перекриває.
             // Збережені пари лише заповнюють порожнє (не повертають колір, який клієнт потім змінив); пари цього ходу — перекривають.
             const curPairs = Array.isArray(u.itemColors) ? u.itemColors : [];
-            // Клас G (14.10, Балаба Микола fbb6087b: «2 кофти, 2 джинси, 3 футболки» різних кольорів — бот лишив по одному кольору на
-            // позицію й порахував 4 597 грн замість 6 388, менеджер добирав 1 791). Власник: оформлює бот, не менеджер. Кілька кольорів
-            // однієї речі = кілька штук цієї речі, кожна свого кольору: перший колір — позиції комплекту, кожен наступний — ще одна
-            // позиція. Склад змінено → ціна сумою позицій (рішення власника 14.09, applySetPricing), підсумок покаже склад і суму.
+            // Клас G (14.10, Балаба Микола fbb6087b: «2 кофти, 2 джинси, 3 футболки» різних кольорів — бот лишив по одній штуці на
+            // позицію й порахував 4 597 грн замість 6 388, менеджер добирав 1 791). Власник: оформлює бот. Кілька штук однієї речі
+            // (різних кольорів — окремі пари itemColors; одного кольору — qty пари) = стільки ж позицій цієї речі, кожна свого кольору.
+            // Названий набір — повний склад цієї речі. Склад змінено → ціна сумою позицій (рішення власника 14.09, applySetPricing).
             let pairsLeft = curPairs;
             if (!(ctx.paymentInfo && ctx.paymentInfo.method) && !ctx.crmOrderId) {
                 const byArt = new Map();
@@ -2474,28 +2474,28 @@ async function runPolicyInner(A, u) {
                     if (!item) continue;
                     const pal = (Array.isArray(item.colorsAll) && item.colorsAll.length ? item.colorsAll : item.colors) || [];
                     const c = pal.length ? matchColor({ colors: pal.join(',') }, String(ic.color)) : null;
-                    const e = byArt.get(item.article) || { item, colors: [], pairs: [] };
-                    e.pairs.push(ic); if (c && !e.colors.includes(c)) e.colors.push(c);
+                    const e = byArt.get(item.article) || { item, want: [], pairs: [] };
+                    e.pairs.push(ic);
+                    if (c) for (let k = 0; k < Math.min(10, Math.max(1, parseInt(ic.qty, 10) || 1)); k++) e.want.push(c);
                     byArt.set(item.article, e);
                 }
-                const multi = [...byArt.values()].filter((e) => e.colors.length > 1);
-                if (multi.length) {
-                    const notes = [];
-                    for (const e of multi) {
-                        const units = ctx.setSelection.filter((x) => x.article === e.item.article);
-                        e.colors.forEach((c, k) => {
-                            if (units.some((u2) => u2.color === c)) return; // цей колір уже є (повтор того самого прохання)
-                            const free = units.find((u2) => !u2.color);
-                            if (free) { free.color = c; return; }
-                            if (k === 0) { units[0].color = c; return; }
-                            const add = { ...units[0], color: c, qty: 1 }; ctx.setSelection.push(add); units.push(add);
-                        });
-                        notes.push(String(e.item.name).split('\n')[0] + ': ' + e.colors.join(', ') + ' — ' + ctx.setSelection.filter((x) => x.article === e.item.article).length + ' шт');
-                    }
+                const multi = [...byArt.values()].filter((e) => e.want.length > 1);
+                const key = (arr) => arr.slice().sort().join('|');
+                const notes = [];
+                for (const e of multi) {
+                    const units = ctx.setSelection.filter((x) => x.article === e.item.article);
+                    if (key(units.map((x) => x.color || '')) === key(e.want)) continue; // той самий склад (повтор прохання)
+                    const base = { ...units[0] };
+                    ctx.setSelection = ctx.setSelection.filter((x) => x.article !== e.item.article);
+                    for (const c of e.want) ctx.setSelection.push({ ...base, color: c, qty: 1 });
+                    const cnt = {}; for (const c of e.want) cnt[c] = (cnt[c] || 0) + 1;
+                    notes.push(String(e.item.name).split('\n')[0] + ': ' + Object.entries(cnt).map(([c, n]) => (n > 1 ? n + ' × ' : '') + c).join(', ') + ' — ' + e.want.length + ' шт');
+                }
+                if (multi.length) pairsLeft = curPairs.filter((ic) => !multi.some((e) => e.pairs.includes(ic)));
+                if (notes.length) {
                     delete ctx.agent.setColorsResolved;
                     ctx.agent.setEditNote = notes.join('; ');
                     A.out.push({ text: 'Записала: ' + notes.join('; ') + ' ✅', step: 'set_multicolor' });
-                    pairsLeft = curPairs.filter((ic) => !multi.some((e) => e.pairs.includes(ic)));
                 }
             }
             for (const ic of [...(ctx.agent.setItemColorHints || []).map((x) => ({ ...x, __old: true })), ...pairsLeft]) {

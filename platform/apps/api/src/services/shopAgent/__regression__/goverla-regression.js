@@ -654,6 +654,15 @@ async function main() {
         const A2 = mk(); A2.ctx.setSelection = A.ctx.setSelection.map((x) => ({ ...x }));
         await runPolicy(A2, freshU({ intent: 'give_params', itemColors: [{ item: 'футболка', color: 'білу' }, { item: 'футболка', color: 'чорну' }] }));
         check('43.1 повтор того самого прохання — футболки не множаться', A2.ctx.setSelection.filter((x) => x.article === 'L0056').length === 2, String(A2.ctx.setSelection.filter((x) => x.article === 'L0056').length));
+        // 43.2 Кілька штук ОДНОГО кольору («2 чорні футболки») і змішано («3 футболки: 2 білі й чорна»).
+        const C = mk();
+        await runPolicy(C, freshU({ intent: 'give_params', itemColors: [{ item: 'футболка', color: 'чорні', qty: 2 }, { item: 'джинси', color: 'сині' }] }));
+        const teesC = C.ctx.setSelection.filter((x) => x.article === 'L0056').map((x) => x.color).join(',');
+        check('43.2 «2 чорні футболки» — дві чорні футболки, сума 1590 + 2 × 449', teesC === 'Чорний,Чорний' && C.ctx.agent.setPricing && C.ctx.agent.setPricing.total === 2488, teesC + ' ' + JSON.stringify(C.ctx.agent.setPricing));
+        const D = mk();
+        await runPolicy(D, freshU({ intent: 'give_params', itemColors: [{ item: 'футболка', color: 'білі', qty: 2 }, { item: 'футболка', color: 'чорну', qty: 1 }, { item: 'джинси', color: 'сині' }] }));
+        const teesD = D.ctx.setSelection.filter((x) => x.article === 'L0056').map((x) => x.color).sort().join(',');
+        check('43.2 «3 футболки: 2 білі й чорна» — три футболки', teesD === 'Білий,Білий,Чорний' && D.ctx.agent.setPricing.total === 1590 + 3 * 449, teesD + ' ' + JSON.stringify(D.ctx.agent.setPricing));
         const B = mk();
         await runPolicy(B, freshU({ intent: 'give_params', itemColors: [{ item: 'футболка', color: 'чорну' }, { item: 'джинси', color: 'сині' }] }));
         const stepsB = B.out.map((o) => o.step).join(',');

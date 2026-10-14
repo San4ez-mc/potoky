@@ -535,9 +535,19 @@ async function handleMetaEvent(webhookBotId, body) {
                     // Пауза менеджера сплила (менеджер не писав клієнту понад добу — pausedAt оновлюється з кожним його повідомленням):
                     // клієнт пише — бот відповідає одразу, не чекаючи фонового зняття (12.10, tanyayaremo: пауза з 11.10 12:58, наступного
                     // дня «Можна замовити чорного L» / «Ціна» / «Передплата» / «Реквізити» — без відповіді). Те саме правило 24 год, що в hardExpirePauses.
-                    const old = ctx.pausedAt && Date.now() - new Date(ctx.pausedAt).getTime() > 24 * 3600 * 1000;
-                    if (!(old && /^(manager_message|manual)/.test(String(ctx.pausedBy || '')))) continue;
-                    await db.session.update({ where: { id: session.id }, data: { context: Z.cleanJsonDeep({ ...ctx, funnelPaused: false, pausedBy: null, adminEngaged: false, resumedBy: 'client_return_24h', resumedAt: new Date().toISOString() }) } });
+                    const age = ctx.pausedAt ? Date.now() - new Date(ctx.pausedAt).getTime() : 0;
+                    const managerPause = /^(manager_message|manual)/.test(String(ctx.pausedBy || ''));
+                    // Пауза, яку поставив сам бот (передав менеджеру: handoff/loop/complaint/insist…), і менеджер відтоді НЕ написав жодного
+                    // разу — через 6 год клієнт знову отримує відповідь бота (14.10, аудит S1: 22 розмови, де після «менеджер напише вам тут»
+                    // ніхто не відповів, а пауза бота не знімалась ніколи). Заблоковано вручну (user_locked) і тестовий режим — не чіпаємо.
+                    let botPauseAbandoned = false;
+                    if (!managerPause && age > 6 * 3600 * 1000 && ctx.pausedBy && !/^(user_locked|test_mode)$/.test(String(ctx.pausedBy))) {
+                        const mgr = await db.message.findFirst({ where: { sessionId: session.id, createdAt: { gt: new Date(ctx.pausedAt) }, metadata: { path: ['source'], equals: 'zernio_inbox' } }, select: { id: true } }).catch(() => ({ id: 'err' }));
+                        botPauseAbandoned = !mgr;
+                    }
+                    if (!((age > 24 * 3600 * 1000 && managerPause) || botPauseAbandoned)) continue;
+                    await db.session.update({ where: { id: session.id }, data: { context: Z.cleanJsonDeep({ ...ctx, funnelPaused: false, pausedBy: null, adminEngaged: false, resumedBy: botPauseAbandoned ? 'bot_handoff_unanswered_6h' : 'client_return_24h', resumedAt: new Date().toISOString() }) } });
+                    if (botPauseAbandoned) logger.info('[metaChannel] пауза бота без відповіді менеджера >6 год — бот знову відповідає', { botId, sessionId: session.id, pausedBy: ctx.pausedBy });
                 }
                 // Точний повтор попереднього повідомлення клієнта за 2 хв, на яке бот уже відповів (подвійне натискання кнопки-питання
                 // реклами, 12.10 _marian28_06_: «Яка ціна кофти?» ×2 → картка, а потім ще раз ціна) — записали, окремо не відповідаємо.

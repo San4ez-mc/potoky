@@ -1412,6 +1412,11 @@ async function runPolicyInner(A, u) {
             await tryReconcile(A);
             if (A._partialPay) return;
             if (ctx.payStatus === 'confirmed') { await afterOrderAccepted(A); return; }
+            // Квитанцію вже надсилали (14.10, df51042d lenkaboiar: «Я скидала вже передплату» → бот знову просив квитанцію) — не просимо вдруге.
+            if (!u.receiptLink && !A.turnImage && (ctx.receiptNew || ctx.lastReceiptImageUrl)) {
+                A.out.push({ text: 'Так, квитанцію бачу 🙏 Менеджер звіряє оплату — щойно підтвердить, передамо замовлення у відправку 💛', step: 'post_receipt_known' });
+                return;
+            }
             if (!u.receiptLink && !A.turnImage) {
                 // «Відправив»/«Оплатив» текстом — не доказ оплати (FunnelTest 13): просимо квитанцію, не підтверджуємо.
                 A.out.push({ text: 'Дякую! Щоб звірити оплату, скиньте, будь ласка, скріншот або посилання на квитанцію 🙏', step: 'post_receipt_ask' });
@@ -1443,6 +1448,17 @@ async function runPolicyInner(A, u) {
             } else {
                 A.out.push({ text: messageText(A.assets, 'n_agent_post_extra_ack', ctx, A.session.id), step: 'post_extra' });
             }
+            return;
+        }
+        // Допродаж, на який клієнт погодився ПІСЛЯ оформлення (14.10, df51042d lenkaboiar: «Білий писала вище» / «То додали чи ні?» —
+        // аналізатор бачив addUpsell, а бот відповідав «в роботі» і «ви не підтвердили»). Склад оплаченого замовлення бот не міняє сам —
+        // чітко підтверджує й передає менеджеру з кольорами.
+        if (u.addUpsell === true || (Array.isArray(u.upsellUnits) && u.upsellUnits.length)) {
+            const upN = (P(ctx) && P(ctx).upsell && (P(ctx).upsell.customerName || P(ctx).upsell.name)) || 'допродаж';
+            const cols = (Array.isArray(u.upsellUnits) ? u.upsellUnits : []).map((x) => [x && x.color, x && x.size].filter(Boolean).join(' ')).filter(Boolean).join(', ');
+            delete ctx.agent.upsellDeclined;
+            A.out.push({ text: 'Записала: додати ' + String(upN).split('\n')[0] + (cols ? ' (' + cols + ')' : '') + ' 👌 Передаю менеджеру — він додасть до вашого замовлення й напише, якщо зміниться сума.', step: 'post_upsell_add' });
+            await T.alert(A, 'n_agent_post_extra_admin', { details: '➕ Клієнт хоче додати до оформленого замовлення ' + ctx.crmOrderId + ': ' + upN + (cols ? ' — ' + cols : '') + '. 💬 «' + text.slice(0, 200) + '»' });
             return;
         }
         if (u.extraProducts || u.alsoWants) {
@@ -1483,6 +1499,8 @@ async function runPolicyInner(A, u) {
             A.out.push({ text: messageText(A.assets, 'n_agent_post_extra_ack', ctx, A.session.id), step: 'post_extra' });
             ctx.agent.orderRefDisplay = ctx.orderRef || ctx.crmOrderId;
             await T.alert(A, 'n_agent_post_extra_admin', { details: '💬 «' + text.slice(0, 200) + '»' });
+        } else if (Number(ctx.payAmount) > 0 && ctx.payStatus !== 'confirmed' && (ctx.receiptNew || ctx.lastReceiptImageUrl)) {
+            A.out.push({ text: 'Квитанцію отримала 🙏 Менеджер звіряє оплату — щойно підтвердить, передамо у відправку 💛', step: 'post_receipt_known' });
         } else if (Number(ctx.payAmount) > 0 && ctx.payStatus !== 'confirmed') {
             // 2026-09-23 (FunnelTest, інваріант I1 «бот не мовчить»): клієнт відповідає «так, оформляйте» вже ПІСЛЯ
             // видачі посилання на оплату — раніше бот мовчав (30 хв після post_order), і Zernio позначав розмову
@@ -1636,14 +1654,18 @@ async function runPolicyInner(A, u) {
     if (!P(ctx) || freshSignal || categorySignal) {
         // Вибір зі списку КОЛЬОРОМ («Чорний»): якщо цей колір мають кілька позицій списку — перепитуємо, яку саме, а не беремо
         // першу (2026-09-29, сесія e5090bb9: «Чорний» → SH617927, хоча чорний був у 3 з 4 костюмів). Одна позиція — беремо її.
-        if (!P(ctx) && ctx.catalogHintSkus && !/\d/.test(text) && text.trim().split(/\s+/).length <= 3) {
+        // Колір — спершу з аналізатора (u.colorMatched/u.color, §15.17): «Жаль, черного цвета нет кофты((((» (14.10, a93504ee basova2460)
+        // — 6 слів і російською, регулярка/«≤3 слів» не спрацьовували, бот показав той самий список, а потім вигадав «немає».
+        const colorQ = String(u.colorMatched || u.color || '').trim();
+        if (!P(ctx) && ctx.catalogHintSkus && (colorQ || (!/\d/.test(text) && text.trim().split(/\s+/).length <= 3))) {
             try {
                 const skusC = String(ctx.catalogHintSkus).split(',').map((s) => s.trim()).filter(Boolean);
                 const catC = await loadCatalog(A.botId, A.keys);
                 const listC = skusC.map((s) => catC.products.find((x) => String(x.sku).toUpperCase() === s.toUpperCase())).filter(Boolean);
                 const colsOf = (pr) => [...new Set((pr.offers || []).filter((o) => o.inStock !== false).flatMap((o) => (o.properties || []).filter((q) => /кол|цвет/i.test(q.name || '')).map((q) => q.value)))];
-                const named = listC.map((pr) => ({ pr, c: matchColor({ colors: colsOf(pr).join(',') }, text) })).filter((x) => x.c);
-                const nameHit = listC.some((pr) => stemsOf(pr.customerName || pr.name).some((st) => String(text).toLowerCase().includes(st)));
+                const named = listC.map((pr) => ({ pr, c: matchColor({ colors: colsOf(pr).join(',') }, colorQ || text) })).filter((x) => x.c);
+                // Назва, що вказує на ОДНУ позицію списку, — це вибір за назвою; слово, спільне для кількох («кофта»), — ні.
+                const nameHit = listC.filter((pr) => stemsOf(pr.customerName || pr.name).some((st) => String(text).toLowerCase().includes(st))).length === 1;
                 if (named.length > 1 && !nameHit) {
                     ctx.agent.pendingColorRaw = text.trim();
                     A.out.push({ text: named[0].c + ' є в кількох моделях зі списку 🙂 Яка саме цікавить?\n' + named.map((x) => (skusC.findIndex((s) => s.toUpperCase() === String(x.pr.sku).toUpperCase()) + 1) + '. ' + String(x.pr.name || x.pr.customerName).split('\n')[0].replace(/\.?\s*Артикул:?.*$/i, '').trim() + ' — ' + Number(x.pr.price) + ' грн').join('\n') + '\nМожна відповісти номером 👌', step: 'hint_color_ambiguous' });
@@ -2232,8 +2254,12 @@ async function runPolicyInner(A, u) {
             // 2026-09-28 (Edit 86c32ac7, «двічі питає зріст та вагу»): «Як підібрати розмір?» разом із свіжою карткою — картка вже
             // закінчується проханням зросту/ваги, тож таке питання вважаємо закритим і не віддаємо в compose (він дописував друге прохання).
             // «Як підібрати розмір?» разом зі свіжою карткою — картка сама закінчується проханням параметрів, це і є відповідь.
-            if (A.justPresented) Q.coverTopics(A, u, ['size_how'], 'card');
-            if (A.justPresented && !u.questions.length && !colorNote) { ctx.agent.lastAsk = paramsPrompt || 'зріст і вага'; return; }
+            // Клас F (14.10, Edits dd25ddeb/93bdc8c6/2fc0e939: кнопка реклами «Як замовити кофту?» → картка + абзац «Оформлення прямо
+            // тут…»): «як замовити» разом зі свіжою карткою теж закрите — картка закінчується першим кроком оформлення (параметри).
+            // Мовчимо, коли ВІДКРИТИХ питань нема (ціну/кольори/наявність картка вже закрила) — не за сирим списком питань.
+            if (A.justPresented) Q.coverTopics(A, u, ['size_how', 'order_process'], 'card');
+            if (!A.qs) Q.init(A, u);
+            if (A.justPresented && !Q.open(A).length && !colorNote) { ctx.agent.lastAsk = paramsPrompt || 'зріст і вага'; return; }
             const missing = isHW ? (si.height && !si.weight ? 'вагу' : (!si.height && si.weight ? 'зріст' : '')) : '';
             let ask = '';
             if (!A.justPresented) {
@@ -2723,6 +2749,14 @@ async function runPolicyInner(A, u) {
     if (ctx.orderIntent && ctx.orderIntent.addUpsell && u.addUpsell === false && !ctx.crmOrderId) {
         ctx.orderIntent.addUpsell = false; ctx.orderIntent.upsellUnits = undefined; ctx.orderIntent.upsellQty = undefined; ctx.orderIntent.upsellNote = undefined;
         if (ctx.paymentInfo && ctx.paymentInfo.method) { ctx.orderRef = ''; await T.payAmount(A); await sendRequisites(A, u); return; }
+    }
+
+    // 7a2. Передумав щодо допродажу після відмови («Тількі кофту» → «Або додайте футболку ще білу», 14.10 df51042d): addUpsell з
+    // аналізатора знімає відмову, а 7b нижче записує кольори й перераховує суму/реквізити.
+    if (u.addUpsell === true && !ctx.crmOrderId && P(ctx) && P(ctx).upsell && ctx.orderIntent && !ctx.orderIntent.addUpsell) {
+        delete ctx.agent.upsellDeclined;
+        ctx.orderIntent = { ...ctx.orderIntent, addUpsell: true };
+        A.out.push({ text: 'Додала до замовлення 👌', step: 'upsell_late_add' });
     }
 
     // 7b. Колір/кількість допродажу, названі ПІЗНІШЕ за підсумок (FunnelTest 9: бот спитав спосіб

@@ -25,6 +25,10 @@ if (require.main === module && !process.env.NODE_PATH) {
     process.env.NODE_PATH = '/var/www/flows.fineko.space/platform/node_modules';
     require('module').Module._initPaths();
 }
+// Фонові цикли (zernioHandler: зняття пауз, повтори ходів; metaChannel: поллер розмов, дозвідправка) запускаються в КОЖНОМУ процесі,
+// що їх підключає, якщо не задано process.env.name (як у pm2). 14.10: прогін регресії зняв 9 прострочених пауз на живих розмовах і не
+// завершувався сам (таймери). Тест — не платформа: цикли вимкнено до першого require.
+if (!process.env.name) process.env.name = 'goverla-regression';
 const { loadAssets } = require('../lib');
 const { runPolicy, matchColor, enforceInsistLimit, breakLoop } = require('../policy');
 
@@ -368,6 +372,63 @@ async function main() {
         await runPolicy(A, u);
         const askedAgain = A.out.some((o) => o.step === 'set_ask');
         check('Після щойно показаної картки set-товару питання "весь комплект?" не дублюється', !askedAgain, 'steps: ' + A.out.map((o) => o.step).join(','));
+    }
+
+    // ── 50.1 (14.10, df51042d lenkaboiar): після оформлення «Білий писала вище» (addUpsell) — підтвердження + менеджеру, не «в роботі»;
+    // квитанцію вже надсилала — не просимо вдруге й не кажемо «чекаю на оплату».
+    {
+        const base = () => freshA({ turnText: 'Білий писала вище', ctx: { testMode: true, agent: { upsellDeclined: true }, crmOrderId: 'o1', orderRef: 'R1', product: { sku: 'C0043', customerName: 'Кофта', price: 1279, upsell: { sku: 'L0056', customerName: 'Футболка', price: 449 } }, paymentInfo: { method: 'cod' }, payAmount: 200, payStatus: 'pending', postOrderMsgAt: Date.now() - 3600e3, lastReceiptImageUrl: 'https://x/r.jpg', receiptNew: true } });
+        const A = base();
+        await runPolicy(A, freshU({ intent: 'other', addUpsell: true, upsellUnits: [{ color: 'Білий' }] }));
+        const s1 = A.out.map((o) => o.step).join(',');
+        check('50.1 допродаж після оформлення — «Записала: додати … Білий» + менеджеру', s1 === 'post_upsell_add' && /Білий/.test(A.out[0].text) && !A.ctx.agent.upsellDeclined, s1);
+        const B = base(); B.turnText = 'Я скидала вже передплату';
+        await runPolicy(B, freshU({ intent: 'other', claimsPaid: true }));
+        const s2 = B.out.map((o) => o.step).join(',');
+        check('50.1 «я вже скидала» при наявній квитанції — «квитанцію бачу», без повторного прохання', s2 === 'post_receipt_known', s2);
+    }
+
+    // ── 49.1 (14.10, a93504ee basova2460): колір у відповідь на показаний список — з аналізатора (довга фраза, російською), а не
+    // повтор того самого списку.
+    {
+        const A = freshA({ turnText: 'Жаль, черного цвета нет кофты((((' });
+        A.ctx.catalogHintSkus = 'C0043,A0187,D0050'; A.ctx.agent.lastAsk = 'який із показаних товарів цікавить';
+        await runPolicy(A, freshU({ intent: 'give_color', color: 'черный', colorMatched: 'Чорний' }));
+        const steps = A.out.map((o) => o.step).join(',');
+        check('49.1 «черного нет кофты» на список — обрано позицію з чорним або перепитано яку, не той самий список', !/(^|,)hint(,|$)/.test(steps) && (!!A.ctx.catalogHintPick || /hint_color_ambiguous|present/.test(steps)), steps + ' pick=' + A.ctx.catalogHintPick);
+    }
+
+    // ── 48.1 (14.10, 0da56214 merdan_movlanov): повідомлення, що прийшли, поки йде повільний хід, — ОДНА наступна пачка, не хід на кожне.
+    {
+        const MC = require('../../metaChannel');
+        const sid = 'regress-burst-' + Date.now();
+        MC._queue.set(sid, new Promise(() => {})); // «хід уже виконується» (ніколи не завершиться — runTurn у тесті не запускається)
+        const b = (t) => ({ botId: 'b', contactId: 'c', texts: [t], imageUrl: null, imageUrls: [], ctxPatch: {} });
+        MC._enqueue(sid, b('У меня есть но это натуральный кожа'));
+        MC._enqueue(sid, b('Мне нужен натуральный кожа'));
+        const w = MC._waiting.get(sid);
+        check('48.1 два повідомлення під час ходу — одна пачка з обома текстами', w && w.texts.length === 2, JSON.stringify(w && w.texts));
+        MC._waiting.delete(sid); MC._queue.delete(sid);
+    }
+
+    // ── 47.1 Клас K (14.10, 9d756d73 amin_i1i): перший id реклами, що наздогнав щойно показаний (з поста) товар, — не новий товар.
+    {
+        const { isNewEntryAd } = require('../index');
+        const shown = { agent: { presentedSku: 'set1119' }, presentedAt: Date.now() - 60 * 1000 };
+        check('47.1 перший ad-id після щойно показаного товару — не новий сигнал', isNewEntryAd(shown, 'adX', null) === false, '');
+        check('47.1 перший ad-id без показаного товару — новий сигнал', isNewEntryAd({ agent: {} }, 'adX', null) === true, '');
+        check('47.1 зміна реклами після іншої реклами — новий сигнал', isNewEntryAd({ agent: { presentedSku: 'set1119', seenEntryAd: 'adA' }, presentedAt: Date.now() }, 'adB', null) === true, '');
+        check('47.1 товар показано давно (>30 хв) — перший ad-id новий', isNewEntryAd({ agent: { presentedSku: 'set1119' }, presentedAt: Date.now() - 2 * 3600e3 }, 'adX', null) === true, '');
+    }
+
+    // ── 46.1 Клас F (14.10, dd25ddeb/93bdc8c6): кнопка реклами «Як замовити кофту?» разом зі свіжою карткою — без окремого абзацу
+    // «Оформлення прямо тут…»: картка закінчується першим кроком оформлення (параметри), питання закрите карткою.
+    {
+        const A = freshA({ turnText: 'Як замовити кофту?' });
+        A.justPresented = true;
+        A.ctx.product = { sku: 'A0187', name: 'Кофта', customerName: 'Кофта', price: 1279 }; A.ctx.agent.presentedSku = 'A0187';
+        await runPolicy(A, freshU({ intent: 'question', questions: ['Як замовити кофту?'], questionTopics: ['order_process'] }));
+        check('46.1 «Як замовити?» зі свіжою карткою — без зайвого тексту', A.out.length === 0, 'steps: ' + A.out.map((o) => o.step).join(',') + ' | ' + A.out.map((o) => String(o.text || '').slice(0, 60)).join(' / '));
     }
 
     // ── 9. Універсальне злиття поспіль ідучих текстових повідомлень одного ходу (архітектурне
@@ -1081,4 +1142,5 @@ async function main() {
     else console.log('УСІ ТЕСТИ ПРОЙШЛИ.');
 }
 
-main().catch((e) => { console.error('РЕГРЕСІЯ ВПАЛА З ПОМИЛКОЮ:', e.stack || e.message); process.exit(1); });
+// Завершуємося явно: підключені модулі тримають зʼєднання (БД, Redis) — без цього процес висів до тайм-ауту.
+main().then(() => process.exit(process.exitCode || 0)).catch((e) => { console.error('РЕГРЕСІЯ ВПАЛА З ПОМИЛКОЮ:', e.stack || e.message); process.exit(1); });

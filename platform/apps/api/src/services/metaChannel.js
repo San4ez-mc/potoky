@@ -165,6 +165,17 @@ function parseInbound(m) {
 
 // ── Склеювання пачки повідомлень і черга ходів на сесію ──
 const _pending = new Map(); const _queue = new Map();
+// Пачка, що вже в черзі за ходом, який виконується, але ще НЕ почалась. Нові повідомлення домішуються в неї, а не стають окремим
+// ходом (14.10, Edit 0da56214 merdan_movlanov: фото → хід ~35 с; за цей час ще два повідомлення про натуральну шкіру стали двома
+// ходами — бот двічі поспіль відповів майже однаковим текстом про екошкіру).
+const _waiting = new Map(); // sessionId -> batch e
+function mergeBatch(into, e) {
+    for (const t of e.texts || []) into.texts.push(t);
+    if (e.imageUrl && !into.imageUrl) into.imageUrl = e.imageUrl;
+    for (const u of e.imageUrls || []) if (!into.imageUrls.includes(u)) into.imageUrls.push(u);
+    for (const [k, v] of Object.entries(e.ctxPatch || {})) if (v != null) into.ctxPatch[k] = v;
+    if (e.resume) into.resume = true;
+}
 function scheduleTurn(sessionId, msg) {
     let e = _pending.get(sessionId);
     if (!e) { e = { botId: msg.botId, contactId: msg.contactId, texts: [], imageUrl: null, imageUrls: [], ctxPatch: {}, timer: null }; _pending.set(sessionId, e); }
@@ -175,16 +186,17 @@ function scheduleTurn(sessionId, msg) {
     if (e.timer) clearTimeout(e.timer);
     e.timer = setTimeout(() => {
         _pending.delete(sessionId);
-        const prev = _queue.get(sessionId) || Promise.resolve();
-        const run = prev.catch(() => {}).then(() => runTurn(sessionId, e)).catch((err) => logger.error('[metaChannel] turn failed', { sessionId, error: err.message }));
-        _queue.set(sessionId, run);
-        run.finally(() => { if (_queue.get(sessionId) === run) _queue.delete(sessionId); });
+        enqueue(sessionId, e);
     }, DEBOUNCE_MS);
 }
 
 function enqueue(sessionId, e) {
+    const w = _waiting.get(sessionId);
+    if (w) { mergeBatch(w, e); logger.info('[metaChannel] повідомлення домішано в пачку, що чекає своєї черги', { sessionId }); return; }
+    const running = _queue.has(sessionId);
+    if (running) _waiting.set(sessionId, e);
     const prev = _queue.get(sessionId) || Promise.resolve();
-    const run = prev.catch(() => {}).then(() => runTurn(sessionId, e)).catch((err) => logger.error('[metaChannel] turn failed', { sessionId, error: err.message }));
+    const run = prev.catch(() => {}).then(() => { if (_waiting.get(sessionId) === e) _waiting.delete(sessionId); return runTurn(sessionId, e); }).catch((err) => logger.error('[metaChannel] turn failed', { sessionId, error: err.message }));
     _queue.set(sessionId, run);
     run.finally(() => { if (_queue.get(sessionId) === run) _queue.delete(sessionId); });
 }
@@ -217,7 +229,7 @@ async function runTurn(sessionId, e) {
     } catch (err) { logger.error('[metaChannel] handleTurn failed', { botId, sessionId, error: err.message }); }
     const outMsgs = await db.message.findMany({ where: { sessionId, role: 'assistant', createdAt: { gt: sinceTime } }, orderBy: { createdAt: 'asc' } });
     // Клієнт уже пише далі (нова пачка в черзі) — застаріле прохання зросту/ваги не шлемо (як у zernioHandler).
-    if (_pending.has(sessionId)) {
+    if (_pending.has(sessionId) || _waiting.has(sessionId)) {
         for (const om of outMsgs) {
             if (!/agent:ask_params$/.test(String((om.metadata || {}).nodeId || ''))) continue;
             const rest = shopAgent.stripKnownHwAsk(String(om.content || ''));
@@ -612,4 +624,4 @@ const __runsBackground = !process.env.name || process.env.name === 'platform-api
 if (__runsBackground) setTimeout(() => { pollConversations(); setInterval(pollConversations, 2 * 60 * 1000).unref(); }, 100 * 1000).unref();
 if (__runsBackground) setTimeout(() => { retryUnanswered(); setInterval(retryUnanswered, 60 * 1000).unref(); }, 150 * 1000).unref();
 
-module.exports = { handleMetaEvent, scheduleTurn, runTurn, drain, sendText, replyToComment, channelOf, channelOfSync, splitText, _echoes, _pollConversations: pollConversations, _refPatch: refPatch, _takeHeldRef: takeHeldRef, _refHold };
+module.exports = { handleMetaEvent, scheduleTurn, runTurn, drain, sendText, replyToComment, channelOf, channelOfSync, splitText, _echoes, _pollConversations: pollConversations, _refPatch: refPatch, _takeHeldRef: takeHeldRef, _refHold, _enqueue: enqueue, _waiting, _queue };

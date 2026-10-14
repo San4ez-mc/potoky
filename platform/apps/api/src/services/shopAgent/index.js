@@ -153,7 +153,7 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
     if (sharedPost) ctx.sharedPost = sharedPost;
     // Кілька фото одним повідомленням — розпізнаються разом (productMatch: lastUserImageUrls).
     if (Array.isArray(imageUrls) && imageUrls.length > 1) ctx.lastUserImageUrls = imageUrls.slice(0, 4); else delete ctx.lastUserImageUrls;
-    const newEntryAd = !!(entryAdId && entryAdId !== ctx.agent.seenEntryAd);
+    const newEntryAd = isNewEntryAd(ctx, entryAdId, sharedPost);
     if (entryAdId) { ctx.entryAdId = entryAdId; ctx.agent.seenEntryAd = entryAdId; }
     let adTouchChanged = false;
     // Дотики реклами для CRM (2026-10-06): з 13.09 жодне замовлення не мало реклами — графовий рушій ставив firstEntryAdId на першому
@@ -355,6 +355,17 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
     return { replies, understanding: u, trace: A.trace, ctx };
 }
 
+/**
+ * Чи є id реклами цього ходу НОВИМ сигналом товару. Клас K (14.10, Edit 9d756d73 amin_i1i): переслав рілс set1119 → бот показав
+ * його; наступне повідомлення прийшло з ПЕРШИМ у розмові id реклами (інший комплект) — вважалось новим товаром, бот перемкнувся.
+ * Перший ad-id, що наздогнав уже показаний за останні 30 хв товар, — лише атрибуція (дотик CRM). Зміна реклами після іншої — новий.
+ */
+function isNewEntryAd(ctx, entryAdId, sharedPost) {
+    if (!entryAdId || entryAdId === ctx.agent.seenEntryAd) return false;
+    if (!ctx.agent.seenEntryAd && ctx.agent.presentedSku && !sharedPost && Date.now() - Number(ctx.presentedAt || 0) < 30 * 60 * 1000) return false;
+    return true;
+}
+
 /** Знімок ходу в agent_turns (best-effort — збій запису не має ламати відповідь клієнту). */
 async function recordTurn({ sessionId, botId, input, ctxBefore, u, qs, out, ms }) {
     if (!ctxBefore) return;
@@ -365,4 +376,4 @@ async function recordTurn({ sessionId, botId, input, ctxBefore, u, qs, out, ms }
     } catch (e) { logger.warn('[shopAgent] recordTurn: ' + e.message, { sessionId }); }
 }
 
-module.exports = { handleTurn, recordTurn, classifyComment, isCommentAgent, isAgentBot, loadCustomerMemory, buildHistory, stripKnownHwAsk, stripAskSentences, ASK_KINDS, paragraphize };
+module.exports = { handleTurn, recordTurn, isNewEntryAd, classifyComment, isCommentAgent, isAgentBot, loadCustomerMemory, buildHistory, stripKnownHwAsk, stripAskSentences, ASK_KINDS, paragraphize };

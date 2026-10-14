@@ -462,6 +462,30 @@ async function main() {
         const steps = A.out.map((o) => o.step).join(',');
         check('60.1 «Поки роблю паузу» з відомими параметрами — мʼякий відступ, без розміру/кольору', /size_postpone/.test(steps) && !/size_reply|ask_color/.test(steps) && !A.ctx.recommendedSize, steps);
     }
+    // ── 61. Оплата, яку бот не перевірить сам (власник 14.10): на картку → у групу з кнопками «✅ Оплату отримано / ❌ Не надійшла»;
+    // на рахунок ФОП → мовчки (знайде перезвірка); після кнопки бот іде далі.
+    {
+        const T = require('../tools');
+        const fop = { iban: 'UA053220010000026006340060450', code: '3717807661' };
+        const k = (rv) => T.receiptKind({ fop, orderRef: 'GOVQ251FA1H', lastReceiptImageUrl: 'u', receiptVision: rv ? { url: 'u', ...rv } : null }, {});
+        check('61.1 квитанція на IBAN ФОП → fop', k({ iban: 'UA05 3220 0100 0002 6006 3400 6045 0' }) === 'fop', '');
+        check('61.1 код замовлення в призначенні → fop', k({ purpose: 'Оплата за товар GOVQ251FA1H' }) === 'fop', '');
+        check('61.1 переказ на картку → card', k({ purpose: 'Переказ на картку', recipientCard: '5375 41** **** 9946' }) === 'card', '');
+        check('61.1 не прочитано → unread', k(null) === 'unread', '');
+        const { continueAfterPayment } = require('../policy');
+        const A = freshA(); A.ctx.product = { sku: 'A0187', name: 'Кофта', price: 1279 }; A.ctx.payStatus = 'confirmed'; A.ctx.orderData = { fullName: 'Коротич Олег' };
+        await continueAfterPayment(A);
+        check('61.2 менеджер підтвердив оплату, даних доставки бракує → «Оплату отримали ✅» + прохання решти даних', A.out.length === 1 && A.out[0].step === 'ask_address' && /Оплату отримали/.test(A.out[0].text) && /телефон/.test(A.out[0].text) && !/ПІБ/.test(A.out[0].text), A.out.map((o) => o.text).join(' | '));
+        const B = freshA({ turnText: '', turnImage: 'https://example.invalid/receipt.jpg' });
+        Object.assign(B.ctx, { product: { sku: 'A0187', name: 'Кофта', price: 1279 }, crmOrderId: 'TEST-1', payAmount: 200, orderRef: 'GOVTESTCARD', orderRefAt: Date.now() - 60000, paymentInfo: { method: 'cod' }, fop, receiptVision: { url: 'https://example.invalid/receipt.jpg', amount: 200, purpose: 'Переказ на картку', recipientCard: '…9946', payerName: 'Коротич Олег' } });
+        await runPolicy(B, freshU({ intent: 'paid', claimsPaid: true }));
+        const al = (B.ctx.testAlerts || []).join(' | ');
+        check('61.3 квитанція на картку → сповіщення з кнопками «Оплата на картку», без старого «Чек отримано»', /Оплата на картку/.test(al) && !/n_receipt_alert/.test(al) && B.ctx.payStatus !== 'confirmed', al + ' / ' + B.ctx.payStatus);
+        const C = freshA({ turnText: '', turnImage: 'https://example.invalid/r2.jpg' });
+        Object.assign(C.ctx, { product: { sku: 'A0187', name: 'Кофта', price: 1279 }, crmOrderId: 'TEST-2', payAmount: 200, orderRef: 'GOVTESTFOP', orderRefAt: Date.now() - 60000, paymentInfo: { method: 'cod' }, fop, receiptVision: { url: 'https://example.invalid/r2.jpg', amount: 200, purpose: 'Оплата за товар GOVTESTFOP', iban: fop.iban } });
+        await runPolicy(C, freshU({ intent: 'paid', claimsPaid: true }));
+        check('61.4 квитанція на ФОП, грошей ще нема → у групу нічого (перезвірка знайде)', !(C.ctx.testAlerts || []).length, (C.ctx.testAlerts || []).join(' | '));
+    }
     // ── 56.1 (аудит M2): допродаж кольору, якого нема в наявності, не записуємо — кажемо чесно й пропонуємо наявні.
     {
         const tee = { id: 't1', sku: 'L0056', name: 'Футболка оверсайз база', customerName: 'Футболка оверсайз база', price: 449, offers: [

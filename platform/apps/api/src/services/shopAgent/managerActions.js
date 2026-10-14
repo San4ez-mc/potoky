@@ -103,7 +103,74 @@ function blockedReason(session, ctx) {
     return null;
 }
 
+/** Відповіді бота після кнопки (немає вхідного ходу клієнта) — клієнту в Instagram + у розмову адмінки. */
+async function deliverOut(A) {
+    const mc = require('../metaChannel');
+    for (const o of A.out) {
+        const text = String(o.text || '').trim(); if (!text) continue;
+        let mid = null; let err = null;
+        try { mid = await mc.sendText(A.botId, A.ctx.psid, text); } catch (e) { err = e.message; }
+        await db.message.create({ data: cleanJsonDeep({ sessionId: A.session.id, role: 'assistant', content: text, metadata: { source: 'shop_agent', nodeId: 'agent:' + o.step, channel: 'meta', status: mid ? 'sent' : 'failed', metaMessageId: mid || null, triggeredBy: 'manager_button', ...(err ? { error: String(err).slice(0, 200) } : {}) } }) }).catch(() => {});
+    }
+}
+
+/**
+ * pc:/pn: — оплата, яку бот не може перевірити сам (переказ на картку тощо; tools.paymentConfirmAlert). Власник 14.10: менеджер
+ * підтверджує кнопкою → бот іде далі: позначає оплату, оновлює замовлення в CRM, робить наступний крок із клієнтом.
+ */
+async function handlePaymentCallback({ action, sessionId, cq, tok, chatId, answer, session, A }) {
+    const { ctx } = A; const msgId = cq.message.message_id; const by = whoPressed(cq.from);
+    const done = (label) => tg(tok, 'editMessageReplyMarkup', { chat_id: chatId, message_id: msgId, reply_markup: { inline_keyboard: [[{ text: label, callback_data: 'pd:' + sessionId }]] } });
+    if (action === 'pd') { await answer(ctx.payStatus === 'confirmed' ? 'Оплату вже підтверджено.' : 'Позначено.', true); return; }
+    if (session.isTest || ctx.testMode) { await answer('Тестова сесія.', true); return; }
+    if (ctx.payStatus === 'confirmed') { await answer('Оплату вже підтверджено' + (ctx.payConfirmedBy ? ': ' + ctx.payConfirmedBy : '') + '.', true); await done('✅ Оплату підтверджено'); return; }
+    const before = snapshot(ctx);
+    if (action === 'pn') {
+        ctx.agent.payRejected = { by, at: new Date().toISOString() };
+        await saveCtxDiff(sessionId, before, ctx);
+        await answer('Позначено: не надійшла. Бот нічого клієнту не писав — напишіть самі, якщо треба.', true);
+        await done('❌ Не надійшла — ' + by + ', ' + kyivTime());
+        return;
+    }
+    const lockKey = 'mgr-pay:' + sessionId;
+    let locked = 'OK';
+    try { locked = await redisClient.set(lockKey, String(cq.from && cq.from.id), { NX: true, EX: 300 }); } catch (e) { /* redis недоступний */ }
+    if (!locked) { await answer('Вже підтверджується іншим натисканням…', true); return; }
+    try {
+        await answer('Підтверджую оплату…');
+        const rv = ctx.receiptVision && ctx.receiptVision.url === ctx.lastReceiptImageUrl ? ctx.receiptVision : null;
+        Object.assign(ctx, { payStatus: 'confirmed', payStatusText: 'підтверджено ✅', payVia: 'manager:' + ((rv && rv.kind) || 'manual'), payPaidAmount: Number(rv && rv.amount) || Number(ctx.payAmount) || 0, payConfirmedLine: 'Оплату отримали ✅ ', payConfirmedBy: by, payConfirmedAt: new Date().toISOString() });
+        const { continueAfterPayment } = require('./policy');
+        await continueAfterPayment(A);
+        await saveCtxDiff(sessionId, before, ctx);
+        await deliverOut(A);
+        logger.info('[managerActions] payment confirmed by manager', { sessionId, by, crmOrderId: ctx.crmOrderId || null, out: A.out.map((o) => o.step) });
+        await done('✅ Оплату підтвердив ' + by + ', ' + kyivTime() + (ctx.crmOrderId ? ' · CRM оновлено' : ''));
+    } catch (e) {
+        logger.error('[managerActions] payment confirm failed', { sessionId, error: e.message });
+        await tg(tok, 'sendMessage', { chat_id: chatId, text: '❌ Не вдалося підтвердити оплату: ' + esc(e.message).slice(0, 300), parse_mode: 'HTML', reply_to_message_id: msgId, allow_sending_without_reply: true });
+    } finally {
+        try { await redisClient.del(lockKey); } catch (e) { /* ignore */ }
+    }
+}
+
 async function handleAdminCallback({ secret, cq }) {
+    const pm = /^(pc|pn|pd):([0-9a-f-]{36})$/.exec(String((cq && cq.data) || ''));
+    if (pm) {
+        const [, action, sessionId] = pm;
+        const session = await db.session.findUnique({ where: { id: sessionId }, include: { user: true } });
+        if (!session) return;
+        const assets = await loadAssets(session.botId);
+        const keys = assets.keys; const tok = String(keys.TELEGRAM_BOT_TOKEN || '');
+        if (!tok || secret !== webhookSecret(tok)) { logger.warn('[managerActions] bad webhook secret', { sessionId }); return; }
+        const answer = (text, alert = false) => tg(tok, 'answerCallbackQuery', { callback_query_id: cq.id, text: String(text || '').slice(0, 190), show_alert: alert });
+        const chatId = cq.message && cq.message.chat && cq.message.chat.id;
+        if (String(chatId) !== String(keys.ADMIN_TELEGRAM_ID || '')) { await answer('Немає доступу.', true); return; }
+        const ctx = session.context || {}; ctx.agent = ctx.agent || {};
+        const A = { botId: session.botId, session, ctx, keys, assets, user: session.user ? { id: session.user.id, firstName: session.user.firstName, username: session.user.username } : {}, trace: [], out: [], history: [] };
+        await handlePaymentCallback({ action, sessionId, cq, tok, chatId, answer, session, A });
+        return;
+    }
     const m = /^(so|sy|sb|sd):([0-9a-f-]{36})(?::([0-9a-f]{10}))?$/.exec(String((cq && cq.data) || ''));
     if (!m) return;
     const [, action, sessionId, seenHash] = m;

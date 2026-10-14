@@ -93,8 +93,48 @@ async function receiptVision(A) {
         }
         const f = JSON.parse(m[0]);
         c.receiptVision = { url, at: Date.now(), amount: f.amount, recipientCode: String(f.recipientCode || ''), iban: String(f.iban || ''), recipientCard: String(f.recipientCard || ''), payerName: String(f.payerName || ''), purpose: String(f.purpose || '') };
+        c.receiptVision.kind = receiptKind(c, A.keys);
         A.trace.push({ tool: 'receiptVision', ok: true, amount: f.amount, ref: /GOV/i.test(String(f.purpose || '')) });
     } catch (e) { A.trace.push({ tool: 'receiptVision', error: e.message }); }
+}
+/**
+ * Куди платили за квитанцією: 'fop' — на наш рахунок ФОП (IBAN / код ФОП / код замовлення на квитанції): гроші знайде фонова
+ * перезвірка за випискою; 'card' — переказ на картку (у виписці рахунку ФОП його не буде); 'other' — розпізнано, але не наш рахунок
+ * і не картка; 'unread' — квитанцію не розпізнано.
+ */
+function receiptKind(ctx, keys) {
+    const rv = ctx.receiptVision;
+    if (!rv || rv.url !== ctx.lastReceiptImageUrl) return 'unread';
+    const iban = String((ctx.fop && ctx.fop.iban) || (keys && keys.FOP_IBAN) || '').replace(/\s/g, '');
+    const code = String((ctx.fop && ctx.fop.code) || (keys && keys.FOP_CODE) || '').replace(/\D/g, '');
+    const ref = String(ctx.orderRef || '').toUpperCase();
+    if ((iban && String(rv.iban || '').replace(/\s/g, '').includes(iban)) || (code && String(rv.recipientCode || '').replace(/\D/g, '').includes(code)) || (ref && String(rv.purpose || '').toUpperCase().includes(ref))) return 'fop';
+    if (String(rv.recipientCard || '').replace(/\D/g, '').length >= 4 || /карт/i.test(String(rv.purpose || ''))) return 'card';
+    return 'other';
+}
+/**
+ * Оплату, яку бот не може перевірити сам (переказ на картку, нерозпізнана квитанція, квитанція на ФОП без грошей у виписці за 12 год), —
+ * у групу з кнопками «✅ Оплату отримано» / «❌ Не надійшла» (обробник — managerActions.js). Один раз на квитанцію.
+ * Власник 14.10: оплата на ФОП, яку знайдено у виписці, сповіщень не шле — група лише для того, на що треба відреагувати.
+ */
+async function paymentConfirmAlert(A, kind) {
+    const c = A.ctx; const url = String(c.lastReceiptImageUrl || '');
+    const key = url || ('claim:' + String(c.orderRef || ''));
+    if (c.payStatus === 'confirmed' || (c.agent && c.agent.payAlertFor === key)) return false;
+    const rv = c.receiptVision && c.receiptVision.url === url ? c.receiptVision : null;
+    const TITLE = { card: '💳 Оплата на картку — підтвердіть, що гроші надійшли', other: '🧾 Оплата не на рахунок ФОП — перевірте й підтвердіть', unread: '🧾 Квитанцію не вдалося розпізнати — перевірте оплату', fop_late: '🧾 Квитанція на ФОП є, а грошей у виписці за 12 год нема — перевірте' };
+    const od = c.orderData || {};
+    const lines = [
+        'Чекаємо: ' + (Number(c.payAmount) || 0) + ' грн' + (c.payLabel ? ' (' + c.payLabel + ')' : ''),
+        'Код замовлення: ' + (c.orderRef || '—'),
+        rv ? 'На квитанції: ' + (rv.amount || '?') + ' грн' + (rv.payerName ? ' від «' + rv.payerName + '»' : '') + (rv.recipientCard ? ', картка …' + String(rv.recipientCard).replace(/\D/g, '').slice(-4) : '') + (rv.purpose ? ', «' + String(rv.purpose).slice(0, 80) + '»' : '') : 'Квитанцію бот не прочитав — гляньте фото.',
+        od.fullName ? 'Отримувач: ' + od.fullName + (od.city ? ', ' + od.city : '') : 'Даних доставки ще нема — бот попросить після підтвердження.',
+        'Після «✅ Оплату отримано» бот позначить оплату, оновить замовлення в CRM і продовжить оформлення з клієнтом.',
+    ];
+    const buttons = [[{ text: '✅ Оплату отримано', callback_data: 'pc:' + A.session.id }, { text: '❌ Не надійшла', callback_data: 'pn:' + A.session.id }]];
+    const ok = await alert(A, { title: TITLE[kind] || TITLE.unread, main: '', details: lines.join('\n'), photoUrl: url }, { buttons });
+    c.agent = c.agent || {}; c.agent.payAlertFor = key; c.agent.payAlertAt = Date.now();
+    return ok;
 }
 async function crmOrder(A) { return tool(A, 'n_crm_order'); }
 async function supplierRoute(A) { return tool(A, 'n_supplier_route'); }
@@ -343,4 +383,4 @@ async function alert(A, nodeIdOrFields, extra = {}) {
     return !!j.ok;
 }
 
-module.exports = { adTouchSync, tool, resolveProduct, setApply, calcSize, checkAvail, availSearch, extraResolve, orderPrefill, intlRoute, payAmount, npCheck, reconcile, crmOrder, supplierRoute, supplierOrder, confirmPrep, ttnSync, returnCrmUpdate, returnCreate, returnAttachTtn, kbContext, kbAsk, kbHit, createInvoice, deleteInvoice, monoStatement, markConsumed, funnelStage, alert, activeFop, clientOrder };
+module.exports = { receiptKind, paymentConfirmAlert, adTouchSync, tool, resolveProduct, setApply, calcSize, checkAvail, availSearch, extraResolve, orderPrefill, intlRoute, payAmount, npCheck, reconcile, crmOrder, supplierRoute, supplierOrder, confirmPrep, ttnSync, returnCrmUpdate, returnCreate, returnAttachTtn, kbContext, kbAsk, kbHit, createInvoice, deleteInvoice, monoStatement, markConsumed, funnelStage, alert, activeFop, clientOrder };

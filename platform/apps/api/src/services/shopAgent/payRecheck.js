@@ -7,10 +7,14 @@
  * менеджеру), так і лишались «не знайдено».
  * Тепер раз на 5 хв: розмови з виданим кодом оплати (orderRef) за 3 доби, оплату не підтверджено → спільна виписка monobank (кеш на
  * рахунок, 1 запит/хв на всіх) → ОДНОЗНАЧНИЙ збіг: код замовлення в коментарі платежу, або єдиний платіж потрібної суми від того,
- * чий ПІБ у даних доставки. Знайшли — «оплачено» в розмові, платіж і стадія в CRM, повідомлення в групу. Клієнту нічого не пишемо.
+ * чий ПІБ у даних доставки. Знайшли — «оплачено» в розмові, платіж і стадія в CRM. Клієнту нічого не пишемо.
+ * Група (власник 14.10: «тримати групу в чистоті, щоб менеджери реагували, а не вимикали сповіщення»): про саму знайдену оплату —
+ * нічого; лише дія — замовлення ще не оформлене постачальнику й не відправлене → стандартне сповіщення з кнопкою «📦 Оформити
+ * постачальнику»; квитанція на ФОП є, а грошей за 12 год нема → сповіщення з кнопками «✅ Оплату отримано / ❌ Не надійшла».
  * Працює лише в platform-api (process.env.name).
  */
-const { db, logger, crmFetch } = require('./lib');
+const { db, logger, crmFetch, loadAssets } = require('./lib');
+const LATE_MS = 12 * 3600 * 1000;
 
 const WINDOW_MS = 72 * 3600 * 1000;
 
@@ -57,23 +61,40 @@ async function tick() {
                 const A = { botId, keys, ctx, session: { id }, trace: [], assets: null, user: {} };
                 await T.monoStatement(A); // спільний кеш на рахунок — для всіх розмов один запит до банку на хвилину
                 const hit = pickPayment(ctx, ctx.monoStatement, ctx.consumedTxIds);
-                if (!hit || !hit.tx) continue;
+                if (!hit || !hit.tx) {
+                    // Квитанція на наш ФОП (receiptKind 'fop'), а грошей у виписці 12 год нема — тепер уже варто, щоб глянула людина.
+                    const rv = ctx.receiptVision;
+                    if (rv && rv.kind === 'fop' && rv.url === ctx.lastReceiptImageUrl && Date.now() - Number(rv.at || 0) > LATE_MS && ctx.agent.payAlertFor !== rv.url) {
+                        A.assets = A.assets || await loadAssets(botId);
+                        await T.paymentConfirmAlert(A, 'fop_late');
+                        await db.$executeRawUnsafe("update sessions set context = jsonb_set(context, '{agent,payAlertFor}', to_jsonb($2::text)) where id = $1", id, rv.url);
+                    }
+                    continue;
+                }
                 const tx = hit.tx;
                 const patch = { payStatus: 'confirmed', payStatusText: 'підтверджено ✅', payVia: hit.via, payTxId: tx.id, payPaidAmount: Number(tx.amountUah) || 0, consumedTxIds: [...new Set([...(ctx.consumedTxIds || []), tx.id])], payConfirmedLine: 'Оплату отримали ✅ ', payRecheckAt: new Date().toISOString() };
                 // Злиття лише цих полів (атомарно) — хід бота, що йде паралельно, не перезаписуємо.
                 await db.$executeRawUnsafe('update sessions set context = context || $2::jsonb where id = $1', id, JSON.stringify(patch));
                 Object.assign(ctx, patch);
                 await T.markConsumed(A);
-                let crmNote = 'замовлення в CRM ще нема — бракує даних доставки, бот дозбирає їх, коли клієнт напише';
                 if (ctx.crmOrderId && !String(ctx.crmOrderId).startsWith('TEST-')) {
                     const pr = await crmFetch(keys, '/payments', { method: 'POST', body: JSON.stringify({ orderId: ctx.crmOrderId, amount: Number(tx.amountUah) || 0, method: 'monobank', status: 'success' }) }, 6000);
                     const pl = await crmFetch(keys, '/pipelines', {}, 4000); let stageId = null;
                     for (const p of (Array.isArray(pl.data) ? pl.data : [])) { const st = (p.stages || []).find((x) => String(x.name || '').trim().toLowerCase() === 'замовлення прийняте'); if (st) { stageId = st.id; break; } }
                     if (stageId) await crmFetch(keys, '/orders/' + ctx.crmOrderId, { method: 'PATCH', body: JSON.stringify({ stageId }) }, 4000);
                     await db.$executeRawUnsafe('update sessions set context = context || $2::jsonb where id = $1', id, JSON.stringify({ crmPaymentPosted: !!pr.ok }));
-                    crmNote = 'у CRM: платіж ' + (pr.ok ? 'записано' : 'НЕ записано (' + pr.status + ')') + ', стадія «Замовлення прийняте»' + (ctx.supplierHandled ? '' : ' — оформіть постачальнику');
+                    // Наступна дія — постачальник, якщо замовлення ще не оформлене й не відправлене (менеджери часто оформлюють самі).
+                    const o = await crmFetch(keys, '/orders/' + ctx.crmOrderId, {}, 5000);
+                    const od0 = o.data || {};
+                    const shipped = !!(ctx.supplierHandled || ctx.managerDispatch || ctx.supplierTtn || ctx.ttn || (Array.isArray(od0.ttn) && od0.ttn.filter(Boolean).length) || /відправ|достав|викона|отриман|скасов|відмов|поверн/i.test(String((od0.stage && od0.stage.name) || '')));
+                    if (!shipped) {
+                        A.assets = await loadAssets(botId);
+                        const { runSupplierDispatch } = require('./policy');
+                        await runSupplierDispatch(A);
+                        const keep = {}; for (const k of ['parcelCount', 'multiParcel', 'supplierOrderStatus', 'supplierTtn', 'supplierOrderResult', 'supplierHandled']) if (ctx[k] !== undefined) keep[k] = ctx[k];
+                        await db.$executeRawUnsafe('update sessions set context = context || $2::jsonb where id = $1', id, JSON.stringify(keep));
+                    }
                 }
-                await T.alert(A, { title: '💰 Оплату знайдено у виписці — бот позначив «оплачено»', main: (ctx.orderData && ctx.orderData.fullName ? ctx.orderData.fullName + ' · ' : '') + tx.amountUah + ' грн від «' + String(tx.counterName || '—') + '»' + (hit.via.endsWith(':ref') ? ' з кодом ' + ctx.orderRef : ' (збіг за ПІБ і сумою)'), details: crmNote + '.' });
                 logger.info('[payRecheck] оплату знайдено', { botId, sessionId: id, via: hit.via, amount: tx.amountUah });
             } catch (e) { logger.warn('[payRecheck] ' + e.message, { sessionId: id }); }
         }

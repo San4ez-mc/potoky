@@ -989,8 +989,7 @@ async function afterOrderAccepted(A) {
         await T.alert(A, 'n_create', manualSupplierMode(A.keys) ? { details: '⏸ Автооформлення постачальнику вимкнено — перевірте замовлення й натисніть «📦 Оформити постачальнику».', buttons: supplierButtons(A) } : {});
         await T.funnelStage(A, ...(ctx.payStatus === 'confirmed' || Number(ctx.payAmount) === 0 ? STAGES.accepted : STAGES.awaiting));
     } else if (ctx.repeatPass || ctx.payStatus === 'confirmed') {
-        await T.crmOrder(A); // повторний прохід: оплата в журнал + стадія
-        if (ctx.receiptNew) await T.alert(A, 'n_receipt_alert', { photoUrl: ctx.lastReceiptImageUrl || '' });
+        await T.crmOrder(A); // повторний прохід: оплата в журнал + стадія (сповіщення про квитанцію — у tryReconcile, лише коли потрібна дія)
     }
     if ((ctx.payStatus === 'confirmed' || Number(ctx.payAmount) === 0) && !ctx.supplierHandled) await runSupplierDispatch(A);
     ctx.shipTermsText = shipTerms(ctx); // строк відправки в підтвердженні — той самий текст, що в підсумку (n_confirm_prep)
@@ -1081,7 +1080,28 @@ async function tryReconcile(A) {
         await T.alert(A, 'n_receipt_alert', { photoUrl: '' });
     }
     if (ctx.payStatus === 'confirmed') { await T.markConsumed(A); await T.deleteInvoice(A); }
+    // Квитанцію не підтверджено виписою. На рахунок ФОП — мовчимо: гроші знайде фонова перезвірка (payRecheck; за 12 год без грошей —
+    // сповіщення). На картку / не на ФОП / не прочитано — одразу в групу з кнопками «✅ Оплату отримано / ❌ Не надійшла» (власник 14.10).
+    else if (A.turnImage && ctx.lastReceiptImageUrl === A.turnImage) {
+        const kind = T.receiptKind(ctx, A.keys);
+        if (kind !== 'fop') await T.paymentConfirmAlert(A, kind);
+    }
     ctx.payCheckedAt = Date.now();
+}
+
+/**
+ * Менеджер підтвердив оплату кнопкою в Telegram (переказ на картку тощо; managerActions.js) — бот іде далі тим самим шляхом, що й
+ * після оплати, знайденої у виписці: замовлення є → оплата й стадія в CRM, постачальник, підтвердження клієнту; замовлення ще нема →
+ * дані доставки є — створює замовлення, нема — просить їх. Повідомлення клієнту — в A.out.
+ */
+async function continueAfterPayment(A) {
+    const { ctx } = A;
+    if (ctx.crmOrderId || addressComplete(ctx.orderData)) { await afterOrderAccepted(A); return; }
+    const od = ctx.orderData || {};
+    ctx.agent.ackLine = 'Оплату отримали ✅ ';
+    ctx.agent.missingFields = [!od.fullName && 'ПІБ', !od.phone && 'телефон', !od.city && 'місто', !od.branch && '№ відділення або поштомата'].filter(Boolean).join(', ');
+    A.out.push({ text: messageText(A.assets, 'n_agent_ask_address', ctx, A.session.id), step: 'ask_address' });
+    ctx.agent.lastAsk = 'дані доставки: ' + ctx.agent.missingFields;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -1487,12 +1507,10 @@ async function runPolicyInner(A, u) {
             if (!u.receiptLink && !A.turnImage) {
                 // «Відправив»/«Оплатив» текстом — не доказ оплати (FunnelTest 13): просимо квитанцію, не підтверджуємо.
                 A.out.push({ text: 'Дякую! Щоб звірити оплату, скиньте, будь ласка, скріншот або посилання на квитанцію 🙏', step: 'post_receipt_ask' });
-                await T.alert(A, 'n_receipt_alert', { photoUrl: '' });
                 return;
             }
             A.out.push({ text: messageText(A.assets, 'n_post_order_receipt_msg', ctx, A.session.id), step: 'post_receipt' });
-            if (A.turnImage) ctx.receiptNew = true;
-            await T.alert(A, 'n_receipt_alert', { photoUrl: A.turnImage || '' });
+            if (A.turnImage) ctx.receiptNew = true; // сповіщення в групу (якщо потрібна дія менеджера) — уже в tryReconcile
             return;
         }
         if (u.wantsCard && ctx.payStatus !== 'confirmed' && Number(ctx.payAmount) > 0) { await sendCard(A); return; }
@@ -3061,4 +3079,4 @@ async function runPolicyInner(A, u) {
     }
 }
 
-module.exports = { runPolicy, breakLoop, LOOP_FAMILIES, addressComplete, matchColor, enforceInsistLimit, runSupplierDispatch, crmOrderEditUrl, shipTerms };
+module.exports = { continueAfterPayment, runPolicy, breakLoop, LOOP_FAMILIES, addressComplete, matchColor, enforceInsistLimit, runSupplierDispatch, crmOrderEditUrl, shipTerms };

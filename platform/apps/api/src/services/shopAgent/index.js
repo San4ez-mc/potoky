@@ -173,7 +173,9 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
     // Ключі Gemini по черзі (власний → конектор воронки) — щоб вичерпаний ключ воронки не клав розпізнавання фото (2026-09-29).
     let turnKeys = assets.keys;
     try { turnKeys = Object.assign({}, assets.keys, { __geminiKeys: await geminiKeys(botId, assets.keys) }); } catch (e) { /* лишаємо як є */ }
-    const A = { botId, session, ctx, keys: turnKeys, assets, user: session.user ? { id: session.user.id, firstName: session.user.firstName, username: session.user.username } : {}, trace: [], out: [], turnText: String(text || ''), turnImage: imageUrl || null, turnSharedPost: sharedPost || (ctx.sharedPost && ctx.hasFreshSignalThisTurn ? ctx.sharedPost : null), newEntryAd, turnStory: storyId || null, history, botSpokeBefore };
+    const rec = recoverManagerLedSignal(ctx, history, { sharedPost, entryAdId, imageUrl });
+    const A = { botId, session, ctx, keys: turnKeys, assets, user: session.user ? { id: session.user.id, firstName: session.user.firstName, username: session.user.username } : {}, trace: [], out: [], turnText: String(text || ''), turnImage: imageUrl || null, turnSharedPost: sharedPost || (ctx.sharedPost && (ctx.hasFreshSignalThisTurn || rec.sharedPost) ? ctx.sharedPost : null), newEntryAd: newEntryAd || rec.entryAd, turnStory: storyId || null, history, botSpokeBefore };
+    if (rec.sharedPost || rec.entryAd) A.trace.push({ tool: 'managerLedRecover', sharedPost: !!rec.sharedPost, entryAd: rec.entryAd });
     if (session.isTest || ctx.testMode) ctx.testMode = true;
     const t0 = Date.now();
     const u = await understand(A);
@@ -366,6 +368,23 @@ function isNewEntryAd(ctx, entryAdId, sharedPost) {
     return true;
 }
 
+/**
+ * Клас E (14.10, Edit 55f76471 andreibardetskii): розмову вів менеджер (бот не відповідав — товар, колір, розмір, способи оплати
+ * обговорили з ним), потім пише клієнт («1» — обрав спосіб оплати), а в памʼяті бота товару нема → «що вас цікавить?». Товарні
+ * сигнали самої розмови лишились (пересланий пост, реклама) — бот бере товар з них (один раз), а не питає категорію.
+ */
+function recoverManagerLedSignal(ctx, history, { sharedPost, entryAdId, imageUrl } = {}) {
+    const none = { sharedPost: false, entryAd: false };
+    if ((ctx.product && ctx.product.sku) || sharedPost || entryAdId || imageUrl || ctx.agent.managerLedRecovered) return none;
+    if (!(history || []).some((m) => m.who === 'manager')) return none;
+    const sp = !!(ctx.sharedPost && (ctx.sharedPost.caption || ctx.sharedPost.mediaId));
+    const ad = !sp && !!(ctx.entryAdId || (ctx.lastReferral && ctx.lastReferral.adId));
+    if (!sp && !ad) return none;
+    if (ad && !ctx.entryAdId) ctx.entryAdId = ctx.lastReferral.adId;
+    ctx.agent.managerLedRecovered = Date.now();
+    return { sharedPost: sp, entryAd: ad };
+}
+
 /** Знімок ходу в agent_turns (best-effort — збій запису не має ламати відповідь клієнту). */
 async function recordTurn({ sessionId, botId, input, ctxBefore, u, qs, out, ms }) {
     if (!ctxBefore) return;
@@ -376,4 +395,4 @@ async function recordTurn({ sessionId, botId, input, ctxBefore, u, qs, out, ms }
     } catch (e) { logger.warn('[shopAgent] recordTurn: ' + e.message, { sessionId }); }
 }
 
-module.exports = { handleTurn, recordTurn, isNewEntryAd, classifyComment, isCommentAgent, isAgentBot, loadCustomerMemory, buildHistory, stripKnownHwAsk, stripAskSentences, ASK_KINDS, paragraphize };
+module.exports = { handleTurn, recordTurn, isNewEntryAd, recoverManagerLedSignal, classifyComment, isCommentAgent, isAgentBot, loadCustomerMemory, buildHistory, stripKnownHwAsk, stripAskSentences, ASK_KINDS, paragraphize };

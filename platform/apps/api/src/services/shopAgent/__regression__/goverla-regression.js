@@ -412,6 +412,21 @@ async function main() {
         MC._waiting.delete(sid); MC._queue.delete(sid);
     }
 
+    // ── 51.1 Клас E (14.10, 55f76471 andreibardetskii): розмову вів менеджер, у памʼяті бота товару нема, клієнт пише «1» —
+    // товар береться зі збережених сигналів розмови (пост, реклама), один раз; без менеджера в історії — ні.
+    {
+        const { recoverManagerLedSignal } = require('../index');
+        const mgr = [{ who: 'manager', text: 'Ви можете оплатити 2-ма способами…' }, { who: 'client', text: '1' }];
+        const c1 = { agent: {}, sharedPost: { kind: 'post', caption: 'Вʼязана чоловіча кофта. Артикул: A0187' }, entryAdId: '120250955696810329' };
+        const r1 = recoverManagerLedSignal(c1, mgr, {});
+        check('51.1 розмова менеджера + пересланий пост у памʼяті → товар з поста', r1.sharedPost === true && r1.entryAd === false, JSON.stringify(r1));
+        check('51.1 відновлення лише раз', recoverManagerLedSignal(c1, mgr, {}).sharedPost === false, '');
+        const r2 = recoverManagerLedSignal({ agent: {}, lastReferral: { adId: 'ad9' } }, mgr, {});
+        check('51.1 лише реклама в памʼяті → товар з реклами', r2.entryAd === true, JSON.stringify(r2));
+        check('51.1 без повідомлень менеджера — нічого не відновлюємо', recoverManagerLedSignal({ agent: {}, entryAdId: 'ad1' }, [{ who: 'client', text: 'привіт' }], {}).entryAd === false, '');
+        check('51.1 товар уже є — нічого не відновлюємо', recoverManagerLedSignal({ agent: {}, product: { sku: 'A0187' }, entryAdId: 'ad1' }, mgr, {}).entryAd === false, '');
+    }
+
     // ── 47.1 Клас K (14.10, 9d756d73 amin_i1i): перший id реклами, що наздогнав щойно показаний (з поста) товар, — не новий товар.
     {
         const { isNewEntryAd } = require('../index');

@@ -1179,7 +1179,9 @@ async function runPolicyInner(A, u) {
     // пішло в CRM/постачальнику): додатковий товар передаємо менеджеру, перше замовлення лишається як є.
     if (ctx.crmOrderId && !ctx.funnelPaused && u.productHint && u.productHint.article && ctx.product && ctx.product.sku
         && String(u.productHint.article).trim().toLowerCase() !== String(ctx.product.sku).trim().toLowerCase() && !A.turnImage) {
-        await T.alert(A, 'n_agent_post_extra_admin', { details: '➕ Клієнт після оформлення хоче додати товар (арт. ' + u.productHint.article + '): «' + text.slice(0, 200) + '». Уточнити: додати до цієї посилки чи окреме замовлення.' });
+        // Пересланий пост без тексту — у сповіщенні його підпис, а не порожні «» (14.10, __v.savchenko__).
+        const said = text.trim() || (A.turnSharedPost ? '[переслав пост] ' + String(A.turnSharedPost.caption || '').split('\n')[0].slice(0, 120) : (A.turnImage ? '[фото]' : ''));
+        await T.alert(A, 'n_agent_post_extra_admin', { details: '➕ Клієнт після оформлення хоче додати товар (арт. ' + u.productHint.article + '): «' + said.slice(0, 200) + '». Уточнити: додати до цієї посилки чи окреме замовлення.' });
         A.out.push({ text: 'Дякую! Додатковий товар (арт. ' + u.productHint.article + ') до вже оформленого замовлення передаю менеджеру — він уточнить, чи можна додати його до цієї посилки (якщо вона ще не відправлена) або оформити окремо, і напише вам тут 💛', step: 'add_item_post_order' });
         return;
     }

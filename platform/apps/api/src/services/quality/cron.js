@@ -88,7 +88,11 @@ async function waitingSentry() {
                   and (m.role = 'user' or (m.metadata->>'source' = 'shop_agent' and coalesce(m.metadata->>'step', m.metadata->>'nodeId', '') ~ '(handoff|post_status_unknown_order|question_waiting|complaint|annoyed|insist|escalat|post_unknown)'))
                   and m."createdAt" < now() - interval '15 minutes' and m."createdAt" > now() - interval '4 hours'
                 order by m."createdAt" asc limit 30`, botId);
-            const fresh = rows.filter((r) => _waitingAlerted.get(r.id) !== r.mid && !/^\[порожнє/.test(String(r.content || '')));
+            // Клієнт сам закрив розмову («Дякую», «Ні, дякую», «Подумаю») — відповідь менеджера не потрібна (14.10, власник: список
+            // «чекають» на 7 з 9 рядків складався з «Дякую»). «Чекаю», «жду» тут — саме очікування менеджера, лишаємо.
+            const { isClosing } = require('./detectors');
+            const fresh = rows.filter((r) => _waitingAlerted.get(r.id) !== r.mid && !/^\[порожнє/.test(String(r.content || ''))
+                && !(r.role === 'user' && isClosing(r.content) && !/(чека|жду|ждем|очіку)/i.test(String(r.content || ''))));
             if (!fresh.length) continue;
             fresh.forEach((r) => _waitingAlerted.set(r.id, r.mid));
             if (_waitingAlerted.size > 2000) _waitingAlerted.clear();

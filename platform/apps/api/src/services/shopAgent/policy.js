@@ -817,7 +817,8 @@ function dropQuestionsAnsweredByCard(A, u) {
     const nameStems = pn.split(/[^a-zа-яіїєґ0-9]+/i).filter((w) => w.length >= 5).map((w) => w.slice(0, 5));
     const aboutThis = (q) => (p.sku && String(q.text).toUpperCase().includes(String(p.sku).toUpperCase())) || String(q.text).toLowerCase().split(/[^a-zа-яіїєґ0-9]+/i).some((w) => w.length >= 5 && nameStems.includes(w.slice(0, 5)) && !/^(костю|кофта|кофти|куртк|джинс|футбо|лофер|бомбе|чолов)/.test(w)); // загальне слово категорії («а є костюми?») — про всі такі товари, не лише показаний
     const colorOutside = !!(u.color && colorsOf(p) && !matchColor(p, u.color));
-    Q.cover(A, u, (q) => q.topic === 'price'
+    // «Як замовити?» (кнопка реклами) — картка сама закінчується першим кроком оформлення (клас F, 14.10, dd25ddeb/93bdc8c6).
+    Q.cover(A, u, (q) => q.topic === 'price' || q.topic === 'order_process'
         || (q.topic === 'colors' && colorsOf(p) && !colorOutside)
         || (q.topic === 'availability' && aboutThis(q))
         || (q.topic === 'other' && p.sku && String(q.text).toUpperCase().includes(String(p.sku).toUpperCase())), 'card');

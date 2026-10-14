@@ -424,11 +424,14 @@ async function main() {
     // ── 46.1 Клас F (14.10, dd25ddeb/93bdc8c6): кнопка реклами «Як замовити кофту?» разом зі свіжою карткою — без окремого абзацу
     // «Оформлення прямо тут…»: картка закінчується першим кроком оформлення (параметри), питання закрите карткою.
     {
-        const A = freshA({ turnText: 'Як замовити кофту?' });
-        A.justPresented = true;
-        A.ctx.product = { sku: 'A0187', name: 'Кофта', customerName: 'Кофта', price: 1279 }; A.ctx.agent.presentedSku = 'A0187';
+        // Пачка: клієнт натиснув кнопку ДО того, як побачив картку (картка показана щойно попереднім ходом) — питання закрите карткою.
+        const cat = await require('../lib').loadCatalog(BOT, assets.keys);
+        const prod = cat.products.find((x) => String(x.sku).toUpperCase() === 'A0187');
+        const now = Date.now();
+        const A = freshA({ turnText: 'Як замовити кофту?', history: [{ who: 'client', text: 'Як замовити кофту?', at: new Date(now - 8000), sentAt: new Date(now - 8000) }, { who: 'bot', text: 'картка', at: new Date(now - 5000) }] });
+        A.ctx.product = prod; A.ctx.agent.presentedSku = 'A0187'; A.ctx.presentedAt = now - 5000; A.ctx.agent.lastAsk = 'зріст і вага';
         await runPolicy(A, freshU({ intent: 'question', questions: ['Як замовити кофту?'], questionTopics: ['order_process'] }));
-        check('46.1 «Як замовити?» зі свіжою карткою — без зайвого тексту', A.out.length === 0, 'steps: ' + A.out.map((o) => o.step).join(',') + ' | ' + A.out.map((o) => String(o.text || '').slice(0, 60)).join(' / '));
+        check('46.1 «Як замовити?», надіслане до картки, — без зайвого абзацу про оформлення', !A.out.some((o) => /question_after_card|question_fallback/.test(String(o.step || ''))), 'steps: ' + A.out.map((o) => o.step).join(',') + ' | ' + A.out.map((o) => String(o.text || '').slice(0, 60)).join(' / '));
     }
 
     // ── 9. Універсальне злиття поспіль ідучих текстових повідомлень одного ходу (архітектурне

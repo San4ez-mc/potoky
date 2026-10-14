@@ -519,7 +519,7 @@ async function handleMetaEvent(webhookBotId, body) {
                 let sharedPost = p.sharedPost;
                 if (sharedPost && sharedPost.kind === 'reel' && sharedPost.mediaId) { try { const fr = await Z.getReelVideoFramesForVision(botId, sharedPost.mediaId); if (fr.length) sharedPost = { ...sharedPost, frameUrls: fr }; } catch (er) { /* кадри — best-effort */ } }
                 const photo = p.media.find((x) => x.type === 'photo') || (p.story && p.story.url ? { type: 'photo', url: p.story.url } : null);
-                const isEmpty = !text && !p.media.length && !sharedPost && !p.audioUrl && !p.story;
+                const isEmpty = !text && !p.media.length && !sharedPost && !p.audioUrl && !p.story && !patch.entryAdId;
                 const label = isEmpty ? (p.unsupported ? '[Instagram: непідтримуваний тип повідомлення]' : (p.other.length ? '[службове вкладення Instagram: ' + p.other.map((o) => o.type).join(', ') + ']' : '[порожнє повідомлення]')) : text || (sharedPost && sharedPost.caption ? ('[переслав ' + sharedPost.kind + '] ' + String(sharedPost.caption).slice(0, 80).replace(/\s+/g, ' ')) : (p.media.length > 1 ? '[' + p.media.length + ' медіа]' : p.media[0] ? (p.media[0].type === 'video' ? '[відео]' : '[фото]') : p.audioUrl ? '[голосове]' : p.story ? '[відповідь на сторіз]' : '[порожнє повідомлення]'));
                 await db.message.create({ data: Z.cleanJsonDeep({ sessionId: session.id, role: 'user', content: label, createdAt: p.at, metadata: {
                     source: 'meta', channel: 'meta', mid: p.mid, platformMessageId: p.mid, channelCreatedAt: p.at.toISOString(),

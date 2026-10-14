@@ -255,6 +255,25 @@ async function main() {
         const step = A.out.map((o) => o.step).join(',');
         check('wantsCard шле номер картки окремим повідомленням (крок req_card)', A.out.some((o) => o.step === 'req_card' && /1111222233334444/.test(o.text || '')), 'steps: ' + step);
     }
+    // 41.1 (2026-10-14, власник): картка й підпис — свіжі з CRM у момент надсилання; «Коментар до картки» замість назви ФОП.
+    {
+        const T = require('../tools');
+        const orig = T.activeFop;
+        T.activeFop = async () => ({ name: 'ФОП Новий', iban: 'UA00', isActive: true, cardNumber: '5555666677778888', cardComment: 'Отримувач: Тест Тестович\nБанк: Тест Банк' });
+        try {
+            const A = freshA({ turnText: 'Дайте картку', ctx: { testMode: true, agent: {}, product: { sku: 'A0187', customerName: 'Кофта', price: 1279 }, orderData: { fullName: 'Тест Тестович', phone: '0671234567', city: 'Київ', branch: '5' }, orderIntent: { ready: 'yes' }, paymentInfo: { method: 'cod' }, fop: { name: 'ФОП Старий', cardNumber: '1111222233334444' } } });
+            await runPolicy(A, freshU({ intent: 'wants_requisites', wantsCard: true }));
+            const card = A.out.find((o) => o.step === 'req_card');
+            const t = (card && card.text) || '';
+            check('41.1 картка — нова з CRM, не закешована в розмові', /5555666677778888/.test(t) && !/1111222233334444/.test(t), t);
+            check('41.1 підпис — «Коментар до картки», не назва ФОП', /Отримувач: Тест Тестович/.test(t) && !/ФОП Новий|ФОП Старий/.test(t), t);
+            T.activeFop = async () => ({ name: 'ФОП Новий', iban: 'UA00', isActive: true, cardNumber: '5555666677778888', cardComment: '' });
+            const B = freshA({ turnText: 'Дайте картку', ctx: { testMode: true, agent: {}, product: { sku: 'A0187', customerName: 'Кофта', price: 1279 }, orderData: { fullName: 'Тест Тестович', phone: '0671234567', city: 'Київ', branch: '5' }, orderIntent: { ready: 'yes' }, paymentInfo: { method: 'cod' }, fop: { name: 'ФОП Старий', cardNumber: '1111222233334444' } } });
+            await runPolicy(B, freshU({ intent: 'wants_requisites', wantsCard: true }));
+            const t2 = ((B.out.find((o) => o.step === 'req_card')) || {}).text || '';
+            check('41.1 без коментаря — підпис «(назва ФОП)»', /5555666677778888 \(ФОП Новий\)/.test(t2), t2);
+        } finally { T.activeFop = orig; }
+    }
 
     // ── 5. hideLinks — сире посилання клієнта (напр. чек банку) ніколи не йде як видимий текст у
     // сповіщення менеджеру. Перевіряємо саму функцію (центральна точка застосування — tools.js:alert()).

@@ -883,6 +883,11 @@ function managerCheckoutInHistory(A) {
 async function sendCard(A) {
     const { ctx } = A;
     if (!ctx.fop) await T.payAmount(A);
+    // Картка й підпис до неї — щоразу свіжі з CRM (2026-10-14): ctx.fop кешується в розмові з першого розрахунку суми, тож
+    // заміна картки в CRM доходила б лише до нових клієнтів. Підпис — ФОП → «Коментар до картки» (отримувач/банк), порожній — назва ФОП.
+    const live = await T.activeFop(A).catch(() => null);
+    if (live && ctx.fop) ctx.fop = { ...ctx.fop, cardNumber: String(live.cardNumber || ''), name: String(live.name || ctx.fop.name || '') };
+    if (ctx.fop) { const cm = String((live && live.cardComment) || '').trim(); ctx.fop.cardHolder = cm ? '\n' + cm : (ctx.fop.name ? ' (' + ctx.fop.name + ')' : ''); }
     if (ctx.fop && ctx.fop.cardNumber) A.out.push({ text: messageText(A.assets, 'n_req_card', ctx, A.session.id), step: 'req_card' });
     else await sendManualRequisites(A, true); // немає картки в CRM — чесний фолбек на реквізити, а не вигадана картка
 }

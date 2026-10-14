@@ -251,7 +251,9 @@ async function main() {
             },
         });
         const u = freshU({ intent: 'wants_requisites', wantsCard: true });
-        await runPolicy(A, u);
+        // CRM недоступна (activeFop → null) — картка з памʼяті розмови; свіжа з CRM — тест 41.1.
+        const T0 = require('../tools'); const orig0 = T0.activeFop; T0.activeFop = async () => null;
+        try { await runPolicy(A, u); } finally { T0.activeFop = orig0; }
         const step = A.out.map((o) => o.step).join(',');
         check('wantsCard шле номер картки окремим повідомленням (крок req_card)', A.out.some((o) => o.step === 'req_card' && /1111222233334444/.test(o.text || '')), 'steps: ' + step);
     }

@@ -29,7 +29,9 @@ function stripAskSentences(text, isAsk) {
         let kept = parts.filter((s) => {
             if (isAsk(s)) { dropped = true; return false; }
             // «Напишіть їх, будь ласка» одразу після прибраного прохання — теж прохання.
-            if (dropped && /^(напишіть|підкажіть|вкажіть|надішліть)\s+(їх|це)/i.test(s.trim())) return false;
+            // 14.10 (аудит B12: «Напишіть, будь ласка, скільки у вас — і одразу рухаємось далі» без першого речення): будь-яке прохання,
+            // що посилається на прибране (їх/це/його/«скільки у вас»), — продовження, теж прибираємо.
+            if (dropped && /^(напишіть|підкажіть|вкажіть|надішліть)[^.!?…]*?((?<![а-яіїєґa-z])(їх|це|його|її)(?![а-яіїєґa-z])|скільки\s+у\s+вас)/i.test(s.trim())) return false;
             return true;
         });
         if (!dropped) return line;
@@ -53,6 +55,15 @@ function paragraphize(text) {
     return out.length < 2 && out[0] === s ? s : out.join('\n\n');
 }
 const isHwAsk = (s) => HW_ASK.h.test(s) && HW_ASK.w.test(s) && HW_ASK.verb.test(s) && !HW_ASK.keep.test(s);
+/** Службові позначки для ШІ → людський текст (аудит B9). */
+function humanizeMarkers(text) {
+    return String(text)
+        .replace(/КОЛІР НЕ ОБРАНО\s*\(є:\s*([^)\n]*)\)?/g, (m, list) => 'колір — оберіть: ' + String(list).trim())
+        .replace(/РОЗМІР НЕ ОБРАНО\s*\(є:\s*([^)\n]*)\)?/g, (m, list) => 'розмір — оберіть: ' + String(list).trim())
+        .replace(/\{\{[^}]*\}\}/g, '')
+        .replace(/(^|[^\p{L}])(undefined|NaN)(?=$|[^\p{L}])/gu, '$1')
+        .replace(/[ \t]{2,}/g, ' ');
+}
 function stripKnownHwAsk(text) { return stripAskSentences(text, isHwAsk); }
 /** Види питань бота (розпізнаються за ВЛАСНИМИ текстами бота — це дані, не зміст клієнта). Що вже відоме — не питаємо; що бот уже
  * спитав після повідомлення клієнта, на яке зараз відповідає (або менш як 90 с тому), — не повторюємо (2026-10-05, категорії
@@ -237,6 +248,9 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
     // між ними» — зливаємо ПОСПІЛЬ ідучі чисто текстові виходи одного ходу в одне повідомлення тут,
     // в ОДНОМУ місці для всієї policy.js, а не точково в кожній секції окремо. Див. lib.js.
     A.out = mergeConsecutiveTextOutputs(A.out);
+    // Службові позначки для ШІ клієнту не йдуть ніколи (14.10, аудит B9: «КОЛІР НЕ ОБРАНО (є: Білий, Чорний» з n_extra_resolve у
+    // підсумку замовлення) — перекладаємо на людську мову в одному місці, хоч би звідки текст прийшов.
+    A.out = A.out.map((o) => (o.text ? Object.assign({}, o, { text: humanizeMarkers(o.text) }) : o));
     // Остання лінія захисту (2026-09-30): сирий/обірваний JSON моделі клієнту не йде ніколи — хоч би з якого місця policy він прийшов.
     const outBefore = A.out.length;
     A.out = A.out.map((o) => {
@@ -395,4 +409,4 @@ async function recordTurn({ sessionId, botId, input, ctxBefore, u, qs, out, ms }
     } catch (e) { logger.warn('[shopAgent] recordTurn: ' + e.message, { sessionId }); }
 }
 
-module.exports = { handleTurn, recordTurn, isNewEntryAd, recoverManagerLedSignal, classifyComment, isCommentAgent, isAgentBot, loadCustomerMemory, buildHistory, stripKnownHwAsk, stripAskSentences, ASK_KINDS, paragraphize };
+module.exports = { handleTurn, recordTurn, humanizeMarkers, isNewEntryAd, recoverManagerLedSignal, classifyComment, isCommentAgent, isAgentBot, loadCustomerMemory, buildHistory, stripKnownHwAsk, stripAskSentences, ASK_KINDS, paragraphize };

@@ -53,11 +53,39 @@ function slotOf(step) {
     return SLOTS.find((x) => x.re.test(last)) || null;
 }
 
+// Дані, якими клієнт відповідає саме на прохання цього слота (поля аналізатора).
+const SLOT_FIELDS = {
+    params: ['height', 'weight', 'clothingSize', 'chest', 'footLength', 'waist'],
+    color: ['color', 'colorMatched', 'itemColors'],
+    address: ['phone', 'fullName', 'city', 'branch', 'region'],
+    pay: ['payMethod', 'claimsPaid', 'receiptLink'],
+    intent: ['ready'],
+    set: ['setItemsWanted', 'setChoice'],
+    unknown: [],
+    oos: [],
+};
+const DATA_FIELDS = [...new Set(Object.values(SLOT_FIELDS).flat().concat(['qty', 'units', 'addUpsell', 'upsellUnits', 'removeItem', 'addItem', 'changeRequest']))];
+const has = (v) => !(v === null || v === undefined || v === false || v === '' || (Array.isArray(v) && !v.length));
+/**
+ * Клієнт рухався вперед, а не «писав не те» (14.10, аудит: 23 передачі «щоб не ганяти по колу», ≥15 — на «А можлива оплата після
+ * отримання?», «Спасибо», «Коричневий», «Я відправив вам кошти…»). Повтор — лише коли клієнт відповідає на ТЕ САМЕ прохання, а бот
+ * не зміг прийняти (дані цього ж слота), або пише без жодного змісту. Питання, подяка/відмова/вагання, дані для іншого кроку — рух.
+ */
+function clientProgressed(u, slot) {
+    if (!u) return false;
+    const same = (SLOT_FIELDS[slot] || []).some((k) => has(u[k]));
+    if (same) return false;
+    if (Array.isArray(u.questions) && u.questions.length) return true;
+    if (/^(thanks|order_no|hesitate|postpone|question|greeting)$/.test(String(u.intent || ''))) return true;
+    if (u.ready === 'no' || u.isComplaint || u.returnRequest || u.statusQuestion || u.wantsHuman || u.asksIfBot) return true;
+    return DATA_FIELDS.some((k) => has(u[k]));
+}
+
 /**
  * Записати прохання цього ходу — ЛИШЕ на виході (index.js), по фінальному тексту, що піде клієнту.
  * Повертає { slot, n, limit, step } або null (хід без прохання).
  */
-function record(A) {
+function record(A, u) {
     const { ctx } = A; ctx.agent = ctx.agent || {};
     const asks = ctx.agent.asks = ctx.agent.asks || {};
     for (const s of Object.keys(asks)) if (filled(ctx, s) || Date.now() - Number(asks[s].at || 0) > 12 * 3600 * 1000) delete asks[s];
@@ -70,6 +98,7 @@ function record(A) {
     const clientAt = Math.max(0, ...(A.history || []).filter((m) => m.who === 'client').map((m) => new Date(m.sentAt || m.at).getTime() || 0));
     // Пачка: клієнт написав ДО того, як побачив попереднє прохання (07.10 tatiananepota: 5 пересилань поста за 14 с) — не рахуємо.
     if (prev && !(clientAt > Number(prev.at || 0))) { prev.at = Date.now(); return { slot: f.slot, n: prev.n, limit: f.limit, step, counted: false }; }
+    if (prev && clientProgressed(u, f.slot)) { prev.at = Date.now(); return { slot: f.slot, n: prev.n, limit: f.limit, step, counted: false, progressed: true }; }
     // Звужене питання — це рух уперед, а не повтор (12.10, dk.ukr: «що цікавить?» ×2 → «Така кофта» → бот показав би 3 кофти, а
     // лічильник дорахував до 3 і «зациклився»). Слот «товар»: перехід із «що цікавить» до списку або НОВИЙ список — лічба з початку.
     const key = f.slot === 'unknown' && /^hint/.test(step) ? String(ctx.catalogHintSkus || '') : '';
@@ -79,4 +108,4 @@ function record(A) {
     return { slot: f.slot, n, limit: f.limit, step, counted: true };
 }
 
-module.exports = { SLOTS, filled, times, slotOf, record };
+module.exports = { SLOTS, filled, times, slotOf, record, clientProgressed };

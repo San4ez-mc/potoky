@@ -342,7 +342,7 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
     }
     // Запобіжник «зациклився» — ОСТАННІМ, по тому, що клієнт реально отримає (після прибирання дублів/відомих питань): 07.10 він
     // рахував прохання, які потім прибирались як дублі, і ходи пачки (5 пересилань поста за 14 с) — менеджер отримав хибне «зациклився».
-    if (!A._noCredit && !dryRun) { try { await breakLoop(A); } catch (e) { logger.warn('[shopAgent] breakLoop failed: ' + e.message, { sessionId }); } }
+    if (!A._noCredit && !dryRun) { try { await breakLoop(A, u); } catch (e) { logger.warn('[shopAgent] breakLoop failed: ' + e.message, { sessionId }); } }
     const replies = [];
     if (!dryRun) {
         for (const o of A.out) {

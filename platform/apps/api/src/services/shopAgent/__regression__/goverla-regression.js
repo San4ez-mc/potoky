@@ -1098,6 +1098,23 @@ async function main() {
         // 31. Абзаци замість суцільного рядка.
         const p1 = paragraphize('Дякую за параметри 🙂 Ви називали M, але за вашим зростом і вагою краще підійде L 📏 Якщо все ж хочете M — напишіть, оформимо так. Тепер оберіть колір: Чорний, Графітовий — який вам більше до душі? 😊');
         check('31.1 Довгий текст одним рядком → абзаци', (p1.match(/\n\n/g) || []).length >= 2, JSON.stringify(p1).slice(0, 120));
+        // 53.1 (14.10, аудит: 23 передачі «щоб не ганяти по колу», ≥15 на нормальні відповіді): питання клієнта, подяка, дані для
+        // іншого кроку — не повтор; передача менеджеру не стирає відповідь цього ходу; дані того ж слота, які бот не прийняв, — повтор.
+        {
+            const late = () => [{ who: 'client', text: 'x', at: new Date(Date.now() + 1000), sentAt: new Date(Date.now() + 1000) }];
+            const P1 = freshA({ turnText: 'А можлива оплата після отримання?' }); let pBroke = false;
+            for (let i = 0; i < 6; i++) { P1.history = late(); P1.out = [{ text: 'Підкажіть, будь ласка, ваш зріст і вагу — підберу розмір 📏', step: 'ask_params' }]; pBroke = (await breakLoop(P1, { intent: 'question', questions: ['А можлива оплата після отримання?'] })) || pBroke; }
+            check('53.1 клієнт щоразу питає своє — бот не «здається»', !pBroke && !P1.ctx.funnelPaused, String(pBroke));
+            const P2 = freshA({ turnText: 'Спасибо' }); let p2 = false;
+            for (let i = 0; i < 6; i++) { P2.history = late(); P2.out = [{ text: 'Оберіть, будь ласка, колір 🎨', step: 'ask_color' }]; p2 = (await breakLoop(P2, { intent: 'thanks', questions: [] })) || p2; }
+            check('53.1 «Спасибо» на прохання — не повтор', !p2, String(p2));
+            const P3 = freshA({ turnText: 'Рост 186, вес 88' }); let p3 = false;
+            for (let i = 0; i < 6; i++) { P3.history = late(); P3.out = [{ text: 'Оберіть, будь ласка, колір 🎨', step: 'ask_color' }]; p3 = (await breakLoop(P3, { intent: 'give_params', questions: [], height: 186, weight: 88 })) || p3; }
+            check('53.1 дані для іншого кроку (зріст/вага на прохання кольору) — не повтор', !p3, String(p3));
+            const P4 = freshA({ turnText: 'чорний' }); let p4 = false;
+            for (let i = 0; i < 4; i++) { P4.history = late(); P4.out = [{ text: 'Відповідь на ваше питання про тканину.', step: 'question_fallback' }, { text: 'Оберіть, будь ласка, колір 🎨', step: 'ask_color' }]; p4 = (await breakLoop(P4, { intent: 'give_color', questions: [], color: 'чорний' })) || p4; }
+            check('53.1 той самий слот, бот не прийняв колір ×4 — передача; відповідь цього ходу лишилась', p4 && P4.out.some((o) => /тканину/.test(String(o.text))) && P4.out.some((o) => o.step === 'loop_handoff') && !P4.out.some((o) => o.step === 'ask_color'), P4.out.map((o) => o.step).join(','));
+        }
         // 32. Запобіжник «зациклився» (05.10, скан 119 розмов): той самий крок 4 ходи поспіль → менеджер, а не 5-й повтор.
         {
             const A = freshA({ turnText: 'Pero para que te hace falta la dirección' });

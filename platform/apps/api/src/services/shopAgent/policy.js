@@ -740,15 +740,18 @@ async function pause(A, reason, alertNode, extraDetails) {
  */
 // Слоти прохань і пороги — у реєстрі прохань (asks.js); LOOP_FAMILIES лишається експортом для сумісності.
 const LOOP_FAMILIES = Asks.SLOTS.map((s) => ({ fam: s.slot, re: s.re, limit: s.limit }));
-async function breakLoop(A) {
+async function breakLoop(A, u) {
     const { ctx } = A;
     if (ctx.funnelPaused || !A.out.length) return false;
     // Реєстр прохань (asks.js) пише ОДИН раз на хід, тут — по фінальному тексту; рахує лише прохання, які клієнт побачив і
     // після яких написав не те (пачка — не рахується, 07.10 tatiananepota), і скидає слот, щойно його заповнено.
-    const r = Asks.record(A);
+    const r = Asks.record(A, u);
     if (!r || !r.counted || r.n < r.limit) return false;
     delete ctx.agent.asks[r.slot];
-    A.out = [];
+    // Прибираємо лише саме прохання, що повторюється; відповіді на питання клієнта цього ходу лишаються (раніше A.out = [] —
+    // клієнт не отримував уже готову відповідь, лише «щоб не ганяти по колу»).
+    const askIdx = (() => { for (let i = A.out.length - 1; i >= 0; i--) { const o = A.out[i]; if (o.text && String(o.text).trim() && Asks.slotOf(o.step) && Asks.slotOf(o.step).slot === r.slot) return i; } return -1; })();
+    A.out = A.out.filter((o, i) => i !== askIdx && !(o.photoUrls && Asks.slotOf(o.step) && Asks.slotOf(o.step).slot === r.slot));
     A.out.push({ text: messageText(A.assets, 'n_agent_loop_handoff', ctx, A.session.id) || 'Щоб не ганяти вас по колу 🙏 — підключаю менеджера, він напише вам тут найближчим часом.', step: 'loop_handoff' });
     await pause(A, 'loop', null);
     const lastClient = String(A.turnText || '').trim() || (A.turnSharedPost ? '[переслав пост] ' + String(A.turnSharedPost.caption || '').split('\n')[0].slice(0, 80) : (A.turnImage ? '[фото]' : '—'));

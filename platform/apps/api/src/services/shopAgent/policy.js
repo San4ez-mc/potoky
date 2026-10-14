@@ -894,6 +894,13 @@ function crmOrderStatusText(o) {
 }
 const NL = String.fromCharCode(10);
 
+/** Позиції щойно показаного списку (номер, артикул, фото, опис) — лише якщо це той самий список, що catalogHintSkus. */
+function hintItems(ctx) {
+    const items = Array.isArray(ctx.catalogHintItems) ? ctx.catalogHintItems : [];
+    const skus = String(ctx.catalogHintSkus || '').split(',').map((x) => x.trim().toUpperCase()).filter(Boolean);
+    return items.length && skus.length && items.every((x) => skus.includes(String(x.sku || '').toUpperCase())) ? items : [];
+}
+
 async function sendCard(A) {
     const { ctx } = A;
     if (!ctx.fop) await T.payAmount(A);
@@ -1310,6 +1317,12 @@ async function runPolicyInner(A, u) {
             ctx.agent.presentedSku = cur.sku; // щоб перехід на комплект скинув стан окремої речі
             A._backToSet = setSku;
         }
+    }
+    // Відповідь свайпом на фото товару (2026-10-14, 7cac4f9b «Ця скільки» на фото зі списку): metaChannel знайшов, якого товару
+    // це фото (photoReplyMap) — це ДАНІ, а не тлумачення: вибір саме цього товару.
+    if (ctx.replyToSku) {
+        const rs = String(ctx.replyToSku); delete ctx.replyToSku;
+        if (!(P(ctx) && String(P(ctx).sku).toUpperCase() === rs.toUpperCase())) { u.productHint = { ...u.productHint, article: rs, fromList: null }; A.trace.push({ tool: 'replyToPhoto', sku: rs }); }
     }
     const freshSignal = !!(ctx.storyRetry || A.turnSharedPost || A.newEntryAd || u.productHint.article || u.productHint.fromList || (A.turnImage && !u.claimsPaid && !u.receiptLink && !(ctx.paymentInfo && ctx.paymentInfo.method) ));
     // Каталожне питання («А є жилетки?», «Які кольори?») аналізатор інколи кладе лише в productHint, без questions — тоді
@@ -1812,8 +1825,14 @@ async function runPolicyInner(A, u) {
             if (ctx.adLinkMismatchAt && !ctx.adLinkMismatchAlertedAt) { await T.alert(A, 'n_ad_conflict_admin'); ctx.adLinkMismatchAlertedAt = Date.now(); }
             // нижче — продовжуємо тим самим ходом (параметри/колір могли бути вже в повідомленні)
         } else if (r.status === 'hint') {
-            const photos = Array.isArray(ctx.catalogHintPhotos) ? ctx.catalogHintPhotos.filter((x) => /^https?:/.test(String(x))).slice(0, 4) : [];
-            if (photos.length && ctx.agent.hintPhotosFor !== ctx.catalogHintSkus) { A.out.push({ photoUrls: photos, caption: '', step: 'hint_photos' }); ctx.agent.hintPhotosFor = ctx.catalogHintSkus; }
+            // 2026-10-14 (власник, 7cac4f9b): різні товари — кожне фото з НОМЕРОМ позиції (малює image-processor при відправці) і
+            // окремим повідомленням, щоб відповідь на конкретне фото вказувала товар (metaChannel: photoReplyMap).
+            const items = hintItems(ctx).filter((x) => /^https?:/.test(String(x.url || ''))).slice(0, 4);
+            const photos = items.length ? items.map((x) => x.url) : (Array.isArray(ctx.catalogHintPhotos) ? ctx.catalogHintPhotos.filter((x) => /^https?:/.test(String(x))).slice(0, 4) : []);
+            if (photos.length && ctx.agent.hintPhotosFor !== ctx.catalogHintSkus) {
+                A.out.push(items.length ? { photoUrls: photos, photoLabels: items.map((x) => String(x.n)), photoSkus: items.map((x) => x.sku), caption: '', step: 'hint_photos' } : { photoUrls: photos, caption: '', step: 'hint_photos' });
+                ctx.agent.hintPhotosFor = ctx.catalogHintSkus;
+            }
             if (u.height || u.weight) ctx.sizeInput = { ...(ctx.sizeInput || {}), ...(u.height ? { height: u.height } : {}), ...(u.weight ? { weight: u.weight } : {}) };
             const list = String(ctx.catalogHint || '');
             ctx.agent.hintList = list;

@@ -346,7 +346,7 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
     const replies = [];
     if (!dryRun) {
         for (const o of A.out) {
-            if (o.photoUrls && o.photoUrls.length) await db.message.create({ data: cleanJsonDeep({ sessionId, role: 'assistant', content: o.caption || '', metadata: { source: 'shop_agent', nodeId: 'agent:' + o.step, nodeType: 'sendPhoto', attachment: { type: 'photo', url: o.photoUrls[0], urls: o.photoUrls, caption: o.caption || '' } } }) });
+            if (o.photoUrls && o.photoUrls.length) await db.message.create({ data: cleanJsonDeep({ sessionId, role: 'assistant', content: o.caption || '', metadata: { source: 'shop_agent', nodeId: 'agent:' + o.step, nodeType: 'sendPhoto', attachment: { type: 'photo', url: o.photoUrls[0], urls: o.photoUrls, caption: o.caption || '', ...(Array.isArray(o.photoLabels) && o.photoLabels.length === o.photoUrls.length ? { labels: o.photoLabels, skus: o.photoSkus || [] } : {}) } } }) });
             else if (o.text && String(o.text).trim()) await db.message.create({ data: cleanJsonDeep({ sessionId, role: 'assistant', content: String(o.text).trim(), metadata: { source: 'shop_agent', nodeId: 'agent:' + o.step } }) });
             replies.push(o);
         }

@@ -502,21 +502,26 @@ function pickCommentPublicReply(text, dmSent, dmFailed, name) {
 
 // Фото через Meta-direct: Zernio-send текстовий, тож зображення шлемо напряму в Meta
 // (psid із Zernio-вебхука = реальний Meta IGSID). imageUrl — публічний http-URL.
-async function sendMetaPhoto(botId, igsid, imageUrl) {
+async function sendMetaPhoto(botId, igsid, imageUrl, opts = {}) {
     if (!igsid) throw new Error('немає IGSID отримувача');
     const km = await db.funnelKey.findFirst({ where: { botId, key: 'INSTAGRAM_ACCESS_TOKEN' }, select: { value: true } });
     const token = (km?.value || '').trim();
     if (!token || token === 'REPLACE_ME') throw new Error('немає INSTAGRAM_ACCESS_TOKEN для Meta-фото');
     // Завантажуємо байти й вантажимо у Meta → attachment_id (URL-метод у Meta нестабільний — «Upload failed»).
-    let ir = null;
-    for (let attempt = 0; attempt < 3; attempt++) { // сховище фото буває віддає 500 на кілька секунд — повтор з паузою
-        if (attempt) await new Promise((r) => setTimeout(r, 1000 * attempt));
-        ir = await fetch(String(imageUrl)).catch(() => null);
-        if (ir && ir.ok) break;
+    // opts.buffer — уже готові байти (фото з номером позиції від image-processor, 14.10).
+    let buf, ct;
+    if (opts.buffer) { buf = opts.buffer; ct = opts.contentType || 'image/png'; }
+    else {
+        let ir = null;
+        for (let attempt = 0; attempt < 3; attempt++) { // сховище фото буває віддає 500 на кілька секунд — повтор з паузою
+            if (attempt) await new Promise((r) => setTimeout(r, 1000 * attempt));
+            ir = await fetch(String(imageUrl)).catch(() => null);
+            if (ir && ir.ok) break;
+        }
+        if (!ir || !ir.ok) throw new Error('не завантажилось зображення: HTTP ' + (ir ? ir.status : 'network'));
+        buf = Buffer.from(await ir.arrayBuffer());
+        ct = ir.headers.get('content-type') || 'image/jpeg';
     }
-    if (!ir || !ir.ok) throw new Error('не завантажилось зображення: HTTP ' + (ir ? ir.status : 'network'));
-    const buf = Buffer.from(await ir.arrayBuffer());
-    const ct = ir.headers.get('content-type') || 'image/jpeg';
     const fd = new FormData();
     fd.append('access_token', token);
     fd.append('message', JSON.stringify({ attachment: { type: 'image', payload: { is_reusable: true } } }));

@@ -18,6 +18,7 @@
  */
 const { db } = require('@platform/db');
 const logger = require('@platform/logger');
+const { labelPhoto } = require('./photoLabel');
 const shopAgent = require('./shopAgent');
 const Z = require('./zernioHandler');
 const { isBlockedByTestMode } = require('./testModeGate');
@@ -159,8 +160,9 @@ function parseInbound(m) {
         } else if (t === 'story_mention' && pl.url) media.push({ type: 'photo', url: pl.url, story: true });
     }
     const story = msg.reply_to && msg.reply_to.story ? msg.reply_to.story : null;
+    const replyToMid = msg.reply_to && msg.reply_to.mid ? String(msg.reply_to.mid) : null; // відповідь свайпом на наше повідомлення
     const ref = msg.referral || m.referral || null;
-    return { mid: msg.mid || null, text, media, sharedPost, audioUrl, story, ref, at: m.timestamp ? new Date(Number(m.timestamp)) : new Date() };
+    return { mid: msg.mid || null, text, media, sharedPost, audioUrl, story, replyToMid, ref, at: m.timestamp ? new Date(Number(m.timestamp)) : new Date() };
 }
 
 // ── Склеювання пачки повідомлень і черга ходів на сесію ──
@@ -364,6 +366,21 @@ async function handleComment(botId, own, v) {
     return 'processed';
 }
 
+/** id наших повідомлень-фото → артикул товару на фото (останні 40) — щоб відповідь свайпом на фото вказувала товар. */
+async function rememberPhotoSkus(sessionId, map) {
+    const s = await db.session.findUnique({ where: { id: sessionId }, select: { context: true } });
+    const c = { ...((s && s.context) || {}) }; const a = { ...(c.agent || {}) };
+    const prev = a.photoReplyMap && typeof a.photoReplyMap === 'object' ? a.photoReplyMap : {};
+    a.photoReplyMap = Object.fromEntries(Object.entries({ ...prev, ...map }).slice(-40));
+    c.agent = a;
+    await db.session.update({ where: { id: sessionId }, data: { context: Z.cleanJsonDeep(c) } }).catch(() => {});
+}
+/** Артикул товару на нашому фото, на яке клієнт відповів свайпом (або null). */
+function replyToSkuFor(ctx, replyToMid) {
+    const m = replyToMid && ctx && ctx.agent && ctx.agent.photoReplyMap;
+    return (m && m[String(replyToMid)]) || null;
+}
+
 async function deliver(botId, sessionId, igsid, outMsgs) {
     for (const om of outMsgs) {
         const m = om.metadata || {};
@@ -373,7 +390,22 @@ async function deliver(botId, sessionId, igsid, outMsgs) {
         const att = m.attachment;
         const urls = att && (att.type === 'photo' || att.type === 'image') ? (Array.isArray(att.urls) && att.urls.length ? att.urls : [att.url]).filter((u) => u && /^https?:/.test(String(u))) : [];
         try {
-            if (urls.length) {
+            if (urls.length && Array.isArray(att.labels) && att.labels.length === urls.length) {
+                // Різні товари списку (14.10): кожне фото окремим повідомленням із НОМЕРОМ позиції — відповідь свайпом на фото
+                // однозначно вказує товар (photoReplyMap у контексті розмови), а номер видно навіть без тексту списку.
+                const mids = []; const map = {};
+                for (let i = 0; i < urls.length; i++) {
+                    let mid = null;
+                    try {
+                        const b = await labelPhoto(urls[i], att.labels[i]);
+                        mid = await Z.sendMetaPhoto(botId, igsid, urls[i], b ? { buffer: b, contentType: 'image/png' } : {});
+                    } catch (e) { logger.warn('[metaChannel] фото позиції ' + att.labels[i] + ': ' + e.message, { sessionId }); }
+                    if (mid) { rememberSent(mid); mids.push(mid); if (att.skus && att.skus[i]) map[mid] = String(att.skus[i]); }
+                }
+                await Z.logDelivery(sessionId, botId, 'ig_photo_list', mids.length > 0, mids.length < urls.length ? ('не надіслано ' + (urls.length - mids.length) + ' з ' + urls.length) : null, { nodeId: m.nodeId || null, count: mids.length, channel: 'meta' });
+                await db.message.update({ where: { id: om.id }, data: { metadata: { ...m, metaMessageId: mids[0] || null, metaMessageIds: mids, status: mids.length ? 'sent' : 'failed' } } }).catch(() => {});
+                if (Object.keys(map).length) await rememberPhotoSkus(sessionId, map);
+            } else if (urls.length) {
                 const rep = { planned: urls.length, sent: urls.length, failed: [] };
                 const mid = await Z.sendMetaPhotoAlbum(botId, igsid, urls.slice(0, 10), rep);
                 if (mid) rememberSent(mid);
@@ -490,6 +522,7 @@ async function handleMetaEvent(webhookBotId, body) {
                     ...(p.media.length > 1 ? { attachments: p.media } : {}), ...(sharedPost ? { sharedPost } : {}),
                     ...(patch.entryAdId ? { adId: patch.entryAdId, referral: patch.lastReferral } : {}), ...(p.story ? { storyId: p.story.id || null } : {}),
                     ...(p.audioUrl ? { voice: true, transcript: text || null } : {}),
+                    ...(p.replyToMid ? { replyToMid: p.replyToMid } : {}),
                 } }) });
                 await db.session.update({ where: { id: session.id }, data: { lastActive: new Date() } }).catch(() => {});
                 processed++;
@@ -516,7 +549,8 @@ async function handleMetaEvent(webhookBotId, body) {
                         if (answered) { logger.info('[metaChannel] повтор того самого питання за 2 хв — бот уже відповів, окремо не відповідаємо', { sessionId: session.id }); continue; }
                     }
                 }
-                scheduleTurn(session.id, { botId, contactId: String(igsid), text, imageUrl: photo ? photo.url : null, ctxPatch: { ...(sharedPost ? { sharedPost, hasFreshSignalThisTurn: true } : {}), ...(patch.entryAdId ? { entryAdId: patch.entryAdId } : {}), ...(p.story && p.story.id ? { storyId: String(p.story.id) } : {}) } });
+                const replyToSku = p.replyToMid ? replyToSkuFor(ctx, p.replyToMid) : null;
+                scheduleTurn(session.id, { botId, contactId: String(igsid), text, imageUrl: photo ? photo.url : null, ctxPatch: { ...(sharedPost ? { sharedPost, hasFreshSignalThisTurn: true } : {}), ...(patch.entryAdId ? { entryAdId: patch.entryAdId } : {}), ...(p.story && p.story.id ? { storyId: String(p.story.id) } : {}), ...(replyToSku ? { replyToSku } : {}) } });
             } catch (err) {
                 logger.error('[metaChannel] event failed', { botId, error: err.message, stack: String(err.stack || '').slice(0, 800) });
             }
@@ -626,4 +660,4 @@ const __runsBackground = !process.env.name || process.env.name === 'platform-api
 if (__runsBackground) setTimeout(() => { pollConversations(); setInterval(pollConversations, 2 * 60 * 1000).unref(); }, 100 * 1000).unref();
 if (__runsBackground) setTimeout(() => { retryUnanswered(); setInterval(retryUnanswered, 60 * 1000).unref(); }, 150 * 1000).unref();
 
-module.exports = { handleMetaEvent, scheduleTurn, runTurn, drain, sendText, replyToComment, channelOf, channelOfSync, splitText, _echoes, _pollConversations: pollConversations, _refPatch: refPatch, _takeHeldRef: takeHeldRef, _refHold, _enqueue: enqueue, _waiting, _queue };
+module.exports = { handleMetaEvent, scheduleTurn, runTurn, drain, sendText, replyToComment, channelOf, channelOfSync, splitText, _echoes, _pollConversations: pollConversations, _refPatch: refPatch, _takeHeldRef: takeHeldRef, _refHold, _enqueue: enqueue, _waiting, _queue, _replyToSkuFor: replyToSkuFor };

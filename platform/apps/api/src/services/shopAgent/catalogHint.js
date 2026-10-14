@@ -230,7 +230,17 @@ var lines = top.map(function (p, i) { return (i + 1) + '. ' + (p.sku ? ('Арт�
 var __publicBase = (keys.CRM_PUBLIC_BASE || 'https://pcrm.fineko.space').replace(/\/$/, '');
 function __resolveUrl(u) { if (!u) return ''; return /^https?:\/\//i.test(u) ? u : (__publicBase + (u.charAt(0) === '/' ? u : '/' + u)); }
 var catalogHintPhotos = top.map(function (p) { return __resolveUrl((Array.isArray(p.images) && p.images[0]) || ''); }).filter(Boolean);
-return { catalogHint: lines.join('\n'), catalogHintCount: top.length, catalogHintTotal: hits.length, catalogHintSkus: top.map(function (p) { return String(p.sku || ''); }).filter(Boolean).join(','), catalogHintPhotos: catalogHintPhotos, catalogHintAdGuess: __advList ? 'list' : '', catalogCategories: catList, unknownTurns: unknownTurns };
+// 2026-10-14 (власник, сесія 7cac4f9b: «З замком» → «Донизу» — бот не зрозумів, про яку з двох однакових кофт): кожна позиція
+// списку з номером, фото й КОРОТКИМ ОПИСОМ (з презентації/нотаток CRM) — аналізатор обирає позицію за ознакою, а номер малюється
+// на фото (кожне фото — окремим повідомленням, тож відповідь на фото теж вказує позицію).
+function __desc(p) {
+    var t = String(p.aiNotes || '') + '\n' + String(p.presentationText || ''); // нотатки для ШІ — першими: там відмінні ознаки (тип блискавки, крій)
+    t = t.replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu, ' ').replace(/https?:\/\/\S+/g, ' ').split(/\n+/).map(function (l) { return l.trim(); })
+        .filter(function (l) { return l && !/(ціна|грн|₴|знижк|акці|доставк|оплат|пишіть|direct|директ|довіряють|відгук|артикул)/i.test(l); }).join('; ');
+    return t.replace(/\s+/g, ' ').trim().slice(0, 320);
+}
+var catalogHintItems = top.map(function (p, i) { return { n: i + 1, sku: String(p.sku || ''), url: __resolveUrl((Array.isArray(p.images) && p.images[0]) || ''), name: String(p.customerName || p.name || '').split('\n')[0].replace(/[.,]?\s*артикул\s*[:#№]?\s*\S*\s*$/i, '').trim(), price: Number(p.price) || 0, desc: __desc(p) }; });
+return { catalogHint: lines.join('\n'), catalogHintCount: top.length, catalogHintTotal: hits.length, catalogHintSkus: top.map(function (p) { return String(p.sku || ''); }).filter(Boolean).join(','), catalogHintPhotos: catalogHintPhotos, catalogHintItems: catalogHintItems, catalogHintAdGuess: __advList ? 'list' : '', catalogCategories: catList, unknownTurns: unknownTurns };
 
 }
 // Для productMatch: id товарів, які зараз рекламуються (і є в наявності) — пріоритет при звірці фото без даних реклами.

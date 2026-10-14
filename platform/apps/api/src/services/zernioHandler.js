@@ -2026,7 +2026,12 @@ async function recordManagerMessage(botId, session, { text, attachments, ids = {
         // resumeAfterManagerSilence такі розмови свідомо не відновлює. Розсилка першим — не ведення діалогу: якщо клієнт за добу
         // нічого не писав, бота на паузу не ставимо (відповідає на відповідь клієнта). Далі менеджер у живій розмові — пауза як завжди.
         let _outreach = false;
-        if (!_pc.funnelPaused) {
+        // Номер ТТН / «накладна» від менеджера — супровід ВІДПРАВЛЕНОГО замовлення, а не розсилка (14.10, аудит B2: після ТТН бот на
+        // «Що це?» / «Дякую» знову продавав — «Який колір обираєте…», ризик дубля замовлення). Такий запис — завжди пауза + позначка.
+        const _shipTtn = String(_sentText || '').match(/(?:^|\D)((?:20|59)\d{12})(?:\D|$)/);
+        const _shipping = !!_shipTtn || /ТТН|накладн/i.test(String(_sentText || ''));
+        if (_shipping) _pc.managerShipped = { at: new Date().toISOString(), ...(_shipTtn ? { ttn: _shipTtn[1] } : {}) };
+        if (!_pc.funnelPaused && !_shipping) {
             try { _outreach = !(await db.message.findFirst({ where: { sessionId: session.id, role: 'user', createdAt: { gte: new Date(Date.now() - 24 * 3600 * 1000) } }, select: { id: true } })); } catch (e) { _outreach = false; }
         }
         if (_outreach) {

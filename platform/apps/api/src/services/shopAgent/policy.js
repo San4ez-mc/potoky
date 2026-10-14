@@ -730,6 +730,15 @@ async function resolveSetParams(A, pp) {
 async function pause(A, reason, alertNode, extraDetails) {
     A.ctx.funnelPaused = true; A.ctx.pausedBy = reason; A.ctx.pausedAt = new Date().toISOString(); A.ctx.adminEngaged = true; A.ctx.handoffKind = reason;
     if (alertNode) await T.alert(A, alertNode, { details: extraDetails });
+    // Оплату підтверджено, а замовлення в CRM ще нема (14.10, аудит M1: scherbakan, tatyanka.miteva, ivanbidon — пауза між оплатою й
+    // повною адресою, і замовлення так і не створилось). Будь-яка передача після оплати — окремий сигнал «оплачено — оформіть».
+    const c = A.ctx;
+    if (c.payStatus === 'confirmed' && !c.crmOrderId && !c.agent.paidNoOrderAlerted) {
+        c.agent.paidNoOrderAlerted = Date.now();
+        const od = c.orderData || {};
+        const miss = [!od.fullName && 'ПІБ', !od.phone && 'телефон', !od.city && 'місто', !od.branch && 'відділення'].filter(Boolean);
+        await T.alert(A, { title: '💰 Оплачено, а замовлення в CRM не створено — оформіть', main: 'Товар: ' + ((P(c) && (P(c).customerName || P(c).name || P(c).sku)) || '—') + (c.payAmount ? ' · оплачено ' + c.payAmount + ' грн' : ''), details: (miss.length ? 'Бракує: ' + miss.join(', ') + '. ' : 'Дані доставки є. ') + 'Бот став на паузу (' + reason + ') до створення замовлення.' }).catch(() => {});
+    }
 }
 
 /**
@@ -1320,6 +1329,14 @@ async function runPolicyInner(A, u) {
             ctx.agent.presentedSku = cur.sku; // щоб перехід на комплект скинув стан окремої речі
             A._backToSet = setSku;
         }
+    }
+    // Закриття після відмови (14.10, аудит B7: «Скасовую» → «Добре» знову відкрило замовлення; «Гарного дня 🫶» → підсумок).
+    // Коротка «згода» без жодних даних протягом доби після відмови — прощання, а не «оформляємо».
+    if (ctx.declinedAt && Date.now() - Number(ctx.declinedAt) < 24 * 3600 * 1000 && (u.ready === 'yes' || u.intent === 'thanks') && !ctx.crmOrderId
+        && !u.productHint.article && !u.productHint.fromList && !u.payMethod && !u.phone && !u.color && !u.colorMatched && !u.clothingSize && !(u.questions || []).length
+        && String(text || '').trim().split(/\s+/).length <= 4) {
+        A.out.push({ text: 'Дякую! Гарного дня 💛 Якщо передумаєте — пишіть, я тут 🙂', step: 'post_decline_thanks' });
+        return;
     }
     // Відповідь свайпом на фото товару (2026-10-14, 7cac4f9b «Ця скільки» на фото зі списку): metaChannel знайшов, якого товару
     // це фото (photoReplyMap) — це ДАНІ, а не тлумачення: вибір саме цього товару.

@@ -425,6 +425,29 @@ async function main() {
         check('52.1 «Покличте менеджера» — передача й пауза', B.ctx.funnelPaused === true && /handoff/.test(B.out.map((o) => o.step).join(',')), B.out.map((o) => o.step).join(','));
     }
 
+    // ── 54.1 (аудит B7): «Добре» / «Гарного дня» протягом доби після відмови — прощання, а не знову підсумок замовлення.
+    {
+        const A = freshA({ turnText: 'Добре' });
+        A.ctx.product = { sku: 'A0187', name: 'Кофта', price: 1279 }; A.ctx.agent.presentedSku = 'A0187'; A.ctx.recommendedSize = 'L'; A.ctx.colorChoice = { color: 'Чорний' };
+        A.ctx.declinedAt = Date.now() - 60 * 1000;
+        await runPolicy(A, freshU({ intent: 'order_yes', ready: 'yes' }));
+        const steps = A.out.map((o) => o.step).join(',');
+        check('54.1 «Добре» після відмови — прощання, без підсумку', steps === 'post_decline_thanks', steps);
+        const B = freshA({ turnText: 'Добре, давайте оформимо чорну L' });
+        B.ctx.product = { sku: 'A0187', name: 'Кофта', price: 1279 }; B.ctx.agent.presentedSku = 'A0187'; B.ctx.declinedAt = Date.now() - 60 * 1000;
+        await runPolicy(B, freshU({ intent: 'order_yes', ready: 'yes', color: 'чорна', clothingSize: 'L' }));
+        check('54.1 справжня згода з даними після відмови — не прощання', !B.out.some((o) => o.step === 'post_decline_thanks'), B.out.map((o) => o.step).join(','));
+    }
+    // ── 55.1 (аудит M1): пауза після підтвердженої оплати без замовлення в CRM — окремий сигнал «оплачено — оформіть».
+    {
+        const A = freshA({ turnText: 'x' });
+        A.ctx.product = { sku: 'A0187', name: 'Кофта', price: 1279 }; A.ctx.payStatus = 'confirmed'; A.ctx.payAmount = 200; A.ctx.orderData = { fullName: 'Тест' };
+        const T = require('../tools'); const orig = T.alert; const sent = [];
+        T.alert = async (_A, node) => { sent.push(typeof node === 'string' ? node : node.title); };
+        try { await runPolicy(A, freshU({ intent: 'other', wantsHuman: true })); } finally { T.alert = orig; }
+        check('55.1 передача після оплати без замовлення — сигнал «💰 Оплачено…»', sent.some((t) => /Оплачено, а замовлення/.test(String(t))) && !!A.ctx.agent.paidNoOrderAlerted, JSON.stringify(sent));
+    }
+
     // ── 51.1 Клас E (14.10, 55f76471 andreibardetskii): розмову вів менеджер, у памʼяті бота товару нема, клієнт пише «1» —
     // товар береться зі збережених сигналів розмови (пост, реклама), один раз; без менеджера в історії — ні.
     {

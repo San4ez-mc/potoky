@@ -116,7 +116,7 @@ router.get('/sessions/unread-count',
             ? await db.$queryRaw`
                 SELECT COUNT(*)::int AS count FROM (
                     SELECT s.id,
-                        (SELECT m.role FROM messages m WHERE m."sessionId" = s.id ORDER BY m."createdAt" DESC LIMIT 1) AS last_role
+                        (SELECT m.role FROM messages m WHERE m."sessionId" = s.id AND m.role <> 'event' ORDER BY m."createdAt" DESC LIMIT 1) AS last_role
                     FROM sessions s
                     JOIN users u ON u.id = s."userId"
                     JOIN bots b ON b.id = s."botId"
@@ -127,7 +127,7 @@ router.get('/sessions/unread-count',
             : await db.$queryRaw`
                 SELECT COUNT(*)::int AS count FROM (
                     SELECT s.id,
-                        (SELECT m.role FROM messages m WHERE m."sessionId" = s.id ORDER BY m."createdAt" DESC LIMIT 1) AS last_role
+                        (SELECT m.role FROM messages m WHERE m."sessionId" = s.id AND m.role <> 'event' ORDER BY m."createdAt" DESC LIMIT 1) AS last_role
                     FROM sessions s
                     JOIN users u ON u.id = s."userId"
                     WHERE s."isActive" = true AND s."isTest" = false AND s."lastActive" >= ${since}

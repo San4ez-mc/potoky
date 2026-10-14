@@ -412,6 +412,19 @@ async function main() {
         MC._waiting.delete(sid); MC._queue.delete(sid);
     }
 
+    // ── 52.1 (14.10, fdde77d9 «Ви людина?» → бот покликав менеджера й замовк на 8 год): питання «ви бот?» — чесна відповідь
+    // без паузи; прохання менеджера — як раніше, пауза.
+    {
+        const A = freshA({ turnText: 'Ви людина?' });
+        A.ctx.product = { sku: 'A0187', name: 'Кофта', price: 1279 }; A.ctx.agent.presentedSku = 'A0187';
+        await runPolicy(A, freshU({ intent: 'question', asksIfBot: true, questions: ['Ви людина?'], questionTopics: ['other'] }));
+        const steps = A.out.map((o) => o.step).join(',');
+        check('52.1 «Ви людина?» — відповідь «віртуальна помічниця», без паузи', /bot_disclosure/.test(steps) && !A.ctx.funnelPaused && /помічниця/.test(A.out[0].text), steps);
+        const B = freshA({ turnText: 'Покличте менеджера' });
+        await runPolicy(B, freshU({ intent: 'other', wantsHuman: true }));
+        check('52.1 «Покличте менеджера» — передача й пауза', B.ctx.funnelPaused === true && /handoff/.test(B.out.map((o) => o.step).join(',')), B.out.map((o) => o.step).join(','));
+    }
+
     // ── 51.1 Клас E (14.10, 55f76471 andreibardetskii): розмову вів менеджер, у памʼяті бота товару нема, клієнт пише «1» —
     // товар береться зі збережених сигналів розмови (пост, реклама), один раз; без менеджера в історії — ні.
     {

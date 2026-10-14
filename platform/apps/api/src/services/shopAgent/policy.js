@@ -1364,6 +1364,13 @@ async function runPolicyInner(A, u) {
         A.out.push({ text: 'Звісно 🙂 Напишіть, будь ласка, номер нового відділення чи поштомата Нової пошти.', step: 'branch_change' }); ctx.agent.lastAsk = 'дані доставки: № відділення або поштомата'; return;
     }
     // 0. Людина / претензія / повернення
+    // «Ви людина?» — питання, а не прохання (14.10, fdde77d9: бот покликав менеджера і замовк, менеджер відповів через 8 год,
+    // продаж втрачено). Чесно відповідаємо й ведемо розмову далі; менеджера кличемо, лише коли клієнт його просить.
+    if (u.asksIfBot && !u.wantsHuman && !ctx.agent.botDisclosed) {
+        ctx.agent.botDisclosed = Date.now();
+        A.out.push({ text: 'Я ' + (A.keys.PERSONA_NAME || 'Оля') + ' — віртуальна помічниця ' + (A.keys.SHOP_TAG || 'магазину') + ' 🙂 Допоможу з вибором і оформленням, а якщо захочете поговорити з менеджером — напишіть, і я покличу.', step: 'bot_disclosure', noMerge: false });
+        Q.coverTopics(A, u, ['other'], 'bot_disclosure', (q) => /бот|робот|людин|жив/i.test(String(q.text)));
+    }
     if (u.wantsHuman) {
         ctx.agent.handoffAsked = (ctx.agent.handoffAsked || 0) + 1;
         if (ctx.agent.handoffAsked > 1) { A.out.push({ text: 'Менеджер уже підключається 🙏 Дякую за терпіння — відповість сюди найближчим часом 💛', step: 'handoff_again' }); return; }

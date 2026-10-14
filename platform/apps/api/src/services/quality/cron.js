@@ -79,10 +79,13 @@ async function waitingSentry() {
     if (Date.now() - _waitingSentAt < 15 * 60 * 1000) return;
     for (const botId of await reportBots()) {
         try {
-            const rows = await db.$queryRawUnsafe(`select s.id, s.context->>'igUsername' ig, s.context->>'senderName' nm, m.id mid, m.content, m."createdAt" at
-                from sessions s join lateral (select id, role, content, "createdAt" from messages where "sessionId" = s.id and role in ('user','assistant') order by "createdAt" desc limit 1) m on true
+            // Чекає: останнє — повідомлення клієнта, АБО бот сам передав розмову («менеджер напише вам тут») і відтоді тиша
+            // (14.10, fdde77d9: «Ви людина?» → передача о 12:49, менеджер — о 20:47; сповіщення не було, бо останнім був бот).
+            const rows = await db.$queryRawUnsafe(`select s.id, s.context->>'igUsername' ig, s.context->>'senderName' nm, m.id mid, m.content, m."createdAt" at, m.role
+                from sessions s join lateral (select id, role, content, "createdAt", metadata from messages where "sessionId" = s.id and role in ('user','assistant') and coalesce(metadata->>'hidden','') <> 'true' order by "createdAt" desc limit 1) m on true
                 where s."botId" = $1 and s."isActive" and not s."isTest" and s.context->>'funnelPaused' = 'true'
-                  and s."lastActive" > now() - interval '4 hours' and m.role = 'user'
+                  and s."lastActive" > now() - interval '4 hours'
+                  and (m.role = 'user' or (m.metadata->>'source' = 'shop_agent' and coalesce(m.metadata->>'step', m.metadata->>'nodeId', '') ~ '(handoff|post_status_unknown_order|question_waiting|complaint|annoyed|insist|escalat|post_unknown)'))
                   and m."createdAt" < now() - interval '15 minutes' and m."createdAt" > now() - interval '4 hours'
                 order by m."createdAt" asc limit 30`, botId);
             const fresh = rows.filter((r) => _waitingAlerted.get(r.id) !== r.mid && !/^\[порожнє/.test(String(r.content || '')));
@@ -91,7 +94,7 @@ async function waitingSentry() {
             if (_waitingAlerted.size > 2000) _waitingAlerted.clear();
             const k = await keysOf(botId, ['TELEGRAM_BOT_TOKEN', 'ADMIN_TELEGRAM_ID', 'SHOP_TAG']);
             const text = (k.SHOP_TAG ? '🏪 ' + k.SHOP_TAG + '\n' : '') + '⏳ Клієнти чекають відповіді менеджера (бот на паузі в цих розмовах):\n'
-                + fresh.slice(0, 12).map((r) => '• ' + (r.ig || r.nm || 'клієнт') + ' — ' + Math.round((Date.now() - new Date(r.at).getTime()) / 60000) + ' хв — «' + String(r.content || '').replace(/\s+/g, ' ').slice(0, 60) + '» https://flows.fineko.space/sessions/' + r.id).join('\n')
+                + fresh.slice(0, 12).map((r) => '• ' + (r.ig || r.nm || 'клієнт') + ' — ' + Math.round((Date.now() - new Date(r.at).getTime()) / 60000) + ' хв — ' + (r.role === 'user' ? '«' + String(r.content || '').replace(/\s+/g, ' ').slice(0, 60) + '»' : 'бот передав вам розмову, відповіді ще нема') + ' https://flows.fineko.space/sessions/' + r.id).join('\n')
                 + (fresh.length > 12 ? '\n… і ще ' + (fresh.length - 12) : '');
             if (await tg(k.TELEGRAM_BOT_TOKEN, k.ADMIN_TELEGRAM_ID, text)) _waitingSentAt = Date.now();
         } catch (e) { logger.warn('[quality] waiting sentry: ' + e.message, { botId }); }

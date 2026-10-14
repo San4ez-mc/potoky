@@ -1033,6 +1033,25 @@ function upsellColorGap(ctx) {
     return { colors, qty, name: String(up.customerName || up.name || 'допродажу').split('.')[0].replace(/^Чоловіч\S*\s+/i, '').trim() };
 }
 
+/** Перша одиниця допродажу, якої нема (колір не в наявних оферах або не шиється в розмірі) → { unit, name, color, size, alt } або null. */
+function upsellUnavailable(ctx) {
+    const oi = ctx.orderIntent || {}; const upI = ctx.product && Array.isArray(ctx.product.upsellItems) && ctx.product.upsellItems[0];
+    if (!upI || !Array.isArray(oi.upsellUnits) || !oi.upsellUnits.length) return null;
+    const offers = Array.isArray(upI.offers) ? upI.offers : [];
+    const colorOfO = (o) => String(((o.properties || []).find((q) => /кол|цвет|colou?r/i.test(q.name || '')) || {}).value || '').trim();
+    const inStockColors = [...new Set(offers.filter((o) => o.inStock !== false) /* inStock рахує CRM (з урахуванням «завжди в наявності») */.map(colorOfO).filter(Boolean))];
+    if (!offers.length || !inStockColors.length) return null; // даних про офери нема — не блокуємо
+    for (const unit of oi.upsellUnits) {
+        const c = unit && unit.color ? (matchColor({ colors: inStockColors.join(',') }, String(unit.color)) || null) : null;
+        const size = unit && unit.size ? unit.size : '';
+        if (unit && unit.color && (!c || !colorHasSize(upI, c, size))) {
+            const alt = inStockColors.filter((x) => colorHasSize(upI, x, size));
+            return { unit, name: String(upI.customerName || upI.name || 'допродаж').split('\n')[0].replace(/[.,]?\s*Артикул.*$/i, '').toLowerCase(), color: unit.color, size, alt };
+        }
+    }
+    return null;
+}
+
 function fillUpsellSize(ctx) {
     const oi = ctx.orderIntent; const upI = ctx.product && Array.isArray(ctx.product.upsellItems) && ctx.product.upsellItems[0];
     if (!oi || !oi.addUpsell || !Array.isArray(oi.upsellUnits) || !oi.upsellUnits.length || !ctx.recommendedSize || !upI) return;
@@ -2843,6 +2862,17 @@ async function runPolicyInner(A, u) {
         const oi = ctx.orderIntent;
         if (u.upsellUnits) oi.upsellUnits = u.upsellUnits;
         fillUpsellSize(ctx);
+        // Наявність допродажу (14.10, аудит M2: продали білу футболку, якої нема — _b0d1k_, levinec.sanya): колір має бути серед
+        // наявних оферів і шитися в розмірі клієнта — та сама перевірка, що для основного товару (colorHasSize).
+        {
+            const bad = upsellUnavailable(ctx);
+            if (bad) {
+                oi.upsellUnits = (oi.upsellUnits || []).filter((x) => x !== bad.unit);
+                A.out.push({ text: 'На жаль, ' + bad.name + ' кольору «' + bad.color + '»' + (bad.size ? ' у розмірі ' + bad.size : '') + ' зараз немає 😔' + (bad.alt.length ? ' Є: ' + bad.alt.join(', ') + '. Який обираєте?' : ' Оформлюємо без нього?'), step: 'upsell_unavailable' });
+                ctx.agent.lastAsk = bad.alt.length ? 'колір допродажу' : 'оформляємо?';
+                return;
+            }
+        }
         if (u.upsellQty) oi.upsellQty = u.upsellQty;
         if (u.upsellNote) oi.upsellNote = u.upsellNote;
         if (ctx.paymentInfo && ctx.paymentInfo.method) { ctx.orderRef = ''; await T.payAmount(A); await sendRequisites(A, u); return; }

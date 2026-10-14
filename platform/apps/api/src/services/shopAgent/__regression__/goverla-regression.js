@@ -438,6 +438,18 @@ async function main() {
         await runPolicy(B, freshU({ intent: 'order_yes', ready: 'yes', color: 'чорна', clothingSize: 'L' }));
         check('54.1 справжня згода з даними після відмови — не прощання', !B.out.some((o) => o.step === 'post_decline_thanks'), B.out.map((o) => o.step).join(','));
     }
+    // ── 56.1 (аудит M2): допродаж кольору, якого нема в наявності, не записуємо — кажемо чесно й пропонуємо наявні.
+    {
+        const tee = { id: 't1', sku: 'L0056', name: 'Футболка оверсайз база', customerName: 'Футболка оверсайз база', price: 449, offers: [
+            { properties: [{ name: 'Колір', value: 'Білий' }], inStock: false }, { properties: [{ name: 'Колір', value: 'Чорний' }], inStock: true }] };
+        const A = freshA({ turnText: 'і білу футболку' });
+        A.ctx.product = { sku: 'A0187', name: 'Кофта', price: 1279, upsell: 'Футболка', upsellItems: [tee] };
+        A.ctx.agent.presentedSku = 'A0187'; A.ctx.recommendedSize = 'L'; A.ctx.colorChoice = { color: 'Чорний' };
+        A.ctx.orderIntent = { ready: 'yes', addUpsell: true }; A.ctx.agent.upsellOffered = true;
+        await runPolicy(A, freshU({ intent: 'other', addUpsell: true, upsellUnits: [{ color: 'білу' }] }));
+        const o = A.out.find((x) => x.step === 'upsell_unavailable');
+        check('56.1 біла футболка не в наявності — чесно + «Є: Чорний», одиниця не записана', !!o && /Чорний/.test(o.text) && !(A.ctx.orderIntent.upsellUnits || []).some((x) => /біл/i.test(String(x.color))), A.out.map((x) => x.step + ': ' + String(x.text || '').slice(0, 70)).join(' | '));
+    }
     // ── 55.1 (аудит M1): пауза після підтвердженої оплати без замовлення в CRM — окремий сигнал «оплачено — оформіть».
     {
         const A = freshA({ turnText: 'x' });

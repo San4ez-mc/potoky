@@ -177,6 +177,21 @@ function MessageContent({ content, metadata }) {
 
     return (
         <div className="whitespace-pre-wrap">
+            {/* 2026-10-14 (власник): що саме клієнт переслав і з якої реклами прийшов — повністю, а не «[переслав post] …». */}
+            {metadata?.sharedPost && (
+                <div className="mb-1.5 max-w-md rounded-lg border border-sky-800 bg-sky-950/40 p-2 text-xs">
+                    <div className="font-semibold text-sky-300">📎 Переслав {metadata.sharedPost.kind === 'reel' ? 'рілс' : 'пост'}{metadata.sharedPost.mediaId ? <span className="ml-1 font-mono font-normal text-sky-600">#{String(metadata.sharedPost.mediaId).slice(-8)}</span> : null}</div>
+                    {metadata.sharedPost.caption && <div className="mt-1 whitespace-pre-wrap text-gray-300">{metadata.sharedPost.caption}</div>}
+                    {metadata.sharedPost.url && <a href={metadata.sharedPost.url} target="_blank" rel="noopener noreferrer" className="mt-1 inline-block text-sky-400 underline">відкрити ↗</a>}
+                </div>
+            )}
+            {(metadata?.adId || metadata?.referral?.adId) && (
+                <div className="mb-1.5 max-w-md rounded-lg border border-amber-800 bg-amber-950/30 p-2 text-xs">
+                    <div className="font-semibold text-amber-300">📣 Відповідь на рекламу</div>
+                    {metadata.referral?.adTitle && <div className="mt-0.5 text-gray-300">{String(metadata.referral.adTitle).replace(/_Group_\d+$/, '')}</div>}
+                    <a href={`https://pcrm.fineko.space/ads?search=${encodeURIComponent(metadata.adId || metadata.referral.adId)}`} target="_blank" rel="noopener noreferrer" className="mt-0.5 inline-block font-mono text-amber-400 underline">ad {metadata.adId || metadata.referral.adId} — у CRM ↗</a>
+                </div>
+            )}
             {metadata?.hasPhoto && (
                 <div className="mb-1.5 inline-flex items-center gap-1.5 px-2 py-0.5 bg-purple-900/30 text-purple-300 rounded border border-purple-800 text-xs">
                     <span>📷</span><span>{metadata?.photoName || 'Фото'}</span>
@@ -1227,6 +1242,19 @@ export function SessionDetail() {
                     {/* Left: chat messages */}
                     <div className="flex-1 overflow-y-auto p-4">
                         <div className="max-w-2xl mx-auto space-y-3">
+                            {(() => {
+                                const c = session?.context || {};
+                                const adId = c.entryAdId || c.lastReferral?.adId || c.lastReferral?.ad_id;
+                                const adTitle = c.adTitle || c.lastReferral?.adTitle || c.lastReferral?.ads_context_data?.ad_title;
+                                const p = c.product;
+                                if (!adId && !p?.sku) return null;
+                                return (
+                                    <div className="rounded-lg border border-gray-800 bg-gray-900/60 px-3 py-2 text-xs text-gray-300 flex flex-wrap gap-x-4 gap-y-1">
+                                        {adId ? <span>📣 Реклама: {adTitle ? String(adTitle).replace(/_Group_\d+$/, '') + ' · ' : ''}<a className="font-mono text-amber-400 underline" href={`https://pcrm.fineko.space/ads?search=${encodeURIComponent(adId)}`} target="_blank" rel="noopener noreferrer">ad {adId} ↗</a></span> : <span className="text-gray-500">📣 Реклама: не відома (клієнт написав не з реклами або Meta не передала)</span>}
+                                        {p?.sku && <span>🛍 Товар у розмові: <span className="font-mono">{p.sku}</span>{p.customerName || p.name ? ' — ' + String(p.customerName || p.name).split('\n')[0].replace(/[.,]?\s*Артикул.*$/i, '') : ''}</span>}
+                                    </div>
+                                );
+                            })()}
                             {messages.map(m => (
                                 m.role === 'event' && m.metadata?.eventType === 'comment.received' ? (
                                     <CommentCard key={m.id} msg={m} />

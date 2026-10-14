@@ -172,6 +172,15 @@ app.use('/api/sessions', authMiddleware, sessionsRouter);
 {
     const mediaStore = require('./services/mediaStore');
     require('./services/metaReminders'); // нагадування бота в каналі Meta (ключ BOT_REMINDERS=1)
+    // Кадри пересланих рілсів (shopAgent зберігає їх для розпізнавання в BOT_FILES_DIR/video-frames) — для картки в адмінці.
+    app.get('/api/media/frame/:file', authMiddleware, (req, res) => {
+        const f = String(req.params.file || '');
+        if (!/^vf-[0-9a-z_-]+\.(jpg|jpeg|png|webp)$/i.test(f)) return res.status(404).end();
+        const fp = require('path').join(BOT_FILES_DIR, 'video-frames', f);
+        if (!require('fs').existsSync(fp)) return res.status(404).end();
+        res.set('Cache-Control', 'private, max-age=604800');
+        return res.sendFile(fp);
+    });
     app.get('/api/media/:sid/:file', authMiddleware, (req, res) => {
         const fp = mediaStore.filePath(req.params.sid + '/' + req.params.file);
         if (!fp || !require('fs').existsSync(fp)) return res.status(404).end();

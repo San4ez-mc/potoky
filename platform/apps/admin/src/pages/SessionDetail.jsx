@@ -181,8 +181,16 @@ function MessageContent({ content, metadata }) {
             {metadata?.sharedPost && (
                 <div className="mb-1.5 max-w-md rounded-lg border border-sky-800 bg-sky-950/40 p-2 text-xs">
                     <div className="font-semibold text-sky-300">📎 Переслав {metadata.sharedPost.kind === 'reel' ? 'рілс' : 'пост'}{metadata.sharedPost.mediaId ? <span className="ml-1 font-mono font-normal text-sky-600">#{String(metadata.sharedPost.mediaId).slice(-8)}</span> : null}</div>
+                    {Array.isArray(metadata.sharedPost.frameUrls) && metadata.sharedPost.frameUrls.length > 0 && (
+                        <div className="mt-1.5 flex gap-1">
+                            {metadata.sharedPost.frameUrls.slice(0, 4).map((u, i) => {
+                                const f = String(u).split('/').pop();
+                                return <a key={i} href={`/api/media/frame/${f}`} target="_blank" rel="noopener noreferrer"><img src={`/api/media/frame/${f}`} alt="" loading="lazy" className="h-24 w-auto rounded border border-sky-900 object-cover" /></a>;
+                            })}
+                        </div>
+                    )}
                     {metadata.sharedPost.caption && <div className="mt-1 whitespace-pre-wrap text-gray-300">{metadata.sharedPost.caption}</div>}
-                    {metadata.sharedPost.url && <a href={metadata.sharedPost.url} target="_blank" rel="noopener noreferrer" className="mt-1 inline-block text-sky-400 underline">відкрити ↗</a>}
+                    {metadata.sharedPost.url && <a href={metadata.sharedPost.url} target="_blank" rel="noopener noreferrer" className="mt-1 inline-block text-sky-400 underline">відкрити {metadata.sharedPost.kind === 'reel' ? 'рілс' : 'пост'} в Instagram ↗</a>}
                 </div>
             )}
             {(metadata?.adId || metadata?.referral?.adId) && (

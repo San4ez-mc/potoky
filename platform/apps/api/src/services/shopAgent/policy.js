@@ -880,6 +880,14 @@ function managerCheckoutInHistory(A) {
         && /ibanoplata\.|pay\.monobank|send\.monobank|UA\d{27}|\bIBAN\b|квитанц|скріншот оплати|номер карт|реквізит/i.test(String(m.text || '')));
 }
 
+/** Є в ДАНИХ ознака, що клієнт має замовлення: CRM, оплата/спосіб оплати, оформлення менеджером у чаті, ТТН чи «оформлено» від
+ *  менеджера або бота. Не тлумачення слів клієнта — лише те, що бот/менеджер/CRM реально зробили. */
+function orderEvidence(A) {
+    const { ctx } = A;
+    if (ctx.crmOrderId || ctx.payStatus === 'confirmed' || (ctx.paymentInfo && ctx.paymentInfo.method) || ctx.supplierOrderId || managerCheckoutInHistory(A)) return true;
+    return (A.history || []).some((m) => (m.who === 'manager' || m.who === 'bot') && /ТТН|накладн|(^|\D)20\d{12}(\D|$)|замовлення (оформлено|прийнято|відправлено)|оформила замовлення|відправили ваше/i.test(String(m.text || '')));
+}
+
 async function sendCard(A) {
     const { ctx } = A;
     if (!ctx.fop) await T.payAmount(A);
@@ -1492,6 +1500,15 @@ async function runPolicyInner(A, u) {
     // 1a. Питання про СВОЄ замовлення, якого бот не бачить (12.10, Edits 3ff8f727/255e3d4d/0dc66ed5: «замовляв вчора — коли
     // відправка?» → бот «який колір цікавить?» / «зріст і вага?»). У тестовому режимі 08–12.10 замовлення оформлювали менеджери
     // вручну, тож у розмові й CRM-привʼязці його нема. Не продаємо заново: терміни відправки + менеджер, який бачить замовлення.
+    if (u.statusQuestion && !u.returnRequest && !orderEvidence(A)) {
+        // Клас I (14.10, Edits 8208ba61 yurev_yu — «По блискавці чекаю відповідь» після відмови; 7e08f82d alla_p0910 — повернення):
+        // аналізатор бачив «питання про замовлення», а замовлення не було — бот називав терміни відправки чужого замовлення.
+        // Без жодної ознаки замовлення в даних — нейтрально: менеджер відповість, терміни відправки не обіцяємо.
+        A.out.push({ text: 'Зараз уточню в менеджера — він напише вам тут найближчим часом 🙏', step: 'question_waiting_handoff' });
+        await pause(A, 'handoff', null);
+        await T.alert(A, { title: '❓ Клієнт чекає відповіді — замовлення в розмові не видно', main: 'Клієнт: «' + text.slice(0, 300) + '»', details: 'Аналізатор прочитав це як питання про статус замовлення, але ні в CRM, ні в розмові (оплата, оформлення менеджером, ТТН) замовлення немає. Бот став на паузу — відповідайте в чаті.' });
+        return;
+    }
     if (u.statusQuestion && !u.returnRequest) {
         A.out.push({ text: 'Одяг шиється під замовлення: відправка протягом 5 робочих днів з моменту оформлення (субота й неділя — вихідні). Номер накладної (ТТН) надішлемо сюди одразу після відправки 📦 Зараз уточню статус саме вашого замовлення в менеджера — він напише вам тут 🙏', step: 'post_status_unknown_order' });
         await pause(A, 'handoff', null);
@@ -2411,6 +2428,25 @@ async function runPolicyInner(A, u) {
             // Спершу пари з попередніх ходів (сказані до підбору розміру), потім цього — новіше перекриває.
             // Збережені пари лише заповнюють порожнє (не повертають колір, який клієнт потім змінив); пари цього ходу — перекривають.
             const curPairs = Array.isArray(u.itemColors) ? u.itemColors : [];
+            // Клас G (14.10, Балаба Микола fbb6087b: «2 кофти, 2 джинси, 3 футболки» різних кольорів — бот лишив по одному кольору на
+            // позицію й порахував 4 597 грн замість 6 388, менеджер добирав 1 791): модель комплекту — ОДИН колір на позицію. Кілька
+            // різних кольорів однієї речі мовчки не стискаємо — до оплати передаємо менеджеру.
+            if (!(ctx.paymentInfo && ctx.paymentInfo.method)) {
+                const byArt = new Map();
+                for (const ic of curPairs) {
+                    const item = ic && ic.item && ic.color && matchSetItem(String(ic.item), ctx.setSelection, catNamesSet);
+                    if (!item) continue;
+                    const s = byArt.get(item.article) || { name: String(item.name).split('\n')[0], colors: new Set() };
+                    s.colors.add(String(ic.color).toLowerCase().trim()); byArt.set(item.article, s);
+                }
+                const multi = [...byArt.values()].filter((s) => s.colors.size > 1);
+                if (multi.length) {
+                    A.out.push({ text: 'Записала 🙏 Кілька кольорів однієї речі в комплекті порахую не я — передаю менеджеру, він уточнить кількість і суму та напише вам тут найближчим часом 💛', step: 'set_multicolor_handoff' });
+                    await pause(A, 'handoff', null);
+                    await T.alert(A, { title: '🎨 Комплект: кілька кольорів однієї речі — оформіть вручну', main: 'Клієнт: «' + String(text || '').slice(0, 300) + '»', details: 'Бот рахує один колір на позицію комплекту, тому склад і суму не рахував:\n' + multi.map((s) => s.name + ': ' + [...s.colors].join(', ')).join('\n') });
+                    return;
+                }
+            }
             for (const ic of [...(ctx.agent.setItemColorHints || []).map((x) => ({ ...x, __old: true })), ...curPairs]) {
                 const item = ic && ic.item && matchSetItem(String(ic.item), ctx.setSelection, catNamesSet);
                 // Розмір саме цієї речі, названий поруч із кольором («кофта світло-сіра XL», Edit 27c53c42) — перекриває розрахований.
@@ -2810,6 +2846,21 @@ async function runPolicyInner(A, u) {
         if (u.questions.length && !A._qAnswered) A.out.push({ text: await answerThenAsk(A, u, ''), step: 'pay_q' });
         await sendRequisites(A, u);
         if (!addressComplete(ctx.orderData)) return;
+    }
+
+    // 9a. Відмова ПІСЛЯ вибору оплати (клас H, 14.10, Edit e06c617d katia_krauvez: після посилання на оплату «відмовляюсь» /
+    // «по сайтам не переходжу» — бот тричі просив адресу). Незручне посилання — реквізити (wantsManualReq, нижче). Відмова — один раз
+    // питаємо, що зупиняє, і пропонуємо реквізити; вдруге — прощаємось і кажемо менеджеру. Не просимо адресу в людини, яка відмовилась.
+    // «Ні» на уточнення адреси («ті самі дані?», відділення НП) — не відмова від замовлення.
+    if (!ctx.crmOrderId && ctx.payStatus !== 'confirmed' && (u.ready === 'no' || u.intent === 'order_no') && !/^(ті самі дані доставки\?|уточнення адреси НП)$/.test(String(ctx.agent.lastAsk || '')) && !u.wantsManualReq && !u.wantsCard && !(u.claimsPaid || u.receiptLink)) {
+        if (!ctx.agent.payRefusalAsked) {
+            ctx.agent.payRefusalAsked = true;
+            A.out.push({ text: 'Зрозуміла 🙏 Підкажіть, будь ласка, що зупиняє? Якщо незручно оплачувати за посиланням — надішлю звичайні реквізити чи номер картки.', step: 'pay_refusal_why' });
+            ctx.agent.lastAsk = 'що зупиняє з оплатою'; return;
+        }
+        A.out.push({ text: messageText(A.assets, 'n_declined_msg', ctx, A.session.id), step: 'declined' }); ctx.declinedAt = Date.now(); ctx.agent.lastAsk = '';
+        await T.alert(A, { title: '🚫 Клієнт відмовився на кроці оплати', main: 'Клієнт: «' + text.slice(0, 300) + '»', details: 'Бот уже спитав, що зупиняє, і запропонував реквізити — клієнт відмовився вдруге. Якщо варто — напишіть йому в чаті.' });
+        return;
     }
 
     // 9. Адреса

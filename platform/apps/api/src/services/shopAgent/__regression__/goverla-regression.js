@@ -182,10 +182,38 @@ async function main() {
     {
         const A = freshA({ turnText: 'Доброго вечора, коли буде відправка мого костюма?' });
         A.ctx.product = { sku: 'A0188', name: 'Костюм', price: 1999 }; A.ctx.agent.presentedSku = 'A0188';
+        A.history = [{ who: 'manager', text: 'Дякуємо! Замовлення оформлено, ТТН надішлемо після відправки', at: new Date(Date.now() - 2 * 864e5) }];
         const u = freshU({ intent: 'question', statusQuestion: true, questions: ['Коли буде відправка?'] });
         await runPolicy(A, u);
         const steps = A.out.map((o) => o.step).join(',');
-        check('38.1 «Коли відправка?» без замовлення в розмові — терміни + менеджер, не продаж', steps === 'post_status_unknown_order' && /5 робочих днів/.test(A.out[0].text) && A.ctx.funnelPaused && A.ctx.pausedBy === 'handoff', 'steps: ' + steps + ' paused ' + A.ctx.pausedBy);
+        check('38.1 «Коли відправка?», замовлення оформив менеджер у чаті — терміни + менеджер, не продаж', steps === 'post_status_unknown_order' && /5 робочих днів/.test(A.out[0].text) && A.ctx.funnelPaused && A.ctx.pausedBy === 'handoff', 'steps: ' + steps + ' paused ' + A.ctx.pausedBy);
+    }
+    // 45.1 Клас H (14.10, e06c617d katia_krauvez): після вибору оплати «відмовляюсь» — не просимо адресу; раз питаємо, що зупиняє,
+    // і пропонуємо реквізити; вдруге — прощаємось. «Ні» на «ті самі дані доставки?» — не відмова.
+    {
+        const mk = (t) => freshA({ turnText: t, ctx: { testMode: true, agent: {}, product: { sku: 'A0187', customerName: 'Кофта', price: 1279 }, orderIntent: { ready: 'yes' }, paymentInfo: { method: 'cod' }, payAmount: 200, orderData: {} } });
+        const A = mk('Я відмовляюсь');
+        await runPolicy(A, freshU({ intent: 'order_no', ready: 'no' }));
+        const s1 = A.out.map((o) => o.step).join(',');
+        check('45.1 перша відмова на оплаті — питання «що зупиняє» + реквізити, без прохання адреси', s1 === 'pay_refusal_why' && /реквізит/.test(A.out[0].text), s1);
+        A.out.length = 0; A.turnText = 'Ні, не буду';
+        await runPolicy(A, freshU({ intent: 'order_no', ready: 'no' }));
+        const s2 = A.out.map((o) => o.step).join(',');
+        check('45.1 друга відмова — прощання (declined), адресу не просить', s2 === 'declined', s2);
+        const B = mk('ні'); B.ctx.agent.lastAsk = 'ті самі дані доставки?';
+        await runPolicy(B, freshU({ ready: 'no' }));
+        const s3 = B.out.map((o) => o.step).join(',');
+        check('45.1 «ні» на «ті самі дані доставки?» — не відмова від замовлення', !/declined|pay_refusal_why/.test(s3), s3);
+    }
+    // 44.1 Клас I (14.10, yurev_yu «По блискавці чекаю відповідь» після відмови): аналізатор сказав statusQuestion, а замовлення
+    // в даних нема — не обіцяємо терміни відправки, нейтрально кличемо менеджера.
+    {
+        const A = freshA({ turnText: 'По блискавці чекаю відповідь' });
+        A.ctx.product = { sku: 'A0188', name: 'Костюм', price: 1999 }; A.ctx.agent.presentedSku = 'A0188';
+        A.history = [{ who: 'bot', text: 'Добре, якщо передумаєте — пишіть 🙂', at: new Date(Date.now() - 864e5) }];
+        await runPolicy(A, freshU({ intent: 'question', statusQuestion: true, questions: ['Яка блискавка?'] }));
+        const steps = A.out.map((o) => o.step).join(',');
+        check('44.1 statusQuestion без ознак замовлення — нейтральна передача менеджеру, без «5 робочих днів»', steps === 'question_waiting_handoff' && !/5 робочих днів/.test(A.out[0].text) && A.ctx.funnelPaused, steps);
     }
 
     // 14.10 (Edits 74433552/1b45cdc7, sv.etlana6372): оформлення веде менеджер (у розмові його посилання на оплату),
@@ -529,6 +557,22 @@ async function main() {
         await runPolicy(A, freshU({ intent: 'give_params' }));
         const shirt = A.ctx.setSelection.find((x) => x.article === 'L0056');
         check('14б.4 Відповідь "2" на друге питання застосовується до Футболки (Чорний), обидві позиції готові', shirt && shirt.color === 'Чорний' && A.ctx.agent.setColorsResolved === true, 'футболка: ' + (shirt && shirt.color) + ', setColorsResolved: ' + A.ctx.agent.setColorsResolved);
+    }
+
+    // ── 43.1 Клас G (14.10, Балаба Микола fbb6087b): кілька кольорів ОДНІЄЇ речі комплекту («футболки білу й чорну») — не стискаємо
+    // до одного кольору й не рахуємо суму, а до оплати передаємо менеджеру; різні кольори РІЗНИХ речей — як раніше.
+    {
+        const mk = () => { const A = freshA({ turnText: 'футболки білу й чорну, джинси сині' }); A.ctx.product = { sku: 'set1115', isSet: true, price: 5490 }; A.ctx.setMode = 'set'; A.ctx.recommendedSize = 'M';
+            A.ctx.agent.setOriginal = [{ article: 'j0032', name: 'Джинси', price: 1590, colors: ['Світло-синій', 'Синій', 'Графітовий'], sizes: [], qty: 1, color: '' }, { article: 'L0056', name: 'Футболка', price: 449, colors: ['Білий', 'Чорний'], sizes: [], qty: 1, color: '' }];
+            A.ctx.setSelection = A.ctx.agent.setOriginal.map((x) => ({ ...x })); A.ctx.agent.setPricing = { total: 5490, edited: false }; return A; };
+        const A = mk();
+        await runPolicy(A, freshU({ intent: 'give_params', itemColors: [{ item: 'футболка', color: 'білу' }, { item: 'футболка', color: 'чорну' }, { item: 'джинси', color: 'сині' }] }));
+        const steps = A.out.map((o) => o.step).join(',');
+        check('43.1 кілька кольорів однієї речі → менеджеру, без підсумку й оплати', /set_multicolor_handoff/.test(steps) && !/pay|summary|order_intent/.test(steps) && A.ctx.funnelPaused === true, steps);
+        const B = mk();
+        await runPolicy(B, freshU({ intent: 'give_params', itemColors: [{ item: 'футболка', color: 'чорну' }, { item: 'джинси', color: 'сині' }] }));
+        const stepsB = B.out.map((o) => o.step).join(',');
+        check('43.1 різні кольори різних речей — без передачі менеджеру', !/set_multicolor_handoff/.test(stepsB) && (B.ctx.setSelection.find((x) => x.article === 'L0056') || {}).color === 'Чорний', stepsB);
     }
 
     // ── 14в. Живий кейс 15.09 (власник: "бот не поняв, які я хочу футболки, це баг") — відповідь

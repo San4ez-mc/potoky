@@ -255,7 +255,7 @@ async function runTurn(sessionId, e) {
             if (m.hidden || m.source === 'zernio_inbox' || m.status === 'sent') continue;
             const att = m.attachment;
             const urls = att && (att.type === 'photo' || att.type === 'image') ? (Array.isArray(att.urls) && att.urls.length ? att.urls : [att.url]).filter((u) => u && /^https?:/.test(String(u))) : [];
-            if (urls.length) pending.push({ urls, caption: att.caption || om.content || '' });
+            if (urls.length) pending.push({ urls, caption: att.caption || om.content || '', msgId: om.id });
             else if (String(om.content || '').trim() && !/^\[повідомлення\]$/.test(String(om.content).trim())) { texts.push(String(om.content).trim()); ids.push(om.id); }
         }
         if (texts.length) {
@@ -304,6 +304,9 @@ async function flushPendingCommentPhotos(botId, sessionId, igsid, outMsgs) {
                 const mid = await Z.sendMetaPhotoAlbum(botId, igsid, p.urls); if (mid) rememberSent(mid);
                 p.urls.forEach((u) => flushed.add(key(u)));
                 await Z.logDelivery(sessionId, botId, 'ig_photo_album', true, null, { deferredFromComment: true, count: p.urls.length, channel: 'meta' });
+                // Відкладене з коментаря фото справді пішло — позначка на самому повідомленні (14.10: без неї аудит рахував такі фото
+                // «недоставленими», хоча клієнт їх отримав одразу після своєї відповіді в директ).
+                if (p.msgId) { const om0 = await db.message.findUnique({ where: { id: p.msgId }, select: { metadata: true } }).catch(() => null); if (om0) await db.message.update({ where: { id: p.msgId }, data: { metadata: { ...(om0.metadata || {}), status: 'sent', channel: 'meta', metaMessageId: mid || null, deferredFromComment: true, deferredSentAt: new Date().toISOString() } } }).catch(() => {}); }
                 if (p.caption) await sendText(botId, igsid, p.caption);
             } catch (er) { await Z.logDelivery(sessionId, botId, 'ig_photo_album', false, er.message, { deferredFromComment: true, channel: 'meta' }); }
         }

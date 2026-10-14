@@ -2755,7 +2755,10 @@ async function runPolicyInner(A, u) {
         if (u.ready === 'yes' || gaveAddress || u.payMethod || answeringUpsellClarify || namesUpsell) {
             const addUpsellFinal = answeringUpsellClarify ? !upsellExplicitNo : (!!u.addUpsell || namesUpsell);
             const upsellWasOn = !!(ctx.orderIntent && ctx.orderIntent.addUpsell);
-            ctx.orderIntent = { ready: 'yes', addUpsell: addUpsellFinal, upsellQty: u.upsellQty || upsellQtyFallback || undefined, upsellNote: u.upsellNote || (answeringUpsellClarify && addUpsellFinal ? text : undefined), upsellUnits: u.upsellUnits || undefined, units: u.units || undefined, qty: u.qty || undefined, extras: undefined, extraProducts: undefined };
+            // Повний комплект: кольори/розміри речей — у setSelection, а не «одиниці» самого комплекту (14.10, _yaroslav01__: три кольори
+            // речей → qty 3 → акційна ціна «2 шт» комплекту, «решта 5317» замість 3118).
+            const setFullI = !!(pp.isSet && ctx.setMode === 'set');
+            ctx.orderIntent = { ready: 'yes', addUpsell: addUpsellFinal, upsellQty: u.upsellQty || upsellQtyFallback || undefined, upsellNote: u.upsellNote || (answeringUpsellClarify && addUpsellFinal ? text : undefined), upsellUnits: u.upsellUnits || undefined, units: setFullI ? undefined : (u.units || undefined), qty: setFullI ? undefined : (u.qty || undefined), extras: undefined, extraProducts: undefined };
             fillUpsellSize(ctx);
             // Клієнт щойно додав допродаж («А можна дві білих футболки?») — підтверджуємо, що саме записали і нову суму, а не
             // мовчки переходимо до оплати (Edit e86adb58: клієнт перепитав «А футболки?»).

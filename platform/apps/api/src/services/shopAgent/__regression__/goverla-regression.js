@@ -1293,6 +1293,19 @@ async function main() {
                 check('52.3 На квитанції код замовлення (без IBAN) + платник у виписці → оплачено', c3.payStatus === 'confirmed' && c3.payTxId === 'k', c3.payStatus + ' ' + c3.payTxId);
             }
         }
+        // 53. Сума комплекту зі зміненим складом (14.10, _yaroslav01__: «решта 5317» замість 3118 — кольори речей стали «3 одиниці»
+        // комплекту, акція «2 шт: 2199» на ціну 0).
+        {
+            const code = String((assets.nodes.get('n_pay_amount') || { data: {} }).data.code || '');
+            if (!code.includes('var full=unit>0?')) check('53.0 n_pay_amount пропатчено (scripts/patch-goverla-pay-amount-set-2026-10-14.js)', false, 'патч ще не застосовано');
+            else {
+                const { runNodeCode } = require('../lib');
+                const sel = [['A0187', 1279, 'Чорний'], ['j0032', 1590, 'Темно-синій'], ['L0056', 449, 'Білий']].map(([sku, price, color]) => ({ id: sku, sku, name: sku, price, qtyPrices: {}, color, size: 'XL', qty: 1, offers: [] }));
+                const c = { product: { sku: 'set1112', isSet: true, price: 0, qtyPrices: { 2: 2199 } }, setMode: 'set', extraItems: sel, orderUnits: [{ color: '', size: '' }], orderIntent: { ready: 'yes', units: [{ color: 'Чорний', size: 'XL' }, { color: 'Темно-синій', size: 'XL' }, { color: 'Білий', size: 'XL' }] }, paymentInfo: { method: 'cod' }, orderRef: 'GOVTEST', orderRefAt: Date.now() };
+                await runNodeCode(code, { ctx: c, keys: { PREPAY_AMOUNT: '200' }, session: { id: 'test' }, input: '', label: 'n_pay_amount' });
+                check('53.1 Змінений комплект: сума = позиції (3318), «решта 3118», не 5517', Number(c.orderTotal) === 3318 && /решта 3118 грн/.test(String(c.payLabel)), c.orderTotal + ' / ' + c.payLabel);
+            }
+        }
         check('31.2 Текст із переносами не чіпається', paragraphize('Рядок один.\nРядок два, досить довгий, щоб перевищити межу в сто сорок символів, і ще трохи тексту, щоб точно перевищити.') === 'Рядок один.\nРядок два, досить довгий, щоб перевищити межу в сто сорок символів, і ще трохи тексту, щоб точно перевищити.', '');
     }
 

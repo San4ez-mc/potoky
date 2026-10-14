@@ -1046,7 +1046,7 @@ function upsellUnavailable(ctx) {
         const size = unit && unit.size ? unit.size : '';
         if (unit && unit.color && (!c || !colorHasSize(upI, c, size))) {
             const alt = inStockColors.filter((x) => colorHasSize(upI, x, size));
-            return { unit, name: String(upI.customerName || upI.name || 'допродаж').split('\n')[0].replace(/[.,]?\s*Артикул.*$/i, '').toLowerCase(), color: unit.color, size, alt };
+            return { unit, name: String(upI.customerName || upI.name || 'допродаж').split('\n')[0].replace(/[.,]?\s*Артикул.*$/i, '').toLowerCase(), color: matchColor({ colors: [...new Set(offers.map(colorOfO).filter(Boolean))].join(',') }, String(unit.color)) || unit.color, size, alt };
         }
     }
     return null;

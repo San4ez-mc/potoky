@@ -453,8 +453,10 @@ async function handleMetaEvent(webhookBotId, body) {
                 // ── echo: повідомлення від нашого акаунта клієнту ──
                 if (msg.is_echo || (own && m.sender && String(m.sender.id) === own)) {
                     const igsid = m.recipient && m.recipient.id; if (!igsid || !msg.mid) { skipped++; continue; }
-                    const user = (await db.user.findMany({ where: { metadata: { path: ['psid'], equals: String(igsid) } } })).find((u) => !u.metadata.zernioBotId || u.metadata.zernioBotId === botId);
-                    const session = user ? await db.session.findFirst({ where: { userId: user.id, botId }, orderBy: { startedAt: 'desc' } }) : null;
+                    // Розмова цього бота серед УСІХ користувачів із цим psid (14.10, cd0b1f76 stanislavchehovskiy: перший знайдений користувач
+                    // належав іншому боту без zernioBotId → сесії «не було», відповіді менеджера губились, бот не знав, що розмову веде менеджер).
+                    const users = await db.user.findMany({ where: { metadata: { path: ['psid'], equals: String(igsid) } }, select: { id: true } });
+                    const session = users.length ? await db.session.findFirst({ where: { userId: { in: users.map((u) => u.id) }, botId }, orderBy: { startedAt: 'desc' } }) : null;
                     if (!session) { skipped++; continue; } // менеджер пише людині, якої бот не знає — розмови тут нема
                     if (_sent.has(String(msg.mid))) { skipped++; continue; }
                     // Чекаємо, поки наша відправка запише свій id, — у фоні, щоб не тримати решту подій пачки.

@@ -1256,6 +1256,43 @@ async function main() {
             check('37.2 «хл і ххл» → XL, XXL', JSON.stringify(sizeTokens('заміри на хл і ххл')) === '["XL","XXL"]', '');
             check('37.3 «1.8 м» — метри, не розмір M', sizeTokens('зріст 1.8 м, вага 80').length === 0, JSON.stringify(sizeTokens('зріст 1.8 м, вага 80')));
         }
+        // 51. Фонова перезвірка оплат (B14, 14.10: vita.zayika — гроші дійшли за 5 год після скріншота; _artem_0503 — оплата з кодом,
+        // бот на паузі). Зараховуємо лише однозначно: код замовлення або ПІБ (≥2 слова) + сума, єдиний такий платіж.
+        {
+            const { pickPayment } = require('../payRecheck');
+            const t0 = Math.floor(Date.UTC(2026, 9, 12, 16, 44) / 1000);
+            const noise = Array.from({ length: 60 }, (_, i) => ({ id: 'n' + i, amountUah: 200, time: t0 + 600 + i * 60, comment: '', counterName: 'Інший Платник ' + i }));
+            const ctxV = { orderRef: 'GOVQ251FA1H', orderRefAt: t0 * 1000, payAmount: 200, orderData: { fullName: 'ЗАЇКА Віта Віталіївна' } };
+            const v = pickPayment(ctxV, noise.concat([{ id: 'v1', amountUah: 200, time: t0 + 18000, comment: 'Оплата за товар GOVQ251FA1H', counterName: 'ЗАЇКА ВІТА ВІТАЛІЇВНА' }]), []);
+            check('51.1 Код замовлення в коментарі платежу серед 60 інших по 200 → саме він', v && v.tx && v.tx.id === 'v1' && v.via === 'mono:recheck:ref', JSON.stringify(v));
+            const ctxA = { orderRef: 'GOVVBHDYFL2', orderRefAt: t0 * 1000, payAmount: 200, orderData: { fullName: 'Сидорук Артем' } };
+            const a = pickPayment(ctxA, noise.concat([{ id: 'a1', amountUah: 200, time: t0 + 900, comment: '', counterName: 'Сидорук Артем Олександрович' }]), []);
+            check('51.2 Без коду: прізвище + імʼя платника й сума, єдиний такий → зараховано', a && a.tx && a.tx.id === 'a1' && a.via === 'mono:recheck:name', JSON.stringify(a));
+            const a2 = pickPayment(ctxA, noise.concat([{ id: 'x', amountUah: 200, time: t0 + 900, comment: '', counterName: 'Петренко Артем Іванович' }]), []);
+            check('51.3 Лише спільне імʼя («Артем») — НЕ зараховуємо чужий платіж', a2 === null, JSON.stringify(a2));
+            check('51.4 Платежу нема (переказ на картку поза рахунком) → нічого', pickPayment({ orderRef: 'GOVA4UCUSKM', orderRefAt: t0 * 1000, payAmount: 200, orderData: { fullName: 'Олег Володимирович Коротич' } }, noise, []) === null, '');
+            check('51.5 Платіж ДО видачі коду (−10 хв) не рахуємо', pickPayment(ctxV, [{ id: 'old', amountUah: 200, time: t0 - 3600, comment: 'Оплата за товар GOVQ251FA1H', counterName: 'ЗАЇКА ВІТА' }], []) === null, '');
+            const p = pickPayment(ctxV, [{ id: 'pp', amountUah: 100, time: t0 + 900, comment: 'GOVQ251FA1H', counterName: 'ЗАЇКА ВІТА' }], []);
+            check('51.6 Код є, але сума менша — не «оплачено» (часткова)', p && !p.tx && p.partial && p.partial.id === 'pp', JSON.stringify(p));
+            check('51.7 Уже зарахований іншому платіж не беремо вдруге', pickPayment(ctxV, [{ id: 'v1', amountUah: 200, time: t0 + 900, comment: 'GOVQ251FA1H' }], ['v1']) === null, '');
+        }
+        // 52. n_reconcile після патча 14.10 (скріншот через спільну чергу ключів → context.receiptVision; суворий збіг).
+        {
+            const code = String((assets.nodes.get('n_reconcile') || { data: {} }).data.code || '');
+            if (!code.includes('receiptVision (14.10)')) check('52.0 n_reconcile пропатчено (scripts/patch-goverla-reconcile-vision-2026-10-14.js)', false, 'патч ще не застосовано');
+            else {
+                const { runNodeCode } = require('../lib');
+                const t0 = Math.floor(Date.now() / 1000) - 3600;
+                const noise = Array.from({ length: 50 }, (_, i) => ({ id: 'n' + i, amountUah: 200, time: t0 + i * 30, comment: '', counterName: 'Інший Платник ' + i, description: '' }));
+                const run = async (rv, extra) => { const c = { orderRef: 'GOVTEST01', orderRefAt: (t0 - 60) * 1000, payAmount: 200, fop: { iban: 'UA053220010000026006340060450', code: '3717807661' }, lastReceiptImageUrl: 'https://x/1.jpg', receiptVision: rv ? { url: 'https://x/1.jpg', ...rv } : null, monoStatement: noise.concat(extra || []), consumedTxIds: [] }; await runNodeCode(code, { ctx: c, keys: {}, session: { id: 'test' }, input: '', label: 'n_reconcile' }); return c; };
+                const c1 = await run({ amount: 200, iban: 'UA05 3220 0100 0002 6006 3400 6045 0', payerName: 'ВІТА ВІТАЛІЇВНА ЗАЇКА', purpose: '' }, [{ id: 'v', amountUah: 200, time: t0 + 2000, comment: '', counterName: 'ЗАЇКА ВІТА ВІТАЛІЇВНА', description: '' }]);
+                check('52.1 Скріншот на наш IBAN + той самий платник у виписці → оплачено (mono:ai)', c1.payStatus === 'confirmed' && c1.payTxId === 'v' && c1.payVia === 'mono:ai', c1.payStatus + ' ' + c1.payVia + ' ' + c1.payTxId);
+                const c2 = await run({ amount: 200, iban: 'UA053220010000026006340060450', payerName: 'ВІТА ВІТАЛІЇВНА ЗАЇКА', purpose: '' });
+                check('52.2 Квитанція наша, а платежу цього платника ще нема → НЕ зараховуємо чужий (було: найсвіжіший із 50)', c2.payStatus === 'not_found', c2.payStatus + ' ' + c2.payTxId);
+                const c3 = await run({ amount: 200, iban: '', recipientCode: '', payerName: 'Коротич Олег Володимирович', purpose: 'Оплата за товар GOVTEST01' }, [{ id: 'k', amountUah: 200, time: t0 + 2000, comment: '', counterName: 'КОРОТИЧ ОЛЕГ', description: '' }]);
+                check('52.3 На квитанції код замовлення (без IBAN) + платник у виписці → оплачено', c3.payStatus === 'confirmed' && c3.payTxId === 'k', c3.payStatus + ' ' + c3.payTxId);
+            }
+        }
         check('31.2 Текст із переносами не чіпається', paragraphize('Рядок один.\nРядок два, досить довгий, щоб перевищити межу в сто сорок символів, і ще трохи тексту, щоб точно перевищити.') === 'Рядок один.\nРядок два, досить довгий, щоб перевищити межу в сто сорок символів, і ще трохи тексту, щоб точно перевищити.', '');
     }
 

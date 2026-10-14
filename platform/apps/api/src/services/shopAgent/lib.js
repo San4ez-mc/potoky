@@ -152,7 +152,12 @@ async function runNodeCode(code, { ctx, keys, user, session, input, label, timeo
     if (!code) return { ok: false, error: 'empty code' };
     const started = Date.now();
     try {
-        const notifyBalanceIssue = () => {};
+        // Платний сервіс у коді ноди відмовив (баланс/ключ) — повідомлення в Telegram-групу воронки, як у двигуні графа.
+        // 14.10: тут була заглушка () => {} — збої Gemini у звірці оплат (402 з 29.09) ніхто не бачив.
+        const notifyBalanceIssue = (serviceLabel, message) => {
+            if (!session || !session.id || (ctx && ctx.testMode)) return;
+            require('@platform/claude').notifyAdminOfServiceOutage(session.id, String(serviceLabel || 'Зовнішній сервіс') + (label ? ' (' + label + ')' : ''), String(message || '')).catch(() => {});
+        };
         const fn = new Function('context', 'user', 'session', 'input', 'keys', 'fetch', 'Buffer', 'FormData', 'Blob', 'console', 'crypto', 'notifyBalanceIssue',
             'return (async function(){"use strict";\n' + code + '\n})();');
         const res = await Promise.race([

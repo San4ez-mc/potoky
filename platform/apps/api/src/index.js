@@ -172,6 +172,7 @@ app.use('/api/sessions', authMiddleware, sessionsRouter);
 {
     const mediaStore = require('./services/mediaStore');
     require('./services/metaReminders'); // нагадування бота в каналі Meta (ключ BOT_REMINDERS=1)
+    require('./services/shopAgent/payRecheck'); // фонова перезвірка оплат за виписку (оплата дійшла пізніше / бот на паузі)
     // Кадри пересланих рілсів (shopAgent зберігає їх для розпізнавання в BOT_FILES_DIR/video-frames) — для картки в адмінці.
     app.get('/api/media/frame/:file', authMiddleware, (req, res) => {
         const f = String(req.params.file || '');

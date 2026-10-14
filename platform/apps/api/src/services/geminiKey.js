@@ -20,6 +20,25 @@ const bad = new Map(); // key -> until
 function isBad(k) { const t = bad.get(k); return !!(t && t > Date.now()); }
 function markBad(k, status) { if ([401, 402, 403, 429].includes(Number(status))) bad.set(k, Date.now() + BAD_TTL_MS); }
 
+// Ключ відмовив через гроші/доступ (14.10, власник: «мало прийти сповіщення в групу»): з 29.09 до 14.10 ключ воронки goverla
+// відповідав 402 «credits depleted», а розпізнавання скріншотів оплати тихо не працювало. Тепер — повідомлення в Telegram-групу
+// воронки (ADMIN_TELEGRAM_ID; той самий notifyAdminOfServiceOutage, що й для Claude), раз на 6 год на ключ.
+const KEY_ALERT_MS = 6 * 3600 * 1000;
+const keyAlertAt = new Map(); // botId:key -> ts
+const STATUS_WHY = { 401: 'ключ недійсний', 402: 'закінчились кредити', 403: 'доступ заборонено', 429: 'вичерпано ліміт запитів' };
+async function alertKey(meta, k, res) {
+    try {
+        if (!meta || !meta.botId || !STATUS_WHY[res.status]) return;
+        const id = meta.botId + ':' + k;
+        if (Date.now() - Number(keyAlertAt.get(id) || 0) < KEY_ALERT_MS) return;
+        keyAlertAt.set(id, Date.now());
+        let detail = ''; try { const j = await res.clone().json(); detail = String((j && j.error && j.error.message) || '').slice(0, 160); } catch (e) { /* без тексту */ }
+        const label = (meta.labels && meta.labels[k]) || 'ключ Gemini';
+        const { notifyAdminOfServiceOutage } = require('@platform/claude');
+        await notifyAdminOfServiceOutage(null, 'Gemini — ' + label, 'HTTP ' + res.status + ' — ' + STATUS_WHY[res.status] + (detail ? ' («' + detail + '»)' : '') + '. Розпізнавання фото, скріншотів оплати й голосових перейшло на наступний ключ у черзі (конектор Gemini → Claude). Поповніть або замініть цей ключ.', { botId: meta.botId });
+    } catch (e) { /* сповіщення best-effort */ }
+}
+
 function cfgKey(cfg) { const c = cfg || {}; return String(c.api_key || c.apiKey || c.key || '').trim(); }
 async function connectorKey(id) {
     if (!id) return '';
@@ -37,7 +56,8 @@ async function geminiKeys(botId, keys) {
     if (!KEY_NAMES.some((n) => km[n])) {
         km = Object.fromEntries((await db.funnelKey.findMany({ where: { botId, key: { in: KEY_NAMES } }, select: { key: true, value: true } })).map((k) => [k.key, String(k.value || '').trim()]));
     }
-    const gem = [String(km.GEMINI_API_KEY || '').trim(), await connectorKey(km.GEMINI_CONNECTOR_ID)].filter(Boolean);
+    const ownKey = String(km.GEMINI_API_KEY || '').trim(); const connKey = await connectorKey(km.GEMINI_CONNECTOR_ID);
+    const gem = [ownKey, connKey].filter(Boolean);
     const cl = String(km.CLAUDE_API_KEY || '').trim() || await connectorKey(km.CLAUDE_CONNECTOR_ID);
     let oa = String(km.OPENAI_API_KEY || km.GPT_API_KEY || '').trim() || await connectorKey(km.OPENAI_CONNECTOR_ID || km.GPT_CONNECTOR_ID);
     if (!oa) {
@@ -47,6 +67,10 @@ async function geminiKeys(botId, keys) {
     const ordered = uniq.filter((k) => !isBad(k)).concat(uniq.filter(isBad));
     if (cl) ordered.push('claude:' + cl);
     if (oa) ordered.push('openai:' + oa);
+    // Чия черга і що за ключ — для сповіщення, коли ключ відмовляє (alertKey). Невидиме поле: місця виклику передають масив як є.
+    const labels = {}; if (ownKey) labels[ownKey] = 'ключ воронки GEMINI_API_KEY'; if (connKey && connKey !== ownKey) labels[connKey] = 'конектор GEMINI_CONNECTOR_ID';
+    if (cl) labels['claude:' + cl] = 'резерв Claude'; if (oa) labels['openai:' + oa] = 'резерв OpenAI';
+    Object.defineProperty(ordered, '__meta', { value: { botId: botId || null, labels }, enumerable: false });
     return ordered;
 }
 
@@ -111,6 +135,7 @@ async function geminiFetch(keyList, body, { model, signal } = {}) {
             }
             if (last.ok) return last;
             markBad(k, last.status);
+            if (Array.isArray(keyList) && keyList.__meta) await alertKey(keyList.__meta, k, last);
             if (last.status === 500 || last.status === 503 || last.status === 529) transient = true;
             else if (![400, 401, 402, 403, 404, 429].includes(last.status)) return last;
         }

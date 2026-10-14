@@ -66,7 +66,36 @@ async function orderPrefill(A) { return tool(A, 'n_order_prefill'); }
 async function intlRoute(A) { return tool(A, 'n_intl_route'); }
 async function payAmount(A) { return tool(A, 'n_pay_amount'); }
 async function npCheck(A) { return tool(A, 'n_np_check'); }
-async function reconcile(A) { return tool(A, 'n_reconcile'); }
+async function reconcile(A) { await receiptVision(A); return tool(A, 'n_reconcile'); }
+/**
+ * Скріншот оплати → дані квитанції (сума, IBAN/код одержувача, платник, призначення) у ctx.receiptVision для n_reconcile.
+ * Через спільну чергу ключів (geminiKey.js: ключ воронки → конектор → Claude; ключ, що відмовив, — сповіщення в групу). 14.10, B14:
+ * нода сама ходила в Gemini з ключем воронки, який з 29.09 відповідав 402, — скріншоти не розпізнавались, і ніхто про це не знав.
+ */
+const RECEIPT_PROMPT = 'Це банківська квитанція про переказ. Поверни ЛИШЕ JSON {"amount":число,"recipientCode":"код одержувача (ЄДРПОУ/ІПН)","iban":"IBAN одержувача","recipientCard":"номер картки одержувача, якщо є","payerName":"ПІБ платника","purpose":"призначення платежу"}. Чого на квитанції нема — порожній рядок.';
+async function receiptVision(A) {
+    const c = A.ctx; const url = String(c.lastReceiptImageUrl || '');
+    if (!/^https?:\/\//.test(url) || (c.receiptVision && c.receiptVision.url === url)) return;
+    try {
+        const r = await fetch(url); const ct = String(r.headers.get('content-type') || '');
+        if (!r.ok || !/^image\//i.test(ct)) { A.trace.push({ tool: 'receiptVision', error: 'image ' + r.status }); return; }
+        const b64 = Buffer.from(await r.arrayBuffer()).toString('base64');
+        const { geminiKeys, geminiFetch } = require('../geminiKey');
+        const q = (Array.isArray(A.keys.__geminiKeys) && A.keys.__geminiKeys.length) ? A.keys.__geminiKeys : await geminiKeys(A.botId, A.keys);
+        const g = await geminiFetch(q, { contents: [{ parts: [{ text: RECEIPT_PROMPT }, { inline_data: { mime_type: ct.split(';')[0], data: b64 } }] }], generationConfig: { temperature: 0, maxOutputTokens: 400, thinkingConfig: { thinkingBudget: 0 } } });
+        const j = await g.json().catch(() => ({}));
+        const t = ((((j.candidates || [])[0] || {}).content || {}).parts || []).map((p) => p.text || '').join('');
+        const m = t.match(/\{[\s\S]*\}/);
+        if (!g.ok || !m) {
+            A.trace.push({ tool: 'receiptVision', error: 'HTTP ' + g.status });
+            if (!c.testMode) require('@platform/claude').notifyAdminOfServiceOutage(A.session.id, 'Розпізнавання скріншотів оплати', 'Жоден ключ (Gemini, резерв Claude) не розпізнав квитанцію: HTTP ' + g.status + '. Перевірте оплату вручну.').catch(() => {});
+            return;
+        }
+        const f = JSON.parse(m[0]);
+        c.receiptVision = { url, at: Date.now(), amount: f.amount, recipientCode: String(f.recipientCode || ''), iban: String(f.iban || ''), recipientCard: String(f.recipientCard || ''), payerName: String(f.payerName || ''), purpose: String(f.purpose || '') };
+        A.trace.push({ tool: 'receiptVision', ok: true, amount: f.amount, ref: /GOV/i.test(String(f.purpose || '')) });
+    } catch (e) { A.trace.push({ tool: 'receiptVision', error: e.message }); }
+}
 async function crmOrder(A) { return tool(A, 'n_crm_order'); }
 async function supplierRoute(A) { return tool(A, 'n_supplier_route'); }
 async function confirmPrep(A) { return tool(A, 'n_confirm_prep'); }

@@ -138,9 +138,12 @@ function MessageContent({ content, metadata }) {
     const messageParts = splitMermaidBlocks(content);
     // Медіа-вкладення — одне або «альбом» (кілька фото). Вхідні від клієнта / вихідні sendPhoto.
     const att = metadata?.attachment;
-    const atts = (Array.isArray(metadata?.attachments) && metadata.attachments.length)
+    // Альбом бота зберігається ОДНИМ вкладенням зі списком urls (shopAgent: attachment.urls) — показуємо всі фото, а не лише перше
+    // (14.10, власник: бот надіслав 3 фото, в адмінці видно одне — виглядало як баг).
+    const expand = (a) => (a && Array.isArray(a.urls) && a.urls.length > 1 ? a.urls.map((u) => ({ ...a, url: u, urls: undefined })) : [a]);
+    const atts = ((Array.isArray(metadata?.attachments) && metadata.attachments.length)
         ? metadata.attachments
-        : (att ? [att] : []);
+        : (att ? [att] : [])).flatMap(expand);
     const imgs = atts.filter((a) => a?.url && (a.type === 'photo' || a.type === 'image'));
     const vids = atts.filter((a) => a?.url && (a.type === 'video' || a.type === 'animation'));
 

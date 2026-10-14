@@ -425,6 +425,21 @@ async function main() {
         check('52.1 «Покличте менеджера» — передача й пауза', B.ctx.funnelPaused === true && /handoff/.test(B.out.map((o) => o.step).join(',')), B.out.map((o) => o.step).join(','));
     }
 
+    // ── 59.1 Нагадування бота (власник 14.10: 2 год і 20 год, лише вдень, у вікні Meta 24 год).
+    {
+        const { reminderFor } = require('../../metaReminders');
+        const day = new Date('2026-10-15T09:00:00Z').getTime(); // 12:00 Київ
+        const bot = { id: 'm1', step: 'ask_color', at: new Date(day - 2.5 * 3600e3) };
+        const r1 = reminderFor({ lastBot: bot, lastClientAt: new Date(day - 3 * 3600e3), managerAfter: false, ctx: { agent: {} }, now: day });
+        check('59.1 через 2 год після прохання кольору — 1-ше нагадування про колір', r1 && r1.n === 1 && /колір/.test(r1.text), JSON.stringify(r1));
+        const r1b = reminderFor({ lastBot: { ...bot, at: new Date(day - 3 * 3600e3) }, lastClientAt: new Date(day - 3.5 * 3600e3), managerAfter: false, ctx: { agent: { reminders: { key: 'm1', n: 1 } } }, now: day });
+        check('59.1 друге — не раніше 20 год', r1b === null, JSON.stringify(r1b));
+        const night = new Date('2026-10-15T20:00:00Z').getTime(); // 23:00 Київ
+        check('59.1 вночі — не нагадуємо', reminderFor({ lastBot: { ...bot, at: new Date(night - 3 * 3600e3) }, lastClientAt: new Date(night - 4 * 3600e3), ctx: { agent: {} }, now: night }) === null, '');
+        check('59.1 менеджер писав після бота — не нагадуємо', reminderFor({ lastBot: bot, lastClientAt: new Date(day - 3 * 3600e3), managerAfter: true, ctx: { agent: {} }, now: day }) === null, '');
+        check('59.1 після «подумаю» (soft) — не нагадуємо', reminderFor({ lastBot: { ...bot, step: 'soft_hesitate_summary' }, lastClientAt: new Date(day - 3 * 3600e3), ctx: { agent: {} }, now: day }) === null, '');
+        check('59.1 поза 24-годинним вікном Meta — не нагадуємо', reminderFor({ lastBot: { ...bot, at: new Date(day - 21 * 3600e3) }, lastClientAt: new Date(day - 23.5 * 3600e3), ctx: { agent: { reminders: { key: 'm1', n: 1 } } }, now: day }) === null, '');
+    }
     // ── 54.1 (аудит B7): «Добре» / «Гарного дня» протягом доби після відмови — прощання, а не знову підсумок замовлення.
     {
         const A = freshA({ turnText: 'Добре' });

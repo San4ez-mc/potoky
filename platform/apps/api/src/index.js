@@ -171,6 +171,7 @@ app.use('/api/sessions', authMiddleware, sessionsRouter);
 // Копії фото/відео з розмов (services/mediaStore.js) — лише для залогінених (cookie), файли в закритій папці.
 {
     const mediaStore = require('./services/mediaStore');
+    require('./services/metaReminders'); // нагадування бота в каналі Meta (ключ BOT_REMINDERS=1)
     app.get('/api/media/:sid/:file', authMiddleware, (req, res) => {
         const fp = mediaStore.filePath(req.params.sid + '/' + req.params.file);
         if (!fp || !require('fs').existsSync(fp)) return res.status(404).end();

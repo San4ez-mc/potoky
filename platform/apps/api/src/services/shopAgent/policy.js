@@ -902,7 +902,7 @@ function crmOrderStatusText(o) {
     const ttn = (Array.isArray(o.ttn) ? o.ttn : []).filter(Boolean);
     if (ttn.length) return 'Ваше замовлення' + what + ' вже відправлено 📦 ТТН: ' + ttn.join(', ') + (o.ttnStatus ? NL + 'Статус у Новій пошті: ' + o.ttnStatus : '') + NL + 'Відстежити можна в застосунку Нової пошти 🙂';
     const date = new Date(o.createdAt).toLocaleDateString('uk-UA', { day: 'numeric', month: 'long', timeZone: 'Europe/Kyiv' });
-    return 'Бачу ваше замовлення від ' + date + what + (o.stage && o.stage.name ? ' — зараз етап «' + o.stage.name + '»' : '') + ' 🙌' + NL + 'Одяг шиється під замовлення: відправка протягом 5 робочих днів з моменту оформлення (субота й неділя — вихідні). Номер ТТН надішлю сюди одразу після відправки 📦';
+    return 'Бачу ваше замовлення від ' + date + what + (o.stage && o.stage.name ? ' — зараз етап «' + o.stage.name + '»' : '') + ' 🙌' + NL + 'Відправка — до 5 робочих днів з моменту оформлення (субота й неділя — вихідні). Номер ТТН надішлю сюди одразу після відправки 📦';
 }
 const NL = String.fromCharCode(10);
 
@@ -1013,7 +1013,7 @@ async function afterOrderAccepted(A) {
 
 /** Рядок про терміни відправки в підсумку замовлення (умови з налаштувань магазину, якщо є; інакше стандартний). */
 function shipTerms(ctx) {
-    return (ctx.shop && ctx.shop.terms) || 'Одяг шиється під замовлення: відправка протягом 5 робочих днів (субота й неділя — вихідні) 📦';
+    return (ctx.shop && ctx.shop.terms) || 'Відправка — до 5 робочих днів (субота й неділя — вихідні) 📦';
 }
 
 /** Допродаж без розміру («ще дві білі футболки»): беремо розмір клієнта, якщо допродаж його має (за офферами товару). */
@@ -1559,7 +1559,7 @@ async function runPolicyInner(A, u) {
             if (o && orderIsLive(o)) { A.out.push({ text: crmOrderStatusText(o), step: 'post_status_crm' }); statusFromCrm = true; }
             else if (!ctx.supplierTtn && !ctx.ttn) {
                 // CRM недоступна / замовлення там не видно — стандартні терміни (FunnelTest 44), менеджер отримає сповіщення нижче.
-                A.out.push({ text: 'Одяг шиється під замовлення: відправка протягом 5 робочих днів з моменту оформлення (субота й неділя — вихідні). Номер накладної (ТТН) надішлемо сюди одразу після відправки 📦', step: 'post_status_terms' });
+                A.out.push({ text: 'Відправка — до 5 робочих днів з моменту оформлення (субота й неділя — вихідні). Номер накладної (ТТН) надішлемо сюди одразу після відправки 📦', step: 'post_status_terms' });
             }
         } else if (u.questions.length && !u.statusQuestion) {
             A.out.push({ text: await answerThenAsk(A, u, 'Ваше замовлення в роботі 💛'), step: 'post_q' });

@@ -393,6 +393,25 @@ async function sessionFor(botId, igsid, patch) {
     return { session, profile: p };
 }
 
+// Реклама, з якої клієнт відкрив розмову, приходить окремою подією messaging_referral (без message) — часто ДО першого повідомлення,
+// інколи після (2026-10-14: ~третина перших повідомлень з реклами за 12–13.10 були без ad_id → бот показував список товарів замість
+// картки; такі події відкидались як «ні message, ні postback»). Тримаємо реферал 10 хв і віддаємо найближчому повідомленню клієнта,
+// а якщо хід уже в черзі склеювання — домішуємо одразу. Сюди ж потрапляють повідомлення, які підібрав поллер розмов (там реклами нема).
+const REF_HOLD_MS = 10 * 60 * 1000;
+const _refHold = new Map(); // `${botId}:${igsid}` -> { patch, at }
+function refPatch(ref) {
+    const adId = ref && (ref.ad_id || ref.adId); if (!adId) return null;
+    const cd = ref.ads_context_data || {};
+    const patch = { entryAdId: String(adId), lastReferral: { ref: ref.ref || null, adId: String(adId), source: ref.source || null, type: ref.type || null, adTitle: cd.ad_title || null, postId: cd.post_id || null } };
+    if (patch.lastReferral.adTitle) patch.adTitle = patch.lastReferral.adTitle;
+    return patch;
+}
+function takeHeldRef(botId, igsid) {
+    const k = botId + ':' + igsid; const h = _refHold.get(k); if (!h) return null;
+    _refHold.delete(k);
+    return Date.now() - h.at < REF_HOLD_MS ? h.patch : null;
+}
+
 /** Вхідна подія вебхука Meta. webhookBotId — бот із URL вебхука; цільовий — за ZERNIO_FORWARD_BOT_ID (той самий ключ, що для Zernio). */
 async function handleMetaEvent(webhookBotId, body) {
     const botId = await Z.resolveZernioTargetBot(webhookBotId);
@@ -407,6 +426,16 @@ async function handleMetaEvent(webhookBotId, body) {
         }
         for (const m of events) {
             try {
+                // Окремий реферал (клієнт відкрив розмову з реклами) — не хід, лише «з якої реклами».
+                if (!m.message && !m.postback && m.referral && m.sender && !(own && String(m.sender.id) === own)) {
+                    const rp = refPatch(m.referral); if (!rp) { skipped++; continue; }
+                    const igsid = String(m.sender.id);
+                    const { session } = await sessionFor(botId, igsid, { lastReferral: rp.lastReferral, ...(rp.adTitle ? { adTitle: rp.adTitle } : {}) });
+                    const pe = _pending.get(session.id);
+                    if (pe) { pe.ctxPatch.entryAdId = rp.entryAdId; logger.info('[metaChannel] referral → хід у черзі', { botId, sessionId: session.id, adId: rp.entryAdId }); }
+                    else { _refHold.set(botId + ':' + igsid, { patch: rp, at: Date.now() }); logger.info('[metaChannel] referral до повідомлення — тримаємо', { botId, sessionId: session.id, adId: rp.entryAdId }); }
+                    processed++; continue;
+                }
                 if (m.read || m.reaction || m.message_edit || (!m.message && !m.postback)) { skipped++; continue; }
                 const msg = m.message || {};
                 // ── echo: повідомлення від нашого акаунта клієнту ──
@@ -432,12 +461,8 @@ async function handleMetaEvent(webhookBotId, body) {
                 const igsid = m.sender && m.sender.id; if (!igsid) { skipped++; continue; }
                 const p = parseInbound(m); if (!p.mid) { skipped++; continue; }
                 if (!(await dedup(botId, 'in_' + p.mid))) { skipped++; continue; }
-                const patch = {};
-                if (p.ref && (p.ref.ad_id || p.ref.adId)) {
-                    patch.entryAdId = String(p.ref.ad_id || p.ref.adId);
-                    patch.lastReferral = { ref: p.ref.ref || null, adId: patch.entryAdId, source: p.ref.source || null, type: p.ref.type || null, adTitle: (p.ref.ads_context_data && p.ref.ads_context_data.ad_title) || null, postId: (p.ref.ads_context_data && p.ref.ads_context_data.post_id) || null };
-                    if (patch.lastReferral.adTitle) patch.adTitle = patch.lastReferral.adTitle;
-                }
+                const held = takeHeldRef(botId, String(igsid));
+                const patch = refPatch(p.ref) || held || {};
                 const { session, profile: prof } = await sessionFor(botId, igsid, patch);
                 let text = p.text;
                 if (!text && p.audioUrl) { const tr = await Z.transcribeVoice(botId, p.audioUrl).catch(() => ''); if (tr) text = tr; }
@@ -587,4 +612,4 @@ const __runsBackground = !process.env.name || process.env.name === 'platform-api
 if (__runsBackground) setTimeout(() => { pollConversations(); setInterval(pollConversations, 2 * 60 * 1000).unref(); }, 100 * 1000).unref();
 if (__runsBackground) setTimeout(() => { retryUnanswered(); setInterval(retryUnanswered, 60 * 1000).unref(); }, 150 * 1000).unref();
 
-module.exports = { handleMetaEvent, scheduleTurn, runTurn, drain, sendText, replyToComment, channelOf, channelOfSync, splitText, _echoes, _pollConversations: pollConversations };
+module.exports = { handleMetaEvent, scheduleTurn, runTurn, drain, sendText, replyToComment, channelOf, channelOfSync, splitText, _echoes, _pollConversations: pollConversations, _refPatch: refPatch, _takeHeldRef: takeHeldRef, _refHold };

@@ -257,6 +257,19 @@ async function main() {
         const step = A.out.map((o) => o.step).join(',');
         check('wantsCard шле номер картки окремим повідомленням (крок req_card)', A.out.some((o) => o.step === 'req_card' && /1111222233334444/.test(o.text || '')), 'steps: ' + step);
     }
+    // 42.1 (2026-10-14, Edits «не розпізнало товар»): реферал реклами окремою подією (messaging_referral, без message) не губиться —
+    // тримається й віддається найближчому повідомленню клієнта; протухлий (>10 хв) — ні; вбудований у повідомлення — як раніше.
+    {
+        const MC = require('../../metaChannel');
+        const rp = MC._refPatch({ source: 'ADS', type: 'OPEN_THREAD', ad_id: '120250955745520329', ads_context_data: { ad_title: 'Допис в Instagram: кофта_Group_1', post_id: '1' } });
+        check('42.1 реферал → entryAdId + adTitle', rp && rp.entryAdId === '120250955745520329' && rp.adTitle === 'Допис в Instagram: кофта_Group_1', JSON.stringify(rp));
+        check('42.1 реферал без ad_id — нічого', MC._refPatch({ source: 'SHORTLINK', ref: 'x' }) === null, '');
+        MC._refHold.set('bot:111', { patch: rp, at: Date.now() });
+        const got = MC._takeHeldRef('bot', '111');
+        check('42.1 утримуваний реферал віддається першому повідомленню і лише раз', got && got.entryAdId === rp.entryAdId && MC._takeHeldRef('bot', '111') === null, JSON.stringify(got));
+        MC._refHold.set('bot:222', { patch: rp, at: Date.now() - 11 * 60 * 1000 });
+        check('42.1 реферал старший за 10 хв — не застосовується', MC._takeHeldRef('bot', '222') === null, '');
+    }
     // 41.1 (2026-10-14, власник): картка й підпис — свіжі з CRM у момент надсилання; «Коментар до картки» замість назви ФОП.
     {
         const T = require('../tools');

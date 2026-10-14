@@ -2238,7 +2238,10 @@ async function runPolicyInner(A, u) {
         // Товар із числовими розмірами (взуття) — розмір за розміром взуття, не за зростом/вагою (зріст і вага тепер переживають зміну товару).
         const _psz = productSizes(pp); const numericSizes = _psz.length > 0 && _psz.every((z) => /^\d/.test(String(z)));
         const complete = (si.height && si.weight && !numericSizes) || si.clothingSize || si.footLength || (si.shoeSize && (numericSizes || !isHW)) || (!isHW && si.chest && pp.sizeChartData);
-        if (complete) {
+        // Клієнт відкладає («Поки роблю паузу», «подумаю»), а параметри відомі з раніше — не підбираємо розмір і не просимо колір цим
+        // ходом, лише мʼяко відступаємо (14.10, Edit 80aad020: «Поки роблю паузу» → «Беру ваші параметри… оберіть колір»).
+        const postponeNow = isSoftDecline(u) && !A.hwThisTurn && !u.clothingSize && !u.shoeSize;
+        if (complete && !postponeNow) {
             // Клієнт просить сітку в тому ж ході, коли розмір рахується (напр. після прохання перевірити розмір) — надсилаємо саме фото,
             // інакше compose пише «надсилаю окремим фото» без вкладення (тести 7c022683/6ed22687).
             if (u.wantsSizeChart && pp.sizeChartUrl && !A._chartSent) sendSizeChart(A, pp, u);

@@ -453,6 +453,15 @@ async function main() {
         await runPolicy(B, freshU({ intent: 'order_yes', ready: 'yes', color: 'чорна', clothingSize: 'L' }));
         check('54.1 справжня згода з даними після відмови — не прощання', !B.out.some((o) => o.step === 'post_decline_thanks'), B.out.map((o) => o.step).join(','));
     }
+    // ── 60.1 (Edit 80aad020): «Поки роблю паузу», а зріст/вага відомі з раніше — мʼякий відступ, без підбору розміру й питання кольору.
+    {
+        const A = freshA({ turnText: 'Поки роблю паузу' });
+        A.ctx.product = { sku: 'A0187', name: 'Кофта', price: 1279, isClothing: true, categoryParamsIsHeightWeight: true, colors: 'Чорний, Графітовий' };
+        A.ctx.agent.presentedSku = 'A0187'; A.ctx.sizeInput = { height: 176, weight: 80 };
+        await runPolicy(A, freshU({ intent: 'postpone' }));
+        const steps = A.out.map((o) => o.step).join(',');
+        check('60.1 «Поки роблю паузу» з відомими параметрами — мʼякий відступ, без розміру/кольору', /size_postpone/.test(steps) && !/size_reply|ask_color/.test(steps) && !A.ctx.recommendedSize, steps);
+    }
     // ── 56.1 (аудит M2): допродаж кольору, якого нема в наявності, не записуємо — кажемо чесно й пропонуємо наявні.
     {
         const tee = { id: 't1', sku: 'L0056', name: 'Футболка оверсайз база', customerName: 'Футболка оверсайз база', price: 449, offers: [

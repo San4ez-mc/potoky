@@ -162,7 +162,11 @@ function parseInbound(m) {
     const story = msg.reply_to && msg.reply_to.story ? msg.reply_to.story : null;
     const replyToMid = msg.reply_to && msg.reply_to.mid ? String(msg.reply_to.mid) : null; // відповідь свайпом на наше повідомлення
     const ref = msg.referral || m.referral || null;
-    return { mid: msg.mid || null, text, media, sharedPost, audioUrl, story, replyToMid, ref, at: m.timestamp ? new Date(Number(m.timestamp)) : new Date() };
+    // Вкладення, яких бот не розбирає (14.10: 120 «[порожнє повідомлення]» за 3 дні — Instagram у ту ж секунду, що й текст із
+    // телефоном/адресою, шле службове вкладення) — тип і сирий вміст для діагностики.
+    const known = /^(image|video|audio|ig_post|share|ig_reel|reel|story_mention)$/;
+    const other = atts.filter((a) => !known.test(String((a && a.type) || '').toLowerCase())).map((a) => ({ type: String((a && a.type) || '?'), payload: JSON.stringify((a && a.payload) || {}).slice(0, 400) }));
+    return { mid: msg.mid || null, text, media, sharedPost, audioUrl, story, replyToMid, ref, other, unsupported: !!msg.is_unsupported, at: m.timestamp ? new Date(Number(m.timestamp)) : new Date() };
 }
 
 // ── Склеювання пачки повідомлень і черга ходів на сесію ──
@@ -515,7 +519,8 @@ async function handleMetaEvent(webhookBotId, body) {
                 let sharedPost = p.sharedPost;
                 if (sharedPost && sharedPost.kind === 'reel' && sharedPost.mediaId) { try { const fr = await Z.getReelVideoFramesForVision(botId, sharedPost.mediaId); if (fr.length) sharedPost = { ...sharedPost, frameUrls: fr }; } catch (er) { /* кадри — best-effort */ } }
                 const photo = p.media.find((x) => x.type === 'photo') || (p.story && p.story.url ? { type: 'photo', url: p.story.url } : null);
-                const label = text || (sharedPost && sharedPost.caption ? ('[переслав ' + sharedPost.kind + '] ' + String(sharedPost.caption).slice(0, 80).replace(/\s+/g, ' ')) : (p.media.length > 1 ? '[' + p.media.length + ' медіа]' : p.media[0] ? (p.media[0].type === 'video' ? '[відео]' : '[фото]') : p.audioUrl ? '[голосове]' : p.story ? '[відповідь на сторіз]' : '[порожнє повідомлення]'));
+                const isEmpty = !text && !p.media.length && !sharedPost && !p.audioUrl && !p.story;
+                const label = isEmpty ? (p.unsupported ? '[Instagram: непідтримуваний тип повідомлення]' : (p.other.length ? '[службове вкладення Instagram: ' + p.other.map((o) => o.type).join(', ') + ']' : '[порожнє повідомлення]')) : text || (sharedPost && sharedPost.caption ? ('[переслав ' + sharedPost.kind + '] ' + String(sharedPost.caption).slice(0, 80).replace(/\s+/g, ' ')) : (p.media.length > 1 ? '[' + p.media.length + ' медіа]' : p.media[0] ? (p.media[0].type === 'video' ? '[відео]' : '[фото]') : p.audioUrl ? '[голосове]' : p.story ? '[відповідь на сторіз]' : '[порожнє повідомлення]'));
                 await db.message.create({ data: Z.cleanJsonDeep({ sessionId: session.id, role: 'user', content: label, createdAt: p.at, metadata: {
                     source: 'meta', channel: 'meta', mid: p.mid, platformMessageId: p.mid, channelCreatedAt: p.at.toISOString(),
                     ...(photo ? { attachment: { type: 'photo', url: photo.url } } : p.media[0] ? { attachment: p.media[0] } : {}),
@@ -523,9 +528,13 @@ async function handleMetaEvent(webhookBotId, body) {
                     ...(patch.entryAdId ? { adId: patch.entryAdId, referral: patch.lastReferral } : {}), ...(p.story ? { storyId: p.story.id || null } : {}),
                     ...(p.audioUrl ? { voice: true, transcript: text || null } : {}),
                     ...(p.replyToMid ? { replyToMid: p.replyToMid } : {}),
+                    ...(p.other.length ? { otherAttachments: p.other } : {}),
+                    // Службове вкладення без змісту — не показуємо в розмові й не відповідаємо (тип і вміст лишаються в metadata).
+                    ...(isEmpty && !p.unsupported ? { hidden: true, hiddenReason: 'empty_or_service_attachment' } : {}),
                 } }) });
                 await db.session.update({ where: { id: session.id }, data: { lastActive: new Date() } }).catch(() => {});
                 processed++;
+                if (isEmpty) { logger.info('[metaChannel] повідомлення без змісту — без ходу', { botId, sessionId: session.id, other: p.other.map((o) => o.type).join(','), unsupported: p.unsupported }); continue; }
                 const _sc = session.context || {}; // профіль від Meta міг не прийти — нікнейм, збережений раніше
                 if (await isBlockedByTestMode(botId, [prof.username, prof.name, _sc.igUsername, _sc.senderName])) continue;
                 const ctx = (await db.session.findUnique({ where: { id: session.id }, select: { context: true } })).context || {};

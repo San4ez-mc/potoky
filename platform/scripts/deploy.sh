@@ -25,6 +25,8 @@ echo "$CHANGED" | sed 's/^/    /' >> "$LOG"
 # Нові SQL-міграції — не автоматично: показуємо, щоб застосувати свідомо (cd apps/api && node ../../scripts/apply-sql.js ../../scripts/<файл>.sql)
 NEWSQL=$(echo "$CHANGED" | grep -E '^scripts/.*\.sql$' || true)
 [ -n "$NEWSQL" ] && echo "⚠ Нові SQL-скрипти (застосуйте вручну, якщо ще ні): $NEWSQL"
+# Адмінка (React) — збирається лише коли змінено apps/admin (14.10: зміни інтерфейсу без збірки на сервер не потрапляли).
+if echo "$CHANGED" | grep -qE '^apps/admin/'; then yarn build:admin >/tmp/flows-admin-build.log 2>&1 && echo "адмінку зібрано" || echo "⚠ збірка адмінки впала — див. /tmp/flows-admin-build.log"; fi
 # API — з плавною зупинкою (index.js чекає завершення ходів до 25 с)
 pm2 restart platform-api --kill-timeout 30000 >/dev/null
 echo "$CHANGED" | grep -qE '^apps/worker/|^packages/' && pm2 restart platform-worker >/dev/null && echo "worker перезапущено"

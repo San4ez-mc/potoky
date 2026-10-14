@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useNavigate } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { format } from 'date-fns';
 import { UserPhoto } from '../components/UserPhoto.jsx';
@@ -42,8 +42,12 @@ export function Sessions() {
     // каналів не поправили на бекенді — дефолт 'Всі', щоб не ховати реальні розмови.
     const [source, setSource] = useState('all');
     const [readMap, setReadMap] = useState(() => getReadMap());
-    const [searchInput, setSearchInput] = useState('');
-    const [search, setSearch] = useState('');
+    // ?search=… з посилання (CRM «відкрити розмову» для замовлень без привʼязки до розмови, 14.10); ?open=1 — одразу остання розмова.
+    const _qs = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
+    const [searchInput, setSearchInput] = useState(_qs.get('search') || '');
+    const [search, setSearch] = useState(_qs.get('search') || '');
+    const _openFirst = _qs.get('open') === '1';
+    const navigate = useNavigate();
 
     // Дебаунс: не смикаємо API на кожне натискання клавіші
     useEffect(() => {
@@ -86,6 +90,7 @@ export function Sessions() {
         return promise
             .then(res => {
                 setSessions(res.data || []);
+                if (_openFirst && search && Array.isArray(res.data) && res.data.length) { navigate('/sessions/' + res.data[0].id, { replace: true }); return; }
                 setMeta(res.meta || { total: 0 });
                 setSelectedIds([]);
             })

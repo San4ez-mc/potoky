@@ -510,6 +510,34 @@ async function chartTextFromImage(A, url) {
     return text;
 }
 
+/** План відповіді на питання від аналізатора (u.questionPlans, 15.10): джерела order/catalog/kb + дія. null — плану нема (старий шлях). */
+function planOfQuestion(u, q) {
+    const qs = Array.isArray(u && u._origQuestions) ? u._origQuestions : (Array.isArray(u && u.questions) ? u.questions : []);
+    const ps = Array.isArray(u && u.questionPlans) ? u.questionPlans : [];
+    const i = qs.findIndex((x) => String(x).trim() === String(q).trim());
+    return i >= 0 && ps[i] ? ps[i] : null;
+}
+/** Факти про СВОЄ замовлення клієнта для відповіді (джерело «order»): номер, коли оформлено, оплата, відправка/ТТН, сума, орієнтовна
+ *  дата відправки (до N робочих днів з моменту оформлення — N із ключа SHIP_DAYS, за замовчуванням 5, як у базі знань). */
+function orderFacts(A) {
+    const c = A.ctx;
+    if (!c.crmOrderId && !c.orderRef) return 'ЗАМОВЛЕННЯ КЛІЄНТА: у цій розмові ще не оформлене.';
+    const f = ['ЗАМОВЛЕННЯ КЛІЄНТА: №' + (c.orderRef || c.crmOrderId)];
+    const at = Number(c.orderRefAt) || Date.parse(c.crmOrderAt || c.confirmedAt || '') || 0;
+    const kyiv = (ms) => new Date(ms).toLocaleDateString('uk-UA', { timeZone: 'Europe/Kyiv', day: '2-digit', month: '2-digit' });
+    if (at) f.push('оформлено ' + kyiv(at));
+    if (c.payStatus) f.push('оплата: ' + (c.payStatus === 'confirmed' ? 'підтверджена' : c.payStatus));
+    const ttn = c.supplierTtn || c.ttn;
+    if (ttn) f.push('ВІДПРАВЛЕНО, ТТН ' + ttn);
+    else {
+        f.push('ще НЕ відправлено');
+        const days = Number(A.keys && A.keys.SHIP_DAYS) || 5;
+        if (at) { let d = new Date(at); let n = 0; while (n < days) { d = new Date(d.getTime() + 86400000); const wd = new Date(d.toLocaleString('en-US', { timeZone: 'Europe/Kyiv' })).getDay(); if (wd !== 0 && wd !== 6) n++; } f.push('відправка — до ' + days + ' робочих днів з оформлення, тобто орієнтовно до ' + kyiv(d.getTime()) + ' (точний день не гарантуємо)'); }
+    }
+    if (Number(c.orderTotal) > 0) f.push('сума замовлення ' + c.orderTotal + ' грн');
+    return f.join('; ') + '.';
+}
+
 async function answerThenAsk(A, u, askText, o = {}) {
     // askText — ГОТОВИЙ текст для клієнта (не інструкція). Без питань клієнта він іде як є;
     // з питаннями → факти (KB, наявність) → одна відповідь + той самий крок своїми словами.
@@ -521,7 +549,12 @@ async function answerThenAsk(A, u, askText, o = {}) {
     if (!A.qs) Q.init(A, u);
     const qsOpen = Q.open(A).map((q) => q.text);
     if (!qsOpen.length && !o.ack) return askText;
-    u = { ...u, questions: qsOpen };
+    u = { ...u, _origQuestions: u._origQuestions || u.questions, questions: qsOpen };
+    // План відповіді від аналізатора (15.10): де шукати. Без плану — як раніше (словник каталогу + ШІ-вид питання).
+    const pl = (q0) => planOfQuestion(u, q0);
+    const wantsKb = (q0) => { const p = pl(q0); return p ? p.sources.includes('kb') : classifyKbQuestion(q0).kind !== 'catalog'; };
+    const wantsCat = (q0) => { const p = pl(q0); return p ? p.sources.includes('catalog') : classifyKbQuestion(q0).kind === 'catalog'; };
+    const wantsOrder = (q0) => { const p = pl(q0); return !!(p && p.sources.includes('order')); };
     if (qsOpen.length) A._qAnswered = true;
 
     let kb = []; let availAnswer = '';
@@ -561,7 +594,7 @@ async function answerThenAsk(A, u, askText, o = {}) {
         // Коротке питання повністю збігається за словами з записом бази знань — відповідаємо самим записом (модель інакше вигадує «зазвичай наступного дня»).
         // …і запис має збігатися з питанням принаймні наполовину своїх слів, інакше одне спільне слово («костюму») дає чужу відповідь.
         // ШІ-зіставлення з базою знань (основний шлях; kbMatch.js): те саме питання по суті з відповіддю — відповідаємо ним.
-        const aiQs = (u.questions || []).filter((q0) => classifyKbQuestion(q0).kind !== 'catalog').slice(0, 2);
+        const aiQs = (u.questions || []).filter(wantsKb).slice(0, 2);
         const aiHits = [];
         for (const q0 of aiQs) { const km = await kbMatch(A, q0); if (km && km.entry && km.entry.a && km.entry.active) aiHits.push(km.entry); }
         // Запис бази знань — ФАКТ для відповіді, а не готовий текст: менеджери пишуть коротко («ні», «стандартний», «A0187»),
@@ -569,7 +602,7 @@ async function answerThenAsk(A, u, askText, o = {}) {
         if (aiHits.length) { for (const h of aiHits) T.kbHit(A, h.id).catch(() => {}); directKb = 'ВІДПОВІДІ З БАЗИ ЗНАНЬ НА ПИТАННЯ КЛІЄНТА (зміст — саме цей, без власних припущень; скажи повним ввічливим реченням, а не одним словом; якщо відповідь «ні» — поясни, як можна натомість, якщо це є у фактах):\n' + aiHits.map((h) => '• ' + h.q + ' → ' + h.a).join('\n'); }
         // Схоже питання вже має відповідь у базі знань (спільний критерій kbSimilar, той самий, що й дедуп CRM) — відповідаємо нею,
         // не кличемо менеджера й не створюємо дубль (рішення власника 29.09).
-        const nonCatQs = (u.questions || []).filter((q0) => classifyKbQuestion(q0).kind !== 'catalog');
+        const nonCatQs = (u.questions || []).filter(wantsKb);
         let simBest = null; let simScore = 0;
         for (const q of nonCatQs) for (const h of kb) { if (!h.a) continue; const sc = kbSimilarity(q, h.q); if (sc > simScore) { simScore = sc; simBest = h; } }
         // Словниковий збіг — лише запас, коли ШІ-зіставлення недоступне (kbMatch повернув null); інакше ШІ вже вирішив «не те саме».
@@ -580,7 +613,9 @@ async function answerThenAsk(A, u, askText, o = {}) {
         if (best && bestN >= 1 && !directKb) directKb = 'НАЙБЛИЖЧА ВІДПОВІДЬ З БАЗИ ЗНАНЬ НА ПИТАННЯ КЛІЄНТА (якщо вона по суті відповідає — скажи саме її, без власних термінів чи припущень): ' + best.a;
     } catch (e) { /* best-effort */ }
     // Ціна/кольори/розміри/наявність/«а є …?» — точні дані з CRM, бот відповідає сам; менеджеру й у базу знань такі питання не йдуть.
-    const catQs = (u.questions || []).filter((q0) => classifyKbQuestion(q0).kind === 'catalog');
+    const catQs = (u.questions || []).filter(wantsCat);
+    // Своє замовлення (джерело order): номер, оплата, відправка/ТТН, орієнтовна дата — з даних розмови (15.10, «встигне до 9-го?»).
+    const orderNote = (u.questions || []).some(wantsOrder) ? 'ДАНІ ЗАМОВЛЕННЯ КЛІЄНТА (відповідай саме ними; якщо питають, чи встигне до дати — порівняй з орієнтовною датою відправки й чесно скажи):\n' + orderFacts(A) : '';
     // Вид некаталожного питання визначила ШІ (kbMatch.kind): розмір / властивість / порівняння / умови / інше (рішення власника 30.09).
     const kindOf = (q0) => (A._kbm && A._kbm[String(q0).trim()] && A._kbm[String(q0).trim()].kind) || 'other';
     const kinds = new Set((u.questions || []).map(kindOf));
@@ -624,10 +659,12 @@ async function answerThenAsk(A, u, askText, o = {}) {
     // обіцяємо «на картку»: реквізити й суму система дає після вибору товару/розміру/кольору і способу 1/2 (15.10, тест 17).
     const payNote = (A.ctx && !(A.ctx.paymentInfo && A.ctx.paymentInfo.method) && !A.ctx.crmOrderId && ((u.questionTopics || []).includes('payment') || /реквізит|карт[уиі]|передоплат|предоплат/i.test(String(A.turnText || ''))))
         ? 'ОПЛАТА (ГОЛОВНЕ ПРАВИЛО ДЛЯ ЦЬОГО ПИТАННЯ): платять НЕ на картку, а на рахунок ФОП (див. БАЗУ ЗНАНЬ) — ніколи не кажи «на картку» і не погоджуйся з «на карту». Спосіб оплати ще не обрано: умови магазину з БАЗИ ЗНАНЬ назвати можна, але не пиши «до сплати …» і не рахуй суму замовлення. Скажи, що реквізити (рахунок ФОП) і точну суму надішлеш одразу після вибору розміру, кольору і способу оплати.' : '';
-    const extraFacts = [payNote, directKb, sizeNote, compareNote, catRule, crmFacts ? 'ДАНІ З CRM (точні й актуальні — відповідай саме ними; кольору/розміру/товару, якого тут немає, немає в наявності; властивості — лише з опису/деталей):\n' + crmFacts : '', catKb].filter(Boolean).join('\n\n');
+    const extraFacts = [payNote, orderNote, directKb, sizeNote, compareNote, catRule, crmFacts ? 'ДАНІ З CRM (точні й актуальні — відповідай саме ними; кольору/розміру/товару, якого тут немає, немає в наявності; властивості — лише з опису/деталей):\n' + crmFacts : '', catKb].filter(Boolean).join('\n\n');
     const { text, resolved } = await compose(A, { questions: u.questions, ack: o.ack, nextStep, kb, availAnswer, extraFacts, fallback: askText });
     // Розмір — не ескалюємо (відповідь — сітка + параметри); каталог — теж; решта — якщо compose не знайшов відповіді.
-    const nonCat = (u.questions || []).filter((q0) => classifyKbQuestion(q0).kind !== 'catalog' && kindOf(q0) !== 'size');
+    // Менеджер — лише для питань, відповідь на які шукали в базі знань і не знайшли (план), або за старим правилом без плану.
+    // Каталог, своє замовлення з даними, реакції (план без джерел) і «перепитати» (clarify) — менеджеру не йдуть.
+    const nonCat = (u.questions || []).filter((q0) => { const p = pl(q0); if (p) return p.sources.includes('kb') && p.action !== 'clarify' && kindOf(q0) !== 'size'; return classifyKbQuestion(q0).kind !== 'catalog' && kindOf(q0) !== 'size'; });
     if (!resolved && nonCat.length) await escalateUnresolved(A, nonCat[0]);
     return text || askText;
 }

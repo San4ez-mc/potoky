@@ -33,6 +33,7 @@ const SCHEMA = `{
  "productHint": {"article": "<A0187 тощо>"|null, "category": "<кофта|костюм|куртка|бомбер|футболка|джинси|лофери|...>"|null, "fromList": "<назва/артикул зі списку, який бот щойно показав>"|null},
  "questions": ["<питання клієнта, на які треба відповісти фактами>"],
  "questionTopics": ["<тема КОЖНОГО питання з questions, по порядку: price|colors|sizes|size_chart|size_how|fit|availability|material|delivery|payment|order_process|order_summary|order_change|photo|compare|other>"],
+ "searchFeatures": ["<ознаки товару, за якими клієнт ШУКАЄ: «спортивний», «з капюшоном», «на флісі», «теплий», «класичний»>"]|null,
  "questionPlans": [{"sources": ["order|catalog|kb"], "action": "show_product|show_list|size_chart|pick_size|add_to_order|change_order|eta|pay_help|clarify"|null, "about": "<артикул / категорія / дата клієнта>"|null}],
  "sentiment": "neutral|positive|annoyed|angry",
  "summary": "<одне речення: що клієнт зробив цим повідомленням>"
@@ -87,6 +88,7 @@ const RULES = `ПРАВИЛА РОЗБОРУ:
 - clothingSize: розмір, як назвав клієнт, без «округлення» вниз: 2XL = XXL; 2XXL, 3XL, XXXL = XXXL; 4XL = 4XL. У questions теж пиши саме цей розмір.
 - questions: усі питання не про слоти (ціна, склад, доставка за кордон, чи є в наявності інший розмір/колір, гарантія…). Питання «яка ціна?» коли товар ЩЕ не показано — це product_query, не question. «Хочу замовити», «беру», «оформлюйте» — це НАМІР замовити (intent product_query/order_yes), НЕ questions. А «Як замовити?», «як оформити замовлення?», «що треба, щоб замовити?» — і намір (intent product_query/order_yes), І питання про порядок оформлення: додай у questions «Як оформити замовлення?» (клієнт просить пояснити кроки — це кнопка Instagram під кожним постом; 07.10 бот відповідав лише «напишіть зріст і вагу»). Кожне питання — словами клієнта; НЕ приписуй його товару в розмові, якщо клієнт питає про іншу річ (у розмові кофта, а клієнт питає «штани будуть звужені?» — питання про штани, не про кофту; артикул додавай лише той, що клієнт сам назвав або що очевидно стосується саме цієї речі).
 - questionTopics (по одній темі на кожне питання, той самий порядок): price — ціна/вартість цього товару; colors — які кольори є / чи є колір X; sizes — які розміри є / чи є розмір X; size_chart — прохання розмірної сітки/таблиці; size_how — як підібрати розмір / який мені розмір; fit — чи підійде/не буде мала/короткі, посадка, довжина, заміри; availability — чи є в наявності (цей чи інший товар, «а є джинси?»); material — склад, тканина, якість, чи колеться, температура; delivery — доставка, терміни, країни, вартість доставки; payment — способи оплати, передплата; order_process — як замовити/оформити; order_summary — показати/нагадати замовлення; order_change — змінити розмір/колір/склад замовлення («а кофту на розмір більше?»); photo — фото, реальні фото; compare — чим відрізняються товари; other — інше.
+- searchFeatures — лише коли клієнт шукає товар за ОЗНАКАМИ (тип, фасон, матеріал, призначення): «чи є спортивний костюм?» → ["спортивний"], «куртки з капюшоном є?» → ["з капюшоном"]. Колір, розмір, зріст/вага, ціна — НЕ ознаки (для них свої поля). Просто категорія без ознак («Яка ціна кофти?», «є костюми?») → null.
 - questionPlans (по одному на кожне питання з questions, той самий порядок) — ПЛАН відповіді: звідки взяти факти і що зробити. Ти НЕ вирішуєш, чи відповідь є, — лише де шукати (15.10, рішення власника).
   sources — одне або кілька джерел (порожній список — бот відповідає сам, без фактів):
     order — СВОЄ замовлення клієнта в CRM: статус, дата оформлення, відправлено чи ні, ТТН, склад, сума («вже пройшло 5 днів», «як вийшло 5317?», «встигне до 9-го?», «додамо ще костюм до замовлення?»);
@@ -225,6 +227,7 @@ async function understand(A) {
         u.questions = qs; u.questionTopics = ts; u.questionPlans = ps;
     }
     u.productHint = u.productHint && typeof u.productHint === 'object' ? u.productHint : { article: null, category: null, fromList: null };
+    u.searchFeatures = Array.isArray(u.searchFeatures) ? u.searchFeatures.map((x) => String(x || '').trim()).filter(Boolean).slice(0, 5) : null; if (u.searchFeatures && !u.searchFeatures.length) u.searchFeatures = null;
     // Кілька різних товарів до покупки (B4): лише ≥2 елементи з непорожнім ref.
     {
         const ci = Array.isArray(u.cartItems) ? u.cartItems.filter((x) => x && String(x.ref || '').trim()).slice(0, 6).map((x) => ({ ref: String(x.ref).trim().slice(0, 80), color: x.color ? String(x.color).trim() : null, size: x.size ? String(x.size).trim().toUpperCase() : null, qty: Number(x.qty) > 0 ? Math.min(10, Math.floor(Number(x.qty))) : null })) : [];

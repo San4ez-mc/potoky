@@ -206,7 +206,7 @@ try {
       // Одразу картка — лише на короткий запит без ознак товару («Яка ціна кофти?» у відповідь на рекламу). Клієнт шукає з
       // ознаками («костюми з полар-флісу», «спортивний костюм») — це пошук: список, де рекламовані першими, а далі решта
       // відповідних (FunnelTest 138/34, 03.10: показувалась одна картка рекламованого A0191 замість флісових костюмів).
-      if (!__ovTop && __lead.sku && (__advHits.length === 1 || (__sum > 0 && __convBy[__lead.id] / __sum >= 0.75))) {
+      if (!__ovTop && !context._hintSearch && __lead.sku && (__advHits.length === 1 || (__sum > 0 && __convBy[__lead.id] / __sum >= 0.75))) {
         return { catalogHint: '', catalogHintCount: 0, catalogHintSkus: '', catalogHintPick: String(__lead.sku), catalogHintAdGuess: String(__lead.sku), hasProductSignal: true, hasFreshSignalThisTurn: true, catalogCategories: catList, unknownTurns: unknownTurns - 1 };
       }
       var __advIdsSet = {}; __advHits.forEach(function (p) { __advIdsSet[p.id] = 1; });

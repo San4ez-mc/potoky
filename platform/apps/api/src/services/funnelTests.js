@@ -407,6 +407,14 @@ async function runTest(testId, onProgress = () => {}) {
             managerAlertsSent: c.testAlerts && c.testAlerts.length ? c.testAlerts : undefined,
             supplierOrder: c.supplierHandled ? { placed: true, status: c.supplierOrderStatus, result: c.supplierOrderResult } : undefined, // замовлення постачальнику (у тесті — mock-виклик, рівно один раз на групу)
             handoffPaused: c.funnelPaused || undefined,
+            // Кошик кількох товарів (B4): mainProduct — товар, який бот ЗАРАЗ веде; головний товар чекає в basket.anchor, готові — у lines,
+            // ще не пройдені — у queue (15.10, Н4: суддя бачив лише mainProduct=джинси і вирішив, що кофту втрачено).
+            basket: c.basket && ((c.basket.lines && c.basket.lines.length) || (c.basket.queue && c.basket.queue.length) || c.basket.anchor) ? {
+                note: 'кошик кількох товарів: anchor — головний товар (повернеться у фокус після черги), lines — уже записані позиції, queue — ще підібрати; mainProduct — той, що бот веде зараз',
+                anchor: c.basket.anchor && c.basket.anchor.ctx && c.basket.anchor.ctx.product ? { sku: c.basket.anchor.ctx.product.sku, color: c.basket.anchor.ctx.colorChoice, size: c.basket.anchor.ctx.recommendedSize } : undefined,
+                lines: (c.basket.lines || []).map((l) => ({ sku: l.sku, name: l.name, color: l.color, size: l.size, qty: l.qty, price: l.price })),
+                queue: (c.basket.queue || []).map((q) => ({ sku: q.sku, name: q.name || q.category || q.ref, color: q.color, size: q.size })),
+            } : undefined,
         });
         // Не-магазинні воронки (онбординг, Content Manager…) не мають цих полів → "{}". Порожній обʼєкт суддя
         // читає як «нічого не збережено», тому для них блок стану не показуємо (докази — у розділі викликів інструментів).

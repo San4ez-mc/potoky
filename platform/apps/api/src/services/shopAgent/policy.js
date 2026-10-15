@@ -1300,7 +1300,9 @@ async function basketIntake(A, u) {
     // Ці товари тепер у кошику — старий шлях «додаткова позиція без кольору» їх не дублює.
     u.extraProducts = null; u.alsoWants = null; u.addItem = null;
     A.trace.push({ step: 'basket_intake', focus: focus ? (focus.r.sku || focus.r.category) : null, queued });
-    if (queued.length) A._switchNote = (A._switchNote || '') + 'Чудово, підберемо по черзі' + (focus ? ': спершу ' + String(focus.r.name || focus.it.ref).toLowerCase() + ', далі ' : ' ще ') + queued.map((x) => String(x).toLowerCase()).join(', ') + ' 👌\n';
+    // Поточний товар уже підібрано (розмір і колір є) — не «спершу кофта», а «кофту лишаємо, підберемо ще…» (Н4, 15.10).
+    const curDone = !!(cur && (!focus || (focus.r.sku && up(focus.r.sku) === up(cur.sku))) && Basket.focusLines(ctx).length);
+    if (queued.length) A._switchNote = (A._switchNote || '') + (curDone ? 'Чудово, ' + String(cur.customerName || cur.name || '').split('\n')[0].replace(/[.,]?\s*Артикул:?.*$/i, '').trim().toLowerCase() + ' лишається в замовленні ✅ Підберемо ще ' : 'Чудово, підберемо по черзі' + (focus ? ': спершу ' + String(focus.r.name || focus.it.ref).toLowerCase() + ', далі ' : ' ще ')) + queued.map((x) => String(x).toLowerCase()).join(', ') + ' 👌\n';
 }
 /** Відмова від товару, який бот веде з черги («ні, светр не треба») — прибираємо лише його, а не все замовлення. */
 async function basketDropFocus(A, u) {

@@ -73,7 +73,9 @@ async function runAgentTurn({ botId, sessionId, step }) {
         const s0 = await db.session.findUnique({ where: { id: sessionId }, select: { context: true } });
         await db.session.update({ where: { id: sessionId }, data: { context: { ...(s0 && s0.context ? s0.context : {}), storyId: storyAd, storyFrames: step.story.imageUrls.slice(0, 3) } } });
     }
-    const adId = step.entryAdId || (step.referral && step.referral.adId) || storyAd || null;
+    // Як у бойовому каналі Meta (metaChannel): відповідь на сторіз = фото кадру + storyId, а НЕ id реклами (15.10: тест передавав
+    // storyId як рекламу — «нову рекламу», і не ловив _mishko.prvt_, де давня реклама перебивала сторіз; урок §15.22).
+    const adId = step.entryAdId || (step.referral && step.referral.adId) || null;
     if (step.referral) {
         const s = await db.session.findUnique({ where: { id: sessionId }, select: { context: true } });
         const ctx = { ...(s && s.context ? s.context : {}), lastReferral: { ads_context_data: { ad_title: step.referral.adTitle || '' }, ...step.referral }, adTitle: step.referral.adTitle || '' };
@@ -89,7 +91,7 @@ async function runAgentTurn({ botId, sessionId, step }) {
         },
     });
     const imgs = Array.isArray(step.imageUrls) && step.imageUrls.length ? step.imageUrls : null;
-    await shopAgent.handleTurn({ botId, sessionId, text, imageUrl: step.imageUrl || (imgs && imgs[0]) || undefined, imageUrls: imgs && imgs.length > 1 ? imgs : undefined, sharedPost: step.sharedPost || undefined, entryAdId: adId || undefined });
+    await shopAgent.handleTurn({ botId, sessionId, text, imageUrl: step.imageUrl || (imgs && imgs[0]) || (storyAd ? step.story.imageUrls[0] : undefined), imageUrls: imgs && imgs.length > 1 ? imgs : undefined, sharedPost: step.sharedPost || undefined, entryAdId: adId || undefined, storyId: storyAd || undefined });
 }
 
 function normalizeStep(step) {

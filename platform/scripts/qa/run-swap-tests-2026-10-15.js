@@ -25,11 +25,11 @@ async function ensureTest(name, steps, expectedOutcome) {
     const img = (sku) => { const p = cat.products.find((x) => String(x.sku).toLowerCase() === sku.toLowerCase()); const u = p && (p.images || [])[0]; return u ? (/^https?:/.test(u) ? u : base + (u.startsWith('/') ? u : '/' + u)) : null; };
     const setImg = img('set1120');
     const created = [];
-    created.push(await ensureTest('15.10 Н1. Реклама пуховика → фото комплекту set1120 «Ціна?» → комплект, а не пуховик (_mishko.prvt_)',
-        [{ type: 'ad_reply', text: 'Ціна ?)', referral: { adId: '120251392363380329', source: 'ADS', type: 'OPEN_THREAD' } }, { type: 'photo', imageUrl: setImg, text: 'Ціна ?)' }],
+    created.push(await ensureTest('15.10 Н1. Пост пуховика → фото комплекту set1120 «Ціна?» → комплект, а не пуховик (_mishko.prvt_)',
+        [{ type: 'forward_post', text: 'Ціна ?)', sharedPost: { kind: 'post', mediaId: 'test-d0043', caption: 'Чоловічий зимовий пуховик. Артикул: D0043' } }, { type: 'photo', imageUrl: setImg, text: 'Ціна ?)' }],
         'Перша відповідь — картка зимового пуховика D0043 з реклами. Друга (клієнт надіслав фото іншого товару — комплекту set1120: светр + джинси) — бот переходить на ЦЕЙ комплект: показує його / його ціну. Бот НЕ повторює ціну пуховика і не просить зріст і вагу для пуховика у відповідь на фото комплекту.'));
-    created.push(await ensureTest('15.10 Н2. Реклама пуховика → «Та не пуховик, светр скільки коштує?» → светри, а не пуховик',
-        [{ type: 'ad_reply', text: 'Ціна?', referral: { adId: '120251392363380329', source: 'ADS', type: 'OPEN_THREAD' } }, { type: 'text', text: 'Та не пуховик, светр скільки коштує?' }],
+    created.push(await ensureTest('15.10 Н2. Пост пуховика → «Та не пуховик, светр скільки коштує?» → светри, а не пуховик',
+        [{ type: 'forward_post', text: 'Ціна?', sharedPost: { kind: 'post', mediaId: 'test-d0043', caption: 'Чоловічий зимовий пуховик. Артикул: D0043' } }, { type: 'text', text: 'Та не пуховик, светр скільки коштує?' }],
         'Після картки пуховика клієнт прямо каже, що питає НЕ про пуховик, а про светр. Бот показує светр(и)/ціну светра (або список светрів/кофт), а не повторює ціну пуховика і не просить зріст і вагу для пуховика.'));
     created.push(await ensureTest('15.10 Н3. Заміна однієї речі на ДВІ однакові інші: A0187 → «замість неї дві кофти C0043 — чорну і світло-сіру»',
         [{ type: 'text', text: 'Хочу кофту A0187' }, { type: 'text', text: 'Зріст 180, вага 80' }, { type: 'text', text: 'Ні, давайте замість неї дві кофти C0043 — чорну і світло-сіру' }],
@@ -42,7 +42,10 @@ async function ensureTest(name, steps, expectedOutcome) {
         'Лофери прибрано зі складу комплекту, футболок стає 2 (одна — чорна), сума перерахована як сума реальних позицій (без лоферів, з двома футболками). Бот підтверджує, що змінено, і не губить кофту й джинси. Розміри одягу — за 185/85, вдруге зріст і вагу не питає.'));
 
     const all = await db.funnelTest.findMany({ where: { botId: BOT }, select: { id: true, name: true } });
-    const ids = EXISTING.map((p) => all.find((t) => t.id.startsWith(p))).filter(Boolean).map((t) => t.id).concat(created);
+    // Аргументи — префікси id тестів, які прогнати (без аргументів — усі). 'new' — лише 5 нових.
+    const ONLY = process.argv.slice(2);
+    let ids = EXISTING.map((p) => all.find((t) => t.id.startsWith(p))).filter(Boolean).map((t) => t.id).concat(created);
+    if (ONLY.length) ids = ids.filter((id) => ONLY.some((p) => (p === 'new' ? created.includes(id) : id.startsWith(p))));
     const results = [];
     for (const id of ids) {
         const t = all.find((x) => x.id === id) || { name: id };

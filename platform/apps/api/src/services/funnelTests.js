@@ -91,7 +91,10 @@ async function runAgentTurn({ botId, sessionId, step }) {
         },
     });
     const imgs = Array.isArray(step.imageUrls) && step.imageUrls.length ? step.imageUrls : null;
-    await shopAgent.handleTurn({ botId, sessionId, text, imageUrl: step.imageUrl || (imgs && imgs[0]) || (storyAd ? step.story.imageUrls[0] : undefined), imageUrls: imgs && imgs.length > 1 ? imgs : undefined, sharedPost: step.sharedPost || undefined, entryAdId: adId || undefined, storyId: storyAd || undefined });
+    // Кадр сторіз як фото — лише якщо він доступний ззовні (живий канал дає посилання Meta). Фікстури з /bot-files ззовні не відкриваються
+    // (§15.16) — їх productMatch читає з диска як storyFrames.
+    const storyImg = storyAd && !/\/bot-files\//.test(String(step.story.imageUrls[0])) ? step.story.imageUrls[0] : undefined;
+    await shopAgent.handleTurn({ botId, sessionId, text, imageUrl: step.imageUrl || (imgs && imgs[0]) || storyImg, imageUrls: imgs && imgs.length > 1 ? imgs : undefined, sharedPost: step.sharedPost || undefined, entryAdId: adId || undefined, storyId: storyAd || undefined });
 }
 
 function normalizeStep(step) {

@@ -222,7 +222,15 @@ async function applySetEdit(A, u, pp) {
     }
     if (u.addItem) {
         const already = matchSetItem(u.addItem, ctx.setSelection, catNames);
-        if (!already) {
+        if (already) {
+            // Річ уже є в складі, а клієнт просить «ще одну футболку» — це ще одна штука цієї речі (свого кольору), а не «вже є»
+            // (15.10, FunnelTest Н5: «замість лоферів ще одну футболку, чорну» — прохання ігнорувалось).
+            const pal = (Array.isArray(already.colorsAll) && already.colorsAll.length ? already.colorsAll : already.colors) || [];
+            const c = pal.length ? (matchColor({ colors: pal.join(',') }, u.addItem) || matchColor({ colors: pal.join(',') }, u.colorMatched || u.color || '')) : '';
+            ctx.setSelection = [...ctx.setSelection, { ...already, color: c || (pal.length === 1 ? pal[0] : ''), qty: 1, sizeByClient: false }];
+            notes.push('додала ще: ' + already.name + (c ? ' (' + c + ')' : '')); changed = true;
+            delete ctx.agent.setColorsResolved;
+        } else {
             const hit = matchSetItem(u.addItem, original, catNames);
             if (hit) { ctx.setSelection = [...ctx.setSelection, { ...hit }]; notes.push('додала: ' + hit.name); changed = true; }
             else {
@@ -1389,7 +1397,8 @@ async function runPolicyInner(A, u) {
         const rs = String(ctx.replyToSku); delete ctx.replyToSku;
         if (!(P(ctx) && String(P(ctx).sku).toUpperCase() === rs.toUpperCase())) { u.productHint = { ...u.productHint, article: rs, fromList: null }; A.trace.push({ tool: 'replyToPhoto', sku: rs }); }
     }
-    const freshSignal = !!(ctx.storyRetry || A.turnSharedPost || A.newEntryAd || u.productHint.article || u.productHint.fromList || (A.turnImage && !u.claimsPaid && !u.receiptLink && !(ctx.paymentInfo && ctx.paymentInfo.method) ));
+    // Відповідь на сторіз цього ходу (A.turnStory) — теж «ось цей товар», навіть без кадру-фото (15.10, _mishko.prvt_).
+    const freshSignal = !!(ctx.storyRetry || (A.turnStory && !(ctx.paymentInfo && ctx.paymentInfo.method)) || A.turnSharedPost || A.newEntryAd || u.productHint.article || u.productHint.fromList || (A.turnImage && !u.claimsPaid && !u.receiptLink && !(ctx.paymentInfo && ctx.paymentInfo.method) ));
     // Каталожне питання («А є жилетки?», «Які кольори?») аналізатор інколи кладе лише в productHint, без questions — тоді
     // воно губилось і бот просив зріст/вагу (тест 131). Питання зі знаком «?», на яке є відповідь у CRM, завжди відповідаємо.
     if (!u.questions.length && /\?/.test(text) && !A.turnSharedPost && classifyKbQuestion(text).kind === 'catalog') Q.add(A, u, text.trim(), 'availability');
@@ -1830,6 +1839,9 @@ async function runPolicyInner(A, u) {
                 if (imR) { const baseR = (A.keys.CRM_PUBLIC_BASE || 'https://pcrm.fineko.space').replace(/\/$/, ''); A.out.push({ photoUrls: [/^https?:/.test(imR) ? imR : baseR + (String(imR).charAt(0) === '/' ? imR : '/' + imR)], caption: '', step: 'replace_add_photo' }); }
             } catch (e) { /* best-effort */ }
             A.out.push({ text: 'Бачу: ' + ctx.agent.pendingReplaceAdd.name.replace(/\.?\s*Артикул:?.*$/i, '').trim() + ' (арт. ' + cand.sku + ') 🙂 Замінити нею ' + String(P(ctx).customerName || P(ctx).name).split('\n')[0].replace(/\.?\s*Артикул:?.*$/i, '').trim().toLowerCase() + ' у замовленні, додати окремою позицією чи залишаємо як було?', step: 'ask_replace_or_add' });
+            // «А джинси у вас є?» — відповідь уже тут («Бачу: джинси, арт. …»): окремо модель про наявність не пише (FunnelTest 147, 15.10:
+            // у тому самому повідомленні було «Джинсів у нас немає — лише верхній одяг» і одразу «Бачу: Чоловічі джинси»).
+            Q.coverTopics(A, u, ['availability'], 'replace_add');
             ctx.agent.lastAsk = 'замінити чи додати';
             return;
         }
@@ -2328,7 +2340,8 @@ async function runPolicyInner(A, u) {
             const carriedNote = !usedMemory && !numericSizes && !(si.shoeSize && String(ctx.recommendedSize) === String(si.shoeSize)) && ctx.agent.hwCarried && si.height && si.weight && !sizeTextClean.includes(String(si.weight)) ? 'Беру ваші параметри ' + si.height + ' см / ' + si.weight + ' кг 🙂 ' : '';
             delete ctx.agent.hwCarried;
             const reply = (usedMemory ? 'Беру ваші параметри з минулого разу (' + si.height + ' см / ' + si.weight + ' кг) 🙂 ' : '') + carriedNote + claimNote + sizeBody + (ctx.sizeColorFollowup ? ' ' + norm(String(ctx.sizeColorFollowup)) : '');
-            const hasColorNow = ctx.colorChoice && ctx.colorChoice.color;
+            // Кілька кольорів одразу («дві кофти — чорну і світло-сіру») — колір теж обрано (15.10, FunnelTest Н3: бот питав колір удруге).
+            const hasColorNow = ctx.colorChoice && (ctx.colorChoice.color || (Array.isArray(ctx.colorChoice.colors) && ctx.colorChoice.colors.length));
             if (!hasColorNow && pp.colors) { A.out.push({ text: u.questions.length ? await answerThenAsk(A, u, reply) : reply, step: 'size_reply' }); ctx.agent.lastAsk = 'колір'; return; }
             A.out.push({ text: u.questions.length ? await answerThenAsk(A, u, reply) : reply, step: 'size_reply' });
         } else if (isSoftDecline(u) || (u.ready === 'no' && !u.questions.length) || /^[\s]*(ні|нє|нет|не\s+треба|не\s+потрібно|ні,?\s+дякую|поки\s+ні)[\s.!🙂]*$/iu.test(String(text))) { // «Ні» на прохання зросту/ваги або нагадування «Бажаєте замовити?» (правка da3916d7: бот учетверте просив зріст/вагу)

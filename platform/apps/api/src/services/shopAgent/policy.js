@@ -1301,6 +1301,24 @@ async function basketIntake(A, u) {
         else res.push({ key, r: x.r, it: { ...x.it }, items: [x.it] });
     }
     for (const g of res) g.colors = g.items.length > 1 ? g.items.map((i) => i.color).filter(Boolean) : null;
+    // Відсутнє в наявності (товар або вся категорія) у кошик не йде — чесно кажемо «немає», решта як була (15.10, тест 162 з кошиком:
+    // «і ще лофери 44» — лофери ставали головним товаром, кофта лишалась лише в anchor).
+    const catOfName = (name) => (cat.categories || []).find((c) => String(c.name) === String(name));
+    const inCat = (p0, c) => c && (p0.categoryId === c.id || (p0.category && p0.category.id === c.id));
+    const oosDrop = [];
+    for (const g of res.slice()) {
+        if (g.r.sku) { const p0 = bySku(g.r.sku); if (p0 && p0.outOfStock) { oosDrop.push(p0); res.splice(res.indexOf(g), 1); } }
+        else if (g.r.category) {
+            const c = catOfName(g.r.category);
+            if (c && !cat.products.some((p0) => !p0.isSet && !p0.outOfStock && inCat(p0, c))) { const any = cat.products.find((p0) => !p0.isSet && inCat(p0, c)); if (any) oosDrop.push(any); res.splice(res.indexOf(g), 1); }
+        }
+    }
+    if (oosDrop.length) {
+        A.out.push({ text: await oosText(A, oosDrop[0], { keep: P(ctx), replace: false }), step: 'oos_basket' });
+        u.shoeSize = null; u.extraProducts = null; u.alsoWants = null; u.addItem = null;
+        if (P(ctx)) u.productHint = { article: null, category: null, fromList: null };
+        Q.coverTopics(A, u, ['availability', 'sizes', 'price'], 'oos_basket');
+    }
     if (res.length < 2) { A.trace.push({ step: 'basket_intake_skip', resolved: res.length }); return; }
     const cur = P(ctx);
     const catIdOf = (name) => { const c = (cat.categories || []).find((x) => String(x.name) === String(name)); return c ? c.id : null; };
@@ -2653,7 +2671,8 @@ async function runPolicyInner(A, u) {
             if (claimNote) { const _th = sizeBody.match(/^\s*(Дякую[^.!?]*[.!?]+\s*(?:🙌\s*)?)/u); if (_th) { sizeBody = sizeBody.slice(_th[0].length); claimNote = _th[1].trim() + ' ' + claimNote; } }
             if (claimNote && !sizeTextClean.includes('\n') && ctx.recommendedSize) {
                 const recRe = new RegExp('(^|[^A-Za-zА-Яа-яІіЇїЄєҐґ])' + String(ctx.recommendedSize).toUpperCase() + '([^A-Za-zА-Яа-яІіЇїЄєҐґ]|$)');
-                sizeBody = sizeTextClean.split(/(?<=[.!?…👌📏])\s+/u).filter((s) => !recRe.test(s.toUpperCase()) && !/^[\s—–-]*(сяде|перевірено)/i.test(s)).join(' ').trim();
+                // sizeBody, а не sizeTextClean: «Дякую…» уже перенесено в claimNote (тест 153: двічі «Дякую за параметри!»).
+                sizeBody = sizeBody.split(/(?<=[.!?…👌📏])\s+/u).filter((s) => !recRe.test(s.toUpperCase()) && !/^[\s—–-]*(сяде|перевірено)/i.test(s)).join(' ').trim();
             }
             // Параметри взято з попереднього товару / з раніших повідомлень — називаємо їх, щоб клієнт міг поправити (напр. якщо цей товар для іншої людини).
             const carriedNote = !usedMemory && !numericSizes && !(si.shoeSize && String(ctx.recommendedSize) === String(si.shoeSize)) && ctx.agent.hwCarried && si.height && si.weight && !sizeTextClean.includes(String(si.weight)) ? 'Беру ваші параметри ' + si.height + ' см / ' + si.weight + ' кг 🙂 ' : '';

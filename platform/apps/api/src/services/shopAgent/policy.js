@@ -3061,7 +3061,10 @@ async function runPolicyInner(A, u) {
             // двічі поспіль. Згоду/відмову від допродажу — коротко визнаємо; вдруге поспіль — показуємо сам список (n_pay), а не те саме.
             const ack = (u.claimsPaid || u.receiptLink || A.turnImage) ? 'Дякую, бачу квитанцію 🙏 ' : ((u.phone || u.fullName || u.city || u.branch) ? 'Дані записала 📝 ' : (u.addUpsell === false ? 'Добре, лише основний товар 👌 ' : (u.ready === 'yes' || /^\s*\+\s*$/.test(text) ? 'Так, оформлюємо 👌 ' : '')));
             
-            if (Asks.times(A, 'pay') > 0 && Asks.times(A, 'pay') % 2 === 0) { A.out.push({ text: ack + messageTextMultiline(A.assets, 'n_pay', ctx, A.session.id + ':pay'), step: 'pay_options_reshow' }); return; }
+            // Минулим повідомленням уже було коротке нагадування — вдруге поспіль не повторюємо його, а показуємо сам список (15.10, тест 143:
+            // лічильник Asks не росте, коли клієнт «рухається» згодою/відмовою від допродажу, і нагадування йшло двічі дослівно).
+            if (ctx.agent.payRepeatShown || (Asks.times(A, 'pay') > 0 && Asks.times(A, 'pay') % 2 === 0)) { ctx.agent.payRepeatShown = false; A.out.push({ text: ack + messageTextMultiline(A.assets, 'n_pay', ctx, A.session.id + ':pay'), step: 'pay_options_reshow' }); return; }
+            ctx.agent.payRepeatShown = true;
             A.out.push({ text: ack + messageText(A.assets, 'n_agent_pay_options_repeat', ctx, A.session.id), step: 'pay_options_repeat' });
             return;
         }

@@ -53,8 +53,26 @@ async function dailyReport(botId, dayStr, { send = true } = {}) {
         require('crypto').randomUUID(), botId, dayStr, JSON.stringify(stats));
     const k = await keysOf(botId, ['TELEGRAM_BOT_TOKEN', 'OWNER_TELEGRAM_ID', 'ADMIN_TELEGRAM_ID', 'SHOP_TAG']);
     const text = Q.formatReport(res, prev, { shopTag: k.SHOP_TAG, dayLabel: dayStr.split('-').reverse().slice(0, 2).join('.') });
-    if (send) await tg(k.TELEGRAM_BOT_TOKEN, k.OWNER_TELEGRAM_ID || k.ADMIN_TELEGRAM_ID, text);
-    return { res, text };
+    let sent = null;
+    if (send) {
+        // Звіт — власнику особисто (15.10: OWNER_TELEGRAM_ID не задано → звіт ішов у групу менеджерів, власник його не бачив).
+        // Порядок: OWNER_TELEGRAM_ID воронки ботом воронки → системний чат власника (system_admin_telegram_id) системним ботом →
+        // останній запас — група менеджерів. Результат Telegram перевіряємо, а не пишемо «надіслано» наосліп.
+        const sys = async (type, field) => { try { const c = await db.savedConnector.findFirst({ where: { type, isActive: true }, orderBy: { updatedAt: 'desc' }, select: { config: true } }); return String((c && c.config && c.config[field]) || '').trim(); } catch (e) { return ''; } };
+        const routes = [];
+        if (k.OWNER_TELEGRAM_ID) routes.push([k.TELEGRAM_BOT_TOKEN, k.OWNER_TELEGRAM_ID, 'owner']);
+        const sysChat = await sys('system_admin_telegram_id', 'value'); const sysTok = await sys('system_telegram_bot_token', 'token');
+        if (sysChat && sysTok) routes.push([sysTok, sysChat, 'system_owner']);
+        routes.push([k.TELEGRAM_BOT_TOKEN, k.ADMIN_TELEGRAM_ID, 'group']);
+        for (const [tok, chat, via] of routes) { if (await tg(tok, chat, text)) { sent = via; break; } logger.warn('[quality] daily report: не доставлено через ' + via, { botId }); }
+        if (sent) await db.$executeRawUnsafe(`update quality_daily set stats = stats || jsonb_build_object('sentAt', now()::text, 'sentVia', $3::text) where "botId" = $1 and "day" = $2::date`, botId, dayStr, sent).catch(() => {});
+    }
+    return { res, text, sent };
+}
+/** Звіт за цей день уже доставлено (позначка в БД, а не в памʼяті процесу — перезапуски сервера о 9-й слали його тричі). */
+async function alreadySent(botId, dayStr) {
+    const r = await db.$queryRawUnsafe(`select stats->>'sentAt' s from quality_daily where "botId" = $1 and "day" = $2::date`, botId, dayStr).catch(() => []);
+    return !!(r[0] && r[0].s);
 }
 
 let _lastReportDay = null;
@@ -65,7 +83,11 @@ async function dailyTick() {
     _lastReportDay = today;
     const yesterday = kyivDay(new Date(Date.now() - 24 * 3600 * 1000));
     for (const botId of await reportBots()) {
-        try { await dailyReport(botId, yesterday); logger.info('[quality] daily report sent', { botId, day: yesterday }); }
+        try {
+            if (await alreadySent(botId, yesterday)) continue;
+            const r = await dailyReport(botId, yesterday);
+            logger.info('[quality] daily report ' + (r.sent ? 'sent via ' + r.sent : 'NOT delivered'), { botId, day: yesterday });
+        }
         catch (e) { logger.warn('[quality] daily report failed: ' + e.message, { botId }); }
     }
     await db.$executeRawUnsafe("delete from agent_turns where \"createdAt\" < now() - interval '10 days'").catch(() => {});

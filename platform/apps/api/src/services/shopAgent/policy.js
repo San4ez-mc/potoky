@@ -1428,6 +1428,21 @@ async function universalQuestionFallback(A, u) {
 async function runPolicyInner(A, u) {
     const { ctx } = A; ctx.agent = ctx.agent || {};
     Q.init(A, u); // реєстр питань ходу (questions.js) — далі питання змінюються лише через Q.cover/Q.add/compose
+    // Розмова, яку вів МЕНЕДЖЕР, після зняття його паузи (варіант 3, рішення власника 14.10): повернення/обмін/скарга/статус посилки —
+    // бот не втручається (знову пауза + менеджеру); товар не впізнано — теж мовчить; продаж — бот підхоплює (історія з менеджером є в
+    // аналізаторі). Лише перше повідомлення після зняття паузи (до 15 хв).
+    if (/^(client_return_24h|manager_silence|auto_24h)$/.test(String(ctx.resumedBy || '')) && ctx.resumedAt && Date.now() - Date.parse(ctx.resumedAt) < 15 * 60 * 1000 && !ctx.agent.mgrLedChecked && !ctx.testMode) {
+        ctx.agent.mgrLedChecked = true;
+        const service = !!(u.returnRequest || u.isComplaint || u.statusQuestion);
+        const unknown = !(ctx.product && ctx.product.sku) && !A.turnSharedPost && !A.turnImage && !A.newEntryAd && !A.turnStory && !(u.productHint && (u.productHint.article || u.productHint.category || u.productHint.fromList));
+        if (service || unknown) {
+            A.out = [];
+            await pause(A, 'manager_message', null);
+            await T.alert(A, { title: '💬 Клієнт пише в розмові, яку вели ви', main: 'Клієнт: «' + text.slice(0, 300) + '»', details: (service ? 'Тема — повернення/обмін/скарга/статус посилки' : 'Товар не впізнано') + ': бот не втручався й лишив розмову вам (пауза).' }).catch(() => {});
+            A.trace.push({ step: 'manager_led_keep', service, unknown });
+            return;
+        }
+    }
     // Назва товару, схожа на місто («Гельсінкі» — «Костюм Гельсінкі полар», A0189): поза кроком доставки слово, що є в назві рівно
     // одного товару CRM, — це товар, а не місто (15.10, тест 95: бот записав «дані доставки: Фінляндія»). Звіряємо з даними каталогу.
     if ((u.city || u.country) && !(ctx.orderIntent && ctx.orderIntent.ready === 'yes') && !(ctx.paymentInfo && ctx.paymentInfo.method) && !/доставк|ПІБ|відділен/i.test(String(ctx.agent.lastAsk || ''))) {

@@ -641,10 +641,13 @@ async function answerThenAsk(A, u, askText, o = {}) {
     // «А джинси у вас є?» посеред розмови про інший товар — разом із відповіддю показуємо фото цих товарів (перше фото, не мініатюра).
     // …але не коли в розмові КОМПЛЕКТ, а клієнт говорить про його ж позиції («мне футболку джинсы чешки и кофту») — це склад
     // комплекту, а не «покажіть інші товари категорії» (01.10, RAIKAHO: летіли фото чужої кофти D0050 і окремих лоферів).
-    if (catQs.length && !(pp0 && pp0.isSet)) {
+    // Фото добірки — лише коли план каже «показати» (show_list/show_product); без плану — як було. «А верх не дуже» про костюм — це
+    // не прохання інших товарів (15.10, тест 149: бот надіслав фото чужих кофт і светра).
+    const showQs = catQs.filter((q0) => { const p = pl(q0); return !p || p.action === 'show_list' || p.action === 'show_product'; });
+    if (showQs.length && !(pp0 && pp0.isSet)) {
         try {
             const base1 =(A.keys.CRM_PUBLIC_BASE || 'https://pcrm.fineko.space').replace(/\/$/, '');
-            for (const pr of await otherCategoryProducts(A, catQs.concat([String(A.turnText || '')]))) { const im = (pr.images || [])[0]; if (im) A.out.push({ photoUrls: [/^https?:/.test(im) ? im : base1 + (String(im).charAt(0) === '/' ? im : '/' + im)], caption: String(pr.customerName || pr.name || '').split('\n')[0].replace(/\.?\s*Артикул:?.*$/i, '').trim() + ' — ' + Number(pr.price) + ' грн', step: 'category_photo' }); }
+            for (const pr of await otherCategoryProducts(A, showQs.concat([String(A.turnText || '')]))) { const im = (pr.images || [])[0]; if (im) A.out.push({ photoUrls: [/^https?:/.test(im) ? im : base1 + (String(im).charAt(0) === '/' ? im : '/' + im)], caption: String(pr.customerName || pr.name || '').split('\n')[0].replace(/\.?\s*Артикул:?.*$/i, '').trim() + ' — ' + Number(pr.price) + ' грн', step: 'category_photo' }); }
         } catch (e) { /* best-effort */ }
     }
     let crmFacts = '';

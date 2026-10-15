@@ -1452,8 +1452,14 @@ async function runPolicyInner(A, u) {
         const big = text.match(/(?<![A-Za-z0-9])(2XXL|3XL|3XXL|XXXL|2XL|ХХХЛ)(?![A-Za-z])/i);
         const _pr = ctx.product || {};
         const szs = ctx.product ? productSizes(_pr) : []; // одне джерело розмірів (catalogFacts.productSizes)
-        if (big && szs.length && !szs.includes('XXXL') && !ctx.crmOrderId) {
-            A.out.push({ text: 'Для цієї моделі розміри: ' + szs.join(', ') + (/до\s*\d+\s*кг/i.test(String(ctx.product.desc || '')) ? ' (' + ((String(ctx.product.desc).match(/до\s*\d+\s*кг/i) || [''])[0]) + ')' : '') + ' — більших, на жаль, немає 🙏 Флісові костюми в нас йдуть до XXXL. Підкажіть зріст і вагу — підберу найкращий розмір з наявних 📏', step: 'size_beyond_range' });
+        const nzB = (z) => String(z).toUpperCase().replace(/^2XL$/, 'XXL').replace(/^(2XXL|3XL|3XXL|ХХХЛ)$/, 'XXXL');
+        // 2XL = XXL (є в більшості товарів) — це не «більший за наявні» (тест 111: «Так, 2XL є» поруч із «більших немає»).
+        if (big && szs.length && !szs.map(nzB).includes(nzB(big[1])) && !ctx.crmOrderId) {
+            // Що запропонувати натомість — з каталогу CRM (товари з більшими розмірами), а не вписане в код «флісові до XXXL».
+            const alt = await oversizeAlternative(A, _pr);
+            const altTail = alt ? ' ' + alt.replace(/^На жаль[^.]*\.\s*/, '') : '';
+            A.out.push({ text: 'Для цієї моделі розміри: ' + szs.join(', ') + (/до\s*\d+\s*кг/i.test(String(ctx.product.desc || '')) ? ' (' + ((String(ctx.product.desc).match(/до\s*\d+\s*кг/i) || [''])[0]) + ')' : '') + ' — розміру ' + big[1].toUpperCase() + ', на жаль, немає 🙏' + altTail + ' Підкажіть зріст і вагу — підберу найкращий розмір з наявних 📏', step: 'size_beyond_range' });
+            Q.coverTopics(A, u, ['sizes', 'availability', 'size_how', 'fit'], 'size_beyond_range');
             ctx.agent.lastAsk = 'параметри для розміру';
             return;
         }

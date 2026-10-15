@@ -1222,6 +1222,7 @@ function basketFocusNext(A) {
     if (e.color) over.color = e.color;
     if (e.size) { if (/^\d{2}$/.test(e.size) && Number(e.size) >= 35 && Number(e.size) <= 50) over.shoeSize = Number(e.size); else over.clothingSize = e.size; }
     if (e.qty > 1) over.qty = e.qty;
+    if (Array.isArray(e.colors) && e.colors.length > 1) { over.units = e.colors.map((col) => ({ color: col, size: '' })); over.qty = Math.max(Number(e.qty) || 0, e.colors.length); over.color = null; }
     A._refocus = { u: neutralU(over), text: e.sku ? ('артикул ' + e.sku) : String(e.ref || e.category || '') };
     A._switchNote = (A._switchNote || '') + 'Тепер ' + String(e.name || e.category || e.ref || 'наступний товар').toLowerCase() + ' 👇\n';
 }
@@ -1273,8 +1274,18 @@ async function basketIntake(A, u) {
     let cat; try { cat = await loadCatalog(A.botId, A.keys); } catch (e) { return; }
     const up = (x) => String(x || '').toUpperCase();
     const bySku = (s) => cat.products.find((x) => up(x.sku) === up(s));
-    const res = u.cartItems.map((it) => ({ it, r: Basket.resolveRef(it.ref, cat.products, cat.categories) }))
+    const res0 = u.cartItems.map((it) => ({ it, r: Basket.resolveRef(it.ref, cat.products, cat.categories) }))
         .filter((x) => x.r && !(x.r.sku && bySku(x.r.sku) && bySku(x.r.sku).isSet) && !(x.r.category && /комплект/i.test(x.r.category)));
+    // Той самий товар кількома кольорами («дві кофти — чорну і світло-сіру») — ОДНА позиція з кількома штуками, а не два товари
+    // кошика: тоді працює звичайний шлях кількох кольорів і акція «2 шт» (15.10, тест К3: 2 × 1279 замість 2199, «спершу кофта, далі кофта»).
+    const res = [];
+    for (const x of res0) {
+        const key = x.r.sku ? 'sku:' + up(x.r.sku) : 'cat:' + String(x.r.category || '').toLowerCase();
+        const g = res.find((y) => y.key === key);
+        if (g) { g.items.push(x.it); g.it = { ...g.it, qty: (Number(g.it.qty) || 1) + (Number(x.it.qty) || 1), color: null }; }
+        else res.push({ key, r: x.r, it: { ...x.it }, items: [x.it] });
+    }
+    for (const g of res) g.colors = g.items.length > 1 ? g.items.map((i) => i.color).filter(Boolean) : null;
     if (res.length < 2) { A.trace.push({ step: 'basket_intake_skip', resolved: res.length }); return; }
     const cur = P(ctx);
     const catIdOf = (name) => { const c = (cat.categories || []).find((x) => String(x.name) === String(name)); return c ? c.id : null; };
@@ -1287,10 +1298,11 @@ async function basketIntake(A, u) {
     }
     const focus = fi >= 0 ? res[fi] : null;
     if (focus) { if (focus.it.color && !u.color && !u.colorMatched) u.color = focus.it.color; if (focus.it.qty > 1 && !u.qty) u.qty = focus.it.qty; }
+    if (focus && focus.colors && focus.colors.length > 1) { u.units = focus.colors.map((c) => ({ color: c, size: '' })); u.qty = Math.max(Number(focus.it.qty) || 0, focus.colors.length); u.color = null; u.colorMatched = null; }
     const queued = [];
     for (const [i, x] of res.entries()) {
         if (i === fi) continue;
-        if (Basket.enqueue(ctx, { sku: x.r.sku || null, name: x.r.name || null, category: x.r.category || null, ref: x.it.ref, color: x.it.color, size: x.it.size, qty: x.it.qty })) queued.push(x.r.name || x.it.ref);
+        if (Basket.enqueue(ctx, { sku: x.r.sku || null, name: x.r.name || null, category: x.r.category || null, ref: x.it.ref, color: x.it.color, colors: x.colors || null, size: x.it.size, qty: x.it.qty })) queued.push(x.r.name || x.it.ref);
     }
     const qSkus = Basket.ensure(ctx).queue.map((q) => up(q.sku)).filter(Boolean);
     if (cur && u.productHint && (qSkus.includes(up(u.productHint.article)) || qSkus.includes(up(u.productHint.fromList)))) u.productHint = { ...u.productHint, article: null, fromList: null };

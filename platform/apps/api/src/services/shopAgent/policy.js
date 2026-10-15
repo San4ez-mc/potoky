@@ -2843,6 +2843,23 @@ async function runPolicyInner(A, u) {
         if ((u.extraProducts || u.alsoWants || ctx.extraProductMention) && !(pp.isSet && ctx.setMode === 'set')) {
             if (!ctx.extraProductMention) ctx.extraProductMention = u.extraProducts || u.alsoWants;
             await T.extraResolve(A);
+            // Відсутнього товару не додаємо і в «яку модель додати?» не показуємо (15.10, тест 162: список із 5 лоферів, яких немає, з цінами).
+            try {
+                const catO = await loadCatalog(A.botId, A.keys);
+                const oosOf = (s) => { const x = catO.products.find((p0) => String(p0.sku).toUpperCase() === String(s || '').toUpperCase()); return x && x.outOfStock ? x : null; };
+                const droppedX = (ctx.extraItems || []).map((e) => oosOf(e.sku)).filter(Boolean);
+                if (droppedX.length) ctx.extraItems = (ctx.extraItems || []).filter((e) => !oosOf(e.sku));
+                const ambO = String(ctx.extraUnresolved || '').match(/\(є кілька: ([^)]*)\)/);
+                const ambSkus = ambO ? [...ambO[1].matchAll(/арт\.\s*([A-Za-z0-9_-]+)/g)].map((m) => m[1]) : [];
+                const ambOos = ambSkus.map(oosOf).filter(Boolean);
+                if (ambSkus.length && ambOos.length === ambSkus.length) { droppedX.push(ambOos[0]); ctx.extraUnresolved = ''; }
+                else if (ambOos.length) ctx.extraUnresolved = String(ctx.extraUnresolved).replace(ambO[1], ambO[1].split(/;\s*|,\s*(?=[^,]*арт\.)/).filter((part) => !ambOos.some((o) => part.includes(String(o.sku)))).join('; '));
+                if (droppedX.length) {
+                    A.out.push({ text: await oosText(A, droppedX[0], { keep: P(ctx), replace: false }), step: 'oos_extra' });
+                    Q.coverTopics(A, u, ['availability', 'sizes', 'price'], 'oos_extra');
+                    u.shoeSize = null; ctx.extraProductMention = '';
+                }
+            } catch (e) { /* best-effort */ }
             // Додатковий товар має кілька моделей («і ще лофери 44» — їх 4) — спершу питаємо яку, а не йдемо мовчки до оплати
             // (тест 162, 02.10). Вибір номером іде звичайним шляхом «вибір зі списку» і додається окремою позицією з названим розміром.
             const amb = !ctx.crmOrderId && String(ctx.extraUnresolved || '').match(/\(є кілька: ([^)]*)\)/);

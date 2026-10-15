@@ -12,6 +12,8 @@ function productFacts(ctx) {
     const f = [];
     f.push('Товар: ' + (p.customerName || p.name) + ' (арт. ' + p.sku + '), ціна ' + p.price + ' грн.');
     if (p.desc) f.push('Опис: ' + String(p.desc).replace(/\s+/g, ' ').slice(0, 700));
+    // Немає в наявності (CRM outOfStock) — жоден розмір чи колір недоступний (15.10, тест 165: «немає в наявності» і поруч «Так, 43-й є»).
+    if (p.outOfStock && !p.isSet) { f.push('ЦЬОГО ТОВАРУ ЗАРАЗ НЕМАЄ В НАЯВНОСТІ: жоден розмір чи колір не доступний, оформити його не можна. НІКОЛИ не кажи, що якийсь розмір чи колір «є».'); return f.join('\n'); }
     if (p.colors) f.push('Кольори: ' + p.colors + '.');
     { const _sz = require('./catalogFacts').productSizes(p); if (_sz.length) f.push('Розміри в наявності: ' + _sz.join(', ') + '. Інших розмірів немає.'); } // одне джерело (офери → поле → сітка → опис)
     // 2026-09-14 (власник): розмірна сітка йде клієнту ЛИШЕ картинкою (n_agent_size_chart_caption,

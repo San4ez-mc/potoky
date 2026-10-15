@@ -132,6 +132,16 @@ async function resolveShoppingIntent(A, u, tool) {
             if (ctx.hintAddsExtra && signal.catalogListPick && decision.action === 'REPLACE_MAIN') decision = { action: 'ADD_EXTRA' };
             if (signal.catalogListPick) delete ctx.hintAddsExtra;
         }
+        // Товар, якого немає в наявності, не стає головним замість уже обраного й не додається до нього (15.10, тести 162/165:
+        // «беру лофери замість кофти» — лоферів немає, а кофта зникала із замовлення). Policy чесно каже «немає» (oosText).
+        if (hadProduct && candidate.outOfStock && !candidate.isSet && beforeProduct && beforeProduct.sku && !beforeProduct.outOfStock
+            && String(beforeProduct.sku) !== String(candidate.sku) && decision.action !== 'CONFIRM') {
+            const replace = decision.action === 'REPLACE_MAIN' || decision.action === 'SET_MAIN';
+            for (const k of Object.keys(ctx)) { if (!(k in ctxSnapshotBefore)) delete ctx[k]; }
+            Object.assign(ctx, ctxSnapshotBefore);
+            ctx.oosMention = { product: candidate, replace };
+            decision = { action: 'OOS_KEPT' }; status = 'kept';
+        }
         if (decision.action === 'ADD_EXTRA' || decision.action === 'ASK_REPLACE_OR_ADD') {
             // Кандидат НЕ стає активним товаром — відкочуємо ВЕСЬ ctx до стану перед матчингом,
             // головний товар лишається як був, кандидат іде в існуючий, уже перевірений шлях

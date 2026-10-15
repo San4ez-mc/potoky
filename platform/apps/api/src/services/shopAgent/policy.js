@@ -629,6 +629,28 @@ function humanSetList(pp) { return (pp.setItems || []).map((it) => '• ' + it.n
  * налаштувань категорії): бот мав зайти в категорію КОЖНОГО товару в розмові й запитати РАЗОМ усі
  * потрібні параметри — а не хардкодити «зріст і вагу» незалежно від складу (set1112 містить
  * лофери з категорії «Взуття», якій потрібен окремий параметр «Розмір взуття», не зріст/вага). */
+/** Товару немає в наявності (CRM outOfStock) — один текст для всіх місць (картка, повтор, спроба замінити ним обраний товар; 15.10,
+ *  тести 94/164/165): назва, чесне «немає», що з цієї ж категорії Є (з CRM) і ОДНЕ питання в кінці. Розмірів і цін відсутнього
+ *  товару не називаємо — інакше «43(27,5см)» у картці і «Так, 43-й є» поруч із «немає». */
+const shortName = (p) => String((p && (p.customerName || p.name)) || '').split('\n')[0].replace(/\.?,?\s*[Аа]ртикул:?.*$/, '').trim();
+async function oosText(A, oos, o = {}) {
+    let alts = [];
+    try {
+        const cat = await loadCatalog(A.botId, A.keys);
+        const catId = oos.categoryId || (oos.category && oos.category.id) || null;
+        alts = cat.products.filter((x) => !x.outOfStock && !x.isSet && String(x.sku) !== String(oos.sku) && catId && (x.categoryId === catId || (x.category && x.category.id === catId))).slice(0, 3);
+    } catch (e) { alts = []; }
+    const catWord = String(oos.categoryName || (oos.category && oos.category.name) || '').toLowerCase();
+    const again = A.ctx.agent.oosShownFor === String(oos.sku);
+    let t = again ? 'Цієї моделі, на жаль, немає, тому оформити її не вийде 🙏' : shortName(oos) + ' (арт. ' + oos.sku + ') зараз немає в наявності 😔';
+    if (alts.length) t += ' Зараз є: ' + alts.map((x) => shortName(x) + ' — ' + Number(x.price) + ' грн').join('; ') + '.';
+    else if (catWord && !again) t += ' Інших товарів категорії «' + catWord + '» зараз теж немає.';
+    if (o.keep) t += o.replace ? ' Тому замінити не вийде — лишаємо ' + shortName(o.keep).toLowerCase() + ' в замовленні? 🙂' : ' Тому додати не вийде — ' + shortName(o.keep).toLowerCase() + ' лишається в замовленні, як було 🙂';
+    else t += alts.length ? ' Показати котрийсь?' : ' Можу підібрати щось інше — напишіть, що шукаєте 🙂';
+    A.ctx.agent.oosShownFor = String(oos.sku);
+    return t;
+}
+
 /** Клієнт більший за найбільший розмір товару: що запропонувати — з каталогу CRM. Товари в наявності (не outOfStock, не
  *  комплекти, не взуття), у яких є більші розміри, групуємо за категорією («костюми — до ХХХЛ»). Нічого — порожньо
  *  (тоді чесне «такого розміру немає»). Розміри — Product.sizes, інакше sizeChartData.sizes. */
@@ -829,7 +851,8 @@ async function present(A) {
     // «Немає в наявності» в CRM (outOfStock, 03.10). Окремий товар: чесно кажемо й не просимо параметрів.
     // Комплект без частини речей: ціна повного комплекту вже не діє — прибираємо її рядок і кажемо, з чого він зараз і за скільки.
     if (p.outOfStock && !p.isSet) {
-        card = card.replace(/\n*👉[^\n]*/g, '') + '\n\n' + (messageText(A.assets, 'n_agent_out_of_stock', ctx, A.session.id) || 'На жаль, цього товару зараз немає в наявності 😔 Можу підібрати щось схоже — напишіть, що шукаєте 🙂');
+        // Лише назва + чесне «немає» + що є натомість: розміри й ціна відсутнього товару з картки CRM вводили в оману (тест 94: «43(27,5см)»).
+        card = await oosText(A, p);
         ctx.agent.outOfStockShown = p.sku;
     } else if (p.isSet && Array.isArray(p.setOutOfStock) && p.setOutOfStock.length && Array.isArray(p.setItems) && p.setItems.length) {
         const sum = p.setItems.reduce((t, it) => t + (Number(it.price) || 0), 0);
@@ -1835,6 +1858,14 @@ async function runPolicyInner(A, u) {
         if (u.productHint.article && !/артикул|арт\.|\b[a-z]\d{3,6}\b/i.test(text)) ctx.lastUserMessage = text + ' артикул ' + u.productHint.article;
         const r = await T.resolveProduct(A, u);
         if (r.status === 'found' || r.status === 'hint') delete ctx.agent.unknownPhotoAt;
+        // Клієнт хоче замінити/доповнити обране товаром, якого немає в наявності — чесно кажемо, обране лишається (resolveShoppingIntent: OOS_KEPT).
+        if (ctx.oosMention) {
+            const m = ctx.oosMention; delete ctx.oosMention;
+            A.out.push({ text: await oosText(A, m.product, { keep: P(ctx), replace: m.replace }), step: 'oos_mention' });
+            Q.coverTopics(A, u, ['availability', 'sizes', 'price', 'colors'], 'oos_mention');
+            u.shoeSize = null; u.clothingSize = null; // розмір стосувався відсутнього товару, не обраного
+            if (m.replace) { ctx.agent.lastAsk = 'лишаємо обраний товар?'; return; }
+        }
         // Давня розмова: товар показано понад 24 год тому, клієнт прийшов із НОВИМ сигналом (реклама/пост/фото), а новий товар не
         // визначився — не продовжуємо про старий (03.10, andrew_stepanchuk: комплект set1112 з 09.09, 02.10 прийшов з реклами
         // флісового костюма → бот «Комплект 4 в 1 коштує 5290 ₴»). Забуваємо старий товар (параметри людини — зріст/вага — лишаються),
@@ -2260,7 +2291,8 @@ async function runPolicyInner(A, u) {
     }
     // Товару немає в наявності (CRM outOfStock): не підбираємо розмір і не оформлюємо — відповідаємо на питання й пропонуємо інше.
     if (pp.outOfStock && !pp.isSet && !ctx.crmOrderId) {
-        if (!A.out.some((o) => o.step === 'present')) A.out.push({ text: await answerThenAsk(A, u, messageText(A.assets, 'n_agent_out_of_stock', ctx, A.session.id) || 'На жаль, цього товару зараз немає в наявності 😔 Можу підібрати щось схоже — напишіть, що шукаєте 🙂'), step: 'out_of_stock' });
+        // Повтор — інший текст, ніж минулого разу (oosText: «Цієї моделі, на жаль, немає…»), і що є натомість; не дослівно те саме (тест 164).
+        if (!A.out.some((o) => o.step === 'present')) A.out.push({ text: await answerThenAsk(A, u, await oosText(A, pp)), step: 'out_of_stock' });
         ctx.agent.lastAsk = 'що підібрати замість відсутнього товару';
         return;
     }

@@ -2845,6 +2845,10 @@ async function runPolicyInner(A, u) {
         // 2026-09-15: LLM теж міг не витягнути кількість із голої відповіді ("Чорні, 2") — рахунок
         // штук тут детермінований (n_crm_order і так вважає upsellQty фолбеком до 1, якщо порожньо).
         const upsellQtyFallback = (() => { if (!answeringUpsellClarify || upsellExplicitNo) return undefined; const m = text.match(/(\d+)\s*(шт|штук|пар)?/iu); return m ? Number(m[1]) : undefined; })();
+        // Підсумок питав «Оформляємо? І додати ще футболку… чи лише основний товар?» — обидва варіанти означають оформлення. Відмова від
+        // допродажу без відмови від замовлення = «лише основний товар» → далі до оплати (15.10, FunnelTest 99: «Ні» → «без тиску»).
+        const onlyMainChosen = !!(ctx.agent.upsellOffered && !ctx.agent.upsellDeclined && u.addUpsell === false && u.ready !== 'no' && !u.questions.length);
+        if (onlyMainChosen) u.ready = 'yes';
         if (u.ready === 'no' && !answeringUpsellClarify) { A.out.push({ text: messageText(A.assets, 'n_declined_msg', ctx, A.session.id), step: 'declined' }); ctx.declinedAt = Date.now(); ctx.agent.lastAsk = ''; return; }
         const gaveAddress = !!(u.phone || u.city || u.branch || u.fullName);
         // Ми запропонували допродаж у підсумку («Оформляємо? І додати футболку?»), а клієнт у відповідь називає його («А можна дві

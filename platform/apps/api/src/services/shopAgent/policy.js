@@ -98,6 +98,14 @@ function matchColor(p, want) {
         }
         if (cand.length === 1) return cand[0];
     }
+    // Колір, який клієнт узяв дослівно з НАШОЇ картки («Кольори: чорний, графітовий, світло-сірий»), а варіант у CRM названо інакше
+    // («Сірий») — беремо варіант з тим самим коренем, якщо він рівно один (15.10, C0043, тест Н3). Лише для назв із картки — не вгадування.
+    const cardColors = ((String(p.desc || p.presentationText || '').match(/Кольор[иі]?[^:\n]*:\s*([^\n]+)/i) || [])[1] || '').toLowerCase();
+    if (cardColors && cardColors.split(/[,;]/).map((s) => s.replace(/[^a-zа-яіїєґ\- ]/gi, '').trim()).includes(w)) {
+        const base = ruToUaColorWord(w.split('-').pop()).replace(/(ього|ьому|ьої|ьою|ий|а|е|у|ого|им|ому|ої|ою|их|і)$/u, '').slice(0, 4);
+        const byBase = base.length >= 3 ? list.filter((c) => c.toLowerCase().includes(base)) : [];
+        if (byBase.length === 1) return byBase[0];
+    }
     return null;
 }
 // 2026-09-15 (власник: "додай нумерування... щоб людина могла цифру написати") — відповідь
@@ -1765,7 +1773,9 @@ async function runPolicyInner(A, u) {
         // аналізатор бачив addUpsell, а бот відповідав «в роботі» і «ви не підтвердили»). Склад оплаченого замовлення бот не міняє сам —
         // чітко підтверджує й передає менеджеру з кольорами.
         if (u.addUpsell === true || (Array.isArray(u.upsellUnits) && u.upsellUnits.length)) {
-            const upN = (P(ctx) && P(ctx).upsell && (P(ctx).upsell.customerName || P(ctx).upsell.name)) || 'допродаж';
+            // Назва товару допродажу з даних (upsellItems), а не службове слово «допродаж» клієнту (тест 19: «Записала: додати допродаж (Білий)»).
+            const upIt = P(ctx) && Array.isArray(P(ctx).upsellItems) ? P(ctx).upsellItems[0] : null;
+            const upN = shortName(upIt) || (P(ctx) && typeof P(ctx).upsell === 'string' ? String(P(ctx).upsell).split(/\s+—\s+/)[0].replace(/\.?\s*Артикул:?.*$/i, '').trim() : '') || 'товар';
             const cols = (Array.isArray(u.upsellUnits) ? u.upsellUnits : []).map((x) => [x && x.color, x && x.size].filter(Boolean).join(' ')).filter(Boolean).join(', ');
             delete ctx.agent.upsellDeclined;
             A.out.push({ text: 'Записала: додати ' + String(upN).split('\n')[0] + (cols ? ' (' + cols + ')' : '') + ' 👌 Передаю менеджеру — він додасть до вашого замовлення й напише, якщо зміниться сума.', step: 'post_upsell_add' });
@@ -1802,10 +1812,10 @@ async function runPolicyInner(A, u) {
         if (u.statusQuestion) {
             // Статус — із CRM (власник 14.10: «якщо замовлення є в СРМ — сама дивиться статус»): етап, ТТН, статус Нової пошти.
             const o = await T.clientOrder(A);
-            if (o && orderIsLive(o)) { A.out.push({ text: crmOrderStatusText(o), step: 'post_status_crm' }); statusFromCrm = true; }
+            if (o && orderIsLive(o)) { A.out.push({ text: crmOrderStatusText(o), step: 'post_status_crm' }); Q.coverTopics(A, u, ['delivery', 'order_summary', 'other'], 'post_status'); statusFromCrm = true; }
             else if (!ctx.supplierTtn && !ctx.ttn) {
                 // CRM недоступна / замовлення там не видно — стандартні терміни (FunnelTest 44), менеджер отримає сповіщення нижче.
-                A.out.push({ text: 'Відправка — до 5 робочих днів з моменту оформлення (субота й неділя — вихідні). Номер накладної (ТТН) надішлемо сюди одразу після відправки 📦', step: 'post_status_terms' });
+                A.out.push({ text: 'Відправка — до 5 робочих днів з моменту оформлення (субота й неділя — вихідні). Номер накладної (ТТН) надішлемо сюди одразу після відправки 📦', step: 'post_status_terms' }); Q.coverTopics(A, u, ['delivery', 'order_summary', 'other'], 'post_status');
             }
         } else if (u.questions.length && !u.statusQuestion) {
             A.out.push({ text: await answerThenAsk(A, u, 'Ваше замовлення в роботі 💛'), step: 'post_q' });
@@ -1839,7 +1849,7 @@ async function runPolicyInner(A, u) {
     // статусом із CRM; нема — кличе менеджера, терміни відправки не обіцяє (клас I: yurev_yu «По блискавці чекаю відповідь» після відмови).
     if (u.statusQuestion && !u.returnRequest) {
         const o = await T.clientOrder(A);
-        if (o && orderIsLive(o)) { A.out.push({ text: crmOrderStatusText(o), step: 'post_status_crm' }); return; }
+        if (o && orderIsLive(o)) { A.out.push({ text: crmOrderStatusText(o), step: 'post_status_crm' }); Q.coverTopics(A, u, ['delivery', 'order_summary', 'other'], 'post_status'); return; }
         A.out.push({ text: 'Зараз уточню в менеджера — він напише вам тут найближчим часом 🙏', step: 'question_waiting_handoff' });
         await pause(A, 'handoff', null);
         const why = o === undefined ? 'CRM не відповіла — статус перевірити не вдалося.' : o ? 'Знайдене в CRM замовлення ' + String(o.id).slice(0, 8) + ' скасоване/з поверненням (' + ((o.stage && o.stage.name) || '') + ') — потрібна ваша відповідь.' : 'У CRM замовлення цього клієнта не знайдено (ні за розмовою, ні за нікнеймом, ні за телефоном).';

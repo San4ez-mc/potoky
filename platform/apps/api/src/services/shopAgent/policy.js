@@ -1406,6 +1406,16 @@ async function universalQuestionFallback(A, u) {
 async function runPolicyInner(A, u) {
     const { ctx } = A; ctx.agent = ctx.agent || {};
     Q.init(A, u); // реєстр питань ходу (questions.js) — далі питання змінюються лише через Q.cover/Q.add/compose
+    // Назва товару, схожа на місто («Гельсінкі» — «Костюм Гельсінкі полар», A0189): поза кроком доставки слово, що є в назві рівно
+    // одного товару CRM, — це товар, а не місто (15.10, тест 95: бот записав «дані доставки: Фінляндія»). Звіряємо з даними каталогу.
+    if ((u.city || u.country) && !(ctx.orderIntent && ctx.orderIntent.ready === 'yes') && !(ctx.paymentInfo && ctx.paymentInfo.method) && !/доставк|ПІБ|відділен/i.test(String(ctx.agent.lastAsk || ''))) {
+        try {
+            const cat = await loadCatalog(A.botId, A.keys);
+            const words = String(A.turnText || '').toLowerCase().split(/[^a-zа-яіїєґ]+/i).filter((w0) => w0.length >= 5);
+            const hits = cat.products.filter((p0) => !p0.isSet && words.some((w0) => String((p0.name || '') + ' ' + (p0.customerName || '')).toLowerCase().includes(w0)));
+            if (words.length && hits.length === 1) { u.productHint = { article: String(hits[0].sku), category: null, fromList: null }; u.city = null; u.country = null; u.region = null; A.trace.push({ step: 'name_not_city', sku: hits[0].sku }); }
+        } catch (e) { /* best-effort */ }
+    }
     // Нетерплячка («?», «??», «Ау», «алло») — клієнт чекає відповіді на останнє питання, а не вагається: інакше «щойно вирішите —
     // напишіть» (15.10, тест 41). Це форма повідомлення (лише знаки/вигук), не тлумачення змісту.
     if (/^\s*(?:[?!.…]+|(?:ау+|алло?|ало|ей|ну|і\s*\?)\s*[?!.…]*)\s*$/iu.test(String(A.turnText || '')) && (u.intent === 'hesitate' || u.intent === 'postpone' || u.intent === 'other')) { u.intent = 'other'; u.ready = null; A._impatient = true; }

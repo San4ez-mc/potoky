@@ -136,7 +136,7 @@ async function resolveShoppingIntent(A, u, tool) {
         // «беру лофери замість кофти» — лоферів немає, а кофта зникала із замовлення). Policy чесно каже «немає» (oosText).
         if (hadProduct && candidate.outOfStock && !candidate.isSet && beforeProduct && beforeProduct.sku && !beforeProduct.outOfStock
             && String(beforeProduct.sku) !== String(candidate.sku) && decision.action !== 'CONFIRM') {
-            const replace = decision.action === 'REPLACE_MAIN' || decision.action === 'SET_MAIN';
+            const replace = signal.connective === 'replace'; // «замість/заміни» — сказав клієнт; інакше це додати чи питання
             for (const k of Object.keys(ctx)) { if (!(k in ctxSnapshotBefore)) delete ctx[k]; }
             Object.assign(ctx, ctxSnapshotBefore);
             ctx.oosMention = { product: candidate, replace };
@@ -207,7 +207,7 @@ async function resolveShoppingIntent(A, u, tool) {
         const cand = ctx.product;
         for (const k of Object.keys(ctx)) { if (!(k in ctxSnapshotBefore)) delete ctx[k]; }
         Object.assign(ctx, ctxSnapshotBefore);
-        ctx.oosMention = { product: cand, replace: signal.connective !== 'add' && decision.action !== 'ADD_EXTRA' };
+        ctx.oosMention = { product: cand, replace: signal.connective === 'replace' };
         decision = { action: 'OOS_KEPT' }; status = 'kept';
     }
     delete ctx.lookupProductsRaw; delete ctx.lookupAdsRaw; delete ctx.lookupCategoriesRaw; delete ctx.catalogHintProductsRaw; delete ctx.catalogHintCategoriesRaw;

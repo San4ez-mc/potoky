@@ -659,7 +659,7 @@ async function oosText(A, oos, o = {}) {
     let t = again ? AGAIN[(n - 1) % AGAIN.length] : shortName(oos) + ' (арт. ' + oos.sku + ') зараз немає в наявності 😔';
     if (alts.length) t += ' Зараз є: ' + alts.map((x) => shortName(x) + ' — ' + Number(x.price) + ' грн').join('; ') + '.';
     else if (catWord && !again) t += ' Інших товарів категорії «' + catWord + '» зараз теж немає.';
-    if (o.keep) t += o.replace ? ' Тому замінити не вийде — лишаємо ' + shortName(o.keep).toLowerCase() + ' в замовленні? 🙂' : ' Тому додати не вийде — ' + shortName(o.keep).toLowerCase() + ' лишається в замовленні, як було 🙂';
+    if (o.keep) t += o.replace ? ' Тому замінити не вийде 🙏 Лишаємо в замовленні те, що вже обрали?' : ' Тому додати не вийде — решта замовлення без змін 🙂';
     else t += alts.length ? ' Показати котрийсь?' : ' Можу підібрати щось інше — напишіть, що шукаєте 🙂';
     A.ctx.agent.oosShownFor = String(oos.sku);
     return t;
@@ -3186,7 +3186,8 @@ async function runPolicyInner(A, u) {
             let txt = summary + '\n\n' + askLine + secondPickLine;
             if (ctx.agent.lastAsk === 'оформляємо?' && !u.questions.length && !hesitating) {
                 // «Оформляємо?» уже питали, клієнт написав щось без рішення — коротка реакція + те саме питання, без повторного підсумку
-                txt = A._impatient ? 'Я тут 🙂 ' + askLine : (await compose(A, { ack: 'відреагуй одним реченням на репліку клієнта (нічого не обіцяй і не змінюй склад замовлення сама)', nextStep: 'і спитай: «' + askLine + '»', maxSentences: 2, fallback: askLine })).text;
+                if (A._impatient) ctx.agent.impatientCount = (Number(ctx.agent.impatientCount) || 0) + 1;
+                txt = A._impatient ? (ctx.agent.impatientCount % 2 ? 'Я тут 🙂 ' + askLine : 'Чекаю вашої відповіді 🙂 Оформляємо замовлення?') : (await compose(A, { ack: 'відреагуй одним реченням на репліку клієнта (нічого не обіцяй і не змінюй склад замовлення сама)', nextStep: 'і спитай: «' + askLine + '»', maxSentences: 2, fallback: askLine })).text;
                 A.out.push({ text: txt, step: 'order_intent_repeat' }); return;
             }
             // Клієнт вагається («подумаю», «спасибо, позже») без питання: м'яко відступаємо, без тиску й без повтору картки з ціною.

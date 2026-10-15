@@ -920,6 +920,8 @@ try {
   function looksLikeSpecLine(s) { s = String(s || '').trim(); return !s || s.length < 4 || /:$/.test(s) || /^[^:]{1,30}:\s/.test(s) || /^(в\s*наявност|наявніст|кольор|розмір|матеріал|ціна\b|акці|сезон)/i.test(s); }
   function upname(prod) {
     var up = Number(prod.price) || 0; var nm = (!looksLikeSpecLine(prod.customerName) && prod.customerName) || (!looksLikeSpecLine(prod.displayName) && prod.displayName) || prod.name || 'Товар';
+    // Назва в один рядок, без «⏎⏎Артикул: …» з картки CRM — вона йде всередину речення «додати ще …?» (15.10, тест 41).
+    nm = String(nm).split('\n').map(function (s) { return s.trim(); }).filter(Boolean)[0] || String(nm); nm = nm.replace(/[.,]?\s*Артикул:?.*$/i, '').trim() || nm;
     // v3: акція за кількість і кольори допродажу в текст пропозиції (реальний кейс: "Так Біла-1 Чорна-1", 2 шт = 799)
     var bp = (Array.isArray(prod.bulkPricing) ? prod.bulkPricing : []).filter(function (b) { return b && b.quantity && b.price; }).map(function (b) { return b.quantity + ' шт — ' + Number(b.price) + ' грн'; });
     var cols = [...new Set((prod.offers || []).flatMap(function (o) { return (o.properties || []).filter(function (q) { return /кол|цвет/i.test(q.name || ''); }).map(function (q) { return q.value; }); }))];

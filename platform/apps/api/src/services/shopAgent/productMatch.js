@@ -533,7 +533,9 @@ try {
     // схоже, прив'язані до того, хто їх отримав (Zernio), не до нас) — zernioHandler.js тепер best-effort
     // підміняє attachment.url на Zernio-проксі refreshUrl (домен zernio.com), тому додаємо його у whitelist і
     // шлемо Bearer ZERNIO_API_TOKEN на такі запити.
-    function imgOk(u) { try { var h = new URL(u).hostname.toLowerCase(); if (h === 'api.telegram.org' || h === 'zernio.com') return true; return ['cdninstagram.com', 'fbcdn.net', 'fbsbx.com', 'lookaside.fbsbx.com', 'facebook.com'].some(function (d) { return h === d || h.endsWith('.' + d); }); } catch (e) { return false; } }
+    // + власний CRM (фото товару з CRM — тести й ручні пересилання менеджера; 15.10, тест Н1: фото комплекту з CRM не розпізнавалось взагалі).
+    var __crmHost = ''; try { __crmHost = new URL(keys.CRM_PUBLIC_BASE || 'https://pcrm.fineko.space').hostname.toLowerCase(); } catch (e) { }
+    function imgOk(u) { try { var h = new URL(u).hostname.toLowerCase(); if (h === 'api.telegram.org' || h === 'zernio.com' || (__crmHost && h === __crmHost)) return true; return ['cdninstagram.com', 'fbcdn.net', 'fbsbx.com', 'lookaside.fbsbx.com', 'facebook.com'].some(function (d) { return h === d || h.endsWith('.' + d); }); } catch (e) { return false; } }
     if (imgOk(__visionUrl)) {
       var acp = new AbortController(); var top = setTimeout(function () { try { acp.abort(); } catch (e) { } }, 10000);
       try {

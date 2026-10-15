@@ -199,6 +199,16 @@ async function resolveShoppingIntent(A, u, tool) {
         }
     }
 
+    // Той самий захист і для шляху через добірку категорії («і ще лофери 44» → список → перший зі списку ставав головним, кофта зникала;
+    // 15.10, тест 162): відсутній товар не замінює вже обраний, хоч би яким шляхом його знайшло.
+    if (hadProduct && !ctx.oosMention && ctx.product && ctx.product.outOfStock && !ctx.product.isSet && beforeProduct && beforeProduct.sku && !beforeProduct.outOfStock
+        && String(beforeProduct.sku) !== String(ctx.product.sku)) {
+        const cand = ctx.product;
+        for (const k of Object.keys(ctx)) { if (!(k in ctxSnapshotBefore)) delete ctx[k]; }
+        Object.assign(ctx, ctxSnapshotBefore);
+        ctx.oosMention = { product: cand, replace: signal.connective !== 'add' && decision.action !== 'ADD_EXTRA' };
+        decision = { action: 'OOS_KEPT' }; status = 'kept';
+    }
     delete ctx.lookupProductsRaw; delete ctx.lookupAdsRaw; delete ctx.lookupCategoriesRaw; delete ctx.catalogHintProductsRaw; delete ctx.catalogHintCategoriesRaw;
     return { status, skipPresentation: !!ctx.skipPresentation, signal, action: decision.action };
 }

@@ -642,7 +642,10 @@ async function oosText(A, oos, o = {}) {
     } catch (e) { alts = []; }
     const catWord = String(oos.categoryName || (oos.category && oos.category.name) || '').toLowerCase();
     const again = A.ctx.agent.oosShownFor === String(oos.sku);
-    let t = again ? 'Цієї моделі, на жаль, немає, тому оформити її не вийде 🙏' : shortName(oos) + ' (арт. ' + oos.sku + ') зараз немає в наявності 😔';
+    const n = again ? (Number(A.ctx.agent.oosShownTimes) || 1) : 0; A.ctx.agent.oosShownTimes = n + 1;
+    // Повтор щоразу іншими словами — не дослівно те саме на кожну репліку (тест 164: I2).
+    const AGAIN = ['Цієї моделі, на жаль, немає, тому оформити її не вийде 🙏', 'Розумію 🙏 Але ' + shortName(oos).toLowerCase() + ' зараз справді немає — замовити їх не вийде.', 'На жаль, ця модель поки відсутня, і коли зʼявиться — точно не знаю 🙏'];
+    let t = again ? AGAIN[(n - 1) % AGAIN.length] : shortName(oos) + ' (арт. ' + oos.sku + ') зараз немає в наявності 😔';
     if (alts.length) t += ' Зараз є: ' + alts.map((x) => shortName(x) + ' — ' + Number(x.price) + ' грн').join('; ') + '.';
     else if (catWord && !again) t += ' Інших товарів категорії «' + catWord + '» зараз теж немає.';
     if (o.keep) t += o.replace ? ' Тому замінити не вийде — лишаємо ' + shortName(o.keep).toLowerCase() + ' в замовленні? 🙂' : ' Тому додати не вийде — ' + shortName(o.keep).toLowerCase() + ' лишається в замовленні, як було 🙂';
@@ -1249,6 +1252,13 @@ async function universalQuestionFallback(A, u) {
 async function runPolicyInner(A, u) {
     const { ctx } = A; ctx.agent = ctx.agent || {};
     Q.init(A, u); // реєстр питань ходу (questions.js) — далі питання змінюються лише через Q.cover/Q.add/compose
+    // Розмір взуття для комплекту, взуття з якого немає в наявності (CRM setOutOfStock) — кажемо, що він не знадобиться, і йдемо далі
+    // (15.10, тест 160: «43» → мовчки «лишилось обрати колір»). Взуття впізнаємо за назвою речі з CRM, не за словами клієнта.
+    {
+        const sp = ctx.product;
+        const shoeOos = sp && sp.isSet && Array.isArray(sp.setOutOfStock) ? sp.setOutOfStock.find((nm) => /лофер|взутт|кросів|черевик|туфл|кед/i.test(String(nm))) : null;
+        if (u.shoeSize && shoeOos && !ctx.crmOrderId) { A.out.push({ text: shortName({ name: shoeOos }) + ' зараз, на жаль, немає в наявності, тож розмір взуття не знадобиться 🙂', step: 'oos_shoe_note' }); u.shoeSize = null; }
+    }
     const text = String(A.turnText || '');
     // Голий номер («2») у відповідь на показаний список — це вибір пункту, а не кількість: детерміновано (LLM іноді читає як qty і картка не показується).
     if (ctx.agent.lastAsk === 'який із показаних товарів цікавить' && ctx.catalogHintSkus) {

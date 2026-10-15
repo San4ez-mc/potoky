@@ -15,7 +15,10 @@ const PAR = Math.max(1, Math.min(10, Number(opt('--par', 6))));
 const OUT = opt('--out', '/tmp/funnel-all.json');
 
 (async () => {
-    const tests = await db.funnelTest.findMany({ where: { botId: BOT }, select: { id: true, name: true, lastRunStatus: true }, orderBy: { createdAt: 'asc' } });
+    let tests = await db.funnelTest.findMany({ where: { botId: BOT }, select: { id: true, name: true, lastRunStatus: true }, orderBy: { createdAt: 'asc' } });
+    // --only id1,id2 — лише ці тести (префікси id), напр. повторний прогін «стало гірше», щоб відрізнити випадковість від поломки.
+    const only = String(opt('--only', '')).split(',').map((s) => s.trim()).filter(Boolean);
+    if (only.length) tests = tests.filter((t) => only.some((p) => t.id.startsWith(p)));
     const before = new Map(tests.map((t) => [t.id, t.lastRunStatus || null]));
     console.log('тестів:', tests.length, 'паралельно:', PAR);
     const results = []; let next = 0; let done = 0;

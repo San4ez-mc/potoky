@@ -2244,7 +2244,12 @@ async function runPolicyInner(A, u) {
     if (u.wantsUpsellPhoto && p && !A.turnImage && !A.out.some((o) => o.photoUrls)) {
         const up = Array.isArray(p.upsellItems) && p.upsellItems[0];
         const urlsU = ((up && Array.isArray(up.photoUrls) && up.photoUrls.length) ? up.photoUrls : (p.upsellPhotoUrl ? [p.upsellPhotoUrl] : [])).filter(Boolean).slice(0, 5);
-        if (urlsU.length) { A.out.push({ photoUrls: urlsU, caption: '', step: 'upsell_photo_on_request' }); ctx.agent.upsellPhotoSent = true; u.wantsPhoto = false; }
+        // Ті самі фото вже надіслано щойно (≤15 хв) — не дублюємо альбом, а показуємо, що вони вище (тест «Фото футболок!!!»: двічі те саме).
+        const sentAt = Number(ctx.agent.upsellPhotoSentAt || 0);
+        if (urlsU.length && sentAt && Date.now() - sentAt < 15 * 60 * 1000) {
+            A.out.push({ text: 'Фото ' + String(shortName(up) || 'товару').toLowerCase() + ' я надіслала вище 👆 Якщо їх не видно — напишіть, надішлю ще раз 🙂', step: 'upsell_photo_already' });
+            u.wantsPhoto = false; Q.coverTopics(A, u, ['photo'], 'upsell_photo');
+        } else if (urlsU.length) { A.out.push({ photoUrls: urlsU, caption: '', step: 'upsell_photo_on_request' }); ctx.agent.upsellPhotoSent = true; ctx.agent.upsellPhotoSentAt = Date.now(); u.wantsPhoto = false; }
         else Q.add(A, u, 'Чи можна побачити фото «' + String((up && up.name) || 'товару допродажу').split(/\n/)[0] + '»?', 'upsell_photo_missing'); // фото в каталозі нема — відповість compose або менеджер
     }
     // «Дайте фото цієї кофти» на будь-якому етапі (навіть під час вибору оплати) — надсилаємо фото товару (сесія f9c2ae98: ігнорувалось).

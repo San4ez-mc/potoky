@@ -3034,6 +3034,11 @@ async function runPolicyInner(A, u) {
         A.out.push({ text: await answerThenAsk(A, u, messageText(A.assets, 'n_agent_ask_address_partial', ctx, A.session.id)), step: 'ask_address_partial' }); ctx.agent.lastAsk = 'дані доставки: ' + missing.join(', '); return;
     }
     if (!(ctx.paymentInfo && ctx.paymentInfo.method)) {
+        // Пряма відмова від замовлення на кроці «оберіть оплату 1 чи 2» («Ні, не буду замовляти», «передумав») — відмова, а не
+        // «Ще не бачу вибраного способу оплати» (15.10, FunnelTest Д1/Д2). Заперечення передоплати — окремий скрипт довіри нижче.
+        if ((u.ready === 'no' || u.intent === 'order_no') && !u.prepaymentObjection && !ctx.trustScriptStep && !u.wantsManualReq && !u.payMethod) {
+            A.out.push({ text: messageText(A.assets, 'n_declined_msg', ctx, A.session.id), step: 'declined' }); ctx.declinedAt = Date.now(); ctx.agent.lastAsk = ''; return;
+        }
         if (u.prepaymentObjection && !ctx.trustScriptStep) { A.out.push({ text: messageTextMultiline(A.assets, 'n_agent_trust1', ctx, A.session.id), step: 'trust1' }); ctx.trustScriptStep = 1; ctx.agent.lastAsk = 'оформимо з передплатою 200?'; return; }
         if (ctx.trustScriptStep === 1 && (u.prepaymentObjection || u.trustPromise === false || u.ready === 'no')) { A.out.push({ text: messageText(A.assets, 'n_agent_trust2', ctx, A.session.id), step: 'trust2' }); ctx.trustScriptStep = 2; ctx.agent.lastAsk = 'обіцяєте прийти на пошту?'; return; }
         if (ctx.trustScriptStep === 2 && u.trustPromise === false) { A.out.push({ text: messageText(A.assets, 'n_agent_handoff', ctx, A.session.id), step: 'trust_handoff' }); await pause(A, 'handoff', 'n_agent_trust_declined_admin', '💬 «' + text.slice(0, 200) + '»'); return; }

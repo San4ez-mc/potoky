@@ -117,6 +117,12 @@ async function viaWhisper(key, audioPart, signal) {
 async function geminiFetch(keyList, body, { model, signal } = {}) {
     const m = model || process.env.GEMINI_FALLBACK_MODEL || 'gemini-flash-latest';
     const list = Array.isArray(keyList) ? keyList.filter(Boolean) : [keyList].filter(Boolean);
+    // gemini-flash-latest інколи «думає» попри thinkingBudget:0 (15.10: 154 токени роздумів), а роздуми входять у maxOutputTokens —
+    // малий ліміт (40–400) обривав відповідь посеред JSON: «квитанцію не розпізнано», хоча HTTP 200. Запас на роздуми — тут, для всіх
+    // викликів; довжину самої відповіді задає промпт.
+    if (body && typeof body === 'object' && body.generationConfig && Number(body.generationConfig.maxOutputTokens) > 0 && Number(body.generationConfig.maxOutputTokens) < 4096) {
+        body = { ...body, generationConfig: { ...body.generationConfig, maxOutputTokens: Number(body.generationConfig.maxOutputTokens) + 2048 } };
+    }
     const payload = typeof body === 'string' ? body : JSON.stringify(body);
     const parts = partsOf(payload);
     const audio = parts.find((p) => p.inline_data && /^audio\//i.test(p.inline_data.mime_type || ''));

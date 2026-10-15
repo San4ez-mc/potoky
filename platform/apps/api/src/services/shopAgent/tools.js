@@ -87,8 +87,10 @@ async function receiptVision(A) {
         const t = ((((j.candidates || [])[0] || {}).content || {}).parts || []).map((p) => p.text || '').join('');
         const m = t.match(/\{[\s\S]*\}/);
         if (!g.ok || !m) {
-            A.trace.push({ tool: 'receiptVision', error: 'HTTP ' + g.status });
-            if (!c.testMode) require('@platform/claude').notifyAdminOfServiceOutage(A.session.id, 'Розпізнавання скріншотів оплати', 'Жоден ключ (Gemini, резерв Claude) не розпізнав квитанцію: HTTP ' + g.status + '. Перевірте оплату вручну.').catch(() => {});
+            // Без сповіщення в групу (15.10, власник): оплату звіряє виписка; не знайдено й квитанція нерозпізнана → tryReconcile
+            // сам шле менеджеру дієве «підтвердьте оплату» з кнопками (kind 'unread'). Збій ключів (401/402/429) — alertKey у geminiKey.js.
+            const fr = (((j.candidates || [])[0] || {}).finishReason) || '';
+            A.trace.push({ tool: 'receiptVision', error: 'HTTP ' + g.status + (fr ? ' ' + fr : '') + (m ? '' : ' no-json') });
             return;
         }
         const f = JSON.parse(m[0]);

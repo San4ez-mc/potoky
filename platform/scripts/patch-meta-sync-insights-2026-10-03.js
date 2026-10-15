@@ -7,6 +7,10 @@
 //     (CRM GET /ads/active-summary — вага = розмови за 3 дні);
 //   • витрати в CRM не оновлювались з 12.09 (аналітика реклам стояла).
 // N = context.metaSpendDays (ручний догін), інакше 3. Крон — раз на 5 годин (рішення власника 03.10).
+// 2026-10-15 (Edits 07546f09/ca88ee28, Олексій: «з 7 числа витрати не показуються, за 6-те 227 замість 616»): 06.10 о 17:45
+// хтось перезапустив старий patch-meta-ads-sync-goverla-2026-09-13.js (той замінював flow ЦІЛКОМ) — вузол n_meta_spend
+// зник, витрати перестали надходити (останній прохід 06.10 о 13:10 — звідси неповні 227 $). Той патч тепер оновлює лише
+// n_meta_sync; цей — повертає n_meta_spend. Дні рахуються за Києвом (часовий пояс кабінетів).
 // Перша версія цього патча вставляла блок прямо в n_meta_sync — тут він прибирається (ідемпотентно).
 //
 // Idempotent. Запуск на сервері (після git pull):  node scripts/patch-meta-sync-insights-2026-10-03.js
@@ -41,8 +45,12 @@ else {
   }
 }
 var days = Math.min(40, Math.max(1, Number(context.metaSpendDays) || 3));
-var since = new Date(Date.now() - (days - 1) * 86400000).toISOString().slice(0, 10);
-var until = new Date().toISOString().slice(0, 10);
+// Дні — за часовим поясом рекламних кабінетів (обидва goverla — Europe/Kiev, перевірено 15.10), а не UTC: інакше біля
+// опівночі «сьогодні» в Meta і в CRM розходились би на добу. Кожен прохід ПЕРЕПИСУЄ останні N днів (upsert), тож день,
+// який на першому проході був неповним, за наступні проходи (раз на 5 год) доходить до повної суми з Ads Manager.
+function kyivDay(ms) { try { return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Kyiv', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms)); } catch (e) { return new Date(ms + 3 * 3600000).toISOString().slice(0, 10); } }
+var since = kyivDay(Date.now() - (days - 1) * 86400000);
+var until = kyivDay(Date.now());
 var res = { accounts: accounts.length, days: days, rows: 0, written: 0, errors: 0 };
 async function syncInsights(acct) {
   var after = null, pages = 0;

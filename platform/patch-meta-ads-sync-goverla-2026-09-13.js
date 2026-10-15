@@ -1,7 +1,9 @@
 // Патч: наповнює РЕАЛЬНОЮ логікою бота "meta-ads-sync-goverla", який раніше існував лише як
 // порожній стаб (0 нод) — crontab б'є щодня, webhook.js бачить порожній flow і мовчки нічого
 // не робить (знайдено при розслідуванні 2026-09-13, живий баг реклами: ID/фото/дублі).
-// Ідемпотентно — replace flowDefinition повністю (той самий підхід, що для нового np-бота).
+// Ідемпотентно. 2026-10-15: раніше замінював flowDefinition ЦІЛКОМ — перезапуск 06.10 (postId) стер вузол n_meta_spend
+// (scripts/patch-meta-sync-insights-2026-10-03.js), і витрати з Ads Manager тиждень не надходили в CRM (Edits 07546f09).
+// Тепер оновлює лише код n_meta_sync (або створює start+n_meta_sync у порожньому flow); інші вузли й звʼязки не чіпає.
 
 const fs = require('fs');
 const path = require('path');
@@ -22,10 +24,19 @@ const JS_CODE = fs.readFileSync(path.join(__dirname, 'meta-ads-sync-goverla-code
   ];
   const EDGES = [{ id: 'edge_1', source: 'start_1', target: 'n_meta_sync' }];
 
-  await prisma.flowDefinition.upsert({
-    where: { botId: bot.id },
-    update: { nodes: NODES, edges: EDGES },
-    create: { botId: bot.id, nodes: NODES, edges: EDGES },
-  });
-  console.log('✅ flow застосовано:', bot.id);
+  const flow = await prisma.flowDefinition.findUnique({ where: { botId: bot.id } });
+  if (!flow) {
+    await prisma.flowDefinition.create({ data: { botId: bot.id, nodes: NODES, edges: EDGES } });
+    console.log('✅ flow створено:', bot.id);
+    return;
+  }
+  const nodes = (flow.nodes || []).slice(); const edges = (flow.edges || []).slice();
+  for (const n of NODES) {
+    const i = nodes.findIndex((x) => x.id === n.id);
+    if (i < 0) nodes.push(n);
+    else if (n.id === 'n_meta_sync') nodes[i] = { ...nodes[i], data: { ...nodes[i].data, code: JS_CODE } };
+  }
+  for (const e of EDGES) if (!edges.some((x) => x.source === e.source && x.target === e.target)) edges.push(e);
+  await prisma.flowDefinition.update({ where: { botId: bot.id }, data: { nodes, edges } });
+  console.log('✅ n_meta_sync оновлено (інші вузли збережено):', nodes.map((n) => n.id).join(', '));
 })().catch((e) => { console.error('ERR', e.message, e.stack); process.exit(1); }).finally(() => prisma.$disconnect());

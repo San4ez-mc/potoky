@@ -95,7 +95,7 @@ if (mode === 'digest') {
             method:'POST', headers:{'Content-Type':'application/json'},
             // callbackUrl + postGroupId: публікатор САМ повертає результат (published/failed + externalId) у content2
             body: JSON.stringify({ text: first.text, content: first.text, imageUrl: first.imageUrl || null, videoUrl: first.videoUrl || null,
-              title: post.hook || null, hook: post.hook || null, formatKey: post.formatKey || null, items: chain, postGroupId: post.id, callbackUrl: callbackUrl || null })
+              title: post.hook || null, hook: post.hook || null, tiktok: post.tiktok || null, formatKey: post.formatKey || null, items: chain, postGroupId: post.id, callbackUrl: callbackUrl || null })
           });
           if (!r.ok) throw new Error('HTTP '+r.status);
           autoposted++;

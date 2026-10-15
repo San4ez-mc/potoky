@@ -1722,6 +1722,16 @@ async function runPolicyInner(A, u) {
         if (u.exchangeFor) { rf.exchangeFor = u.exchangeFor; if (!rf.type) rf.type = 'exchange'; }
         const ask = !rf.type && !rf.reason ? 'n_agent_return_ask_type_reason' : (!rf.type ? 'n_agent_return_ask_type' : (!rf.reason ? 'n_agent_return_ask_reason' : (rf.type === 'exchange' && !rf.exchangeFor ? 'n_agent_return_ask_exchange' : '')));
         const askText = ask ? messageText(A.assets, ask, ctx, A.session.id) : '';
+        // Брак у отриманій речі — спершу вибачення, прохання фото браку і як вирішимо (обмін/повернення через «Легке повернення»), а
+        // не одразу «на який розмір обміняти?» (15.10, тест 65). Тип (обмін чи повернення) питаємо, якщо клієнт його сам не назвав.
+        if (!rfCollecting && u.isComplaint) {
+            rf.defect = true; rf.asks = 1; rf.at = Date.now();
+            if (rf.type && !/обмін|обміня|поміня|заміни|поверн|гроші|кошти/i.test(text)) delete rf.type; // аналізатор додумав тип
+            A.out.push({ text: 'Дуже прикро, що так сталося 😔 Вибачте, будь ласка. Надішліть, будь ласка, фото браку' + (ctx.crmOrderId ? '' : ' і номер замовлення або ТТН') + ' — і підкажіть, як вам зручніше: обміняти на таку саму річ чи повернути кошти? Обмін і повернення робимо через «Легке повернення» Нової пошти 📦', step: 'return_defect' });
+            ctx.agent.lastAsk = 'дані для повернення/обміну';
+            await T.alert(A, { title: '⚠️ Претензія: брак у отриманому товарі', main: 'Клієнт: «' + text.slice(0, 300) + '»', details: 'Бот вибачився й попросив фото браку та як вирішити (обмін/повернення). Підключіться, якщо потрібно.' }).catch(() => {});
+            return;
+        }
         if (askText && (rf.asks || 0) < 2) {
             rf.asks = (rf.asks || 0) + 1; rf.at = Date.now();
             A.out.push({ text: await answerThenAsk(A, u, askText), step: 'return_collect' });

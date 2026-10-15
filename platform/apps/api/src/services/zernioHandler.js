@@ -1956,6 +1956,8 @@ async function recordManagerMessage(botId, session, { text, attachments, ids = {
         return { ok: true, processed: 0, dedupedRepeat: true };
     }
     await db.message.create({ data: cleanJsonDeep({ sessionId: session.id, role: 'assistant', content: _label, metadata: { source: 'zernio_inbox', zernioMessageId: ids.zernioMessageId || null, platformMessageId: ids.platformMessageId || null, ...(ids.channel ? { channel: ids.channel, metaMessageId: ids.metaMessageId || null } : {}), status: 'sent', ...(_sentAtts.length ? { attachments: _sentAtts.slice(0, 10) } : {}) } }) });
+    // Відповідь менеджера на питання, яке бот передав йому, — у базу знань (shopAgent/kbFromManager.js, 15.10). Лише текст.
+    if (_sentText && String(_sentText).trim()) { try { await require('./shopAgent/kbFromManager').capture(botId, session, _sentText); } catch (e) { /* best-effort */ } }
     // 2026-09-07 20:05 (рішення власника, бойовий старт): менеджер написав клієнту з інбокса → сесія стає на
     // ЗВИЧАЙНУ паузу (funnelPaused — та сама іконка в адмінці). Бот мовчить, доки менеджер сам не зніме паузу.
     try {

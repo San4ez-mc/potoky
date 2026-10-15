@@ -185,7 +185,9 @@ async function kbAsk(A, question) {
     if (cls.kind !== 'unique') return { skipped: cls.kind, reason: cls.reason };
     // ШІ (kbMatch) уже визначив: чи є таке саме питання в базі (matchId → лише лічильник) і чого воно стосується (scope).
     const km = (A._kbm && A._kbm[q]) || null;
-    await crmFetch(A.keys, '/knowledge/from-dialog', { method: 'POST', body: JSON.stringify({ question: q.slice(0, 500), sessionId: A.session.id, productId: (A.ctx.product && A.ctx.product.id) || null, igUsername: A.ctx.igUsername || null, scope: (km && km.scope) || undefined, matchId: (km && km.entry && km.entry.id) || undefined }) }, 4000).catch(() => {});
+    const rk = await crmFetch(A.keys, '/knowledge/from-dialog', { method: 'POST', body: JSON.stringify({ question: q.slice(0, 500), sessionId: A.session.id, productId: (A.ctx.product && A.ctx.product.id) || null, igUsername: A.ctx.igUsername || null, scope: (km && km.scope) || undefined, matchId: (km && km.entry && km.entry.id) || undefined }) }, 4000).catch(() => {});
+    // Чернетка без відповіді — памʼятаємо її id: перша відповідь менеджера в цій розмові запишеться в неї (kbFromManager.js, 15.10).
+    if (rk && rk.ok && rk.data && rk.data.id && !String(rk.data.answer || '').trim()) A.ctx.agent.kbDrafts = (A.ctx.agent.kbDrafts || []).concat([{ id: rk.data.id, q: q.slice(0, 200), at: Date.now() }]).slice(-5);
     return { saved: true };
 }
 /** Бот відповів клієнту записом з бази знань — +1 до лічильника «скільки разів питали». */

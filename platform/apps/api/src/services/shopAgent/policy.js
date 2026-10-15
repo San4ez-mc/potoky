@@ -219,6 +219,13 @@ function applySetPricing(ctx, pp) {
     ctx.agent.setPricing = { total, edited: true };
     return ctx.agent.setPricing;
 }
+/** «Записала: …» + нова сума складу, коли він уже не той, що в CRM (клієнт бачить, що зміна врахована в ціні — тест Н5, 15.10). */
+function setEditText(ctx) {
+    const sel = Array.isArray(ctx.setSelection) ? ctx.setSelection : [];
+    const edited = sel.length && !setMatchesOriginal(sel, ctx.agent.setOriginal);
+    const total = edited ? setSelectionTotal(sel) : 0;
+    return 'Записала: ' + ctx.agent.setEditNote + ' ✅' + (total > 0 ? '\nРазом зараз: ' + total + ' грн' : '');
+}
 /** Застосувати правку складу з розуміння ходу. Повертає true, якщо щось реально змінилось. */
 async function applySetEdit(A, u, pp) {
     const { ctx } = A; const sel = ctx.setSelection; const original = ctx.agent.setOriginal;
@@ -226,7 +233,8 @@ async function applySetEdit(A, u, pp) {
     const notes = []; let changed = false;
     if (u.removeItem) {
         const hit = matchSetItem(u.removeItem, sel, catNames);
-        const gone = !hit && Array.isArray(original) ? matchSetItem(u.removeItem, original, catNames) : null;
+        const oos = (pp && Array.isArray(pp.setOutOfStock) ? pp.setOutOfStock : []).find((n) => stemsOf(n).some((st) => String(u.removeItem).toLowerCase().includes(st.slice(0, 4))));
+        const gone = hit ? null : ((Array.isArray(original) ? matchSetItem(u.removeItem, original, catNames) : null) || (oos ? { name: oos } : null));
         if (hit) { ctx.setSelection = sel.filter((x) => x !== hit); notes.push('прибрала: ' + hit.name); changed = true; }
         // Річ уже не в складі (немає в наявності чи прибрана раніше) — «замість лоферів…» не означає «не знайшла» (15.10, тест Н5).
         else if (gone) notes.push(gone.name + ' — і так не входить у замовлення');
@@ -2185,7 +2193,7 @@ async function runPolicyInner(A, u) {
             const prodArts = (p0.setItems || []).map((it) => String(it.article).toUpperCase()).sort().join('|');
             if (nowArts !== prodArts) await narrowSetTo(A, ctx.setSelection.map((s) => s.article));
             if (edited && ctx.agent.setEditNote) {
-                A.out.push({ text: 'Записала: ' + ctx.agent.setEditNote + ' ✅', step: 'set_edit' });
+                A.out.push({ text: setEditText(ctx), step: 'set_edit' });
                 Q.coverTopics(A, u, ['order_change'], 'set_edit'); // «Записала: …» і є відповіддю на прохання змінити склад/розмір/колір
             }
         }
@@ -2580,7 +2588,7 @@ async function runPolicyInner(A, u) {
             const editedEarly = await applySetEdit(A, u, pp);
             A._setEditDone = true;
             if (editedEarly && ctx.agent.setEditNote) {
-                A.out.push({ text: 'Записала: ' + ctx.agent.setEditNote + ' ✅', step: 'set_edit' });
+                A.out.push({ text: setEditText(ctx), step: 'set_edit' });
                 Q.coverTopics(A, u, ['order_change'], 'set_edit');
             }
         }

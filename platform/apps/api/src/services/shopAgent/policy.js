@@ -861,6 +861,13 @@ async function present(A) {
         else if (ctx.sizeInput && ctx.sizeInput.height && ctx.sizeInput.weight) card = card.replace(/\n*👉[^\n]*(зріст|вага)[^\n]*/i, '');
         if (ctx.sizeInput && ctx.sizeInput.shoeSize) card = card.replace(/\n*👉[^\n]*розмір взуття[^\n]*/i, ''); // розмір взуття вже названо (тест 165)
     } catch (e) { /* best-effort */ }
+    // Розміри в тексті картки CRM зовсім не збігаються з розмірами варіантів (джинси j0032: у тексті «29…36», варіанти — XS…3XL) —
+    // показуємо розміри варіантів: саме з них підбирається й оформлюється розмір (15.10, тест 25).
+    try {
+        const real = productSizes(p); const mm = card.match(/^([^\n]*Розміри:\s*)([^\n]+)$/m);
+        const nz = (z) => String(z).trim().toUpperCase().replace(/\s*\(.*$/, '').replace(/^2XL$/, 'XXL').replace(/^3XL$/, 'XXXL');
+        if (real.length && mm && !p.isSet) { const said = mm[2].split(/[,;]+/).map(nz).filter(Boolean); if (said.length && !said.some((z) => real.map(nz).includes(z))) card = card.replace(mm[0], mm[1] + real.join(', ')); }
+    } catch (e) { /* best-effort */ }
     if (!urls.length) card = card + '\n\nНа жаль, фото цього товару зараз відсутнє 🙏';
     // «Немає в наявності» в CRM (outOfStock, 03.10). Окремий товар: чесно кажемо й не просимо параметрів.
     // Комплект без частини речей: ціна повного комплекту вже не діє — прибираємо її рядок і кажемо, з чого він зараз і за скільки.
@@ -2509,6 +2516,15 @@ async function runPolicyInner(A, u) {
             if (A.justPresented) { const card = A.out.find((o) => o.step === 'present'); if (card && card.text) card.text = card.text.replace(/\n*👉[^\n]*(зріст|вага)[^\n]*/i, ''); }
             const catParams = String(paramsPrompt || '').trim();
             const _ps = productSizes(pp); const sizesHint = _ps.length ? ' (у цієї моделі розміри ' + _ps.join(', ') + ')' : '';
+            // Числовий розмір («W32», «32») для моделі з літерними розмірами — не «перевірю, чи 32 підійде», а чесно: позначення інше,
+            // підбираємо за параметрами (15.10, тест 25; рішення власника 30.09 — джинси за зростом і вагою, розміри з CRM).
+            const numericClaim = /^\d{2}$/.test(ctx.agent.sizeClaim) && _ps.length && !_ps.some((z) => /^\d+$/.test(z));
+            if (numericClaim) {
+                delete si.clothingSize; ctx.sizeInput = si; delete ctx.agent.sizeClaim;
+                A.out.push({ text: await answerThenAsk(A, u, 'У цієї моделі розміри літерні — ' + _ps.join(', ') + ' (не за талією), тож розмір ' + String(u.clothingSize || '').toUpperCase() + ' тут не позначається 🙂 Напишіть, будь ласка, ' + (catParams ? humanizeParamsPrompt(catParams) : 'ваш зріст і вагу') + ' — підберу потрібний.'), step: 'ask_params' });
+                ctx.agent.lastAsk = 'зріст і вага';
+                return;
+            }
             A.out.push({ text: catParams
                 ? 'Підберу розмір саме під вас' + sizesHint + ' 🙂 Напишіть, будь ласка, ' + humanizeParamsPrompt(catParams) + ' — і я перевірю, чи ' + ctx.agent.sizeClaim + ' вам підійде.'
                 : 'Підберу розмір саме під вас' + sizesHint + ' 🙂 ' + messageText(A.assets, 'n_agent_ask_size_both', ctx, A.session.id) + '\n— і я перевірю, чи ' + ctx.agent.sizeClaim + ' вам підійде.', step: 'size_verify_ask' });

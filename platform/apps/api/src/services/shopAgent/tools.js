@@ -64,7 +64,7 @@ async function extraResolve(A) {
 }
 async function orderPrefill(A) { return tool(A, 'n_order_prefill'); }
 async function intlRoute(A) { return tool(A, 'n_intl_route'); }
-async function payAmount(A) { return tool(A, 'n_pay_amount'); }
+async function payAmount(A) { require('./basket').sync(A.ctx); return tool(A, 'n_pay_amount'); } // рядки кошика (B4) — у суму як додаткові позиції
 async function npCheck(A) { return tool(A, 'n_np_check'); }
 async function reconcile(A) { await receiptVision(A); return tool(A, 'n_reconcile'); }
 /**

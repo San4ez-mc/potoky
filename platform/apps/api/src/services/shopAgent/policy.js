@@ -133,7 +133,7 @@ function initSetSelection(pp) {
  * тож кольори, названі разом із вибором речей, інакше губились (2026-10-02, живий кейс c6d03189). */
 function rememberSetItemColors(ctx, u) {
     const pairs = (Array.isArray(u.itemColors) ? u.itemColors : []).filter((ic) => ic && ic.item && (ic.color || ic.size));
-    if (pairs.length) ctx.agent.setItemColorHints = (ctx.agent.setItemColorHints || []).concat(pairs).slice(-8);
+    if (pairs.length) { ctx.agent.setItemColorHints = (ctx.agent.setItemColorHints || []).concat(pairs).slice(-8); ctx.agent.setItemColorHintsLast = pairs; }
 }
 function stemsOf(name) {
     return String(name || '').toLowerCase().replace(/[«»().,]/g, ' ').split(/\s+/).filter((w) => w.length >= 4 && !/^(чоловіч|жіноч|дитяч|артикул|комплект)/.test(w)).map((w) => w.slice(0, 5));
@@ -394,6 +394,10 @@ async function pickSingleSetItem(A, article) {
     if (!item) { ctx.setPick = { setChoice: 'item', article }; await T.setApply(A); return; }
     ctx.product = { ...item, _via: 'set_item:' + String((setP && setP.sku) || '') + ':' + article };
     if (supplier) ctx.supplier = supplier;
+    // Розмір, порахований для комплекту, — не розмір цієї речі: рахуємо заново за її сіткою (15.10, sandrik_m: 187/115 — светра такого
+    // розміру нема, але після «тільки светр» лишились розміри комплекту, і бот учетверте питав колір). Параметри людини лишаються.
+    for (const k of ['recommendedSize', 'sizeSource', 'isSetSizeCalc', 'setSizesText', 'setSizeMap', 'setSizeOor', 'sizeOutOfRange', 'sizeOorReason', 'sizeOorAlternative', 'sizeReplyText', 'sizeColorFollowup']) delete ctx[k];
+    delete ctx.agent.sizeCalcKey; delete ctx.agent.availKey;
     ctx.setMode = 'item'; ctx.colorChoice = null; delete ctx.setPick;
 }
 
@@ -1424,6 +1428,13 @@ async function runPolicyInner(A, u) {
         if (ctx.crmOrderId) { A.out.push({ text: 'Звісно 🙂 Напишіть, будь ласка, номер нового відділення чи поштомата — передам менеджеру, щоб змінили адресу до відправки.', step: 'branch_change_post' }); await T.alert(A, 'n_agent_post_extra_admin', { details: '📍 Клієнт хоче змінити відділення після оформлення: «' + text.slice(0, 200) + '»' }); return; }
         A.out.push({ text: 'Звісно 🙂 Напишіть, будь ласка, номер нового відділення чи поштомата Нової пошти.', step: 'branch_change' }); ctx.agent.lastAsk = 'дані доставки: № відділення або поштомата'; return;
     }
+    // Відгук про вже отриману покупку («Дякую. Забрав. Все супер», «Я відгук залишити») — дякуємо, нічого не продаємо (15.10,
+    // nazar.sovych, jester30_: замовлення оформлював менеджер, бот про нього не знав і показав картку / спитав колір).
+    if (u.feedback && !u.isComplaint && !u.returnRequest && !(u.questions || []).length && !(u.productHint && (u.productHint.article || u.productHint.fromList))) {
+        A.out.push({ text: 'Дякуємо за відгук! 💛 Дуже раді, що все сподобалось. Звертайтесь, коли захочете ще щось — завжди допоможемо 🙂', step: 'feedback_thanks' });
+        ctx.agent.feedbackAt = Date.now(); ctx.agent.lastAsk = '';
+        return;
+    }
     // 0. Людина / претензія / повернення
     // «Ви людина?» — питання, а не прохання (14.10, fdde77d9: бот покликав менеджера і замовк, менеджер відповів через 8 год,
     // продаж втрачено). Чесно відповідаємо й ведемо розмову далі; менеджера кличемо, лише коли клієнт його просить.
@@ -1919,7 +1930,8 @@ async function runPolicyInner(A, u) {
             if (!hintResolved && u.questions.length) await escalateUnresolved(A, u.questions[0]);
             A.out.push({ text: txt, step: 'hint' }); ctx.agent.lastAsk = 'який із показаних товарів цікавить';
             return;
-        } else if (!P(ctx) && ctx.agent.hintList && !A.turnImage && /^[\s?!.…]*$|^\s*(ау|алло|ало|ей|еу|ну)[\s?!.]*$/i.test(text.trim())) {
+        } else if (!P(ctx) && ctx.agent.hintList && !A.turnImage && /^[\s?!.…]*$|^\s*(ау|алло|ало|ей|еу|ну|ця|цю|оця|оцю|ось\s+ця|ось\s+цю|цей|оцей|ось\s+цей|така|такий|ось\s+така)[\s?!.)]*$/i.test(text.trim())) {
+            // «Ця» у відповідь на фото списку, яке бот не зміг звʼязати з товаром (15.10, byloiproshlo), — просимо номер, а не «що цікавить».
             // (!A.turnImage: фото без тексту — це новий сигнал «ось цей товар», а не «?»; 05.10 aze111274 — «оберіть номер» на фото.)
             // 2026-09-24 (FunnelTest 41): «?»/«Ау» після показаного списку — нетерплячка, а не новий запит; показуємо
             // список ще раз замість скидання в «що вас цікавить».
@@ -2469,6 +2481,10 @@ async function runPolicyInner(A, u) {
     // «Без взуття» / «додайте джинси» / «дві футболки» перераховують склад і суму одразу, без
     // приміток менеджеру (рішення власника 2026-09-14) — доки замовлення ще не в CRM.
     if (pp.isSet && ctx.setMode === 'set') {
+        // «Ні. Дякую.» на прохання розмірів/кольорів речей комплекту — відмова, а не привід питати знову (15.10, rogova3453).
+        if (!ctx.crmOrderId && (u.ready === 'no' || u.intent === 'order_no') && !u.questions.length && !u.setItemsWanted && !u.removeItem && !u.changeRequest) {
+            A.out.push({ text: messageText(A.assets, 'n_declined_msg', ctx, A.session.id), step: 'declined' }); ctx.declinedAt = Date.now(); ctx.agent.lastAsk = ''; return;
+        }
         if (!Array.isArray(ctx.setSelection)) {
             ctx.agent.setOriginal = initSetSelection(pp);
             ctx.setSelection = initSetSelection(pp);
@@ -2549,7 +2565,10 @@ async function runPolicyInner(A, u) {
             // регулярка читала як ОДНУ позицію, і джинси ставали чорними (2026-09-30, правка 8292a6c8). Нарізка тексту — лише запас.
             // Спершу пари з попередніх ходів (сказані до підбору розміру), потім цього — новіше перекриває.
             // Збережені пари лише заповнюють порожнє (не повертають колір, який клієнт потім змінив); пари цього ходу — перекривають.
-            const curPairs = Array.isArray(u.itemColors) ? u.itemColors : [];
+            // Кольори, названі ще до кроку розміру («Чорна і біла футболка» → 2 футболки; 15.10, innastepanets: записалась одна) — останній
+            // такий перелік теж рахуємо як склад, а не лише пари цього ходу.
+            const curPairs = Array.isArray(u.itemColors) && u.itemColors.length ? u.itemColors : (Array.isArray(ctx.agent.setItemColorHintsLast) ? ctx.agent.setItemColorHintsLast : []);
+            delete ctx.agent.setItemColorHintsLast;
             // Клас G (14.10, Балаба Микола fbb6087b: «2 кофти, 2 джинси, 3 футболки» різних кольорів — бот лишив по одній штуці на
             // позицію й порахував 4 597 грн замість 6 388, менеджер добирав 1 791). Власник: оформлює бот. Кілька штук однієї речі
             // (різних кольорів — окремі пари itemColors; одного кольору — qty пари) = стільки ж позицій цієї речі, кожна свого кольору.

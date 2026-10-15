@@ -101,7 +101,15 @@ async function resolveShoppingIntent(A, u, tool) {
     // мутації, а не лише ctx.product — інакше стан презентації розсинхронізується з тим, який
     // товар насправді лишився активним.
     const ctxSnapshotBefore = Object.assign({}, ctx);
-    Object.assign(ctx, await matchProduct(ctx, keys, text, { botId: A.botId }));
+    // Клієнт цим ходом показує товар (сторіз, фото, пересланий пост), а реклама, з якої він колись прийшов, — стара: у цьому пошуку
+    // реклама не бере участі. Інакше привʼязка реклами перемагала свіжий сигнал щоразу (15.10, _mishko.prvt_: прийшов з реклами
+    // пуховика, відповідав на сторіз комплекту set1120 — «Ціна?», «Та не пуховик скільки коштує» — бот 6 разів про пуховик).
+    const adBak = (!A.newEntryAd && (signal.photoUrl || signal.forwardedPost) && (ctx.entryAd || ctx.entryAdId))
+        ? { entryAd: ctx.entryAd, entryAdId: ctx.entryAdId, adTitle: ctx.adTitle, adCaption: ctx.adCaption, lastReferral: ctx.lastReferral } : null;
+    if (adBak) for (const k of Object.keys(adBak)) delete ctx[k];
+    try { Object.assign(ctx, await matchProduct(ctx, keys, text, { botId: A.botId })); }
+    finally { if (adBak) for (const [k, v] of Object.entries(adBak)) if (v !== undefined) ctx[k] = v; }
+    if (adBak) A.trace.push({ step: 'match_without_old_ad', signal: signal.photoUrl ? 'photo/story' : 'post' });
     if (!hasAnySignal(signal) && nameTry && !(ctx.product && ctx.product.sku && /^user_name/.test(String(ctx.product._via || '')))) {
         // Пошук лише за назвою не дав точного збігу — нічого не підставляємо (жодних «найближчих» товарів на «Дякую» тощо).
         for (const k of Object.keys(ctx)) { if (!(k in ctxSnapshotBefore)) delete ctx[k]; }

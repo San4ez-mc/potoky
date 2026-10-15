@@ -486,6 +486,21 @@ async function main() {
         await runPolicy(C, freshU({ intent: 'paid', claimsPaid: true }));
         check('61.4 квитанція на ФОП, грошей ще нема → у групу нічого (перезвірка знайде)', !(C.ctx.testAlerts || []).length, (C.ctx.testAlerts || []).join(' | '));
     }
+    // ── 62. Правки 15.10.
+    {
+        // 62.1 відгук після отриманого замовлення (nazar.sovych, jester30_) — подяка, без картки й питань про колір.
+        const A = freshA({ turnText: 'Дякую. Забрав. Все супер' });
+        A.ctx.product = { sku: 'A0191', name: 'Костюм', price: 1979, colors: 'Чорний, Графітовий' }; A.ctx.agent.presentedSku = 'A0191';
+        await runPolicy(A, freshU({ intent: 'thanks', feedback: true }));
+        check('62.1 «Дякую. Забрав. Все супер» → подяка за відгук, без продажу', A.out.map((o) => o.step).join(',') === 'feedback_thanks', A.out.map((o) => o.step).join(','));
+        // 62.3 «Ні. Дякую.» на прохання розмірів речей комплекту — відмова (rogova3453), а не повтор прохання.
+        const B = freshA({ turnText: 'Ні.Дякую.' });
+        B.ctx.product = { sku: 'set1120', name: 'Комплект', isSet: true, price: 3290, setItems: [{ article: 'A0148', name: 'Светр', price: 1690, colors: ['Чорний'] }, { article: 'j0032', name: 'Джинси', price: 1590, colors: ['Синій'] }] };
+        Object.assign(B.ctx, { setMode: 'set', isSetSizeCalc: true, recommendedSize: 'XL' }); B.ctx.agent.presentedSku = 'set1120';
+        await runPolicy(B, freshU({ intent: 'order_no', ready: 'no' }));
+        const st = B.out.map((o) => o.step).join(',');
+        check('62.3 «Ні. Дякую.» на кроці комплекту — відмова, без повтору прохання розмірів', /declined/.test(st) && !/set_size_ask|set_color_ask/.test(st) && !!B.ctx.declinedAt, st);
+    }
     // ── 56.1 (аудит M2): допродаж кольору, якого нема в наявності, не записуємо — кажемо чесно й пропонуємо наявні.
     {
         const tee = { id: 't1', sku: 'L0056', name: 'Футболка оверсайз база', customerName: 'Футболка оверсайз база', price: 449, offers: [

@@ -302,6 +302,19 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
                 return t ? Object.assign({}, o, { text: t }) : (o.photoUrls ? Object.assign({}, o, { text: undefined }) : null);
             }).filter(Boolean);
         }
+        // Одне й те саме прохання двічі за ЦЕЙ хід (15.10, mike.sitarchuk: відповідь на питання сама дописала «лишилось обрати колір»
+        // зі списком, а слідом пішло те саме прохання кроку) — лишаємо останнє (крок), з попереднього прибираємо прохання й усе після нього.
+        for (const kd of ASK_KINDS) {
+            const idx = A.out.map((o, i) => (o.text && !o.noMerge && String(o.text).split(/(?<=[.!?…])\s+|\n/).some((snt) => kd.isAsk(snt)) ? i : -1)).filter((i) => i >= 0);
+            for (const i of idx.slice(0, -1)) {
+                const t = String(A.out[i].text);
+                const parts = t.split(/(?<=[.!?…])\s+|\n/); const first = parts.find((snt) => kd.isAsk(snt));
+                const cut = first ? t.slice(0, t.indexOf(first)).trim() : t;
+                logger.info('[shopAgent] прохання двічі за хід — прибрано з попереднього повідомлення', { sessionId, kind: kd.kind, step: A.out[i].step });
+                A.out[i] = cut ? Object.assign({}, A.out[i], { text: cut }) : Object.assign({}, A.out[i], { text: '', _drop: true });
+            }
+        }
+        A.out = A.out.filter((o) => !o._drop);
         // Повідомлення, майже дослівно таке саме, як бот уже надіслав (після повідомлення клієнта або < 90 с тому), — не дублюємо.
         const stems = (t) => new Set(String(t || '').toLowerCase().split(/[^a-zа-яіїєґ0-9]+/i).filter((w) => w.length >= 4).map((w) => w.slice(0, 6)));
         const sim = (a, b) => { const x = stems(a), y = stems(b); if (!x.size || !y.size) return 0; let n = 0; for (const w of x) if (y.has(w)) n++; return n / Math.max(x.size, y.size); };

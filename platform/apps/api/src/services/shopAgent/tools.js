@@ -340,6 +340,26 @@ async function returnAttachTtn(A, ttn) {
     return !!r.ok;
 }
 
+// ── Тікет у CRM «Перевірки» (сторінка Олексія) — для того, що виправляють у ДАНИХ CRM, а не менеджери в розмові ──────────────
+// Група менеджерів — лише для дій у розмові (рішення власника 14.10). Розбіжність привʼязки реклами, товар без даних тощо —
+// сюди, один відкритий тікет на ключ (key = source), а не сповіщення на кожного клієнта (15.10, _0nufriy_: «реклама привʼязана не
+// до того товару?» у групі, хоча бот сам відповів клієнту).
+async function crmCheck(A, { key, title, details, pageUrl, priority }) {
+    const { ctx } = A;
+    if (ctx.testMode) { A.trace.push({ crmCheck: title, skipped: 'testMode' }); ctx.testAlerts = [...(ctx.testAlerts || []), 'crm-check: ' + title]; return false; }
+    const list = await crmFetch(A.keys, '/crm-checks', {}, 5000);
+    const dup = Array.isArray(list.data) && list.data.find((t) => t && t.source === key && t.status !== 'closed');
+    const link = { label: (A.user && A.user.username ? '@' + A.user.username : 'клієнт') + ' — розмова', url: 'https://flows.fineko.space/sessions/' + A.session.id };
+    if (dup) {
+        const links = Array.isArray(dup.sessionLinks) ? dup.sessionLinks : [];
+        if (links.length < 10 && !links.some((l) => l && l.url === link.url)) await crmFetch(A.keys, '/crm-checks/' + dup.id, { method: 'PATCH', body: JSON.stringify({ sessionLinks: [...links, link] }) }, 5000);
+        A.trace.push({ crmCheck: title, dup: dup.id }); return true;
+    }
+    const r = await crmFetch(A.keys, '/crm-checks', { method: 'POST', body: JSON.stringify({ title, details, page: 'Реклама', pageUrl: pageUrl || '/ads', priority: priority || 'normal', sessionLinks: [link], createdBy: 'bot', source: key }) }, 5000);
+    A.trace.push({ crmCheck: title, ok: r.ok, status: r.status });
+    return r.ok;
+}
+
 // ── Telegram-алерт менеджеру (той самий формат, що notifyTg-ноди) ─────────────────────────────
 async function alert(A, nodeIdOrFields, extra = {}) {
     const { ctx, keys, session } = A;
@@ -383,4 +403,4 @@ async function alert(A, nodeIdOrFields, extra = {}) {
     return !!j.ok;
 }
 
-module.exports = { receiptKind, paymentConfirmAlert, adTouchSync, tool, resolveProduct, setApply, calcSize, checkAvail, availSearch, extraResolve, orderPrefill, intlRoute, payAmount, npCheck, reconcile, crmOrder, supplierRoute, supplierOrder, confirmPrep, ttnSync, returnCrmUpdate, returnCreate, returnAttachTtn, kbContext, kbAsk, kbHit, createInvoice, deleteInvoice, monoStatement, markConsumed, funnelStage, alert, activeFop, clientOrder };
+module.exports = { receiptKind, paymentConfirmAlert, adTouchSync, tool, resolveProduct, setApply, calcSize, checkAvail, availSearch, extraResolve, orderPrefill, intlRoute, payAmount, npCheck, reconcile, crmOrder, supplierRoute, supplierOrder, confirmPrep, ttnSync, returnCrmUpdate, returnCreate, returnAttachTtn, kbContext, kbAsk, kbHit, createInvoice, deleteInvoice, monoStatement, markConsumed, funnelStage, alert, crmCheck, activeFop, clientOrder };

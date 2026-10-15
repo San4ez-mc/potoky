@@ -1939,7 +1939,18 @@ async function runPolicyInner(A, u) {
                 if (A.justPresented) dropQuestionsAnsweredByCard(A, u);
             }
             else if (u.wantsPhoto && !A.turnImage && (Date.now() - Number(ctx.presentedAt)) > 2 * 60 * 1000) { const urls = firstPhotoUrls(P(ctx)); if (urls.length) A.out.push({ photoUrls: urls, caption: '', step: 'photo_again' }); }
-            if (ctx.adLinkMismatchAt && !ctx.adLinkMismatchAlertedAt) { await T.alert(A, 'n_ad_conflict_admin'); ctx.adLinkMismatchAlertedAt = Date.now(); }
+            // Розбіжність привʼязки реклами — це дані CRM (Олексій), а не дія менеджера в розмові: бот уже відповів клієнту за привʼязкою.
+            // Тікет у «Перевірки» — один на рекламу, розмови додаються до нього посиланнями (15.10, _0nufriy_; група — лише для дій).
+            if (ctx.adLinkMismatchAt && !ctx.adLinkMismatchAlertedAt) {
+                const adKey = String(ctx.entryAd || ctx.entryAdId || (ctx.lastReferral && (ctx.lastReferral.ad_id || ctx.lastReferral.adId)) || '');
+                await T.crmCheck(A, {
+                    key: 'ad-link:' + (adKey || String(ctx.adLinkMismatch).slice(0, 80)),
+                    title: 'Привʼязка реклами: ' + String(ctx.adLinkMismatch).slice(0, 180),
+                    details: String(ctx.adLinkMismatch) + '\n\nБот показав клієнтам товар за привʼязкою в CRM і відповідає далі сам. Перевірте: якщо привʼязка правильна, а в тексті поста помилка чи артикулу нема в CRM — закрийте тікет із відповіддю; якщо привʼязка хибна — перепривʼяжіть рекламу. Посилання на розмови нижче додаються самі.',
+                    pageUrl: '/ads',
+                });
+                ctx.adLinkMismatchAlertedAt = Date.now();
+            }
             // нижче — продовжуємо тим самим ходом (параметри/колір могли бути вже в повідомленні)
         } else if (r.status === 'hint') {
             // 2026-10-14 (власник, 7cac4f9b): різні товари — кожне фото з НОМЕРОМ позиції (малює image-processor при відправці) і

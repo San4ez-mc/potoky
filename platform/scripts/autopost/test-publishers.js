@@ -208,6 +208,48 @@ async function t(name, fn) { try { await fn(); passed++; console.log('✅', name
         assert.ok(/INIT_FAILED/.test(r.publishError)); assert.strictEqual(has(calls, 'upload.tiktok').length, 0);
     });
 
+    // ── TikTok: вікно публікації (creator_info + вибір користувача) ───────────
+    const creatorData = { creator_nickname: 'KIRO', creator_username: 'kiro0333', creator_avatar_url: 'https://a/x.jpg',
+        privacy_level_options: ['SELF_ONLY'], comment_disabled: false, duet_disabled: true, stitch_disabled: false, max_video_post_duration_sec: 600 };
+    await t('tiktok: action=creator_info → callback з ніком/приватністю/заборонами, без публікації', async () => {
+        const calls = mockFetch([
+            { when: (u) => u.includes('creator_info/query'), reply: resp({ data: creatorData, error: { code: 'ok' } }) },
+            { when: (u) => u.includes('/cb'), reply: resp({}) },
+        ]);
+        const r = await run('publish-tiktok-node-code.js', { action: 'creator_info', requestId: 'rq1', callbackUrl: 'https://c2/cb' }, { TIKTOK_ACCESS_TOKEN: 'tok' });
+        assert.strictEqual(r.creatorInfoOk, true); assert.ok(!r.publishError);
+        const cb = has(calls, '/cb'); assert.strictEqual(cb.length, 1);
+        const body = JSON.parse(cb[0].body);
+        assert.strictEqual(body.requestId, 'rq1'); assert.strictEqual(body.ok, true);
+        assert.strictEqual(body.creator.nickname, 'KIRO'); assert.deepStrictEqual(body.creator.privacyLevelOptions, ['SELF_ONLY']);
+        assert.strictEqual(body.creator.duetDisabled, true); assert.strictEqual(body.creator.maxVideoPostDurationSec, 600);
+        assert.strictEqual(has(calls, 'video/init').length, 0, 'публікації в режимі creator_info нема');
+        assert.ok(!('status' in body), 'не має імітувати статус публікації');
+    });
+    await t('tiktok: creator_info без ключів → callback ok:false (а не мовчання)', async () => {
+        const calls = mockFetch([{ when: (u) => u.includes('/cb'), reply: resp({}) }]);
+        const r = await run('publish-tiktok-node-code.js', { action: 'creator_info', requestId: 'rq2', callbackUrl: 'https://c2/cb' }, {});
+        assert.strictEqual(r.creatorInfoOk, false);
+        const body = JSON.parse(has(calls, '/cb')[0].body);
+        assert.strictEqual(body.ok, false); assert.ok(/NEED_TIKTOK_KEYS/.test(body.error)); assert.strictEqual(body.requestId, 'rq2');
+    });
+    await t('tiktok: вибір користувача застосовується як є (коментарі/дует/стіч вимкнені, реклама, AI-мітка, підпис)', async () => {
+        const calls = mockFetch(tiktokOk(['PUBLIC_TO_EVERYONE', 'SELF_ONLY']));
+        const r = await run('publish-tiktok-node-code.js', { videoUrl: 'https://v/x.mp4', postGroupId: 'g9', callbackUrl: 'https://c2/cb',
+            tiktok: { privacy_level: 'SELF_ONLY', title: 'Мій підпис #kiro', allow_comment: true, allow_duet: false, allow_stitch: false, brand_organic: true, brand_content: false, is_aigc: true } }, { TIKTOK_ACCESS_TOKEN: 'tok' });
+        assert.strictEqual(r.publishError, null);
+        const pi = JSON.parse(has(calls, 'video/init')[0].body).post_info;
+        assert.strictEqual(pi.privacy_level, 'SELF_ONLY'); assert.strictEqual(pi.title, 'Мій підпис #kiro');
+        assert.strictEqual(pi.disable_comment, false); assert.strictEqual(pi.disable_duet, true); assert.strictEqual(pi.disable_stitch, true);
+        assert.strictEqual(pi.brand_organic_toggle, true); assert.strictEqual(pi.brand_content_toggle, false); assert.strictEqual(pi.is_aigc, true);
+    });
+    await t('tiktok: обраний рівень приватності недоступний акаунту → помилка, без публікації і без мовчазної підміни', async () => {
+        const calls = mockFetch(tiktokOk(['SELF_ONLY']));
+        const r = await run('publish-tiktok-node-code.js', { videoUrl: 'https://v/x.mp4', callbackUrl: 'https://c2/cb', postGroupId: 'g',
+            tiktok: { privacy_level: 'PUBLIC_TO_EVERYONE', title: 'x' } }, { TIKTOK_ACCESS_TOKEN: 'tok' });
+        assert.ok(/PRIVACY_NOT_ALLOWED/.test(r.publishError)); assert.strictEqual(has(calls, 'video/init').length, 0);
+    });
+
     // ── YouTube ────────────────────────────────────────────────────────────
     const ytKeys = { YT_CLIENT_ID: 'i', YT_CLIENT_SECRET: 's', YT_REFRESH_TOKEN: 'r' };
     const ytOk = (finalJson) => [
@@ -283,6 +325,13 @@ async function t(name, fn) { try { await fn(); passed++; console.log('✅', name
         assert.strictEqual(b.title, 'Хук ролика'); assert.strictEqual(b.callbackUrl, 'https://c2/done?token=t'); assert.strictEqual(b.postGroupId, 'pg1');
         assert.ok(has(calls, 'sendVideo').length >= 1, 'у Telegram має піти sendVideo'); assert.strictEqual(has(calls, 'sendPhoto').length, 0);
         assert.strictEqual(has(calls, 'c2/done').length, 0, 'планувальник не має ставити published автопосту');
+    });
+    await t('scheduler: вибір користувача з вікна TikTok (post.tiktok) іде у публікатор', async () => {
+        const calls = mockFetch([{ when: () => true, reply: resp({ ok: true }) }]);
+        const tiktok = { privacy_level: 'SELF_ONLY', title: 'T', allow_comment: false, allow_duet: false, allow_stitch: false, brand_organic: false, brand_content: false, is_aigc: true };
+        await run('content-scheduler-node-code.js', { mode: 'publish', posts: [videoPost({ sendToTelegram: false, tiktok })], today: '2026-10-05', callbackUrl: 'https://c2/done?token=t' }, schedKeys);
+        const b = JSON.parse(has(calls, 'webhook/bot/publish-tiktok')[0].body);
+        assert.deepStrictEqual(b.tiktok, tiktok);
     });
     await t('scheduler: збій запуску публікатора → callback failed і алерт власнику', async () => {
         const calls = mockFetch([

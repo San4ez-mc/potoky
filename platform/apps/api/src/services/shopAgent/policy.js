@@ -1391,6 +1391,9 @@ async function universalQuestionFallback(A, u) {
 async function runPolicyInner(A, u) {
     const { ctx } = A; ctx.agent = ctx.agent || {};
     Q.init(A, u); // реєстр питань ходу (questions.js) — далі питання змінюються лише через Q.cover/Q.add/compose
+    // Нетерплячка («?», «??», «Ау», «алло») — клієнт чекає відповіді на останнє питання, а не вагається: інакше «щойно вирішите —
+    // напишіть» (15.10, тест 41). Це форма повідомлення (лише знаки/вигук), не тлумачення змісту.
+    if (/^\s*(?:[?!.…]+|(?:ау+|алло?|ало|ей|ну|і\s*\?)\s*[?!.…]*)\s*$/iu.test(String(A.turnText || '')) && (u.intent === 'hesitate' || u.intent === 'postpone' || u.intent === 'other')) { u.intent = 'other'; u.ready = null; A._impatient = true; }
     // Розмір взуття для комплекту, взуття з якого немає в наявності (CRM setOutOfStock) — кажемо, що він не знадобиться, і йдемо далі
     // (15.10, тест 160: «43» → мовчки «лишилось обрати колір»). Взуття впізнаємо за назвою речі з CRM, не за словами клієнта.
     {
@@ -3125,7 +3128,7 @@ async function runPolicyInner(A, u) {
             let txt = summary + '\n\n' + askLine + secondPickLine;
             if (ctx.agent.lastAsk === 'оформляємо?' && !u.questions.length && !hesitating) {
                 // «Оформляємо?» уже питали, клієнт написав щось без рішення — коротка реакція + те саме питання, без повторного підсумку
-                txt = (await compose(A, { ack: 'відреагуй одним реченням на репліку клієнта (нічого не обіцяй і не змінюй склад замовлення сама)', nextStep: 'і спитай: «' + askLine + '»', maxSentences: 2, fallback: askLine })).text;
+                txt = A._impatient ? 'Я тут 🙂 ' + askLine : (await compose(A, { ack: 'відреагуй одним реченням на репліку клієнта (нічого не обіцяй і не змінюй склад замовлення сама)', nextStep: 'і спитай: «' + askLine + '»', maxSentences: 2, fallback: askLine })).text;
                 A.out.push({ text: txt, step: 'order_intent_repeat' }); return;
             }
             // Клієнт вагається («подумаю», «спасибо, позже») без питання: м'яко відступаємо, без тиску й без повтору картки з ціною.

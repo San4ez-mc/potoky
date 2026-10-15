@@ -1616,6 +1616,29 @@ async function runPolicyInner(A, u) {
             for (const k of ['setMode', 'setPick', 'setParent']) delete ctx[k];
             ctx.agent.presentedSku = cur.sku; // щоб перехід на комплект скинув стан окремої речі
             A._backToSet = setSku;
+        } else if (cur && !cur.isSet && !ctx.crmOrderId && u.setChoice === 'set' && !fromSetArticle && !ogFits) {
+            // Річ прийшла не з комплекту (пост самої кофти), а клієнт хоче «весь комплект 4 в 1» — комплекти CRM, до складу яких входить
+            // ця річ; «N в 1» з тексту — кількість речей (15.10, тест 36: бот і далі вів одну кофту).
+            try {
+                const catS = await loadCatalog(A.botId, A.keys);
+                const compsOf = (s) => String(s.setComponents || (Array.isArray(s.setItems) ? s.setItems.map((i) => i.article || i.sku).join(',') : '')).split(/[,;\s]+/).map((x) => x.trim().toUpperCase()).filter(Boolean);
+                let parents = catS.products.filter((s) => s.isSet && !s.outOfStock && compsOf(s).includes(String(cur.sku).toUpperCase()));
+                const nIn1 = (String(text).match(/(\d)\s*в\s*1/i) || [])[1];
+                if (nIn1 && parents.length > 1) { const byN = parents.filter((s) => compsOf(s).length === Number(nIn1) || new RegExp(nIn1 + '\\s*в\\s*1', 'i').test(String(s.name || '') + ' ' + String(s.customerName || ''))); if (byN.length) parents = byN; }
+                if (parents.length === 1) {
+                    const setSku = String(parents[0].sku);
+                    if (ctx.colorChoice && ctx.colorChoice.color) ctx.agent.setItemColorHints = (ctx.agent.setItemColorHints || []).concat([{ item: cur.sku, color: ctx.colorChoice.color }]).slice(-8);
+                    u.productHint = { ...u.productHint, article: setSku };
+                    if (!new RegExp(setSku, 'i').test(ctx.lastUserMessage || '')) ctx.lastUserMessage = String(ctx.lastUserMessage || text) + ' артикул ' + setSku;
+                    for (const k of ['setMode', 'setPick', 'setParent']) delete ctx[k];
+                    ctx.agent.presentedSku = cur.sku; A._backToSet = setSku;
+                } else if (parents.length > 1) {
+                    ctx.catalogHintSkus = parents.slice(0, 5).map((s) => s.sku).join(',');
+                    A.out.push({ text: shortName(cur) + ' є в кількох комплектах 🙂 Який вас цікавить?\n' + parents.slice(0, 5).map((s, i) => (i + 1) + '. ' + shortName(s) + (Number(s.price) > 0 ? ' — ' + Number(s.price) + ' грн' : '')).join('\n') + '\nМожна відповісти номером 👌', step: 'set_parent_choice' });
+                    ctx.agent.lastAsk = 'який із показаних товарів цікавить';
+                    return;
+                }
+            } catch (e) { /* best-effort */ }
         }
     }
     // Закриття після відмови (14.10, аудит B7: «Скасовую» → «Добре» знову відкрило замовлення; «Гарного дня 🫶» → підсумок).
@@ -3187,7 +3210,9 @@ async function runPolicyInner(A, u) {
             if (ctx.agent.lastAsk === 'оформляємо?' && !u.questions.length && !hesitating) {
                 // «Оформляємо?» уже питали, клієнт написав щось без рішення — коротка реакція + те саме питання, без повторного підсумку
                 if (A._impatient) ctx.agent.impatientCount = (Number(ctx.agent.impatientCount) || 0) + 1;
-                txt = A._impatient ? (ctx.agent.impatientCount % 2 ? 'Я тут 🙂 ' + askLine : 'Чекаю вашої відповіді 🙂 Оформляємо замовлення?') : (await compose(A, { ack: 'відреагуй одним реченням на репліку клієнта (нічого не обіцяй і не змінюй склад замовлення сама)', nextStep: 'і спитай: «' + askLine + '»', maxSentences: 2, fallback: askLine })).text;
+                // Нетерплячка після підсумку — не повтор того самого, а коротке нагадування, що в замовленні, і те саме питання (тест 41).
+                const pS = P(ctx) || {}; const shortOrder = [shortName(pS), [(ctx.colorChoice && (ctx.colorChoice.color || (ctx.colorChoice.colors || []).join(' + '))) || '', ctx.recommendedSize || ''].filter(Boolean).join(', ')].filter(Boolean).join(' (') + ([ctx.colorChoice && ctx.colorChoice.color, ctx.recommendedSize].some(Boolean) ? ')' : '') + (Number(pS.price) > 0 ? ' — ' + Number(pS.price) + ' грн' : '');
+                txt = A._impatient ? (ctx.agent.impatientCount % 2 ? 'Я тут 🙂 Нагадаю: у замовленні ' + shortOrder + '. Оформляємо? 🙂' : 'Чекаю вашої відповіді 🙂 Якщо є питання — напишіть, підкажу. А якщо все гаразд — оформляємо?') : (await compose(A, { ack: 'відреагуй одним реченням на репліку клієнта (нічого не обіцяй і не змінюй склад замовлення сама)', nextStep: 'і спитай: «' + askLine + '»', maxSentences: 2, fallback: askLine })).text;
                 A.out.push({ text: txt, step: 'order_intent_repeat' }); return;
             }
             // Клієнт вагається («подумаю», «спасибо, позже») без питання: м'яко відступаємо, без тиску й без повтору картки з ціною.

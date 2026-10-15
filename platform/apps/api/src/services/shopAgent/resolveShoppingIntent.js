@@ -104,12 +104,17 @@ async function resolveShoppingIntent(A, u, tool) {
     // Клієнт цим ходом показує товар (сторіз, фото, пересланий пост), а реклама, з якої він колись прийшов, — стара: у цьому пошуку
     // реклама не бере участі. Інакше привʼязка реклами перемагала свіжий сигнал щоразу (15.10, _mishko.prvt_: прийшов з реклами
     // пуховика, відповідав на сторіз комплекту set1120 — «Ціна?», «Та не пуховик скільки коштує» — бот 6 разів про пуховик).
-    const adBak = (!A.newEntryAd && (signal.photoUrl || signal.forwardedPost) && (ctx.entryAd || ctx.entryAdId))
-        ? { entryAd: ctx.entryAd, entryAdId: ctx.entryAdId, adTitle: ctx.adTitle, adCaption: ctx.adCaption, lastReferral: ctx.lastReferral } : null;
-    if (adBak) for (const k of Object.keys(adBak)) delete ctx[k];
+    // Те саме для ВСІХ старих джерел артикула: товар з коментаря (72 год), з повідомлення менеджера, пересланий пост минулих ходів
+    // (той самий _mishko.prvt_: розмова почалась з коментаря під пуховиком → commentProductArticle=D0043 перебивав сторіз
+    // з написом «Артикул: set1120» навіть без реклами). Свіжий візуальний сигнал цього ходу — головний.
+    const freshVisual = !A.newEntryAd && (signal.photoUrl || signal.forwardedPost);
+    const staleKeys = freshVisual ? ['entryAd', 'entryAdId', 'adTitle', 'adCaption', 'lastReferral', 'commentProductArticle', 'managerArticleHint']
+        .concat(A.turnSharedPost ? [] : ['sharedPost']).filter((k) => ctx[k] !== undefined && ctx[k] !== null && ctx[k] !== '') : [];
+    const adBak = staleKeys.length ? Object.fromEntries(staleKeys.map((k) => [k, ctx[k]])) : null;
+    if (adBak) for (const k of staleKeys) delete ctx[k];
     try { Object.assign(ctx, await matchProduct(ctx, keys, text, { botId: A.botId })); }
-    finally { if (adBak) for (const [k, v] of Object.entries(adBak)) if (v !== undefined) ctx[k] = v; }
-    if (adBak) A.trace.push({ step: 'match_without_old_ad', signal: signal.photoUrl ? 'photo/story' : 'post' });
+    finally { if (adBak) for (const [k, v] of Object.entries(adBak)) if (ctx[k] === undefined) ctx[k] = v; }
+    if (adBak) A.trace.push({ step: 'match_without_old_sources', hidden: staleKeys, signal: signal.photoUrl ? 'photo/story' : 'post' });
     if (!hasAnySignal(signal) && nameTry && !(ctx.product && ctx.product.sku && /^user_name/.test(String(ctx.product._via || '')))) {
         // Пошук лише за назвою не дав точного збігу — нічого не підставляємо (жодних «найближчих» товарів на «Дякую» тощо).
         for (const k of Object.keys(ctx)) { if (!(k in ctxSnapshotBefore)) delete ctx[k]; }

@@ -224,7 +224,11 @@ function setEditText(ctx) {
     const sel = Array.isArray(ctx.setSelection) ? ctx.setSelection : [];
     const edited = sel.length && !setMatchesOriginal(sel, ctx.agent.setOriginal);
     const total = edited ? setSelectionTotal(sel) : 0;
-    return 'Записала: ' + ctx.agent.setEditNote + ' ✅' + (total > 0 ? '\nРазом зараз: ' + total + ' грн' : '');
+    // Звідки менша сума — видно клієнту: «2 шт — 799 грн за акцією» (інакше 3668 замість 3767 виглядає вигаданою).
+    const by = {}; for (const it of sel) { const k = it.article || it.name; (by[k] = by[k] || { it, n: 0 }).n += Number(it.qty) || 1; }
+    const promo = Object.values(by).filter((g) => g.n > 1 && tierTotal(g.it.qtyPrices, Number(g.it.price) || 0, g.n) < (Number(g.it.price) || 0) * g.n)
+        .map((g) => String(g.it.name || '').split('.')[0] + ' × ' + g.n + ' — ' + tierTotal(g.it.qtyPrices, Number(g.it.price) || 0, g.n) + ' грн за акцією');
+    return 'Записала: ' + ctx.agent.setEditNote + ' ✅' + (total > 0 ? '\nРазом зараз: ' + total + ' грн' + (promo.length ? ' (' + promo.join('; ') + ')' : '') : '');
 }
 /** Застосувати правку складу з розуміння ходу. Повертає true, якщо щось реально змінилось. */
 async function applySetEdit(A, u, pp) {

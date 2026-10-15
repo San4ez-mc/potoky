@@ -310,10 +310,14 @@ async function narrowSetTo(A, articles) {
     const items = full.filter((it) => keep.has(up(it.article)));
     if (!items.length) return false;
     const cur = Array.isArray(ctx.setSelection) ? ctx.setSelection : [];
-    const prev = new Map(cur.map((s) => [up(s.article), s]));
+    const prev = new Map(); for (const s of cur) if (!prev.has(up(s.article))) prev.set(up(s.article), s); // перший рядок артикула; решта — extraUnits
     // Речі не з цього комплекту, додані з каталогу («і ще бомбер» у комплекті) — лишаються у виборі як були.
     const outside = cur.filter((s) => keep.has(up(s.article)) && !full.some((it) => up(it.article) === up(s.article)));
-    ctx.setSelection = initSetSelection({ setItems: items }).map((s) => prev.get(up(s.article)) || s).concat(outside);
+    // Ще одна штука тієї самої речі («ще одну футболку, чорну») — окремий рядок з тим самим артикулом; перебудова за артикулами
+    // лишала лише перший (15.10, тест Н5: «додала ще футболку», а в замовленні одна).
+    const seenArt = new Set();
+    const extraUnits = cur.filter((s) => { const k = up(s.article); if (!seenArt.has(k)) { seenArt.add(k); return false; } return keep.has(k) && full.some((it) => up(it.article) === k); });
+    ctx.setSelection = initSetSelection({ setItems: items }).map((s) => prev.get(up(s.article)) || s).concat(extraUnits, outside);
     ctx.product = { ...p, setItems: items };
     ctx.setMode = 'set';
     if (ctx.setSizeMap) for (const k of Object.keys(ctx.setSizeMap)) if (!keep.has(up(k))) delete ctx.setSizeMap[k];

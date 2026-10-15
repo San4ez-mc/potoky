@@ -19,6 +19,7 @@ const { extractHeightWeight } = require('./understand');
 const { matchProduct } = require('./productMatch');
 const Q = require('./questions');
 const Asks = require('./asks');
+const Basket = require('./basket');
 
 // 2026-09-14 (власник: "я взагалі проти будь-якого хардкоду... все в ноди перенеси"): TRUST_STEP1/2,
 // HANDOFF_TEXT та решта клієнтських/менеджерських текстів цього файлу БУЛИ тут як JS-константи —
@@ -196,6 +197,7 @@ function applySetPricing(ctx, pp) {
         if (ctx.product && !(Number(ctx.product.price) > 0)) ctx.product.price = total;
         ctx.orderExtras = []; ctx.extraItems = []; ctx.orderUnitsTotal = total; ctx.orderUnits = [{ color: '', size: '' }]; ctx.orderUnitsText = ctx.setSizesText || 'весь комплект';
         ctx.agent.setPricing = { total, edited: false };
+        Basket.sync(ctx); // рядки кошика (B4) лишаються поруч із комплектом
         return ctx.agent.setPricing;
     }
     // extraItems (не orderExtras!) — n_pay_amount рахує звідси, а вже його результат (orderExtras
@@ -208,6 +210,7 @@ function applySetPricing(ctx, pp) {
     if (ctx.product && ctx.product.isSet) ctx.product.price = 0;
     const total = setSelectionTotal(sel);
     ctx.agent.setPricing = { total, edited: true };
+    Basket.sync(ctx);
     return ctx.agent.setPricing;
 }
 /** Застосувати правку складу з розуміння ходу. Повертає true, якщо щось реально змінилось. */
@@ -858,6 +861,7 @@ function resetForNewProduct(A, sku) {
         for (const k of ['setOriginal', 'setPricing', 'setStageSent', 'setEditNote', 'setParams', 'setItemsAll', 'setItemColorHints', 'setColorHints', 'upsellOffered', 'upsellDeclined', 'setGeneralQ', 'setNamedItem', 'payRepeatCount', 'asks', 'upsellPhotoSent', 'availKey', 'sizeVerifyAsked', 'sizeClaim']) delete ctx.agent[k];
         if (!ctx.crmOrderId) for (const k of ['paymentInfo', 'payAmount', 'payLabel', 'orderRef', 'orderRefAt', 'ibanPayUrl', 'ibanInvoiceUid', 'requisitesSentAt']) delete ctx[k];
         if (body) { ctx.sizeInput = body; if (!A.hwThisTurn) ctx.agent.hwCarried = true; }
+        Basket.sync(ctx); // рядки кошика (B4) не губляться разом з додатковими позиціями попереднього товару
     }
 }
 
@@ -1129,9 +1133,127 @@ async function runPolicy(A, u) {
     // finally, не catch: якщо каскад кинув виняток — стан A.out частковий/непередбачуваний, тому
     // фолбек НЕ втручається, і виняток пробрасуємо як є (index.js сам покаже стандартне вибачення).
     let threw = false;
-    try { await runPolicyInner(A, u); }
+    try {
+        await runPolicyInner(A, u);
+        // Кошик (B4): товар готовий — той самий хід веде наступний товар із черги (або повертає головний до підсумку). Повторний
+        // прохід тими самими секціями, з «нейтральним» розумінням: нових слів клієнта в ньому нема, лише товар із черги.
+        for (let i = 0; i < 4 && A._refocus; i++) {
+            const rf = A._refocus; A._refocus = null;
+            await universalQuestionFallback(A, u); // питання клієнта з першого проходу — відповідаємо до переходу на інший товар
+            Object.assign(A, { turnText: rf.text, turnImage: null, turnSharedPost: null, newEntryAd: false, turnStory: null, justPresented: false });
+            A.ctx.lastUserMessage = rf.text; delete A.ctx.lastUserImageUrl; delete A.ctx.lastUserImageUrls; delete A.ctx.replyToSku;
+            A.trace.push({ step: 'basket_refocus', text: rf.text });
+            u = rf.u;
+            await runPolicyInner(A, u);
+        }
+    }
     catch (e) { threw = true; throw e; }
     finally { if (!threw) { await universalQuestionFallback(A, u); await enforceInsistLimit(A); } }
+}
+
+/** Розуміння «без нових слів клієнта» для повторного проходу кошика (усі поля, як повертає understand). */
+function neutralU(over) {
+    const u = { intent: 'other', summary: '', questions: [], questionTopics: [], productHint: { article: null, category: null, fromList: null }, cartItems: null, setItemsWanted: null, sizeShift: null, returnType: null, returnReason: null, exchangeFor: null };
+    for (const k of ['height', 'weight', 'clothingSize', 'chest', 'footLength', 'shoeSize', 'waist', 'color', 'colorMatched', 'qty', 'units', 'setChoice', 'setArticle', 'ready', 'addUpsell', 'upsellQty', 'upsellNote', 'upsellUnits', 'extraProducts', 'alsoWants', 'removeItem', 'addItem', 'itemColors', 'changeRequest', 'payMethod', 'country', 'trustPromise', 'fullName', 'phone', 'city', 'region', 'branch', 'paymentMethodChange', 'receiptLink', 'replaceOrAdd']) u[k] = null;
+    for (const k of ['belly', 'refersToStory', 'wantsOrderSummary', 'compare', 'prepaymentObjection', 'homeAddress', 'wantsManualReq', 'wantsCard', 'claimsPaid', 'wantsSizeChart', 'wantsPhoto', 'wantsUpsellPhoto', 'wantsHuman', 'asksIfBot', 'isComplaint', 'annoyedAtBot', 'returnRequest', 'statusQuestion']) u[k] = false;
+    return Object.assign(u, over || {});
+}
+
+/** Наступний товар із черги кошика стає фокусом: повторний прохід ходу покаже його картку й поведе розмір/колір. */
+function basketFocusNext(A) {
+    const { ctx } = A; const b = Basket.ensure(ctx);
+    const e = b.queue.shift();
+    Basket.clearFocus(ctx);
+    const over = { intent: 'product_query', productHint: e.sku ? { article: e.sku, category: null, fromList: null } : { article: null, category: e.category || e.ref, fromList: null } };
+    if (e.color) over.color = e.color;
+    if (e.size) { if (/^\d{2}$/.test(e.size) && Number(e.size) >= 35 && Number(e.size) <= 50) over.shoeSize = Number(e.size); else over.clothingSize = e.size; }
+    if (e.qty > 1) over.qty = e.qty;
+    A._refocus = { u: neutralU(over), text: e.sku ? ('артикул ' + e.sku) : String(e.ref || e.category || '') };
+    A._switchNote = (A._switchNote || '') + 'Тепер ' + String(e.name || e.category || e.ref || 'наступний товар').toLowerCase() + ' 👇\n';
+}
+/** Черга порожня — головний товар знову у фокусі, повторний прохід покаже підсумок усього кошика. */
+function basketRestoreAnchor(A) {
+    const { ctx } = A; const b = Basket.ensure(ctx);
+    if (!b.anchor) return false;
+    Basket.restoreFocus(ctx, b.anchor); delete b.anchor;
+    Basket.sync(ctx);
+    A._refocus = { u: neutralU({}), text: '' };
+    return true;
+}
+/** Товар у фокусі пройдено → у рядки кошика (з підтвердженням клієнту). Комплект як другий товар кошика не паркується — менеджеру. */
+async function basketPark(A) {
+    const { ctx } = A; const b = Basket.ensure(ctx); const p = P(ctx);
+    const lines = Basket.focusLines(ctx);
+    if (!lines.length) {
+        if (p) await T.alert(A, { title: '🧺 Кошик: товар не вдалося додати автоматично', main: 'Клієнт хоче ще ' + String(p.customerName || p.name || p.sku).split('\n')[0] + ' (' + p.sku + ')', details: 'Бот веде кілька товарів у кошику; цю позицію (' + (p.isSet ? 'комплект' : 'без кольору/розміру') + ') додайте до замовлення вручну.' }).catch(() => {});
+        return false;
+    }
+    b.lines.push(...lines);
+    A._switchNote = (A._switchNote || '') + 'Записала: ' + lines.map((l) => l.name + ([l.color, l.size].filter(Boolean).length ? ' (' + [l.color, l.size].filter(Boolean).join(', ') + ')' : '') + (l.qty > 1 ? ' ×' + l.qty : '')).join('; ') + ' ✅\n';
+    return true;
+}
+/** Секція 7 (товар у фокусі пройдено): наступний товар із черги, або повернення головного до підсумку. true — хід продовжить повторний прохід. */
+async function basketAdvance(A) {
+    const { ctx } = A;
+    if (!Basket.enabled(A) || ctx.crmOrderId || (ctx.orderIntent && ctx.orderIntent.ready === 'yes')) return false;
+    // Додаткові товари без кольору/розміру («і ще футболку» → КОЛІР НЕ ОБРАНО) — у чергу: бот проведе їх так само, як головний.
+    const inc = (Array.isArray(ctx.extraItems) ? ctx.extraItems : []).filter((x) => x && !x._basket && x.sku && ((Array.isArray(x.colorsList) && x.colorsList.length > 1 && !x.color) || (Array.isArray(x.sizes) && x.sizes.length > 1 && !x.size)));
+    if (inc.length) {
+        for (const x of inc) Basket.enqueue(ctx, { sku: x.sku, name: String(x.name || '').split('\n')[0].replace(/[.,]?\s*Артикул:?.*$/i, '').trim(), color: x.color || null, size: x.size || null, qty: Number(x.qty) > 1 ? Number(x.qty) : null });
+        ctx.extraItems = ctx.extraItems.filter((x) => !inc.includes(x)); ctx.extraItemsText = '';
+    }
+    const b = ctx.basket; if (!b) return false;
+    if (!b.queue.length) {
+        if (!b.anchor) return false;
+        await basketPark(A);
+        return basketRestoreAnchor(A);
+    }
+    if (b.anchor) await basketPark(A); else b.anchor = Basket.snapshotFocus(ctx);
+    basketFocusNext(A);
+    return true;
+}
+/** Кілька різних товарів в одному повідомленні (аналізатор: cartItems) → один у фокусі, решта в черзі. */
+async function basketIntake(A, u) {
+    const { ctx } = A;
+    if (!Basket.enabled(A) || ctx.crmOrderId || !Array.isArray(u.cartItems) || u.cartItems.length < 2) return;
+    let cat; try { cat = await loadCatalog(A.botId, A.keys); } catch (e) { return; }
+    const up = (x) => String(x || '').toUpperCase();
+    const bySku = (s) => cat.products.find((x) => up(x.sku) === up(s));
+    const res = u.cartItems.map((it) => ({ it, r: Basket.resolveRef(it.ref, cat.products, cat.categories) }))
+        .filter((x) => x.r && !(x.r.sku && bySku(x.r.sku) && bySku(x.r.sku).isSet) && !(x.r.category && /комплект/i.test(x.r.category)));
+    if (res.length < 2) { A.trace.push({ step: 'basket_intake_skip', resolved: res.length }); return; }
+    const cur = P(ctx);
+    const catIdOf = (name) => { const c = (cat.categories || []).find((x) => String(x.name) === String(name)); return c ? c.id : null; };
+    const curCat = cur && (cur.categoryId || (cur.category && cur.category.id));
+    let fi = cur ? res.findIndex((x) => x.r.sku && up(x.r.sku) === up(cur.sku)) : -1;
+    if (cur && fi < 0) fi = res.findIndex((x) => !x.r.sku && curCat && catIdOf(x.r.category) === curCat);
+    if (!cur) {
+        fi = 0; const f = res[0];
+        u.productHint = f.r.sku ? { article: f.r.sku, category: null, fromList: null } : { article: null, category: f.r.category, fromList: null };
+    }
+    const focus = fi >= 0 ? res[fi] : null;
+    if (focus) { if (focus.it.color && !u.color && !u.colorMatched) u.color = focus.it.color; if (focus.it.qty > 1 && !u.qty) u.qty = focus.it.qty; }
+    const queued = [];
+    for (const [i, x] of res.entries()) {
+        if (i === fi) continue;
+        if (Basket.enqueue(ctx, { sku: x.r.sku || null, name: x.r.name || null, category: x.r.category || null, ref: x.it.ref, color: x.it.color, size: x.it.size, qty: x.it.qty })) queued.push(x.r.name || x.it.ref);
+    }
+    const qSkus = Basket.ensure(ctx).queue.map((q) => up(q.sku)).filter(Boolean);
+    if (cur && u.productHint && (qSkus.includes(up(u.productHint.article)) || qSkus.includes(up(u.productHint.fromList)))) u.productHint = { ...u.productHint, article: null, fromList: null };
+    // Ці товари тепер у кошику — старий шлях «додаткова позиція без кольору» їх не дублює.
+    u.extraProducts = null; u.alsoWants = null; u.addItem = null;
+    A.trace.push({ step: 'basket_intake', focus: focus ? (focus.r.sku || focus.r.category) : null, queued });
+    if (queued.length) A._switchNote = (A._switchNote || '') + 'Чудово, підберемо по черзі' + (focus ? ': спершу ' + String(focus.r.name || focus.it.ref).toLowerCase() + ', далі ' : ' ще ') + queued.map((x) => String(x).toLowerCase()).join(', ') + ' 👌\n';
+}
+/** Відмова від товару, який бот веде з черги («ні, светр не треба») — прибираємо лише його, а не все замовлення. */
+async function basketDropFocus(A, u) {
+    const { ctx } = A; const b = ctx.basket;
+    if (!Basket.enabled(A) || !b || !b.anchor || ctx.crmOrderId || !(u.ready === 'no' || u.intent === 'order_no') || (u.productHint && (u.productHint.article || u.productHint.fromList))) return false;
+    const name = P(ctx) ? String(P(ctx).customerName || P(ctx).name || '').split('\n')[0].replace(/[.,]?\s*Артикул:?.*$/i, '').trim().toLowerCase() : 'цей товар';
+    Basket.clearFocus(ctx);
+    A._switchNote = (A._switchNote || '') + 'Добре, ' + name + ' не беремо 👌\n';
+    if (b.queue.length) basketFocusNext(A); else basketRestoreAnchor(A);
+    return true;
 }
 
 /** 2026-09-17 (власник: "те, що ми сьогодні робили вже гарно спрацювало... але давай перевірку
@@ -1397,6 +1519,8 @@ async function runPolicyInner(A, u) {
         const rs = String(ctx.replyToSku); delete ctx.replyToSku;
         if (!(P(ctx) && String(P(ctx).sku).toUpperCase() === rs.toUpperCase())) { u.productHint = { ...u.productHint, article: rs, fromList: null }; A.trace.push({ tool: 'replyToPhoto', sku: rs }); }
     }
+    // Кошик (B4): кілька різних товарів у повідомленні — один у фокусі, решта в черзі (до визначення «свіжого сигналу» товару).
+    await basketIntake(A, u);
     // Відповідь на сторіз цього ходу (A.turnStory) — теж «ось цей товар», навіть без кадру-фото (15.10, _mishko.prvt_).
     const freshSignal = !!(ctx.storyRetry || (A.turnStory && !(ctx.paymentInfo && ctx.paymentInfo.method)) || A.turnSharedPost || A.newEntryAd || u.productHint.article || u.productHint.fromList || (A.turnImage && !u.claimsPaid && !u.receiptLink && !(ctx.paymentInfo && ctx.paymentInfo.method) ));
     // Каталожне питання («А є жилетки?», «Які кольори?») аналізатор інколи кладе лише в productHint, без questions — тоді
@@ -1739,6 +1863,8 @@ async function runPolicyInner(A, u) {
     }
     const preNote = (A._phoneNoteSent ? '' : __phoneNote) + (__dataThisTurn && !addressComplete(ctx.orderData) ? 'Дані доставки записала 📝 ' : '') + (earlyReceipt ? ((u.receiptLink || A.turnImage) ? 'Дякую, оплату бачу — звіримо 🙏 Щоб оформити відправку, лишилось кілька кроків. ' : 'Дякую! Щоб звірити оплату, скиньте, будь ласка, скріншот або посилання на квитанцію 🙏 ') : '') + (u.intent === 'wants_requisites' && !(ctx.paymentInfo && ctx.paymentInfo.method) ? 'Реквізити надішлю одразу після підбору розміру і кольору 🙂 ' : '');
 
+    // Кошик: відмова від товару, який бот веде з черги, — лише від нього.
+    if (await basketDropFocus(A, u)) return;
     // 2. Товар
     // 2026-09-15 (живий кейс: у комплекті клієнт написав "чорні джинси"/"Чорний" — понял() LLM
     // побачив productHint на артикул джинсів j0032, freshSignal=true, resolveProduct переключив
@@ -1893,13 +2019,20 @@ async function runPolicyInner(A, u) {
                             const pxBase = (A.keys.CRM_PUBLIC_BASE || 'https://pcrm.fineko.space').replace(/\/$/, '');
                             const pxPhotos = (Array.isArray(px.images) ? px.images : []).filter(Boolean).slice(0, 2).map((u0) => (/^https?:\/\//i.test(u0) ? u0 : pxBase + (String(u0).charAt(0) === '/' ? u0 : '/' + u0)));
                             if (pxPhotos.length) A.out.push({ photoUrls: pxPhotos, caption: '', step: 'multi_pick_second_photo' });
-                            // Клієнт вибрав ДВА пункти зі списку («2,4») — обидва потрапляють у замовлення; другий — окремою позицією (можна прибрати словами).
-                            ctx.extraProductMention = String(px.sku);
-                            try { await T.extraResolve(A); } catch (e) { /* best-effort */ }
-                            const added = Array.isArray(ctx.extraItems) && ctx.extraItems.some((x) => String(x.sku).toUpperCase() === String(px.sku).toUpperCase());
-                            const pxColors = [...new Set((px.offers || []).flatMap((o) => (o.properties || []).filter((q) => /кол|цвет/i.test(q.name || '')).map((q) => q.value)))].filter(Boolean);
-                            A.out.push({ text: 'І другий обраний варіант 👌 ' + (px.customerName || px.name).split('\n')[0] + ' — ' + px.price + ' грн.' + (pxColors.length ? ' Кольори: ' + pxColors.join(', ') + '.' : '') + (added ? ' Додала його окремою позицією до замовлення (якщо не потрібен — напишіть) 🙂' : ' Додати його до замовлення окремою позицією чи оформляємо тільки перший? 🙂'), step: 'multi_pick_second' });
-                            if (added) { ctx.agent.multiPickExtra = null; }
+                            const pxName = String(px.customerName || px.name || '').split('\n')[0];
+                            // Кошик (B4): другий обраний варіант бот проведе сам (розмір, колір) одразу після першого.
+                            if (Basket.enabled(A) && Basket.enqueue(ctx, { sku: String(px.sku), name: pxName.replace(/[.,]?\s*Артикул:?.*$/i, '').trim() })) {
+                                A.out.push({ text: 'І другий обраний варіант 👌 ' + pxName + ' — ' + px.price + ' грн. Його підберемо одразу після першого 🙂', step: 'multi_pick_second' });
+                                ctx.agent.multiPickExtra = null;
+                            } else {
+                                // Клієнт вибрав ДВА пункти зі списку («2,4») — обидва потрапляють у замовлення; другий — окремою позицією (можна прибрати словами).
+                                ctx.extraProductMention = String(px.sku);
+                                try { await T.extraResolve(A); } catch (e) { /* best-effort */ }
+                                const added = Array.isArray(ctx.extraItems) && ctx.extraItems.some((x) => String(x.sku).toUpperCase() === String(px.sku).toUpperCase());
+                                const pxColors = [...new Set((px.offers || []).flatMap((o) => (o.properties || []).filter((q) => /кол|цвет/i.test(q.name || '')).map((q) => q.value)))].filter(Boolean);
+                                A.out.push({ text: 'І другий обраний варіант 👌 ' + pxName + ' — ' + px.price + ' грн.' + (pxColors.length ? ' Кольори: ' + pxColors.join(', ') + '.' : '') + (added ? ' Додала його окремою позицією до замовлення (якщо не потрібен — напишіть) 🙂' : ' Додати його до замовлення окремою позицією чи оформляємо тільки перший? 🙂'), step: 'multi_pick_second' });
+                                if (added) { ctx.agent.multiPickExtra = null; }
+                            }
                         }
                     } catch (e) { /* best-effort */ }
                     if (ctx.agent.multiPickExtra) ctx.agent.pendingSecondPick = ctx.agent.multiPickExtra;
@@ -2013,7 +2146,10 @@ async function runPolicyInner(A, u) {
         const unitsS = ctx.orderUnitsText || ((ctx.colorChoice && ctx.colorChoice.color ? ctx.colorChoice.color : '') + (ctx.recommendedSize ? ' ' + ctx.recommendedSize : ''));
         const totalS = (p.isSet && ctx.agent.setPricing && ctx.agent.setPricing.total) || ctx.orderUnitsTotal || p.price;
         const usS = !(p.isSet && ctx.setMode === 'set') ? upsellSummary(ctx, p) : null;
-        A.out.push({ text: 'Ваше замовлення 🙌\n' + String(p.customerName || p.name).split('\n')[0] + (unitsS ? ' — ' + unitsS.trim() : '') + ' — ' + totalS + ' грн' + (usS ? '\n+ ' + usS.text + '\nРазом: ' + (Number(totalS) + usS.sum) + ' грн' : '') + (ctx.extraItemsText ? '\n' + ctx.extraItemsText : ''), step: 'order_reshow' });
+        const bskS = Basket.active(ctx) ? Basket.summaryBlock(ctx, { withOwnExtras: !(p.isSet && ctx.setMode === 'set') }) : null;
+        A.out.push({ text: bskS
+            ? 'Ваше замовлення 🙌\n• ' + String(p.customerName || p.name).split('\n')[0] + (unitsS ? ' — ' + unitsS.trim() : '') + ' — ' + totalS + ' грн' + (usS ? '\n• ' + usS.text : '') + '\n' + bskS.text + '\nРазом: ' + (Number(totalS) + (usS ? usS.sum : 0) + bskS.sum) + ' грн'
+            : 'Ваше замовлення 🙌\n' + String(p.customerName || p.name).split('\n')[0] + (unitsS ? ' — ' + unitsS.trim() : '') + ' — ' + totalS + ' грн' + (usS ? '\n+ ' + usS.text + '\nРазом: ' + (Number(totalS) + usS.sum) + ' грн' : '') + (ctx.extraItemsText ? '\n' + ctx.extraItemsText : ''), step: 'order_reshow' });
         Q.coverTopics(A, u, ['order_summary'], 'order_summary');
     }
 
@@ -2788,6 +2924,8 @@ async function runPolicyInner(A, u) {
                 }
             }
         }
+        // Кошик (B4): товар у фокусі пройдено — наступний із черги (той самий хід), або головний повертається до підсумку.
+        if (await basketAdvance(A)) return;
 
         // 2026-09-15 (живий кейс, власник: "бот не поняв, які я хочу футболки, це баг") — відповідь
         // САМЕ на наше запитання n_agent_upsell_clarify ("з допродажем чи без") могла бути ГОЛИМ
@@ -2842,9 +2980,11 @@ async function runPolicyInner(A, u) {
             const setOrigArts = Array.isArray(ctx.agent.setOriginal) ? ctx.agent.setOriginal.map((o) => String(o.article).toUpperCase()).sort().join('|') : '';
             const setPartial = isSetFull && !!setOrigArts && setOrigArts !== [...new Set((ctx.setSelection || []).map((s) => String(s.article).toUpperCase()))].sort().join('|');
             const setTitle = setPartial ? 'Ваш вибір із комплекту «' + String(pp.customerName || pp.name).replace(/\.?\s*Артикул:?\s*\S+\s*$/i, '').trim() + '»:' : (pp.customerName || pp.name);
+            // Кошик (B4): інші товари — окремими рядками з кольором/розміром, «Разом» — за все замовлення.
+            const bsk = Basket.active(ctx) ? Basket.summaryBlock(ctx, { withOwnExtras: !isSetFull }) : null;
             const summary = isSetFull
-                ? messageText(A.assets, 'n_agent_order_summary_header', ctx, A.session.id) + '\n' + setTitle + '\n\n' + ctx.setSelection.map((it) => '• ' + it.name + ((it.color || it.size) ? ' (' + [it.color, it.size].filter(Boolean).join(', ') + ')' : '') + (it.qty > 1 ? ' ×' + it.qty : '') + ' — ' + (it.price * it.qty) + ' грн').join('\n') + '\n\nРазом: ' + total + ' грн' + '\n' + shipTerms(ctx)
-                : (() => { const units = ctx.orderUnitsText || ((ctx.colorChoice && ctx.colorChoice.color ? ctx.colorChoice.color : '') + (ctx.recommendedSize ? ' ' + ctx.recommendedSize : '')); const usM = upsellSummary(ctx, pp); return messageText(A.assets, 'n_agent_order_summary_header', ctx, A.session.id) + '\n' + (pp.customerName || pp.name) + (units ? ' — ' + units : '') + ' — ' + total + ' грн' + (usM ? '\n+ ' + usM.text + '\nРазом: ' + (Number(total) + usM.sum) + ' грн' : '') + (ctx.extraItemsText ? '\n' + ctx.extraItemsText : '') + '\n' + shipTerms(ctx); })();
+                ? messageText(A.assets, 'n_agent_order_summary_header', ctx, A.session.id) + '\n' + setTitle + '\n\n' + ctx.setSelection.map((it) => '• ' + it.name + ((it.color || it.size) ? ' (' + [it.color, it.size].filter(Boolean).join(', ') + ')' : '') + (it.qty > 1 ? ' ×' + it.qty : '') + ' — ' + (it.price * it.qty) + ' грн').join('\n') + (bsk ? '\n' + bsk.text : '') + '\n\nРазом: ' + (Number(total) + (bsk ? bsk.sum : 0)) + ' грн' + '\n' + shipTerms(ctx)
+                : (() => { const units = ctx.orderUnitsText || ((ctx.colorChoice && ctx.colorChoice.color ? ctx.colorChoice.color : '') + (ctx.recommendedSize ? ' ' + ctx.recommendedSize : '')); const usM = upsellSummary(ctx, pp); if (bsk) return messageText(A.assets, 'n_agent_order_summary_header', ctx, A.session.id) + '\n• ' + String(pp.customerName || pp.name).split('\n')[0] + (units ? ' — ' + units : '') + ' — ' + total + ' грн' + (usM ? '\n• ' + usM.text : '') + '\n' + bsk.text + '\n\nРазом: ' + (Number(total) + (usM ? usM.sum : 0) + bsk.sum) + ' грн\n' + shipTerms(ctx); return messageText(A.assets, 'n_agent_order_summary_header', ctx, A.session.id) + '\n' + (pp.customerName || pp.name) + (units ? ' — ' + units : '') + ' — ' + total + ' грн' + (usM ? '\n+ ' + usM.text + '\nРазом: ' + (Number(total) + usM.sum) + ' грн' : '') + (ctx.extraItemsText ? '\n' + ctx.extraItemsText : '') + '\n' + shipTerms(ctx); })();
             // Допродаж уже доданий клієнтом як додатковий товар («і ще футболку») — не пропонуємо його вдруге.
             const upItem = Array.isArray(pp.upsellItems) && pp.upsellItems[0];
             const upsellAlreadyExtra = !!(pp.upsell && upItem && Array.isArray(ctx.extraItems) && ctx.extraItems.some((x) => x && ((x.id && x.id === upItem.id) || (x.sku && upItem.sku && x.sku === upItem.sku))));

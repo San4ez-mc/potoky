@@ -324,6 +324,21 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
             if (dup) logger.info('[shopAgent] дубль повідомлення не надіслано', { sessionId, step: o.step });
             return !dup;
         });
+        // Клієнт відповів, а бот збирається надіслати ДОСЛІВНО те саме, що й минулим повідомленням (інваріант I2, 15.10: «Ну я ж відповів
+        // на вашу першу історію» → той самий текст удруге). Не мовчимо і не повторюємо — те саме іншими словами з реакцією на репліку.
+        const lastBotBefore = clientAt ? hist.filter((m) => m.who === 'bot' && m.text && new Date(m.at).getTime() <= clientAt).slice(-1)[0] : null;
+        if (lastBotBefore && !ctx.funnelPaused) {
+            for (const o of A.out) {
+                if (!o.text || o.photoUrls || String(o.text).length < 25 || sim(o.text, lastBotBefore.text) < 0.9) continue;
+                // Точні тексти (підсумок, оплата, реквізити, картка, підтвердження) не переписуємо — там гроші й дані; клієнт міг сам їх попросити.
+                if (/(reshow|pay_|requisit|reqs|present|confirm|summary|invoice|^order_intent$)/i.test(String(o.step || ''))) continue;
+                try {
+                    const { compose } = require('./compose');
+                    const r = await compose(A, { ack: 'коротко й доречно відреагуй на останню репліку клієнта (не перепрошуй за технічне)', nextStep: 'і скажи ТЕ САМЕ ІНШИМИ СЛОВАМИ (зміст, кольори, ціни, прохання — без змін): «' + String(o.text).slice(0, 700) + '»', maxSentences: 4, fallback: '' });
+                    if (r && r.text && sim(r.text, lastBotBefore.text) < 0.9) { logger.info('[shopAgent] повтор переформульовано', { sessionId, step: o.step }); o.text = r.text; }
+                } catch (e) { /* best-effort: краще повтор, ніж мовчання */ }
+            }
+        }
     }
     // Інваріант «обіцяне фото = надіслане фото» (Edit 5283717f: «Ось фото сірого кольору», «Фото надішлю окремим повідомленням» —
     // а фото не було; той самий клас, що й «надсилаю сітку» без сітки 18.09). Текст бота обіцяє фото, а фото в ході нема → додаємо

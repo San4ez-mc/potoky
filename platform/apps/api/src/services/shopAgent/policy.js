@@ -127,7 +127,7 @@ function initSetSelection(pp) {
     // fixedColor — нове поле CRM (ProductSetComponent.fixedColor, 2026-09-15): власник фіксує
     // колір позиції САМЕ В МЕЖАХ цього комплекту (напр. джинси завжди сині для цього набору) —
     // тоді бот ніколи не питає й не вгадує, бере готове значення з CRM.
-    return (pp.setItems || []).map((it) => ({ article: it.article, id: it.id, name: it.name, price: Number(it.price) || 0, supplier: it.supplier || '', supplierArticle: it.supplierArticle || '', colors: it.colors || [], colorPhotos: it.colorPhotos || {}, sizes: (Array.isArray(it.sizes) && it.sizes.length) ? it.sizes : ((Array.isArray(it.structuredSizes) && it.structuredSizes.length) ? it.structuredSizes : ((it.sizeChartData && Array.isArray(it.sizeChartData.sizes)) ? it.sizeChartData.sizes : [])), qty: 1, color: it.fixedColor || '', size: '' }));
+    return (pp.setItems || []).map((it) => ({ article: it.article, id: it.id, name: it.name, price: Number(it.price) || 0, qtyPrices: it.qtyPrices || {}, supplier: it.supplier || '', supplierArticle: it.supplierArticle || '', colors: it.colors || [], colorPhotos: it.colorPhotos || {}, sizes: (Array.isArray(it.sizes) && it.sizes.length) ? it.sizes : ((Array.isArray(it.structuredSizes) && it.structuredSizes.length) ? it.structuredSizes : ((it.sizeChartData && Array.isArray(it.sizeChartData.sizes)) ? it.sizeChartData.sizes : [])), qty: 1, color: it.fixedColor || '', size: '' }));
 }
 /** Пари «позиція — колір» від аналізатора (u.itemColors), поки комплект збирається: секція кольорів іде ПІСЛЯ розміру,
  * тож кольори, названі разом із вибором речей, інакше губились (2026-10-02, живий кейс c6d03189). */
@@ -2604,7 +2604,9 @@ async function runPolicyInner(A, u) {
             // Збережені пари лише заповнюють порожнє (не повертають колір, який клієнт потім змінив); пари цього ходу — перекривають.
             // Кольори, названі ще до кроку розміру («Чорна і біла футболка» → 2 футболки; 15.10, innastepanets: записалась одна) — останній
             // такий перелік теж рахуємо як склад, а не лише пари цього ходу.
-            const curPairs = Array.isArray(u.itemColors) && u.itemColors.length ? u.itemColors : (Array.isArray(ctx.agent.setItemColorHintsLast) ? ctx.agent.setItemColorHintsLast : []);
+            let curPairs = Array.isArray(u.itemColors) && u.itemColors.length ? u.itemColors : (Array.isArray(ctx.agent.setItemColorHintsLast) ? ctx.agent.setItemColorHintsLast : []);
+            // Колір НОВОЇ штуки («ще одну футболку, чорну») уже застосовано правкою складу — не фарбуємо ним наявну футболку (15.10, Н5).
+            if (A._setEditDone && u.addItem) curPairs = curPairs.filter((ic) => !(ic && ic.item && stemsOf(String(ic.item)).some((st) => String(u.addItem).toLowerCase().includes(st.slice(0, 4)))));
             delete ctx.agent.setItemColorHintsLast;
             // Клас G (14.10, Балаба Микола fbb6087b: «2 кофти, 2 джинси, 3 футболки» різних кольорів — бот лишив по одній штуці на
             // позицію й порахував 4 597 грн замість 6 388, менеджер добирав 1 791). Власник: оформлює бот. Кілька штук однієї речі
@@ -2697,7 +2699,10 @@ async function runPolicyInner(A, u) {
             // лишитись і кілька — ми просто запитали про них по черзі).
             const askingArticle = ctx.agent.setColorAskingArticle;
             const askingItem = askingArticle ? ctx.setSelection.find((it) => it.article === askingArticle && !it.color && Array.isArray(it.colors) && it.colors.length > 1) : null;
-            if (askingItem) {
+            // Колір у повідомленні про ІНШУ річ («замість лоферів ще одну футболку, чорну»; «кофту XL, а джинси чорні») — не відповідь
+            // на питання про цю позицію: аналізатор уже розклав його в addItem/changeRequest/itemColors (15.10, Н5: кофта стала чорною).
+            const colourIsForOther = !!(u.addItem || u.changeRequest || (Array.isArray(u.itemColors) && u.itemColors.length));
+            if (askingItem && !colourIsForOther) {
                 const c = matchColor({ colors: askingItem.colors.join(',') }, text) || matchColorByPosition(askingItem, text);
                 if (c) askingItem.color = c;
             }

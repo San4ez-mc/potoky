@@ -1294,6 +1294,9 @@ async function basketIntake(A, u) {
     }
     const qSkus = Basket.ensure(ctx).queue.map((q) => up(q.sku)).filter(Boolean);
     if (cur && u.productHint && (qSkus.includes(up(u.productHint.article)) || qSkus.includes(up(u.productHint.fromList)))) u.productHint = { ...u.productHint, article: null, fromList: null };
+    // Поточний товар не серед названих («і ще джинси і футболку») — він лишається у фокусі, а названі йдуть у чергу. Категорія з
+    // productHint («джинси») інакше замінювала його головним (15.10, тест Н4: кофта зникла, головним став j0032).
+    if (cur && fi < 0) u.productHint = { article: null, category: null, fromList: null };
     // Ці товари тепер у кошику — старий шлях «додаткова позиція без кольору» їх не дублює.
     u.extraProducts = null; u.alsoWants = null; u.addItem = null;
     A.trace.push({ step: 'basket_intake', focus: focus ? (focus.r.sku || focus.r.category) : null, queued });

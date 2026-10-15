@@ -536,12 +536,19 @@ try {
     // + власний CRM (фото товару з CRM — тести й ручні пересилання менеджера; 15.10, тест Н1: фото комплекту з CRM не розпізнавалось взагалі).
     var __crmHost = ''; try { __crmHost = new URL(keys.CRM_PUBLIC_BASE || 'https://pcrm.fineko.space').hostname.toLowerCase(); } catch (e) { }
     function imgOk(u) { try { var h = new URL(u).hostname.toLowerCase(); if (h === 'api.telegram.org' || h === 'zernio.com' || (__crmHost && h === __crmHost)) return true; return ['cdninstagram.com', 'fbcdn.net', 'fbsbx.com', 'lookaside.fbsbx.com', 'facebook.com'].some(function (d) { return h === d || h.endsWith('.' + d); }); } catch (e) { return false; } }
-    if (imgOk(__visionUrl)) {
+    // Наш власний файл /bot-files/… (кадр сторіз/рілсу, тестова фікстура) — читаємо з диска, не мережею (§15.16).
+    var __locV = String(__visionUrl).match(/\/bot-files\/([A-Za-z0-9_.\/-]+)$/);
+    if (__locV && /\.\./.test(__locV[1])) __locV = null;
+    if (__locV || imgOk(__visionUrl)) {
       var acp = new AbortController(); var top = setTimeout(function () { try { acp.abort(); } catch (e) { } }, 10000);
       try {
         var __visHdr = {};
         try { if (new URL(__visionUrl).hostname.toLowerCase() === 'zernio.com' && keys.ZERNIO_API_TOKEN) __visHdr.Authorization = 'Bearer ' + keys.ZERNIO_API_TOKEN; } catch (e) { }
-        var irp = await fetch(__visionUrl, { signal: acp.signal, headers: __visHdr });
+        var irp;
+        if (__locV) {
+          var __lb = require('fs').readFileSync(require('path').join(process.env.BOT_FILES_DIR || require('path').join(__dirname, '..', '..', '..', '..', 'uploads', 'bot-files'), __locV[1]));
+          irp = { arrayBuffer: async function () { return __lb.buffer.slice(__lb.byteOffset, __lb.byteOffset + __lb.byteLength); }, headers: { get: function () { return /\.mp4$/i.test(__locV[1]) ? 'video/mp4' : 'image/jpeg'; } } };
+        } else irp = await fetch(__visionUrl, { signal: acp.signal, headers: __visHdr });
         var abp = await irp.arrayBuffer();
         if (abp.byteLength <= 8000000) {
           var b64p = Buffer.from(abp).toString('base64');

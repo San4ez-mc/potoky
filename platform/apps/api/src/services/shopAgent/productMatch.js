@@ -1016,6 +1016,8 @@ try {
     setItems.push({
       article: comp.sku || '', id: comp.productId, name: comp.name || '',
       price: compFull ? (Number(compFull.price) || 0) : null,
+      // Акція «N шт» самої речі — коли склад змінено й рахується позиціями (15.10, Н5: дві футболки = «2 шт: 799», а не 2×449).
+      qtyPrices: (function () { var q = {}; (compFull && Array.isArray(compFull.bulkPricing) ? compFull.bulkPricing : []).forEach(function (b) { if (b && b.quantity && b.price) q[String(b.quantity)] = Number(b.price); }); return q; })(),
       supplier: (compFull && compFull.supplier && compFull.supplier.name) || '',
       supplierArticle: (compFull && compFull.supplierArticle) || '',
       colors: cColors, sizes: cSizes, colorPhotos: cColorPhotos,

@@ -161,11 +161,20 @@ function matchSetItem(text, items, categoryNames) {
     for (const it of items) { const score = stemsOf(it.name).filter((s) => t.includes(s)).length; if (score > bestScore) { bestScore = score; best = it; } }
     return best;
 }
-function setSelectionTotal(sel) { return sel.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 1), 0); }
+// Ціна N шт за акцією товару («2 шт — 799»): набори за найбільшою акцією + решта поштучно — так само, як n_pay_amount.
+function tierTotal(qp, unit, n) {
+    const tiers = Object.keys(qp || {}).map(Number).filter((t) => t > 1 && Number(qp[t]) > 0).sort((a, b) => b - a);
+    let left = n, total = 0; for (const t of tiers) while (left >= t) { total += Number(qp[t]); left -= t; } return total + left * unit;
+}
+// Акція рахується на ТОВАР, а не на рядок: дві футболки різних кольорів — два рядки, але «2 шт — 799» (15.10, тест Н5).
+function setSelectionTotal(sel) {
+    const by = {}; for (const it of sel) { const k = it.article || it.id || it.name; (by[k] = by[k] || { price: Number(it.price) || 0, qp: it.qtyPrices || {}, n: 0 }).n += Number(it.qty) || 1; }
+    return Object.values(by).reduce((s, g) => s + tierTotal(g.qp, g.price, g.n), 0);
+}
 // Форма n_extra_resolve.extraItems (НЕ orderExtras!) — n_pay_amount рахує orderTotal/extrasSum
 // САМЕ з context.extraItems (свій резолвер), тому синтетичний orderExtras воно ігнорує й
 // перезаписує власним (тоді extrasSum=0 і сума комплекту губиться, «решта −200 грн»).
-function setSelectionToExtraItems(sel) { return sel.map((it) => ({ id: it.id, sku: it.article, name: it.name, price: it.price, qtyPrices: {}, color: it.color, size: it.size, qty: it.qty, colorsList: it.colors || [], sizes: it.sizes || [], supplier: it.supplier, supplierArticle: it.supplierArticle, offers: [] })); }
+function setSelectionToExtraItems(sel) { return sel.map((it) => ({ id: it.id, sku: it.article, name: it.name, price: it.price, qtyPrices: it.qtyPrices || {}, color: it.color, size: it.size, qty: it.qty, colorsList: it.colors || [], sizes: it.sizes || [], supplier: it.supplier, supplierArticle: it.supplierArticle, offers: [] })); }
 /** Склад точно збігається з офіційно визначеним комплектом (той самий набір артикулів, по 1 шт) — лише тоді працює знижка комплекту. */
 function setMatchesOriginal(sel, original) {
     if (!original || sel.length !== original.length) return false;
@@ -217,7 +226,10 @@ async function applySetEdit(A, u, pp) {
     const notes = []; let changed = false;
     if (u.removeItem) {
         const hit = matchSetItem(u.removeItem, sel, catNames);
+        const gone = !hit && Array.isArray(original) ? matchSetItem(u.removeItem, original, catNames) : null;
         if (hit) { ctx.setSelection = sel.filter((x) => x !== hit); notes.push('прибрала: ' + hit.name); changed = true; }
+        // Річ уже не в складі (немає в наявності чи прибрана раніше) — «замість лоферів…» не означає «не знайшла» (15.10, тест Н5).
+        else if (gone) notes.push(gone.name + ' — і так не входить у замовлення');
         else notes.push('не знайшла в комплекті «' + u.removeItem + '» — менеджер уточнить, коли зверне увагу');
     }
     if (u.addItem) {

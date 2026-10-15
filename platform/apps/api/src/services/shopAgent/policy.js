@@ -1496,7 +1496,8 @@ async function runPolicyInner(A, u) {
         const t1 = 'За фото я не можу точно визначити відтінок 🙈 У цієї моделі є: ' + ctx.product.colors + '. Напишіть, будь ласка, який із них вам ближчий, — або я уточню у менеджера 🙂';
         const t2 = 'Точно порівняти відтінок за фото не вийде — орієнтуйтесь на назви: ' + ctx.product.colors + '. Якщо сумніваєтесь, передам питання менеджеру 💛';
         A.out.push({ text: ctx.agent.colorSampleReplies % 2 ? t1 : t2, step: 'color_sample_honest' });
-        
+        // Цей текст і є відповіддю на «такий колір є?» — модель не дописує свого «Клієнт надіслав фото, але я не бачу…» (тест 32).
+        Q.coverTopics(A, u, ['colors', 'photo', 'availability', 'other'], 'color_sample');
         return;
     }
     // 2026-09-23 (FunnelTest 1): у відповіді на допродаж («так, 2 футболки…») understand() ставить

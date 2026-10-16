@@ -1485,7 +1485,10 @@ async function runPolicyInner(A, u) {
     // перепитує, нове від клієнта (фото, накладна, картка, питання) — менеджеру; клієнту коротке «передала менеджеру», лише якщо є що
     // передати і менеджер не писав у розмові останні 3 год (інакше він на звʼязку — мовчимо). Розмова — на паузу.
     // Лише коли справу вже веде менеджер (є його повідомлення в історії): нова скарга/перше звернення — звичайний шлях повернення (тест 65).
-    if (u.afterSale && (A.history || []).some((h) => h.who === 'manager') && !A.turnSharedPost && !A.newEntryAd && !A.turnStory && !(ctx.returnFlow && ctx.returnFlow.stage === 'collect') && !(u.productHint && u.productHint.article && !A.turnImage)) {
+    // Запобіжник (16.10, хибне спрацювання: «кофту отримали, сподобалась, як прати?» → «передала менеджеру» й пауза): у розмові справді
+    // йшлося про повернення/обмін (рядок умов «Обмін/повернення 14 днів» з картки товару не рахується) або клієнт надіслав номер картки.
+    const histReturn = (A.history || []).some((h) => /поверн|обмін|обміня|поміня|возврат|обмен/i.test(String(h.text || '')) && !/обмін\/повернення\s*14/i.test(String(h.text || ''))) || cardIn(text) || !!ctx.returnFlow;
+    if (u.afterSale && histReturn && (A.history || []).some((h) => h.who === 'manager') &&!A.turnSharedPost && !A.newEntryAd && !A.turnStory && !(ctx.returnFlow && ctx.returnFlow.stage === 'collect') && !(u.productHint && u.productHint.article && !A.turnImage)) {
         const ttnT = ttnIn(text), card = cardIn(text);
         const what = A.turnImage ? 'фото (накладна / квитанція?) — подивіться в чаті' : card ? 'номер картки для повернення коштів — подивіться в чаті' : ttnT ? 'номер накладної ' + ttnT : '';
         const mgr = (A.history || []).filter((h) => h.who === 'manager').pop();

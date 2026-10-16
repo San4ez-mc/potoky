@@ -12,6 +12,7 @@ const CASES = [
     { name: 'Алла: «Зараз» посеред зʼясування повернення', sid: '933c290b-48fc-4c71-8d3c-81380384194a', at: '2026-10-13T17:44:00Z', expect: 'aftersale' },
     { name: 'Алла: «Костюм вам не прийшов?»', sid: '933c290b-48fc-4c71-8d3c-81380384194a', at: '2026-10-13T17:54:00Z', expect: 'aftersale' },
     { name: 'КОНТРОЛЬ Валерій: продаж менеджера з рядком «Обмін/повернення 14 днів»', sid: 'ae1985ac-b833-4fec-88ea-7eb39fd7f36f', at: '2026-10-13T10:22:00Z', expect: 'not_aftersale' },
+    { name: 'КОНТРОЛЬ (живе хибне 16.10): «кофту отримали, сподобалась, як прати?»', sid: '16f7db52-84fd-407a-8460-8e08d071c827', at: '2026-10-16T14:42:00Z', expect: 'not_aftersale' },
 ];
 
 (async () => {
@@ -36,7 +37,7 @@ const CASES = [
         const u = r.understanding || {};
         const steps = (r.replies || []).map((o) => o.step).join(',');
         const paused = r.ctx && r.ctx.funnelPaused && r.ctx.pausedBy;
-        const ok = c.expect === 'aftersale' ? (u.afterSale && paused === 'aftersale' && !/present|order_intent|hint|ask_params|phone_invalid|return_easy|post_order/.test(steps)) : !u.afterSale;
+        const ok = c.expect === 'aftersale' ? (paused === 'aftersale' && !/present|order_intent|hint|ask_params|phone_invalid|return_easy|post_order/.test(steps)) : paused !== 'aftersale';
         if (!ok) fail++;
         console.log((ok ? '✅ ' : '❌ ') + c.name + '\n    вхід: ' + (text.replace(/\d{12,19}/g, '<число>').replace(/\n/g, ' ⏎ ').slice(0, 120) || '') + (img ? ' [фото]' : '') + '\n    afterSale=' + u.afterSale + ' intent=' + u.intent + ' пауза=' + (paused || '—') + ' кроки=' + (steps || '— (мовчить)') + '\n    відповідь: ' + ((r.replies || []).map((o) => String(o.text || '').replace(/\n/g, ' ')).join(' | ').slice(0, 200) || '—'));
         await db.message.deleteMany({ where: { sessionId: test.id } }); await db.session.delete({ where: { id: test.id } }).catch(() => {}); await db.user.delete({ where: { id: user.id } }).catch(() => {});

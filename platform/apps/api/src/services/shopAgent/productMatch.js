@@ -650,6 +650,13 @@ try {
       var __existsResp = await fetch(base + '/ads?externalId=' + encodeURIComponent(String(context.entryAd)) + '&take=1', { headers: hdr() });
       var __existsJson = __existsResp.ok ? await __existsResp.json().catch(function () { return {}; }) : {};
       __adAlreadyExists = !!(Array.isArray(__existsJson.data) && __existsJson.data.length);
+      // Запис створено порожнім («Реклама <id>» — перший клієнт прийшов без назви реклами), а тепер Meta дала назву: оновлюємо, бо
+      // варіанти Advantage+ CRM привʼязує до «батька» саме за назвою (16.10, 120251392363380329 — варіант кампанії D0043 без привʼязки).
+      var __exAd = __adAlreadyExists ? __existsJson.data[0] : null;
+      var __refTitle = String(context.adTitle || ((context.lastReferral && context.lastReferral.ads_context_data) || {}).ad_title || '').trim();
+      if (__exAd && __exAd.id && __refTitle && /^Реклама\s+\d+$/.test(String(__exAd.name || '')) && !__exAd.productId) {
+        await fetch(base + '/ads/' + __exAd.id, { method: 'PATCH', headers: Object.assign({ 'Content-Type': 'application/json' }, hdr()), body: JSON.stringify({ name: __refTitle.slice(0, 200), campaignName: __refTitle.replace(/_group_\d+/i, '').slice(0, 200) }) }).catch(function () {});
+      }
     } catch (e) { __adAlreadyExists = adsList.some(function (a) { return String(a.externalId || '') === String(context.entryAd); }); }
   }
   // Відповідь на сторіз — не реклама: не реєструємо її в CRM /ads (раніше зʼявлялись «Реклама <id сторіз>» без товару).

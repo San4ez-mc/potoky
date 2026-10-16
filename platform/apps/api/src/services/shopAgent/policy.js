@@ -1503,6 +1503,25 @@ async function runPolicyInner(A, u) {
         A.trace.push({ step: 'aftersale', what: !!what, mgrActive, hasQuestion });
         return;
     }
+    // Кілька однакових КОМПЛЕКТІВ для різних людей (16.10, dobryi___17: «Два комплекти» + зріст/вага собі й другу → бот оформив ОДИН
+    // комплект з розмірами першої людини, а суму рахував то 3318, то 5290 × 2, «передоплата 200 × 2»). Кошик комплекти не веде — поки
+    // що бот записує, скільки комплектів і для кого з якими параметрами, і передає менеджеру; суму й оформлення робить менеджер.
+    {
+        const sp = ctx.product;
+        const persons = Array.isArray(u.persons) ? u.persons : [];
+        const nSets = Math.max(persons.length, (Number(u.qty) >= 2 && /комплект/i.test(text)) ? Number(u.qty) : 0);
+        if (sp && sp.isSet && nSets >= 2 && !ctx.crmOrderId && !(ctx.paymentInfo && ctx.paymentInfo.method) && !ctx.agent.multiSetAt) {
+            ctx.agent.multiSetAt = Date.now();
+            const who = persons.length ? persons.map((p, i) => (p.label || ('людина ' + (i + 1))) + ': ' + [p.height ? p.height + ' см' : '', p.weight ? p.weight + ' кг' : ''].filter(Boolean).join(' / ')).join('; ') : '';
+            ctx.multiSet = { qty: nSets, persons, at: Date.now() };
+            A.out = [];
+            A.out.push({ text: 'Записала: ' + nSets + ' × ' + shortName(sp) + (who ? ' — ' + who : '') + ' 🙌 Розміри й кольори для кожного комплекту та точну суму за ' + nSets + ' шт підбере менеджер — він напише вам тут найближчим часом 💛', step: 'multi_set_handoff' });
+            await pause(A, 'multi_set', null);
+            await T.alert(A, { title: '🧺 Кілька комплектів для різних людей — оформіть', main: nSets + ' × ' + (sp.customerName || sp.name || sp.sku) + ' (' + sp.sku + ')', details: (who ? 'Параметри: ' + who + '\n' : '') + 'Клієнт: «' + text.slice(0, 300) + '»\nБот суму не називав і замовлення не оформлював — розмова на паузі.' });
+            A.trace.push({ step: 'multi_set', nSets, persons: persons.length });
+            return;
+        }
+    }
     // Розмова, яку вів МЕНЕДЖЕР, після зняття його паузи (варіант 3, рішення власника 14.10): повернення/обмін/скарга/статус посилки —
     // бот не втручається (знову пауза + менеджеру); товар не впізнано — теж мовчить; продаж — бот підхоплює (історія з менеджером є в
     // аналізаторі). Лише перше повідомлення після зняття паузи (до 15 хв).

@@ -313,6 +313,13 @@ async function main() {
         check('42.2 postback від нашого акаунта не стає вхідним', !pbOwn.message && !pbOwn._fromPostback, '');
         const msgAlready = MC._postbackAsMessage({ sender: { id: '1' }, message: { mid: 'm4', text: 'a' }, postback: { mid: 'm4', title: 'b' } }, 'own');
         check('42.2 звичайне повідомлення не переписується postback-ом', msgAlready.message.text === 'a' && !msgAlready._fromPostback, '');
+        // 42.3 (16.10): реклама, яку Meta віддала лише Zernio, — з метаданих розмови Zernio; лише свіжа (≤30 хв).
+        const zmd = { meta_ad_id: '120250652631510329', meta_ad_title: 'Допис в Instagram: Осіння вʼязана кофта, джинси,..._Group_1', meta_ad_source: 'ADS', meta_ad_type: 'OPEN_THREAD', meta_ad_captured_at: '2026-10-16T14:13:29.463Z', meta_ad_post_id: '892882943590139' };
+        const zNow = Date.parse('2026-10-16T14:14:00Z');
+        const za = MC._zernioAdFromMeta(zmd, zNow);
+        check('42.3 реклама з Zernio → entryAdId, назва, пост', za && za.entryAdId === '120250652631510329' && za.adTitle === zmd.meta_ad_title && za.lastReferral.ads_context_data.post_id === '892882943590139', JSON.stringify(za));
+        check('42.3 давня реклама Zernio (>30 хв) — не береться', MC._zernioAdFromMeta(zmd, zNow + 31 * 60 * 1000) === null, '');
+        check('42.3 розмова Zernio без реклами — нічого', MC._zernioAdFromMeta({}, zNow) === null, '');
     }
     // 41.1 (2026-10-14, власник): картка й підпис — свіжі з CRM у момент надсилання; «Коментар до картки» замість назви ФОП.
     {

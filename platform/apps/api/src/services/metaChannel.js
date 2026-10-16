@@ -221,6 +221,18 @@ async function runTurn(sessionId, e) {
     const contactId = String(((sess0 && sess0.context) || {}).psid || e.contactId || '');
     if (!contactId) { logger.warn('[metaChannel] немає psid клієнта — нема куди відповідати', { sessionId }); return; }
     e.texts = Array.isArray(e.texts) ? e.texts : []; e.imageUrls = Array.isArray(e.imageUrls) ? e.imageUrls : []; e.ctxPatch = e.ctxPatch || {};
+    // Meta не передала рекламу (перше повідомлення з реклами взагалі не прийшло нам вебхуком, його підхопив поллер, або прийшло без
+    // реклами) — беремо її з Zernio, якому Meta її віддала (16.10). Лише для розмови без товару й без реклами в памʼяті.
+    if (!e.ctxPatch.entryAdId && !e.ctxPatch.sharedPost && !e.ctxPatch.storyId && !e.commentId) {
+        const c0 = (sess0 && sess0.context) || {};
+        if (!c0.entryAdId && !(c0.product && c0.product.sku)) {
+            const za = await zernioAdFor(botId, contactId);
+            if (za) {
+                e.ctxPatch.entryAdId = za.entryAdId; e.ctxPatch.lastReferral = za.lastReferral; if (za.adTitle) e.ctxPatch.adTitle = za.adTitle;
+                logger.info('[metaChannel] реклама з Zernio (Meta нам не передала)', { botId, sessionId, adId: za.entryAdId });
+            }
+        }
+    }
     // Сигнали товару цього ходу (пост, реклама, сторіз) — у контекст перед ходом, як робить звичайний вхід.
     if (Object.keys(e.ctxPatch).length) {
         const s = await db.session.findUnique({ where: { id: sessionId }, select: { context: true } });
@@ -462,6 +474,35 @@ function takeHeldRef(botId, igsid) {
     _refHold.delete(k);
     return Date.now() - h.at < REF_HOLD_MS ? h.patch : null;
 }
+// Zernio досі підключений до акаунта goverla, і Meta віддає ЙОМУ рекламу першого повідомлення з реклами, а нам — ні (16.10: ~24% розмов
+// з готового питання реклами; у Zernio для dobryi___17, bez_zaza, s.lozinsky_ реклама записана за кілька секунд, нам не прийшло нічого).
+// Розмова Zernio має id = psid клієнта. Лише свіжа реклама (≤30 хв), щоб не підхопити рекламу давньої розмови.
+async function zernioAdFor(botId, psid) {
+    try {
+        if (!psid) return null;
+        const rows = await db.funnelKey.findMany({ where: { botId, key: { in: ['ZERNIO_API_TOKEN', 'ZERNIO_ACCOUNT_ID'] } }, select: { key: true, value: true } });
+        const k = Object.fromEntries(rows.map((r) => [r.key, String(r.value || '').trim()]));
+        if (!k.ZERNIO_API_TOKEN || !k.ZERNIO_ACCOUNT_ID || k.ZERNIO_API_TOKEN === 'REPLACE_ME') return null;
+        const ac = new AbortController(); const to = setTimeout(() => { try { ac.abort(); } catch (er) {} }, 5000);
+        const r = await fetch('https://zernio.com/api/v1/inbox/conversations/' + encodeURIComponent(String(psid)) + '?accountId=' + encodeURIComponent(k.ZERNIO_ACCOUNT_ID), { headers: { Authorization: 'Bearer ' + k.ZERNIO_API_TOKEN }, signal: ac.signal }).finally(() => clearTimeout(to));
+        if (!r.ok) { if (r.status !== 404) logger.warn('[metaChannel] Zernio: розмова ' + r.status, { botId }); return null; }
+        const md = ((((await r.json().catch(() => ({}))) || {}).data) || {}).metadata || {};
+        return zernioAdFromMeta(md);
+    } catch (er) { return null; }
+}
+function zernioAdFromMeta(md, now = Date.now()) {
+    if (!md || !md.meta_ad_id) return null;
+    const at = Date.parse(md.meta_ad_captured_at || '') || 0;
+    if (!at || now - at > 30 * 60 * 1000) return null;
+    const adTitle = md.meta_ad_title || null;
+    return { entryAdId: String(md.meta_ad_id), adTitle, lastReferral: { ref: null, adId: String(md.meta_ad_id), source: md.meta_ad_source || 'ADS', type: md.meta_ad_type || null, adTitle, postId: md.meta_ad_post_id || null, via: 'zernio', ads_context_data: { ad_title: adTitle, post_id: md.meta_ad_post_id || null, photo_url: md.meta_ad_photo_url || null, video_url: md.meta_ad_video_url || null } } };
+}
+// Zernio повідомив про нове повідомлення клієнта: якщо Meta нам його не надіслала, поллер підхопить його вже за ~20 с, а не за 2–3 хв.
+const _nudge = new Map();
+function nudgePoll(botId) {
+    if (_nudge.has(botId)) return;
+    _nudge.set(botId, setTimeout(() => { _nudge.delete(botId); pollConversations({ minAgeMs: 15 * 1000, onlyBotId: botId }).catch(() => {}); }, 20 * 1000));
+}
 /** postback клієнта (готове питання / кнопка) → message: текст = title, реклама = postback.referral. Мутує m, ставить m._fromPostback. */
 function postbackAsMessage(m, own) {
     if (!m || !m.postback || m.message || (own && m.sender && String(m.sender.id) === own)) return m;
@@ -697,10 +738,10 @@ async function retryUnanswered() {
  * ні тим самим текстом ±3 хв. Реклама в API розмов не віддається — такий хід іде без товару з реклами (бот спитає/покаже список).
  */
 const _convPollAt = new Map();
-async function pollConversations() {
+async function pollConversations({ minAgeMs = 90 * 1000, onlyBotId = null } = {}) {
     const now = Date.now();
     for (const [botId, c] of _channel) {
-        if (!c || c.v !== 'meta') continue;
+        if (!c || c.v !== 'meta' || (onlyBotId && botId !== onlyBotId)) continue;
         try {
             const bot = await db.bot.findUnique({ where: { id: botId }, select: { isActive: true } });
             if (!bot || !bot.isActive) continue;
@@ -721,7 +762,7 @@ async function pollConversations() {
                 for (let i = 0; i < msgs.length; i++) {
                     const m = msgs[i]; if (isOwn(m) || !(m.from && m.from.id)) continue;
                     const at = new Date(m.created_time).getTime(); const age = now - at;
-                    if (age < 90 * 1000 || age > 30 * 60 * 1000) continue;
+                    if (age < minAgeMs || age > 30 * 60 * 1000) continue;
                     if (msgs.slice(i + 1).some(isOwn)) continue; // уже відповіли (бот чи менеджер)
                     if (await db.processedMessage.findFirst({ where: { botId, updateId: 'meta_in_' + m.id }, select: { id: true } }).catch(() => null)) continue;
                     const text = String(m.message || '').trim();
@@ -748,4 +789,4 @@ const __runsBackground = !process.env.name || process.env.name === 'platform-api
 if (__runsBackground) setTimeout(() => { pollConversations(); setInterval(pollConversations, 2 * 60 * 1000).unref(); }, 100 * 1000).unref();
 if (__runsBackground) setTimeout(() => { retryUnanswered(); setInterval(retryUnanswered, 60 * 1000).unref(); }, 150 * 1000).unref();
 
-module.exports = { handleMetaEvent, scheduleTurn, runTurn, drain, sendText, replyToComment, channelOf, channelOfSync, splitText, _echoes, _pollConversations: pollConversations, _refPatch: refPatch, _takeHeldRef: takeHeldRef, _postbackAsMessage: postbackAsMessage, _parseInbound: parseInbound, _refHold, _enqueue: enqueue, _waiting, _queue, _replyToSkuFor: replyToSkuFor };
+module.exports = { handleMetaEvent, scheduleTurn, runTurn, drain, sendText, replyToComment, channelOf, channelOfSync, splitText, _echoes, _pollConversations: pollConversations, _refPatch: refPatch, _takeHeldRef: takeHeldRef, _postbackAsMessage: postbackAsMessage, _parseInbound: parseInbound, _zernioAdFromMeta: zernioAdFromMeta, nudgePoll, _refHold, _enqueue: enqueue, _waiting, _queue, _replyToSkuFor: replyToSkuFor };

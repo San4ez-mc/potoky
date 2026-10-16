@@ -624,7 +624,9 @@ async function handleZernioEvent(webhookBotId, body) {
     const botId = await resolveZernioTargetBot(webhookBotId);
     if (botId !== webhookBotId) logger.info('[zernioHandler] forward', { from: webhookBotId, to: botId, event });
     // Воронка на прямому каналі Meta (INBOUND_CHANNEL=meta, metaChannel.js) — Zernio лише резерв, його події не обробляємо.
-    if ((await require('./metaChannel').channelOf(botId)) === 'meta') return { ok: true, skipped: 'meta-channel' };
+    // Нове повідомлення клієнта: Meta частину перших повідомлень з реклами шле лише Zernio, а не нам (16.10) — штовхаємо поллер прямого
+    // каналу, щоб підхопив за ~20 с, а не за 2–3 хв. Обробка й реклама — у metaChannel (реклама — з метаданих розмови Zernio).
+    if ((await require('./metaChannel').channelOf(botId)) === 'meta') { if (event === 'message.received') require('./metaChannel').nudgePoll(botId); return { ok: true, skipped: 'meta-channel' }; }
     const convId = body?.conversation?.id || body?.conversation?.conversationId || body?.data?.conversationId || 'nc';
     return withConvLock(`${botId}:${convId}`, () =>
         (event === 'message.received' ? handleIncomingMessage(botId, body)

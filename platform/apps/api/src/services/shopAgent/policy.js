@@ -1377,11 +1377,19 @@ async function basketIntake(A, u) {
     let fi = cur ? res.findIndex((x) => x.r.sku && up(x.r.sku) === up(cur.sku)) : -1;
     if (cur && fi < 0) fi = res.findIndex((x) => !x.r.sku && curCat && catIdOf(x.r.category) === curCat);
     if (!cur) {
-        fi = 0; const f = res[0];
+        // Головним стає той товар, який обере й пошук товару: названий артикулом (аналізатор), інакше будь-який з артикулом, інакше
+        // перший. Раніше — завжди перший: «2 джинси, 2 кофти A0187 і 3 футболки» → у фокусі джинси (категорія), а пошук обирав
+        // A0187 за артикулом — джинси не потрапляли ні в чергу, ні у фокус і зникали (16.10, тест Л8 / Edits ef168b49).
+        const art = up(u.productHint && u.productHint.article);
+        fi = art ? res.findIndex((x) => x.r.sku && up(x.r.sku) === art) : -1;
+        if (fi < 0) fi = res.findIndex((x) => x.r.sku);
+        if (fi < 0) fi = 0;
+        const f = res[fi];
         u.productHint = f.r.sku ? { article: f.r.sku, category: null, fromList: null } : { article: null, category: f.r.category, fromList: null };
     }
     const focus = fi >= 0 ? res[fi] : null;
-    if (focus) { if (focus.it.color && !u.color && !u.colorMatched) u.color = focus.it.color; if (focus.it.qty > 1 && !u.qty) u.qty = focus.it.qty; }
+    // Кількість головного — з ЙОГО позиції («2 кофти»), а не загальне u.qty аналізатора, яке могло стосуватись іншого товару.
+    if (focus) { if (focus.it.color && !u.color && !u.colorMatched) u.color = focus.it.color; u.qty = Number(focus.it.qty) > 1 ? Number(focus.it.qty) : null; }
     if (focus && focus.colors && focus.colors.length > 1) { u.units = focus.colors.map((c) => ({ color: c, size: '' })); u.qty = Math.max(Number(focus.it.qty) || 0, focus.colors.length); u.color = null; u.colorMatched = null; }
     const queued = [];
     for (const [i, x] of res.entries()) {
@@ -1470,6 +1478,79 @@ async function universalQuestionFallback(A, u) {
     const item = { text, step: A.justPresented ? 'question_after_card' : 'question_fallback' };
     if (firstText < 0 || A.justPresented) A.out.push(item); // після картки — окремо після неї; без тексту скрипту — просто відповідь
     else A.out.splice(firstText, 0, item);
+}
+
+/** Люди з параметрами з повідомлення: аналізатор (u.persons, з «для кого»), запасно — пари з тексту, коли аналізатор недоступний
+ * («185/58», «185 см … 58 кг»). Лише правдоподібні зріст/вага, до 10 людей. */
+function personsFrom(u, text) {
+    let persons = (Array.isArray(u.persons) ? u.persons : []).map((p) => ({ h: Number(p.height) || 0, w: Number(p.weight) || 0, who: p.label || null }));
+    if (persons.length < 2) {
+        persons = [...String(text).matchAll(/(\d{3})\s*(?:см)?\s*[\/,\s]\s*(\d{2,3})\s*(?:кг)?/gi)].map((m) => ({ h: Number(m[1]), w: Number(m[2]), who: null }));
+        if (persons.length < 2) {
+            const hs = [...String(text).matchAll(/(\d{3})\s*см/gi)].map((m) => Number(m[1]));
+            const ws = [...String(text).matchAll(/(\d{2,3})\s*кг/gi)].map((m) => Number(m[1]));
+            persons = hs.length >= 2 && ws.length >= 2 ? hs.slice(0, ws.length).map((h, i) => ({ h, w: ws[i], who: null })) : [];
+        }
+    }
+    return persons.filter((x) => x.h >= 140 && x.h <= 220 && x.w >= 35 && x.w <= 200).slice(0, 10);
+}
+/**
+ * КІЛЬКА ЛЮДЕЙ з різними параметрами в одному замовленні (будь-яка кількість) — одне правило для всіх товарів.
+ * Розмір рахується для КОЖНОЇ людини тим самим алгоритмом (n_calc).
+ *  • окремий товар → одиниця на людину з її розміром і підписом «для кого» (pairSizes/pairWho; колір кожної — звичайним кроком);
+ *  • комплект → розміри позицій для кожної людини, далі менеджер (кошик комплекти не веде; 16.10, dobryi___17: «два комплекти»
+ *    собі й другу → бот оформив ОДИН комплект і плутав суму). Без параметрів «3 комплекти» — теж менеджер, без суми;
+ *  • комусь розміру немає (поза сіткою) — менеджеру з тим, що порахували, людей не губимо.
+ * (Було з 24.09: регулярка лише на ДВІ пари, лише для окремого товару і до визначення товару — FunnelTest 23.)
+ * Повертає 'stop', коли хід завершено передачею менеджеру.
+ */
+async function applyPersons(A, u) {
+    const { ctx } = A; const pend = ctx.agent.pendingPersons; const sp = ctx.product;
+    if (!pend || !sp || !sp.sku || ctx.crmOrderId) return;
+    if (Date.now() - Number(pend.at || 0) > 30 * 60 * 1000) { delete ctx.agent.pendingPersons; return; }
+    delete ctx.agent.pendingPersons;
+    const persons = pend.persons || []; const text = pend.text || String(A.turnText || '');
+    const setsQty = sp.isSet ? Math.max(persons.length, Number(pend.setsQty) || 0) : 0;
+    if (!(persons.length >= 2 || setsQty >= 2)) return;
+    const keepSI = { ...(ctx.sizeInput || {}) };
+    const sizes = [];
+    for (const pr of persons) {
+        ctx.recommendedSize = null; ctx.sizeOutOfRange = false; if (sp.isSet) { delete ctx.setSizesText; delete ctx.setSizeMap; }
+        ctx.sizeInput = { ...keepSI, height: pr.h, weight: pr.w, clothingSize: undefined };
+        await T.calcSize(A);
+        sizes.push(sp.isSet ? String(ctx.setSizesText || '').trim() : (ctx.sizeOutOfRange ? '' : ctx.recommendedSize));
+    }
+    const label = (p, i) => p.who || ('людина ' + (i + 1));
+    if (persons.length) ctx.sizeInput = { ...keepSI, height: persons[0].h, weight: persons[0].w };
+    if (sp.isSet) {
+        const n = Math.max(setsQty, persons.length);
+        ctx.multiSet = { qty: n, persons, sizes, at: Date.now() };
+        if (persons.length) { ctx.recommendedSize = null; await T.calcSize(A); }
+        const who = persons.map((p, i) => label(p, i) + ' (' + p.h + ' см / ' + p.w + ' кг)' + (sizes[i] ? ': ' + sizes[i].replace(/\n+/g, '; ') : '')).join('\n');
+        A.out = A.out.filter((o) => /^present/.test(String(o.step || ''))); // картку, показану на цьому ж ході, лишаємо
+        A.out.push({ text: 'Записала: ' + n + ' × ' + shortName(sp) + (who ? '\n' + who : '') + '\n\n' + (persons.length ? 'Розміри підібрала за параметрами 📏 ' : '') + 'Кольори для кожного комплекту, точну суму за ' + n + ' шт і оформлення узгодить менеджер — він напише вам тут найближчим часом 💛', step: 'multi_set_handoff' });
+        await pause(A, 'multi_set', null);
+        await T.alert(A, { title: '🧺 ' + n + ' комплекти для різних людей — оформіть', main: n + ' × ' + (sp.customerName || sp.name || sp.sku) + ' (' + sp.sku + ')', details: (who ? who + '\n' : '') + 'Клієнт: «' + text.slice(0, 300) + '»\nБот суму не називав і замовлення не оформлював — розмова на паузі.' });
+        A.trace.push({ step: 'multi_set', n, persons: persons.length });
+        return 'stop';
+    }
+    if (persons.length >= 2 && sizes.every(Boolean)) {
+        const cols = (u.units || []).map((x) => x && x.color);
+        u.units = sizes.map((sz, i) => ({ color: cols[i] || '', size: sz }));
+        u.qty = sizes.length; ctx.recommendedSize = sizes[0]; ctx.agent.pairSizes = sizes;
+        ctx.agent.pairWho = persons.map((p, i) => label(p, i));
+        ctx.agent.pendingUnits = { units: u.units, qty: u.qty, at: Date.now() };
+        A.trace.push({ step: 'multi_person', n: persons.length, sizes });
+        return;
+    }
+    if (persons.length >= 2) {
+        const who = persons.map((p, i) => label(p, i) + ' (' + p.h + ' см / ' + p.w + ' кг): ' + (sizes[i] || 'розміру нема в сітці')).join('\n');
+        A.out = A.out.filter((o) => /^present/.test(String(o.step || '')));
+        A.out.push({ text: 'Записала для кожного:\n' + who + '\n\nДля когось із вас у сітці цього товару розміру немає — менеджер підбере варіант і напише вам тут найближчим часом 🙏', step: 'multi_person_handoff' });
+        await pause(A, 'multi_person', null);
+        await T.alert(A, { title: '👥 Кілька людей, комусь немає розміру — підберіть', main: (sp.customerName || sp.name || sp.sku) + ' (' + sp.sku + ')', details: who + '\nКлієнт: «' + text.slice(0, 300) + '»' });
+        return 'stop';
+    }
 }
 
 async function runPolicyInner(A, u) {
@@ -2102,64 +2183,18 @@ async function runPolicyInner(A, u) {
         const hw = hwFromHistory(A);
         if (hw) { ctx.sizeInput = { ...(ctx.sizeInput || {}), height: (ctx.sizeInput || {}).height || hw.height, weight: (ctx.sizeInput || {}).weight || hw.weight }; ctx.agent.hwCarried = true; }
     }
-    // КІЛЬКА ЛЮДЕЙ з різними параметрами в одному замовленні (будь-яка кількість) — одне правило для всіх товарів.
-    // Люди — з аналізатора (u.persons: зріст/вага/«для кого»); запасно — ДАНІ з тексту (пари «185/58», «185 см … 58 кг»), коли
-    // аналізатор недоступний. Розмір рахується для КОЖНОЇ людини тим самим алгоритмом (n_calc).
-    //  • окремий товар → одиниця на людину з її розміром і підписом «для кого» (pairSizes/pairWho; колір кожної — звичайним кроком);
-    //  • комплект → розміри позицій для кожної людини, далі менеджер (кошик комплекти не веде; 16.10, dobryi___17: «два комплекти»
-    //    собі й другу → бот оформив ОДИН комплект і плутав суму). Без параметрів «3 комплекти» — теж менеджер, без суми.
-    // (Було з 24.09: регулярка лише на ДВІ пари і лише для окремого товару — FunnelTest 23.)
+    // КІЛЬКА ЛЮДЕЙ в одному замовленні (будь-яка кількість) — запамʼятовуємо як СТАН (ctx.agent.pendingPersons) і застосовуємо там,
+    // де товар уже відомий (applyPersons: тут, якщо товар є, або на початку розділу «3. Комплект» — після картки). Параметри першої
+    // людини — одразу в sizeInput, щоб картка не просила зріст/вагу вдруге (16.10, тести Л2/Л3: товар і люди в першому повідомленні).
     {
-        let persons = (Array.isArray(u.persons) ? u.persons : []).map((p) => ({ h: Number(p.height) || 0, w: Number(p.weight) || 0, who: p.label || null }));
-        if (persons.length < 2) {
-            persons = [...String(text).matchAll(/(\d{3})\s*(?:см)?\s*[\/,\s]\s*(\d{2,3})\s*(?:кг)?/gi)].map((m) => ({ h: Number(m[1]), w: Number(m[2]), who: null }));
-            if (persons.length < 2) {
-                const hs = [...String(text).matchAll(/(\d{3})\s*см/gi)].map((m) => Number(m[1]));
-                const ws = [...String(text).matchAll(/(\d{2,3})\s*кг/gi)].map((m) => Number(m[1]));
-                persons = hs.length >= 2 && ws.length >= 2 ? hs.slice(0, ws.length).map((h, i) => ({ h, w: ws[i], who: null })) : [];
-            }
+        const persons = personsFrom(u, text);
+        const setsQty = (Number(u.qty) >= 2 && /комплект|набор|образ/i.test(text)) ? Number(u.qty) : 0;
+        if ((persons.length >= 2 || setsQty >= 2) && !ctx.crmOrderId) {
+            ctx.agent.pendingPersons = { persons, setsQty, at: Date.now(), text: String(text).slice(0, 300) };
+            if (persons.length && !(ctx.sizeInput && ctx.sizeInput.height && ctx.sizeInput.weight)) ctx.sizeInput = { ...(ctx.sizeInput || {}), height: persons[0].h, weight: persons[0].w };
         }
-        persons = persons.filter((x) => x.h >= 140 && x.h <= 220 && x.w >= 35 && x.w <= 200).slice(0, 10);
-        const sp = ctx.product;
-        const setsQty = sp && sp.isSet ? Math.max(persons.length, (Number(u.qty) >= 2 && /комплект|набор|образ/i.test(text)) ? Number(u.qty) : 0) : 0;
-        if (sp && !ctx.crmOrderId && (persons.length >= 2 || setsQty >= 2)) {
-            const keepSI = { ...(ctx.sizeInput || {}) };
-            const sizes = [];
-            for (const pr of persons) {
-                ctx.recommendedSize = null; ctx.sizeOutOfRange = false; if (sp.isSet) { delete ctx.setSizesText; delete ctx.setSizeMap; }
-                ctx.sizeInput = { ...keepSI, height: pr.h, weight: pr.w, clothingSize: undefined };
-                await T.calcSize(A);
-                sizes.push(sp.isSet ? String(ctx.setSizesText || '').trim() : (ctx.sizeOutOfRange ? '' : ctx.recommendedSize));
-            }
-            const label = (p, i) => p.who || ('людина ' + (i + 1));
-            if (sp.isSet) {
-                const n = Math.max(setsQty, persons.length);
-                ctx.multiSet = { qty: n, persons, sizes, at: Date.now() };
-                if (persons.length) { ctx.sizeInput = { ...keepSI, height: persons[0].h, weight: persons[0].w }; ctx.recommendedSize = null; await T.calcSize(A); }
-                const who = persons.map((p, i) => label(p, i) + ' (' + p.h + ' см / ' + p.w + ' кг)' + (sizes[i] ? ': ' + sizes[i].replace(/\n+/g, '; ') : '')).join('\n');
-                A.out = [];
-                A.out.push({ text: 'Записала: ' + n + ' × ' + shortName(sp) + (who ? '\n' + who : '') + '\n\n' + (persons.length ? 'Розміри підібрала за параметрами 📏 ' : '') + 'Кольори для кожного комплекту, точну суму за ' + n + ' шт і оформлення узгодить менеджер — він напише вам тут найближчим часом 💛', step: 'multi_set_handoff' });
-                await pause(A, 'multi_set', null);
-                await T.alert(A, { title: '🧺 ' + n + ' комплекти для різних людей — оформіть', main: n + ' × ' + (sp.customerName || sp.name || sp.sku) + ' (' + sp.sku + ')', details: (who ? who + '\n' : '') + 'Клієнт: «' + text.slice(0, 300) + '»\nБот суму не називав і замовлення не оформлював — розмова на паузі.' });
-                A.trace.push({ step: 'multi_set', n, persons: persons.length });
-                return;
-            }
-            if (persons.length >= 2 && sizes.every(Boolean)) {
-                const cols = (u.units || []).map((x) => x && x.color);
-                u.units = sizes.map((sz, i) => ({ color: cols[i] || '', size: sz }));
-                u.qty = sizes.length; ctx.recommendedSize = sizes[0]; ctx.agent.pairSizes = sizes;
-                ctx.agent.pairWho = persons.map((p, i) => label(p, i));
-            } else if (persons.length >= 2) {
-                // Комусь розміру нема (поза сіткою) — не губимо людей: менеджеру з тим, що порахували.
-                ctx.sizeInput = { ...keepSI, height: persons[0].h, weight: persons[0].w };
-                const who = persons.map((p, i) => label(p, i) + ' (' + p.h + ' см / ' + p.w + ' кг): ' + (sizes[i] || 'розміру нема в сітці')).join('\n');
-                A.out = [];
-                A.out.push({ text: 'Записала для кожного:\n' + who + '\n\nДля когось із вас у сітці цього товару розміру немає — менеджер підбере варіант і напише вам тут найближчим часом 🙏', step: 'multi_person_handoff' });
-                await pause(A, 'multi_person', null);
-                await T.alert(A, { title: '👥 Кілька людей, комусь немає розміру — підберіть', main: (sp.customerName || sp.name || sp.sku) + ' (' + sp.sku + ')', details: who + '\nКлієнт: «' + text.slice(0, 300) + '»' });
-                return;
-            }
-        }
+        const newProductNow = !!(A.turnSharedPost || A.turnImage || A.newEntryAd || (u.productHint && (u.productHint.article || u.productHint.category)));
+        if (ctx.agent.pendingPersons && ctx.product && ctx.product.sku && !newProductNow && (await applyPersons(A, u)) === 'stop') return;
     }
     if (u.colorMatched) ctx.agent.pendingColor = u.colorMatched; else if (u.color) ctx.agent.pendingColorRaw = u.color;
     // Кілька кольорів одразу («чорну і сіру», «один світло-сірий, другий чорний») теж памʼятаємо: хід міг завершитись питанням
@@ -2559,6 +2594,8 @@ async function runPolicyInner(A, u) {
     // питання лише повторював «Мені ще потрібні зріст і вага»; FunnelTest 79/86/115/125).
     const __clientAt = Math.max(0, ...(A.history || []).filter((m) => m.who === 'client').map((m) => new Date(m.sentAt || m.at).getTime() || 0));
     if (!A.justPresented && ctx.presentedAt && ctx.agent.presentedSku === p.sku && Date.now() - Number(ctx.presentedAt) < 90 * 1000 && !(__clientAt > Number(ctx.presentedAt))) dropQuestionsAnsweredByCard(A, u);
+    // Кілька людей, названих до того, як товар став відомий (картка на цьому ж ході), — застосовуємо тепер.
+    if (ctx.agent.pendingPersons && (await applyPersons(A, u)) === 'stop') return;
     // 3. Комплект
     if (p.isSet && !ctx.setMode) {
         // 2026-09-18 (живий кейс, Roman/tovstanovskiy_, сесія 20af04a6: "Кофта и лоферы" / "5934

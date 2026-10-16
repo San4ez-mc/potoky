@@ -471,6 +471,15 @@ async function handleMetaEvent(webhookBotId, body) {
     for (const entry of body.entry || []) {
         let events = (entry.messaging && entry.messaging.length ? entry.messaging : entry.standby) || [];
         if (!events.length && Array.isArray(entry.changes)) events = entry.changes.filter((c) => c && c.value && (c.field === 'messages' || c.field === 'message')).map((c) => c.value);
+        // Діагностика (16.10, Valentina umanska2702: «Як замовити пуховик?» з реклами D0043 без жодних даних реклами; з 14.10 жодного
+        // окремого рефералу з ad_id, хоча підписки увімкнені): подія іншого формату (changes з невідомим полем, standby поряд із messaging)
+        // досі зникала без сліду — пишемо її вигляд у журнал, щоб бачити, що саме шле Meta.
+        for (const ch of (Array.isArray(entry.changes) ? entry.changes : []).filter((c) => c && !/^(messages|message|comments)$/.test(String(c.field || '')))) {
+            logger.info('[metaChannel] diag: changes з іншим полем', { botId, field: ch.field, value: JSON.stringify(ch.value || {}).slice(0, 1500) });
+        }
+        if (entry.messaging && entry.messaging.length && Array.isArray(entry.standby) && entry.standby.length) {
+            logger.info('[metaChannel] diag: standby поряд із messaging', { botId, standby: JSON.stringify(entry.standby).slice(0, 1500) });
+        }
         for (const ch of (Array.isArray(entry.changes) ? entry.changes : []).filter((c) => c && c.field === 'comments' && c.value)) {
             try { const r = await handleComment(botId, own, ch.value); if (r === 'skip') skipped++; else processed++; }
             catch (err) { logger.error('[metaChannel] comment failed', { botId, error: err.message }); }
@@ -479,7 +488,9 @@ async function handleMetaEvent(webhookBotId, body) {
             try {
                 // Окремий реферал (клієнт відкрив розмову з реклами) — не хід, лише «з якої реклами».
                 if (!m.message && !m.postback && m.referral && m.sender && !(own && String(m.sender.id) === own)) {
-                    const rp = refPatch(m.referral); if (!rp) { skipped++; continue; }
+                    const rp = refPatch(m.referral);
+                    logger.info('[metaChannel] diag: окремий реферал', { botId, sender: String(m.sender.id), hasAdId: !!rp, referral: JSON.stringify(m.referral).slice(0, 1500) });
+                    if (!rp) { skipped++; continue; }
                     const igsid = String(m.sender.id);
                     const { session } = await sessionFor(botId, igsid, { lastReferral: rp.lastReferral, ...(rp.adTitle ? { adTitle: rp.adTitle } : {}) });
                     const pe = _pending.get(session.id);
@@ -495,7 +506,11 @@ async function handleMetaEvent(webhookBotId, body) {
                     m.message = { mid: String(me.mid || '') + ':edit' + (Number(me.num_edit) || 1), text: String(me.text) };
                     delete m.message_edit;
                 }
-                if (m.read || m.reaction || m.message_edit || (!m.message && !m.postback)) { skipped++; continue; }
+                if (m.read || m.reaction || m.message_edit || (!m.message && !m.postback)) {
+                    // «Прочитано» і реакції — шум; решту відкинутого пишемо з вмістом (ключі події + сирий вміст), щоб знайти, де губиться реклама.
+                    if (!m.read && !m.reaction) logger.info('[metaChannel] diag: відкинута подія', { botId, keys: Object.keys(m).join(','), raw: JSON.stringify(m).slice(0, 1500) });
+                    skipped++; continue;
+                }
                 const msg = m.message || {};
                 // ── echo: повідомлення від нашого акаунта клієнту ──
                 if (msg.is_echo || (own && m.sender && String(m.sender.id) === own)) {
@@ -520,7 +535,13 @@ async function handleMetaEvent(webhookBotId, body) {
                 }
                 // ── вхідне від клієнта ──
                 const igsid = m.sender && m.sender.id; if (!igsid) { skipped++; continue; }
-                const p = parseInbound(m); if (!p.mid) { skipped++; continue; }
+                const p = parseInbound(m);
+                {
+                    const extraM = Object.keys(m).filter((k) => !/^(sender|recipient|timestamp|message)$/.test(k));
+                    const extraMsg = Object.keys(msg).filter((k) => !/^(mid|text|attachments|reply_to|is_echo|quick_reply)$/.test(k));
+                    if (extraM.length || extraMsg.length || p.ref || !p.mid) logger.info('[metaChannel] diag: вхідне з додатковими полями', { botId, extra: extraM.concat(extraMsg.map((k) => 'message.' + k)).join(','), hasAdId: !!refPatch(p.ref), raw: JSON.stringify(m).slice(0, 1500) });
+                }
+                if (!p.mid) { skipped++; continue; }
                 if (!(await dedup(botId, 'in_' + p.mid))) { skipped++; continue; }
                 const held = takeHeldRef(botId, String(igsid));
                 const patch = refPatch(p.ref) || held || {};

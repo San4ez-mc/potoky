@@ -1877,7 +1877,7 @@ async function runPolicyInner(A, u) {
     const returnSignal = u.returnRequest || u.returnType || u.returnReason || u.exchangeFor;
     // Фото у відповідь на «надішліть фото браку» — це фото браку, а не пошук товару (16.10, Катя Верзан: два фото нерівної вʼязки →
     // бот закрив скаргу як «пішла від теми» і показав картку тієї самої кофти). Менеджеру — зі скаргою; клієнту — подяка; пауза.
-    if (rfCollecting && ctx.returnFlow.defect && A.turnImage && !A.turnSharedPost && !A.newEntryAd && !returnSignal) {
+    if (rfCollecting && ctx.returnFlow.defect && A.turnImage && !A.turnSharedPost && !A.newEntryAd && !(u.returnType || u.exchangeFor)) {
         const rf = ctx.returnFlow; rf.defectPhotos = (rf.defectPhotos || 0) + 1;
         await finishReturnCollect(A, { silent: true, note: '📷 Клієнт надіслав фото браку — подивіться в чаті й запропонуйте рішення (обмін або повернення коштів).' });
         A.out.push({ text: 'Дякую за фото 🙏 Передала менеджеру — він подивиться й запропонує рішення (обмін або повернення коштів) тут, у чаті.', step: 'return_defect_photo' });

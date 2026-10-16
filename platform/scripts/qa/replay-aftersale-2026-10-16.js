@@ -24,7 +24,7 @@ const CASES = [
         const all = await db.message.findMany({ where: { sessionId: c.sid }, orderBy: { createdAt: 'asc' }, select: { role: true, content: true, metadata: true, createdAt: true } });
         const before = all.filter((m) => m.createdAt < at).slice(-30);
         const batch = []; for (const m of all) { if (m.createdAt < at) continue; if (m.role !== 'user') break; if (batch.length && m.createdAt - batch[batch.length - 1].createdAt > 120000) break; batch.push(m); }
-        const text = batch.map((b) => String(b.content || '')).filter((t) => t && !/^\[фото|^\[порожнє/.test(t)).join('\n');
+        const text = batch.map((b) => String(b.content || '')).filter((t) => t && !/^\[(фото|порожнє|\d+ медіа)/.test(t)).join('\n');
         const img = (batch.map((b) => (b.metadata || {}).attachment).find((a) => a && a.type === 'photo') || {}).url || null;
         const rc = real.context || {};
         const seed = { testMode: true, replayOf: c.sid, channel: 'meta', psid: rc.psid, igUsername: rc.igUsername, senderName: rc.senderName, agent: {} };

@@ -43,10 +43,11 @@ async function calcSize(A) { return tool(A, 'n_calc'); }
 async function checkAvail(A) {
     const r = await tool(A, 'n_avail');
     // Два одержувачі з різними параметрами: n_avail ставить усім одиницям один recommendedSize — підставляємо розмір кожної пари.
-    const c = A.ctx, ps = c.agent && c.agent.pairSizes;
+    const c = A.ctx, ps = c.agent && c.agent.pairSizes, pw = (c.agent && c.agent.pairWho) || [];
     if (Array.isArray(ps) && Array.isArray(c.orderUnits) && c.orderUnits.length === ps.length) {
-        c.orderUnits = c.orderUnits.map((x, i) => ({ ...x, size: ps[i] || x.size }));
-        c.orderUnitsText = c.orderUnits.length + ' шт: ' + c.orderUnits.map((x) => [x.color, x.size].filter(Boolean).join(' ') || '—').join(', ');
+        // Кілька людей: у кожної одиниці свій розмір і підпис «для кого» (видно в підсумку й менеджеру).
+        c.orderUnits = c.orderUnits.map((x, i) => ({ ...x, size: ps[i] || x.size, ...(pw[i] ? { who: pw[i] } : {}) }));
+        c.orderUnitsText = c.orderUnits.length + ' шт: ' + c.orderUnits.map((x) => ([x.color, x.size].filter(Boolean).join(' ') || '—') + (x.who ? ' (' + x.who + ')' : '')).join(', ');
     }
     return r;
 }

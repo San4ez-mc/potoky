@@ -978,7 +978,7 @@ function resetForNewProduct(A, sku) {
         // «бот знову питає зріст і вагу», 01.10: 38 — картка нового товару просила їх заново). Скидаємо лише розмір/заміри під товар.
         const body = ctx.sizeInput && ctx.sizeInput.height && ctx.sizeInput.weight ? { height: ctx.sizeInput.height, weight: ctx.sizeInput.weight, ...(ctx.sizeInput.belly ? { belly: true } : {}), ...(ctx.sizeInput.shoeSize ? { shoeSize: ctx.sizeInput.shoeSize } : {}) } : null;
         for (const k of ['sizeInput','recommendedSize', 'sizeSource', 'sizeReplyText', 'sizeColorFollowup', 'sizeOutOfRange', 'sizeOorReason', 'sizeOorAlternative', 'isSetSizeCalc', 'setSizesText', 'setSizeMap', 'setSizeOor', 'colorChoice', 'available', 'availReason', 'orderUnits', 'orderUnitsText', 'orderUnitsTotal', 'orderQty', 'orderIntent', 'setMode', 'setPick', 'setSelection', 'availChecked', 'extraItems', 'extraItemsText', 'extraUnresolved', 'orderExtras', 'unavailableColors', 'availableColorsNow']) delete ctx[k];
-        for (const k of ['setOriginal', 'setPricing', 'setStageSent', 'setEditNote', 'setParams', 'setItemsAll', 'setItemColorHints', 'setColorHints', 'upsellOffered', 'upsellDeclined', 'setGeneralQ', 'setNamedItem', 'payRepeatCount', 'asks', 'upsellPhotoSent', 'availKey', 'sizeVerifyAsked', 'sizeClaim']) delete ctx.agent[k];
+        for (const k of ['pairSizes', 'pairWho', 'setOriginal', 'setPricing', 'setStageSent', 'setEditNote', 'setParams', 'setItemsAll', 'setItemColorHints', 'setColorHints', 'upsellOffered', 'upsellDeclined', 'setGeneralQ', 'setNamedItem', 'payRepeatCount', 'asks', 'upsellPhotoSent', 'availKey', 'sizeVerifyAsked', 'sizeClaim']) delete ctx.agent[k];
         if (!ctx.crmOrderId) for (const k of ['paymentInfo', 'payAmount', 'payLabel', 'orderRef', 'orderRefAt', 'ibanPayUrl', 'ibanInvoiceUid', 'requisitesSentAt']) delete ctx[k];
         if (body) { ctx.sizeInput = body; if (!A.hwThisTurn) ctx.agent.hwCarried = true; }
         Basket.sync(ctx); // рядки кошика (B4) не губляться разом з додатковими позиціями попереднього товару
@@ -1507,25 +1507,6 @@ async function runPolicyInner(A, u) {
         A.trace.push({ step: 'aftersale', what: !!what, mgrActive, hasQuestion });
         return;
     }
-    // Кілька однакових КОМПЛЕКТІВ для різних людей (16.10, dobryi___17: «Два комплекти» + зріст/вага собі й другу → бот оформив ОДИН
-    // комплект з розмірами першої людини, а суму рахував то 3318, то 5290 × 2, «передоплата 200 × 2»). Кошик комплекти не веде — поки
-    // що бот записує, скільки комплектів і для кого з якими параметрами, і передає менеджеру; суму й оформлення робить менеджер.
-    {
-        const sp = ctx.product;
-        const persons = Array.isArray(u.persons) ? u.persons : [];
-        const nSets = Math.max(persons.length, (Number(u.qty) >= 2 && /комплект/i.test(text)) ? Number(u.qty) : 0);
-        if (sp && sp.isSet && nSets >= 2 && !ctx.crmOrderId && !(ctx.paymentInfo && ctx.paymentInfo.method) && !ctx.agent.multiSetAt) {
-            ctx.agent.multiSetAt = Date.now();
-            const who = persons.length ? persons.map((p, i) => (p.label || ('людина ' + (i + 1))) + ': ' + [p.height ? p.height + ' см' : '', p.weight ? p.weight + ' кг' : ''].filter(Boolean).join(' / ')).join('; ') : '';
-            ctx.multiSet = { qty: nSets, persons, at: Date.now() };
-            A.out = [];
-            A.out.push({ text: 'Записала: ' + nSets + ' × ' + shortName(sp) + (who ? ' — ' + who : '') + ' 🙌 Розміри й кольори для кожного комплекту та точну суму за ' + nSets + ' шт підбере менеджер — він напише вам тут найближчим часом 💛', step: 'multi_set_handoff' });
-            await pause(A, 'multi_set', null);
-            await T.alert(A, { title: '🧺 Кілька комплектів для різних людей — оформіть', main: nSets + ' × ' + (sp.customerName || sp.name || sp.sku) + ' (' + sp.sku + ')', details: (who ? 'Параметри: ' + who + '\n' : '') + 'Клієнт: «' + text.slice(0, 300) + '»\nБот суму не називав і замовлення не оформлював — розмова на паузі.' });
-            A.trace.push({ step: 'multi_set', nSets, persons: persons.length });
-            return;
-        }
-    }
     // Розмова, яку вів МЕНЕДЖЕР, після зняття його паузи (варіант 3, рішення власника 14.10): повернення/обмін/скарга/статус посилки —
     // бот не втручається (знову пауза + менеджеру); товар не впізнано — теж мовчить; продаж — бот підхоплює (історія з менеджером є в
     // аналізаторі). Лише перше повідомлення після зняття паузи (до 15 хв).
@@ -2014,7 +1995,7 @@ async function runPolicyInner(A, u) {
         if (!u.clothingSize) { const sm = text.match(/(?:змін|поміня|заміни|переробі|краще|давайте)\S*[^.!?]{0,25}?(?:розмір|размер|на)\s+(XXXL|XXL|XL|XS|S|M|L)(?![A-Za-z])/i); if (sm) u.clothingSize = sm[1]; }
         if (u.clothingSize && !ctx.supplierTtn && !ctx.ttn && !u.statusQuestion) {
             // 2026-09-24 (FunnelTest 28): зміна розміру після оформлення — чітке підтвердження + сигнал менеджеру, а не «в роботі 💛».
-            { const ns = String(u.clothingSize).toUpperCase(); delete ctx.agent.pairSizes; ctx.recommendedSize = ns; if (Array.isArray(ctx.orderUnits)) ctx.orderUnits = ctx.orderUnits.map((x) => ({ ...x, size: ns })); if (ctx.colorChoice) ctx.colorChoice = { ...ctx.colorChoice, size: ns }; }
+            { const ns = String(u.clothingSize).toUpperCase(); delete ctx.agent.pairSizes; delete ctx.agent.pairWho; ctx.recommendedSize = ns; if (Array.isArray(ctx.orderUnits)) ctx.orderUnits = ctx.orderUnits.map((x) => ({ ...x, size: ns })); if (ctx.colorChoice) ctx.colorChoice = { ...ctx.colorChoice, size: ns }; }
             A.out.push({ text: 'Звісно, змінила на ' + String(u.clothingSize).toUpperCase() + ' 👍 Передаю менеджеру, щоб виправили розмір у замовленні до відправки.', step: 'post_size_change' });
             await T.alert(A, 'n_agent_post_extra_admin', { details: '📏 Клієнт просить змінити розмір на ' + String(u.clothingSize).toUpperCase() + ' після оформлення: «' + text.slice(0, 200) + '»' });
             return;
@@ -2121,23 +2102,62 @@ async function runPolicyInner(A, u) {
         const hw = hwFromHistory(A);
         if (hw) { ctx.sizeInput = { ...(ctx.sizeInput || {}), height: (ctx.sizeInput || {}).height || hw.height, weight: (ctx.sizeInput || {}).weight || hw.weight }; ctx.agent.hwCarried = true; }
     }
-    // 2026-09-24 (FunnelTest 23): два одержувачі в одному повідомленні («185/58 темно-сіру, 187/100 чорну») — рахуємо розмір
-    // для кожної пари окремо й збираємо дві одиниці, а не питаємо зріст/вагу заново.
+    // КІЛЬКА ЛЮДЕЙ з різними параметрами в одному замовленні (будь-яка кількість) — одне правило для всіх товарів.
+    // Люди — з аналізатора (u.persons: зріст/вага/«для кого»); запасно — ДАНІ з тексту (пари «185/58», «185 см … 58 кг»), коли
+    // аналізатор недоступний. Розмір рахується для КОЖНОЇ людини тим самим алгоритмом (n_calc).
+    //  • окремий товар → одиниця на людину з її розміром і підписом «для кого» (pairSizes/pairWho; колір кожної — звичайним кроком);
+    //  • комплект → розміри позицій для кожної людини, далі менеджер (кошик комплекти не веде; 16.10, dobryi___17: «два комплекти»
+    //    собі й другу → бот оформив ОДИН комплект і плутав суму). Без параметрів «3 комплекти» — теж менеджер, без суми.
+    // (Було з 24.09: регулярка лише на ДВІ пари і лише для окремого товару — FunnelTest 23.)
     {
-        const prs = [...String(text).matchAll(/(\d{3})\s*(?:см)?\s*[\/,\s]\s*(\d{2,3})\s*(?:кг)?/gi)].map((m) => ({ h: Number(m[1]), w: Number(m[2]) })).filter((x) => x.h >= 140 && x.h <= 220 && x.w >= 35 && x.w <= 200);
-        if (prs.length < 2) {
-            // Формат словами: «185 см зросту, десь 58 кг … 187 см, 100 кг» — зрости й ваги по порядку.
-            const hs = [...String(text).matchAll(/(\d{3})\s*см/gi)].map((m) => Number(m[1]));
-            const ws = [...String(text).matchAll(/(\d{2,3})\s*кг/gi)].map((m) => Number(m[1]));
-            if (hs.length >= 2 && ws.length >= 2) { prs.length = 0; prs.push({ h: hs[0], w: ws[0] }, { h: hs[1], w: ws[1] }); }
+        let persons = (Array.isArray(u.persons) ? u.persons : []).map((p) => ({ h: Number(p.height) || 0, w: Number(p.weight) || 0, who: p.label || null }));
+        if (persons.length < 2) {
+            persons = [...String(text).matchAll(/(\d{3})\s*(?:см)?\s*[\/,\s]\s*(\d{2,3})\s*(?:кг)?/gi)].map((m) => ({ h: Number(m[1]), w: Number(m[2]), who: null }));
+            if (persons.length < 2) {
+                const hs = [...String(text).matchAll(/(\d{3})\s*см/gi)].map((m) => Number(m[1]));
+                const ws = [...String(text).matchAll(/(\d{2,3})\s*кг/gi)].map((m) => Number(m[1]));
+                persons = hs.length >= 2 && ws.length >= 2 ? hs.slice(0, ws.length).map((h, i) => ({ h, w: ws[i], who: null })) : [];
+            }
         }
-        if (prs.length >= 2 && ctx.product && !ctx.product.isSet && !ctx.crmOrderId) {
+        persons = persons.filter((x) => x.h >= 140 && x.h <= 220 && x.w >= 35 && x.w <= 200).slice(0, 10);
+        const sp = ctx.product;
+        const setsQty = sp && sp.isSet ? Math.max(persons.length, (Number(u.qty) >= 2 && /комплект|набор|образ/i.test(text)) ? Number(u.qty) : 0) : 0;
+        if (sp && !ctx.crmOrderId && (persons.length >= 2 || setsQty >= 2)) {
+            const keepSI = { ...(ctx.sizeInput || {}) };
             const sizes = [];
-            for (const pr of prs.slice(0, 2)) { ctx.recommendedSize = null; ctx.sizeOutOfRange = false; ctx.sizeInput = { ...(ctx.sizeInput || {}), height: pr.h, weight: pr.w, clothingSize: undefined }; await T.calcSize(A); sizes.push(ctx.recommendedSize); }
-            if (sizes.every(Boolean)) {
+            for (const pr of persons) {
+                ctx.recommendedSize = null; ctx.sizeOutOfRange = false; if (sp.isSet) { delete ctx.setSizesText; delete ctx.setSizeMap; }
+                ctx.sizeInput = { ...keepSI, height: pr.h, weight: pr.w, clothingSize: undefined };
+                await T.calcSize(A);
+                sizes.push(sp.isSet ? String(ctx.setSizesText || '').trim() : (ctx.sizeOutOfRange ? '' : ctx.recommendedSize));
+            }
+            const label = (p, i) => p.who || ('людина ' + (i + 1));
+            if (sp.isSet) {
+                const n = Math.max(setsQty, persons.length);
+                ctx.multiSet = { qty: n, persons, sizes, at: Date.now() };
+                if (persons.length) { ctx.sizeInput = { ...keepSI, height: persons[0].h, weight: persons[0].w }; ctx.recommendedSize = null; await T.calcSize(A); }
+                const who = persons.map((p, i) => label(p, i) + ' (' + p.h + ' см / ' + p.w + ' кг)' + (sizes[i] ? ': ' + sizes[i].replace(/\n+/g, '; ') : '')).join('\n');
+                A.out = [];
+                A.out.push({ text: 'Записала: ' + n + ' × ' + shortName(sp) + (who ? '\n' + who : '') + '\n\n' + (persons.length ? 'Розміри підібрала за параметрами 📏 ' : '') + 'Кольори для кожного комплекту, точну суму за ' + n + ' шт і оформлення узгодить менеджер — він напише вам тут найближчим часом 💛', step: 'multi_set_handoff' });
+                await pause(A, 'multi_set', null);
+                await T.alert(A, { title: '🧺 ' + n + ' комплекти для різних людей — оформіть', main: n + ' × ' + (sp.customerName || sp.name || sp.sku) + ' (' + sp.sku + ')', details: (who ? who + '\n' : '') + 'Клієнт: «' + text.slice(0, 300) + '»\nБот суму не називав і замовлення не оформлював — розмова на паузі.' });
+                A.trace.push({ step: 'multi_set', n, persons: persons.length });
+                return;
+            }
+            if (persons.length >= 2 && sizes.every(Boolean)) {
                 const cols = (u.units || []).map((x) => x && x.color);
                 u.units = sizes.map((sz, i) => ({ color: cols[i] || '', size: sz }));
                 u.qty = sizes.length; ctx.recommendedSize = sizes[0]; ctx.agent.pairSizes = sizes;
+                ctx.agent.pairWho = persons.map((p, i) => label(p, i));
+            } else if (persons.length >= 2) {
+                // Комусь розміру нема (поза сіткою) — не губимо людей: менеджеру з тим, що порахували.
+                ctx.sizeInput = { ...keepSI, height: persons[0].h, weight: persons[0].w };
+                const who = persons.map((p, i) => label(p, i) + ' (' + p.h + ' см / ' + p.w + ' кг): ' + (sizes[i] || 'розміру нема в сітці')).join('\n');
+                A.out = [];
+                A.out.push({ text: 'Записала для кожного:\n' + who + '\n\nДля когось із вас у сітці цього товару розміру немає — менеджер підбере варіант і напише вам тут найближчим часом 🙏', step: 'multi_person_handoff' });
+                await pause(A, 'multi_person', null);
+                await T.alert(A, { title: '👥 Кілька людей, комусь немає розміру — підберіть', main: (sp.customerName || sp.name || sp.sku) + ' (' + sp.sku + ')', details: who + '\nКлієнт: «' + text.slice(0, 300) + '»' });
+                return;
             }
         }
     }

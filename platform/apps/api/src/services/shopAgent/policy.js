@@ -402,7 +402,9 @@ function captureColorChoice(A, u, pp) {
     }
     if (pp.colors && !resolved()) {
         const c = u.colorMatched || matchColor(pp, u.color) || (ctx.sizeInput && ctx.sizeInput.color) || matchColor(pp, ctx.agent.pendingColor) || matchColor(pp, ctx.agent.pendingColorRaw) || null;
-        if (c) { ctx.colorChoice = { color: c, qty: u.qty || undefined }; delete ctx.agent.pendingColor; delete ctx.agent.pendingColorRaw; }
+        // Кількість, названа раніше за колір («2 кофти» → «чорну», «три кофти: мені…, сину…» → «всім чорні»), — зі стану, а не 1.
+        const pq = ctx.agent.pendingQty && Date.now() - Number(ctx.agent.pendingQty.at || 0) < 6 * 3600 * 1000 ? Number(ctx.agent.pendingQty.qty) : 0;
+        if (c) { ctx.colorChoice = { color: c, qty: u.qty || (pu && pu.qty) || pq || undefined }; delete ctx.agent.pendingColor; delete ctx.agent.pendingColorRaw; }
     } else if (pp.colors && ctx.colorChoice && ctx.colorChoice.color && !Array.isArray(ctx.colorChoice.colors) && (u.colorMatched || u.color)) {
         // Клієнт передумав («ні, краще графітовий») — корекція теж тут, до розміру: секція 5c стоїть після розміру й не виконувалась,
         // коли хід закінчувався питанням про зріст і вагу (FunnelTest 3, 05.10: «Графітовий — записала», а в замовленні лишався чорний).
@@ -978,7 +980,7 @@ function resetForNewProduct(A, sku) {
         // «бот знову питає зріст і вагу», 01.10: 38 — картка нового товару просила їх заново). Скидаємо лише розмір/заміри під товар.
         const body = ctx.sizeInput && ctx.sizeInput.height && ctx.sizeInput.weight ? { height: ctx.sizeInput.height, weight: ctx.sizeInput.weight, ...(ctx.sizeInput.belly ? { belly: true } : {}), ...(ctx.sizeInput.shoeSize ? { shoeSize: ctx.sizeInput.shoeSize } : {}) } : null;
         for (const k of ['sizeInput','recommendedSize', 'sizeSource', 'sizeReplyText', 'sizeColorFollowup', 'sizeOutOfRange', 'sizeOorReason', 'sizeOorAlternative', 'isSetSizeCalc', 'setSizesText', 'setSizeMap', 'setSizeOor', 'colorChoice', 'available', 'availReason', 'orderUnits', 'orderUnitsText', 'orderUnitsTotal', 'orderQty', 'orderIntent', 'setMode', 'setPick', 'setSelection', 'availChecked', 'extraItems', 'extraItemsText', 'extraUnresolved', 'orderExtras', 'unavailableColors', 'availableColorsNow']) delete ctx[k];
-        for (const k of ['pairSizes', 'pairWho', 'setOriginal', 'setPricing', 'setStageSent', 'setEditNote', 'setParams', 'setItemsAll', 'setItemColorHints', 'setColorHints', 'upsellOffered', 'upsellDeclined', 'setGeneralQ', 'setNamedItem', 'payRepeatCount', 'asks', 'upsellPhotoSent', 'availKey', 'sizeVerifyAsked', 'sizeClaim']) delete ctx.agent[k];
+        for (const k of ['pairSizes', 'pairWho', 'pendingQty', 'setOriginal', 'setPricing', 'setStageSent', 'setEditNote', 'setParams', 'setItemsAll', 'setItemColorHints', 'setColorHints', 'upsellOffered', 'upsellDeclined', 'setGeneralQ', 'setNamedItem', 'payRepeatCount', 'asks', 'upsellPhotoSent', 'availKey', 'sizeVerifyAsked', 'sizeClaim']) delete ctx.agent[k];
         if (!ctx.crmOrderId) for (const k of ['paymentInfo', 'payAmount', 'payLabel', 'orderRef', 'orderRefAt', 'ibanPayUrl', 'ibanInvoiceUid', 'requisitesSentAt']) delete ctx[k];
         if (body) { ctx.sizeInput = body; if (!A.hwThisTurn) ctx.agent.hwCarried = true; }
         Basket.sync(ctx); // рядки кошика (B4) не губляться разом з додатковими позиціями попереднього товару
@@ -1389,7 +1391,7 @@ async function basketIntake(A, u) {
     }
     const focus = fi >= 0 ? res[fi] : null;
     // Кількість головного — з ЙОГО позиції («2 кофти»), а не загальне u.qty аналізатора, яке могло стосуватись іншого товару.
-    if (focus) { if (focus.it.color && !u.color && !u.colorMatched) u.color = focus.it.color; u.qty = Number(focus.it.qty) > 1 ? Number(focus.it.qty) : null; }
+    if (focus) { if (focus.it.color && !u.color && !u.colorMatched) u.color = focus.it.color; u.qty = Number(focus.it.qty) > 1 ? Number(focus.it.qty) : null; if (u.qty) ctx.agent.pendingQty = { qty: u.qty, at: Date.now() }; else delete ctx.agent.pendingQty; }
     if (focus && focus.colors && focus.colors.length > 1) { u.units = focus.colors.map((c) => ({ color: c, size: '' })); u.qty = Math.max(Number(focus.it.qty) || 0, focus.colors.length); u.color = null; u.colorMatched = null; }
     const queued = [];
     for (const [i, x] of res.entries()) {
@@ -1539,7 +1541,8 @@ async function applyPersons(A, u) {
         u.units = sizes.map((sz, i) => ({ color: cols[i] || '', size: sz }));
         u.qty = sizes.length; ctx.recommendedSize = sizes[0]; ctx.agent.pairSizes = sizes;
         ctx.agent.pairWho = persons.map((p, i) => label(p, i));
-        ctx.agent.pendingUnits = { units: u.units, qty: u.qty, at: Date.now() };
+        ctx.agent.pendingUnits = { units: u.units, qty: u.qty, at: Date.now() }; ctx.agent.pendingQty = { qty: u.qty, at: Date.now() };
+        A.out.push({ text: 'Підібрала розмір для кожного 📏\n' + persons.map((p, i) => '• ' + label(p, i) + ' (' + p.h + ' см / ' + p.w + ' кг) — ' + sizes[i]).join('\n'), step: 'multi_person_sizes' });
         A.trace.push({ step: 'multi_person', n: persons.length, sizes });
         return;
     }
@@ -2199,6 +2202,8 @@ async function runPolicyInner(A, u) {
     if (u.colorMatched) ctx.agent.pendingColor = u.colorMatched; else if (u.color) ctx.agent.pendingColorRaw = u.color;
     // Кілька кольорів одразу («чорну і сіру», «один світло-сірий, другий чорний») теж памʼятаємо: хід міг завершитись питанням
     // про зріст і вагу, і кольори губились — бот питав колір удруге (Edits 39dc3ff6, c83d677f, 03–04.10).
+    // Кількість штук одного товару, названа до кольору, — стан (16.10, тест Л8: «2 кофти» губились, якщо колір називали наступним ходом).
+    if (Number(u.qty) > 1 && !(ctx.product && ctx.product.isSet) && !(Array.isArray(u.cartItems) && u.cartItems.length > 1)) ctx.agent.pendingQty = { qty: Number(u.qty), at: Date.now() };
     if (Array.isArray(u.units) && u.units.length > 1 && u.units.some((x) => x && (x.color || x.colorMatched))) ctx.agent.pendingUnits = { units: u.units, qty: u.qty || u.units.length, at: Date.now() };
     // Згадка ще одного товару («і ще лофери 44») — памʼятаємо текст: розмір із нього застосовується, коли модель оберуть наступним ходом.
     // addItem — поле для складу КОМПЛЕКТУ; поза комплектом «додайте лофери 44» — це ще один товар (extraProducts), інакше його ніхто
@@ -2891,8 +2896,10 @@ async function runPolicyInner(A, u) {
             const reply = (usedMemory ? 'Беру ваші параметри з минулого разу (' + si.height + ' см / ' + si.weight + ' кг) 🙂 ' : '') + carriedNote + claimNote + sizeBody + (ctx.sizeColorFollowup ? ' ' + norm(String(ctx.sizeColorFollowup)) : '');
             // Кілька кольорів одразу («дві кофти — чорну і світло-сіру») — колір теж обрано (15.10, FunnelTest Н3: бот питав колір удруге).
             const hasColorNow = ctx.colorChoice && (ctx.colorChoice.color || (Array.isArray(ctx.colorChoice.colors) && ctx.colorChoice.colors.length));
-            if (!hasColorNow && pp.colors) { A.out.push({ text: u.questions.length ? await answerThenAsk(A, u, reply) : reply, step: 'size_reply' }); ctx.agent.lastAsk = 'колір'; return; }
-            A.out.push({ text: u.questions.length ? await answerThenAsk(A, u, reply) : reply, step: 'size_reply' });
+            // Кілька людей: розмір кожної вже названо (multi_person_sizes) — «Ваш розмір — XL» про першу людину не дублюємо, колір спитає розділ 5.
+            const multiSized = A.out.some((o) => o.step === 'multi_person_sizes');
+            if (!multiSized && !hasColorNow && pp.colors) { A.out.push({ text: u.questions.length ? await answerThenAsk(A, u, reply) : reply, step: 'size_reply' }); ctx.agent.lastAsk = 'колір'; return; }
+            if (!multiSized) A.out.push({ text: u.questions.length ? await answerThenAsk(A, u, reply) : reply, step: 'size_reply' });
         } else if (isSoftDecline(u) || (u.ready === 'no' && !u.questions.length) || /^[\s]*(ні|нє|нет|не\s+треба|не\s+потрібно|ні,?\s+дякую|поки\s+ні)[\s.!🙂]*$/iu.test(String(text))) { // «Ні» на прохання зросту/ваги або нагадування «Бажаєте замовити?» (правка da3916d7: бот учетверте просив зріст/вагу)
             // Живий кейс 2026-09-14 (Володимир): «Но я просто цікавлюсь цінами», «Поки не потрібно» —
             // бот тричі поспіль повторив те саме питання про зріст/вагу. Тут — рівно ОДНЕ мʼяке

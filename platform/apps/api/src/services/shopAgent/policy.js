@@ -1594,10 +1594,29 @@ async function runPolicyInner(A, u) {
     // Розмова, яку вів МЕНЕДЖЕР, після зняття його паузи (варіант 3, рішення власника 14.10): повернення/обмін/скарга/статус посилки —
     // бот не втручається (знову пауза + менеджеру); товар не впізнано — теж мовчить; продаж — бот підхоплює (історія з менеджером є в
     // аналізаторі). Лише перше повідомлення після зняття паузи (до 15 хв).
-    if (/^(client_return_24h|manager_silence|auto_24h)$/.test(String(ctx.resumedBy || '')) && ctx.resumedAt && Date.now() - Date.parse(ctx.resumedAt) < 15 * 60 * 1000 && !ctx.agent.mgrLedChecked && !ctx.testMode) {
-        ctx.agent.mgrLedChecked = true;
+    // 16.10 — узагальнено: не лише 15 хв після зняття паузи, а будь-коли, коли ОСТАННІМ клієнту писав менеджер (до 72 год; Edits
+    // 05e2b60c: «Супер» після повернення коштів → бот надіслав давній підсумок «Оформляємо?»; 78f99e73/55f76471: менеджер продавав,
+    // «Так, оформляємо» → бот показав список товарів). Промо-розсилка менеджера (managerOutreachAt) — не розмова менеджера (урок 15.21).
+    // Коротка згода/подяка без даних: «дякую/супер» — мовчимо; «так, оформляємо» — менеджеру (він вів, він і продовжує).
+    const _lastOther = [...(A.history || [])].reverse().find((h) => h.who !== 'client');
+    const _mgrAt = _lastOther && _lastOther.who === 'manager' && _lastOther.at ? new Date(_lastOther.at).getTime() : 0;
+    const _outreach = ctx.managerOutreachAt && _mgrAt && Date.parse(ctx.managerOutreachAt) >= _mgrAt - 60 * 1000;
+    const mgrLast = !!_mgrAt && Date.now() - _mgrAt < 72 * 3600 * 1000 && !_outreach && !ctx.crmOrderId;
+    const resumedRecent = /^(client_return_24h|manager_silence|auto_24h)$/.test(String(ctx.resumedBy || '')) && ctx.resumedAt && Date.now() - Date.parse(ctx.resumedAt) < 15 * 60 * 1000 && !ctx.agent.mgrLedChecked;
+    if (mgrLast || resumedRecent) {
+        if (resumedRecent) ctx.agent.mgrLedChecked = true;
         const service = !!(u.returnRequest || u.isComplaint || u.statusQuestion);
         const unknown = !(ctx.product && ctx.product.sku) && !A.turnSharedPost && !A.turnImage && !A.newEntryAd && !A.turnStory && !(u.productHint && (u.productHint.article || u.productHint.category || u.productHint.fromList));
+        const bare = !(u.questions || []).length && !u.height && !u.weight && !u.color && !u.colorMatched && !u.clothingSize && !u.phone && !u.city && !u.branch && !u.fullName && !A.turnImage && !A.turnSharedPost && !(u.productHint && (u.productHint.article || u.productHint.category || u.productHint.fromList)) && String(text).trim().split(/\s+/).length <= 4;
+        if (mgrLast && bare && (u.intent === 'thanks' || u.feedback || /^(other|hesitate)$/.test(String(u.intent || '')))) {
+            A.out = []; A.trace.push({ step: 'manager_led_ack_silent' }); return; // подяка/«супер» менеджеру — відповідати нічого
+        }
+        if (mgrLast && bare && (u.intent === 'order_yes' || u.ready === 'yes')) {
+            A.out = [];
+            await pause(A, 'manager_message', null);
+            await T.alert(A, { title: '💬 Клієнт відповів на ваше повідомлення — продовжіть', main: 'Клієнт: «' + text.slice(0, 300) + '»', details: 'Розмову вели ви; бот не перехоплює її на коротку згоду. Розмова на паузі.' });
+            A.trace.push({ step: 'manager_led_yes' }); return;
+        }
         if (service || unknown) {
             A.out = [];
             await pause(A, 'manager_message', null);

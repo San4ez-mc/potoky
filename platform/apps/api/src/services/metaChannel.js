@@ -462,6 +462,24 @@ function takeHeldRef(botId, igsid) {
     _refHold.delete(k);
     return Date.now() - h.at < REF_HOLD_MS ? h.patch : null;
 }
+/** postback клієнта (готове питання / кнопка) → message: текст = title, реклама = postback.referral. Мутує m, ставить m._fromPostback. */
+function postbackAsMessage(m, own) {
+    if (!m || !m.postback || m.message || (own && m.sender && String(m.sender.id) === own)) return m;
+    const pb = m.postback; const pl = String(pb.payload || '');
+    const pbText = String(pb.title || '').trim() || (pl && !/^[A-Z0-9_:.-]+$/.test(pl) ? pl : ''); // payload-код (GET_STARTED тощо) — не текст клієнта
+    m.message = { mid: String(pb.mid || ('pb:' + ((m.sender && m.sender.id) || '') + ':' + (m.timestamp || Date.now()))), ...(pbText ? { text: pbText } : {}), ...(pb.referral ? { referral: pb.referral } : {}) };
+    m._fromPostback = true;
+    return m;
+}
+// Те саме готове питання прийшло двома подіями (message без реклами + postback з рекламою, у будь-якому порядку): друга не стає
+// окремим повідомленням, але її реклама має дійти до ходу. Хід ще в черзі — домішуємо; уже відповіли — лише памʼять (атрибуція),
+// без «нової реклами» на наступному повідомленні (інакше вибір клієнта зі списку перебила б картка).
+async function lateReferral(botId, igsid, rp, why) {
+    const { session } = await sessionFor(botId, igsid, { lastReferral: rp.lastReferral, ...(rp.adTitle ? { adTitle: rp.adTitle } : {}) });
+    const pe = _pending.get(session.id) || _waiting.get(session.id);
+    if (pe) { pe.ctxPatch.entryAdId = rp.entryAdId; logger.info('[metaChannel] реклама з другої події → хід у черзі', { botId, sessionId: session.id, adId: rp.entryAdId, why }); return; }
+    logger.info('[metaChannel] реклама з другої події прийшла після ходу — записано лише в памʼять', { botId, sessionId: session.id, adId: rp.entryAdId, why });
+}
 
 /** Вхідна подія вебхука Meta. webhookBotId — бот із URL вебхука; цільовий — за ZERNIO_FORWARD_BOT_ID (той самий ключ, що для Zernio). */
 async function handleMetaEvent(webhookBotId, body) {
@@ -506,6 +524,12 @@ async function handleMetaEvent(webhookBotId, body) {
                     m.message = { mid: String(me.mid || '') + ':edit' + (Number(me.num_edit) || 1), text: String(me.text) };
                     delete m.message_edit;
                 }
+                // Готове питання реклами (icebreaker) Meta шле подією postback: текст — postback.title, реклама — postback.referral
+                // (документація Meta, ig.me/icebreakers). Код читав лише message, тож postback мовчки відкидався (16.10, Valentina
+                // umanska2702 «Як замовити пуховик?» з реклами D0043): ~24% розмов з готового питання реклами приходили без реклами —
+                // або взагалі без першого повідомлення (його через 3 хв підхоплював поллер, уже без реклами), або звичайне повідомлення
+                // без реклами + відкинутий postback з рекламою. Старий instagramHandler postback.referral читав — загубилось при переході 11.10.
+                postbackAsMessage(m, own);
                 if (m.read || m.reaction || m.message_edit || (!m.message && !m.postback)) {
                     // «Прочитано» і реакції — шум; решту відкинутого пишемо з вмістом (ключі події + сирий вміст), щоб знайти, де губиться реклама.
                     if (!m.read && !m.reaction) logger.info('[metaChannel] diag: відкинута подія', { botId, keys: Object.keys(m).join(','), raw: JSON.stringify(m).slice(0, 1500) });
@@ -542,7 +566,8 @@ async function handleMetaEvent(webhookBotId, body) {
                     if (extraM.length || extraMsg.length || p.ref || !p.mid) logger.info('[metaChannel] diag: вхідне з додатковими полями', { botId, extra: extraM.concat(extraMsg.map((k) => 'message.' + k)).join(','), hasAdId: !!refPatch(p.ref), raw: JSON.stringify(m).slice(0, 1500) });
                 }
                 if (!p.mid) { skipped++; continue; }
-                if (!(await dedup(botId, 'in_' + p.mid))) { skipped++; continue; }
+                const rpNow = refPatch(p.ref);
+                if (!(await dedup(botId, 'in_' + p.mid))) { if (rpNow) await lateReferral(botId, String(igsid), rpNow, 'same_mid'); skipped++; continue; }
                 const held = takeHeldRef(botId, String(igsid));
                 const patch = refPatch(p.ref) || held || {};
                 const { session, profile: prof } = await sessionFor(botId, igsid, patch);
@@ -551,10 +576,15 @@ async function handleMetaEvent(webhookBotId, body) {
                 let sharedPost = p.sharedPost;
                 if (sharedPost && sharedPost.kind === 'reel' && sharedPost.mediaId) { try { const fr = await Z.getReelVideoFramesForVision(botId, sharedPost.mediaId); if (fr.length) sharedPost = { ...sharedPost, frameUrls: fr }; } catch (er) { /* кадри — best-effort */ } }
                 const photo = p.media.find((x) => x.type === 'photo') || (p.story && p.story.url ? { type: 'photo', url: p.story.url } : null);
+                // Пара message + postback з різними id і тим самим текстом (див. вище) — друга подія не окреме повідомлення.
+                if (text && !photo && !sharedPost) {
+                    const twin = await db.message.findFirst({ where: { sessionId: session.id, role: 'user', content: text, createdAt: { gte: new Date(p.at.getTime() - 30 * 1000), lte: new Date(p.at.getTime() + 30 * 1000) } }, select: { metadata: true } }).catch(() => null);
+                    if (twin && (m._fromPostback || (twin.metadata && twin.metadata.postback))) { if (rpNow) await lateReferral(botId, String(igsid), rpNow, 'same_text'); skipped++; continue; }
+                }
                 const isEmpty = !text && !p.media.length && !sharedPost && !p.audioUrl && !p.story && !patch.entryAdId;
                 const label = isEmpty ? (p.unsupported ? '[Instagram: непідтримуваний тип повідомлення]' : (p.other.length ? '[службове вкладення Instagram: ' + p.other.map((o) => o.type).join(', ') + ']' : '[порожнє повідомлення]')) : text || (sharedPost && sharedPost.caption ? ('[переслав ' + sharedPost.kind + '] ' + String(sharedPost.caption).slice(0, 80).replace(/\s+/g, ' ')) : (p.media.length > 1 ? '[' + p.media.length + ' медіа]' : p.media[0] ? (p.media[0].type === 'video' ? '[відео]' : '[фото]') : p.audioUrl ? '[голосове]' : p.story ? '[відповідь на сторіз]' : '[порожнє повідомлення]'));
                 await db.message.create({ data: Z.cleanJsonDeep({ sessionId: session.id, role: 'user', content: label, createdAt: p.at, metadata: {
-                    source: 'meta', channel: 'meta', mid: p.mid, platformMessageId: p.mid, channelCreatedAt: p.at.toISOString(),
+                    source: 'meta', channel: 'meta', mid: p.mid, platformMessageId: p.mid, channelCreatedAt: p.at.toISOString(), ...(m._fromPostback ? { postback: true } : {}),
                     ...(photo ? { attachment: { type: 'photo', url: photo.url } } : p.media[0] ? { attachment: p.media[0] } : {}),
                     ...(p.media.length > 1 ? { attachments: p.media } : {}), ...(sharedPost ? { sharedPost } : {}),
                     ...(patch.entryAdId ? { adId: patch.entryAdId, referral: patch.lastReferral } : {}), ...(p.story ? { storyId: p.story.id || null } : {}),
@@ -718,4 +748,4 @@ const __runsBackground = !process.env.name || process.env.name === 'platform-api
 if (__runsBackground) setTimeout(() => { pollConversations(); setInterval(pollConversations, 2 * 60 * 1000).unref(); }, 100 * 1000).unref();
 if (__runsBackground) setTimeout(() => { retryUnanswered(); setInterval(retryUnanswered, 60 * 1000).unref(); }, 150 * 1000).unref();
 
-module.exports = { handleMetaEvent, scheduleTurn, runTurn, drain, sendText, replyToComment, channelOf, channelOfSync, splitText, _echoes, _pollConversations: pollConversations, _refPatch: refPatch, _takeHeldRef: takeHeldRef, _refHold, _enqueue: enqueue, _waiting, _queue, _replyToSkuFor: replyToSkuFor };
+module.exports = { handleMetaEvent, scheduleTurn, runTurn, drain, sendText, replyToComment, channelOf, channelOfSync, splitText, _echoes, _pollConversations: pollConversations, _refPatch: refPatch, _takeHeldRef: takeHeldRef, _postbackAsMessage: postbackAsMessage, _parseInbound: parseInbound, _refHold, _enqueue: enqueue, _waiting, _queue, _replyToSkuFor: replyToSkuFor };

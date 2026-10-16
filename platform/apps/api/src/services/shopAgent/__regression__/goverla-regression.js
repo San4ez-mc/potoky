@@ -302,6 +302,17 @@ async function main() {
         check('42.1 утримуваний реферал віддається першому повідомленню і лише раз', got && got.entryAdId === rp.entryAdId && MC._takeHeldRef('bot', '111') === null, JSON.stringify(got));
         MC._refHold.set('bot:222', { patch: rp, at: Date.now() - 11 * 60 * 1000 });
         check('42.1 реферал старший за 10 хв — не застосовується', MC._takeHeldRef('bot', '222') === null, '');
+        // 42.2 (2026-10-16, Valentina umanska2702): готове питання реклами Meta шле postback-ом — текст і реклама не губляться.
+        const ref = { source: 'ADS', type: 'OPEN_THREAD', ad_id: '120251407789340329', ads_context_data: { ad_title: 'Допис в Instagram: Чоловічий зимовий пуховик.' } };
+        const pbm = MC._postbackAsMessage({ sender: { id: '1625330305604929' }, recipient: { id: 'own' }, timestamp: 1, postback: { mid: 'mid1', title: 'Як замовити пуховик?', payload: 'x', referral: ref } }, 'own');
+        const pp = MC._parseInbound(pbm);
+        check('42.2 postback → текст, id, реклама', pbm._fromPostback && pp.mid === 'mid1' && pp.text === 'Як замовити пуховик?' && MC._refPatch(pp.ref).entryAdId === '120251407789340329', JSON.stringify(pp));
+        const pbCode = MC._parseInbound(MC._postbackAsMessage({ sender: { id: '1' }, timestamp: 2, postback: { mid: 'm2', payload: 'GET_STARTED' } }, 'own'));
+        check('42.2 postback-код без заголовка — не текст клієнта', pbCode.mid === 'm2' && pbCode.text === '', JSON.stringify(pbCode));
+        const pbOwn = MC._postbackAsMessage({ sender: { id: 'own' }, postback: { mid: 'm3', title: 'x' } }, 'own');
+        check('42.2 postback від нашого акаунта не стає вхідним', !pbOwn.message && !pbOwn._fromPostback, '');
+        const msgAlready = MC._postbackAsMessage({ sender: { id: '1' }, message: { mid: 'm4', text: 'a' }, postback: { mid: 'm4', title: 'b' } }, 'own');
+        check('42.2 звичайне повідомлення не переписується postback-ом', msgAlready.message.text === 'a' && !msgAlready._fromPostback, '');
     }
     // 41.1 (2026-10-14, власник): картка й підпис — свіжі з CRM у момент надсилання; «Коментар до картки» замість назви ФОП.
     {

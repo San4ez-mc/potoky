@@ -2356,6 +2356,24 @@ async function runPolicyInner(A, u) {
             // рекламовані товари — менеджер (05.10, aze111274: давній пост, 9 ходів «що цікавить»/«оберіть номер», «Вы ненормальные»).
             const photoStillUnknown = !!(ctx.agent.unknownPhotoAt && Date.now() - ctx.agent.unknownPhotoAt < 2 * 3600 * 1000);
             if (A.turnImage && !photoStillUnknown) ctx.agent.unknownPhotoAt = Date.now();
+            // Назва з реклами/поста («Допис в Instagram: Чоловічий зимовий пуховик…») ТОЧНО збігається з назвою кількох товарів у наявності
+            // (D0043 і D0098 — обидва «Чоловічий зимовий пуховик») — показуємо їх і питаємо, який, а не «уточню в менеджера» (16.10,
+            // valentynasalamon: реклама з кабінету, до якого немає доступу, тож привʼязки в CRM нема). Збіг за даними каталогу, не вгадування.
+            if (fromPostOrAd && !ctx.crmOrderId) {
+                try {
+                    const titleRaw = String(ctx.adTitle || (A.turnSharedPost && A.turnSharedPost.caption) || '').replace(/^\s*(Допис в Instagram|Instagram post|Публікація в Instagram)\s*:\s*/i, '').split('\n')[0].replace(/[.…]+.*$/, '').replace(/_group_\d+/i, '').trim().toLowerCase();
+                    const catT = await loadCatalog(A.botId, A.keys);
+                    const same = titleRaw.length >= 8 ? catT.products.filter((p0) => !p0.isSet && !p0.outOfStock && [p0.customerName, p0.name].some((nm) => shortName({ name: nm }).toLowerCase() === titleRaw)) : [];
+                    if (same.length >= 2 && same.length <= 4) {
+                        const baseT = (A.keys.CRM_PUBLIC_BASE || 'https://pcrm.fineko.space').replace(/\/$/, '');
+                        same.forEach((p0, i) => { const im = (p0.images || [])[0]; if (im) A.out.push({ photoUrls: [/^https?:/.test(im) ? im : baseT + (String(im).charAt(0) === '/' ? im : '/' + im)], caption: (i + 1) + '. ' + shortName(p0) + ' — ' + Number(p0.price) + ' грн', step: 'ad_same_name_photo' }); });
+                        ctx.catalogHintSkus = same.map((p0) => p0.sku).join(',');
+                        A.out.push({ text: (A.botSpokeBefore ? '' : 'Вітаю! 💛 Я ' + (A.keys.PERSONA_NAME || 'Оля') + ' з ' + (A.keys.SHOP_TAG || 'магазину') + '.\n') + 'У нас ' + same.length + ' моделі з такою назвою 🙂 Яка саме вас цікавить? Напишіть номер:\n' + same.map((p0, i) => (i + 1) + '. ' + shortName(p0) + ' (арт. ' + p0.sku + ') — ' + Number(p0.price) + ' грн').join('\n'), step: 'ad_same_name_choice' });
+                        ctx.agent.lastAsk = 'який із показаних товарів цікавить';
+                        return;
+                    }
+                } catch (e) { /* best-effort: далі — менеджеру, як було */ }
+            }
             if (fromPostOrAd || photoStillUnknown) {
                 A.out.push({ text: (A.botSpokeBefore ? '' : 'Вітаю! 💛 Я ' + (A.keys.PERSONA_NAME || 'Оля') + ' з ' + (A.keys.SHOP_TAG || 'магазину') + '.\n') + 'Дякую за інтерес до цієї моделі! Уточню її наявність у менеджера — він напише вам сюди найближчим часом 🙏', step: 'post_unknown_handoff' });
                 const src = photoStillUnknown && !fromPostOrAd ? ('фото клієнта не впізнано' + (ctx.recentUserImageUrl ? ': ' + ctx.recentUserImageUrl : '')) : A.turnSharedPost ? ('пост: ' + String((A.turnSharedPost.caption || '').split('\n')[0]).slice(0, 120) + (A.turnSharedPost.url ? ' ' + A.turnSharedPost.url : '')) : ('реклама ' + String(ctx.entryAdId || '') + (ctx.adTitle ? ' «' + String(ctx.adTitle).slice(0, 80) + '»' : ''));

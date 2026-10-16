@@ -205,6 +205,8 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
             ctx.agent.aiDownAlertAt = Date.now();
             try { await require('./tools').alert(A, { title: u._noCredit ? '💸 Кредити Claude закінчились — клієнт чекає, відповідайте вручну' : '⚠️ ШІ недоступний — бот не може відповісти', main: 'Клієнт чекає відповіді: «' + String(text || '').slice(0, 200) + '»', details: (u._noCredit ? 'Бот мовчить, поки не поповнять баланс Anthropic.' : 'Причина: ' + String(u._error).slice(0, 200) + '\nБот повторить відповідь сам, щойно ШІ відновиться; якщо терміново — відпишіть вручну.') }); } catch (e) { /* best-effort */ }
         }
+        // Позначка «хід пропущено через недоступний ШІ» — канал Meta повторить його, щойно ШІ повернеться (до 12 год; retryUnanswered).
+        ctx.agent.aiMissedAt = Date.now();
         await db.session.update({ where: { id: sessionId }, data: { context: cleanJsonDeep(ctx) } }).catch(() => {});
         await recordTurn({ sessionId, botId, input: _input, ctxBefore: _ctxBefore, u, qs: [], out: [], ms: Date.now() - t0 });
         return { replies: [], understanding: u, trace: A.trace, ctx, aiDown: true };
@@ -230,8 +232,10 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
         await db.appError.create({ data: { sessionId, botId, errorType: 'shop_agent', message: e.message, stack: String(e.stack || '').slice(0, 4000), context: { step: 'policy' } } }).catch(() => {});
     }
     // Кредити Claude закінчились посеред ходу (аналізатор встиг, складання відповіді — ні): нічого не відправляємо, кличемо менеджера.
+    if (!A._noCredit && ctx.agent && ctx.agent.aiMissedAt) delete ctx.agent.aiMissedAt; // ШІ відповів — пропущений хід надолужено
     if (A._noCredit && !dryRun) {
         A.out = [];
+        ctx.agent.aiMissedAt = Date.now();
         logger.warn('[shopAgent] Claude credit ran out mid-turn — no reply', { botId, sessionId });
         if (!ctx.agent.aiDownAlertAt || Date.now() - ctx.agent.aiDownAlertAt > 30 * 60 * 1000) {
             ctx.agent.aiDownAlertAt = Date.now();

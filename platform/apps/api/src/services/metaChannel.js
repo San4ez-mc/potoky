@@ -487,6 +487,14 @@ async function handleMetaEvent(webhookBotId, body) {
                     else { _refHold.set(botId + ':' + igsid, { patch: rp, at: Date.now() }); logger.info('[metaChannel] referral до повідомлення — тримаємо', { botId, sessionId: session.id, adId: rp.entryAdId }); }
                     processed++; continue;
                 }
+                // Клієнт ВІДРЕДАГУВАВ своє повідомлення (дописав телефон тощо) — обробляємо новий текст як звичайне вхідне (16.10,
+                // stakhivliubchik: дописав номер у попереднє повідомлення й написав «Відредагував» — бот номера не бачив і «зациклився»).
+                // Редагування від нашого акаунта (менеджер виправив свій текст) — пропускаємо.
+                if (m.message_edit && m.message_edit.text && !(own && m.sender && String(m.sender.id) === own)) {
+                    const me = m.message_edit;
+                    m.message = { mid: String(me.mid || '') + ':edit' + (Number(me.num_edit) || 1), text: String(me.text) };
+                    delete m.message_edit;
+                }
                 if (m.read || m.reaction || m.message_edit || (!m.message && !m.postback)) { skipped++; continue; }
                 const msg = m.message || {};
                 // ── echo: повідомлення від нашого акаунта клієнту ──
@@ -585,6 +593,12 @@ async function retryUnanswered() {
     try {
         const now = Date.now();
         const sessions = await db.session.findMany({ where: { isActive: true, isTest: false, context: { path: ['channel'], equals: 'meta' }, lastActive: { lte: new Date(now - 45 * 1000), gte: new Date(now - 30 * 60 * 1000) } }, select: { id: true, botId: true, context: true }, take: 100 });
+        // Хід, пропущений через недоступний ШІ (закінчились кредити), — пробуємо до 12 год, а не лише 30 хв (16.10: кредити повернули
+        // о 13:57, а клієнтів, що писали вночі, бот так і не підхопив). Невдала спроба без кредитів нічого не коштує.
+        try {
+            const missed = await db.$queryRawUnsafe(`select id, "botId", context from sessions where "isActive" = true and "isTest" = false and context->>'channel' = 'meta' and (context->'agent'->>'aiMissedAt')::numeric > $1 limit 100`, now - 12 * 3600 * 1000);
+            for (const m of missed) if (!sessions.some((s) => s.id === m.id)) sessions.push(m);
+        } catch (e) { /* best-effort */ }
         for (const s of sessions) {
             try {
                 if (_pending.has(s.id) || _queue.has(s.id)) continue;
@@ -611,8 +625,9 @@ async function retryUnanswered() {
                 if (now - lastAt < 60 * 1000) continue;
                 const key = String((unanswered[unanswered.length - 1].metadata || {}).mid || lastAt);
                 const r = ctx.metaRetry && ctx.metaRetry.key === key ? ctx.metaRetry : { key, n: 0, next: 0 };
-                if (r.n >= 3 || now < r.next) continue;
-                await db.session.update({ where: { id: s.id }, data: { context: { ...ctx, metaRetry: { key, n: r.n + 1, next: now + [3, 9, 27][r.n] * 60 * 1000 } } } }).catch(() => {});
+                const aiMissed = Number(ctx.agent && ctx.agent.aiMissedAt) > now - 12 * 3600 * 1000;
+                if ((!aiMissed && r.n >= 3) || (aiMissed && r.n >= 150) || now < r.next) continue;
+                await db.session.update({ where: { id: s.id }, data: { context: { ...ctx, metaRetry: { key, n: r.n + 1, next: now + (aiMissed ? 5 : [3, 9, 27][r.n]) * 60 * 1000 } } } }).catch(() => {});
                 const text = unanswered.map((m) => String(m.content || '')).filter((t) => t && !/^\[(порожнє|фото|відео|голосове|\d+ медіа)/.test(t)).join('\n').trim();
                 const att = unanswered.map((m) => (m.metadata || {}).attachment).find((a) => a && a.type === 'photo' && /^http/.test(a.url || ''));
                 const shared = unanswered.map((m) => (m.metadata || {}).sharedPost).find(Boolean);

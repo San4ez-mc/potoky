@@ -980,7 +980,7 @@ function resetForNewProduct(A, sku) {
         // «бот знову питає зріст і вагу», 01.10: 38 — картка нового товару просила їх заново). Скидаємо лише розмір/заміри під товар.
         const body = ctx.sizeInput && ctx.sizeInput.height && ctx.sizeInput.weight ? { height: ctx.sizeInput.height, weight: ctx.sizeInput.weight, ...(ctx.sizeInput.belly ? { belly: true } : {}), ...(ctx.sizeInput.shoeSize ? { shoeSize: ctx.sizeInput.shoeSize } : {}) } : null;
         for (const k of ['sizeInput','recommendedSize', 'sizeSource', 'sizeReplyText', 'sizeColorFollowup', 'sizeOutOfRange', 'sizeOorReason', 'sizeOorAlternative', 'isSetSizeCalc', 'setSizesText', 'setSizeMap', 'setSizeOor', 'colorChoice', 'available', 'availReason', 'orderUnits', 'orderUnitsText', 'orderUnitsTotal', 'orderQty', 'orderIntent', 'setMode', 'setPick', 'setSelection', 'availChecked', 'extraItems', 'extraItemsText', 'extraUnresolved', 'orderExtras', 'unavailableColors', 'availableColorsNow']) delete ctx[k];
-        for (const k of ['pairSizes', 'pairWho', 'pendingQty', 'setOriginal', 'setPricing', 'setStageSent', 'setEditNote', 'setParams', 'setItemsAll', 'setItemColorHints', 'setColorHints', 'upsellOffered', 'upsellDeclined', 'setGeneralQ', 'setNamedItem', 'payRepeatCount', 'asks', 'upsellPhotoSent', 'availKey', 'sizeVerifyAsked', 'sizeClaim']) delete ctx.agent[k];
+        for (const k of ['pairSizes', 'pairWho', 'pendingQty', 'personsKey', 'setOriginal', 'setPricing', 'setStageSent', 'setEditNote', 'setParams', 'setItemsAll', 'setItemColorHints', 'setColorHints', 'upsellOffered', 'upsellDeclined', 'setGeneralQ', 'setNamedItem', 'payRepeatCount', 'asks', 'upsellPhotoSent', 'availKey', 'sizeVerifyAsked', 'sizeClaim']) delete ctx.agent[k];
         if (!ctx.crmOrderId) for (const k of ['paymentInfo', 'payAmount', 'payLabel', 'orderRef', 'orderRefAt', 'ibanPayUrl', 'ibanInvoiceUid', 'requisitesSentAt']) delete ctx[k];
         if (body) { ctx.sizeInput = body; if (!A.hwThisTurn) ctx.agent.hwCarried = true; }
         Basket.sync(ctx); // рядки кошика (B4) не губляться разом з додатковими позиціями попереднього товару
@@ -2192,7 +2192,10 @@ async function runPolicyInner(A, u) {
     {
         const persons = personsFrom(u, text);
         const setsQty = (Number(u.qty) >= 2 && /комплект|набор|образ/i.test(text)) ? Number(u.qty) : 0;
-        if ((persons.length >= 2 || setsQty >= 2) && !ctx.crmOrderId) {
+        // Ті самі люди, що вже враховані (аналізатор повторив їх з історії), — не перераховуємо.
+        const pKey = persons.map((p) => p.h + "/" + p.w).join(",") + "|" + setsQty;
+        if ((persons.length >= 2 || setsQty >= 2) && !ctx.crmOrderId && pKey !== ctx.agent.personsKey) {
+            ctx.agent.personsKey = pKey;
             ctx.agent.pendingPersons = { persons, setsQty, at: Date.now(), text: String(text).slice(0, 300) };
             if (persons.length && !(ctx.sizeInput && ctx.sizeInput.height && ctx.sizeInput.weight)) ctx.sizeInput = { ...(ctx.sizeInput || {}), height: persons[0].h, weight: persons[0].w };
         }

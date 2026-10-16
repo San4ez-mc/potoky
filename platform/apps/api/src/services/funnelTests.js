@@ -444,8 +444,13 @@ async function runTest(testId, onProgress = () => {}) {
                 note: 'кошик кількох товарів: anchor — головний товар (повернеться у фокус після черги), lines — уже записані позиції, queue — ще підібрати; mainProduct — той, що бот веде зараз',
                 anchor: c.basket.anchor && c.basket.anchor.ctx && c.basket.anchor.ctx.product ? { sku: c.basket.anchor.ctx.product.sku, color: c.basket.anchor.ctx.colorChoice, size: c.basket.anchor.ctx.recommendedSize } : undefined,
                 lines: (c.basket.lines || []).map((l) => ({ sku: l.sku, name: l.name, color: l.color, size: l.size, qty: l.qty, price: l.price })),
-                queue: (c.basket.queue || []).map((q) => ({ sku: q.sku, name: q.name || q.category || q.ref, color: q.color, size: q.size })),
+                queue: (c.basket.queue || []).map((q) => ({ sku: q.sku, name: q.name || q.category || q.ref, color: q.color, size: q.size, qty: q.qty || 1 })),
             } : undefined,
+            // Кількість, названа ДО кольору (orderQty зʼявиться лише після кольору), і кілька людей з розміром кожної (16.10, тести Л1–Л8:
+            // суддя бачив лише recommendedSize першої людини й вирішував, що інших загублено).
+            qtyBeforeColor: c.agent && c.agent.pendingQty && Number(c.agent.pendingQty.qty) > 1 ? Number(c.agent.pendingQty.qty) : undefined,
+            peopleSizes: c.agent && Array.isArray(c.agent.pairSizes) && c.agent.pairSizes.length > 1 ? c.agent.pairSizes.map((sz, i) => ({ who: (c.agent.pairWho || [])[i] || ('людина ' + (i + 1)), size: sz })) : undefined,
+            multiSet: c.multiSet ? { qty: c.multiSet.qty, persons: (c.multiSet.persons || []).length, sizes: c.multiSet.sizes } : undefined,
         });
         // Не-магазинні воронки (онбординг, Content Manager…) не мають цих полів → "{}". Порожній обʼєкт суддя
         // читає як «нічого не збережено», тому для них блок стану не показуємо (докази — у розділі викликів інструментів).

@@ -95,6 +95,27 @@ async function dailyTick() {
 
 // ── Сторож: клієнт чекає менеджера ──
 const _waitingAlerted = new Map(); // sessionId -> id останнього повідомлення клієнта, про яке вже сказали
+// Чи потребує останнє повідомлення клієнта відповіді — за ЗМІСТОМ (ШІ, останні повідомлення розмови), а не регуляркою закриття
+// (16.10, Edits 17d2ae90/cada3f57/5eecd6f2, Олексій: «Так, зараз», «Є. Дякую», «Да есть, спасибо» → хибне «клієнт чекає»; «краще
+// прибрати такі сповіщення»). Справжнє очікування (питання, дані, квитанція, «??») лишається. Результат кешуємо за id повідомлення.
+const _needsReply = new Map();
+async function needsReply(r, histOverride) {
+    if (!histOverride && _needsReply.has(r.mid)) return _needsReply.get(r.mid);
+    let v;
+    try {
+        const { callClaude } = require('@platform/claude');
+        const msgs = await db.message.findMany({ where: { sessionId: r.id, role: { in: ['user', 'assistant'] } }, orderBy: { createdAt: 'desc' }, take: 8, select: { role: true, content: true, metadata: true } });
+        const hist = histOverride || msgs.reverse().filter((m) => !(m.metadata && m.metadata.hidden)).map((m) => (m.role === 'user' ? 'КЛІЄНТ' : ((m.metadata || {}).source === 'zernio_inbox' ? 'МЕНЕДЖЕР' : 'БОТ')) + ': ' + String(m.content || '').replace(/\s+/g, ' ').slice(0, 300)).join('\n');
+        const raw = await callClaude({ sessionId: r.id, systemPrompt: 'Ти визначаєш, чи клієнт інтернет-магазину чекає відповіді. Відповідаєш лише JSON.', messages: [{ role: 'user', content: 'Розмова (останнє — внизу):\n' + hist + '\n\nЧи потребує ОСТАННЄ повідомлення КЛІЄНТА відповіді або дії менеджера?\nНІ — подяка чи завершення («Є. Дякую», «Да есть, спасибо», «Супер»), підтвердження без питання («Так, зараз», «Добре», «+», «Ок»), обіцянка самого клієнта щось зробити («зараз напишу», «завтра наберу», «подумаю»).\nТАК — питання, прохання, скарга, надіслані дані / фото / квитанція / номер, на які треба відреагувати, нетерплячка («??», «ау», «чекаю»).\nJSON: {"needsReply": true|false}' }], options: { model: 'claude-haiku-4-5', maxTokens: 30, extra: { temperature: 0 } } });
+        const m = String(raw || '').match(/\{[\s\S]*\}/);
+        v = m ? JSON.parse(m[0]).needsReply !== false : true;
+    } catch (e) {
+        const { isClosing } = require('./detectors'); // ШІ недоступний — як раніше
+        v = !(isClosing(r.content) && !/(чека|жду|ждем|очіку)/i.test(String(r.content || '')));
+    }
+    _needsReply.set(r.mid, v); if (_needsReply.size > 3000) _needsReply.clear();
+    return v;
+}
 let _waitingSentAt = 0;
 async function waitingSentry() {
     const h = kyivHour(); if (h < 8 || h >= 22) return;
@@ -112,9 +133,12 @@ async function waitingSentry() {
                 order by m."createdAt" asc limit 30`, botId);
             // Клієнт сам закрив розмову («Дякую», «Ні, дякую», «Подумаю») — відповідь менеджера не потрібна (14.10, власник: список
             // «чекають» на 7 з 9 рядків складався з «Дякую»). «Чекаю», «жду» тут — саме очікування менеджера, лишаємо.
-            const { isClosing } = require('./detectors');
-            const fresh = rows.filter((r) => _waitingAlerted.get(r.id) !== r.mid && !/^\[порожнє/.test(String(r.content || ''))
-                && !(r.role === 'user' && isClosing(r.content) && !/(чека|жду|ждем|очіку)/i.test(String(r.content || ''))));
+            const cand = rows.filter((r) => _waitingAlerted.get(r.id) !== r.mid && !/^\[порожнє/.test(String(r.content || '')));
+            const fresh = [];
+            for (const r of cand) {
+                if (r.role === 'user' && !(await needsReply(r))) { _waitingAlerted.set(r.id, r.mid); continue; } // не чекає — більше не перевіряємо
+                fresh.push(r);
+            }
             if (!fresh.length) continue;
             fresh.forEach((r) => _waitingAlerted.set(r.id, r.mid));
             if (_waitingAlerted.size > 2000) _waitingAlerted.clear();
@@ -132,4 +156,4 @@ function start() {
     setTimeout(() => { waitingSentry(); setInterval(waitingSentry, 5 * 60 * 1000).unref(); }, 3 * 60 * 1000).unref();
 }
 
-module.exports = { start, dailyReport, kyivDayBounds, kyivDay, waitingSentry };
+module.exports = { start, dailyReport, kyivDayBounds, kyivDay, waitingSentry, _needsReply: needsReply };

@@ -1488,7 +1488,11 @@ async function runPolicyInner(A, u) {
     // Запобіжник (16.10, хибне спрацювання: «кофту отримали, сподобалась, як прати?» → «передала менеджеру» й пауза): у розмові справді
     // йшлося про повернення/обмін (рядок умов «Обмін/повернення 14 днів» з картки товару не рахується) або клієнт надіслав номер картки.
     const histReturn = (A.history || []).some((h) => /поверн|обмін|обміня|поміня|возврат|обмен/i.test(String(h.text || '')) && !/обмін\/повернення\s*14/i.test(String(h.text || ''))) || cardIn(text) || !!ctx.returnFlow;
-    if (u.afterSale && histReturn && (A.history || []).some((h) => h.who === 'manager') &&!A.turnSharedPost && !A.newEntryAd && !A.turnStory && !(ctx.returnFlow && ctx.returnFlow.stage === 'collect') && !(u.productHint && u.productHint.article && !A.turnImage && text.toLowerCase().includes(String(u.productHint.article).toLowerCase()))) { // новий артикул — лише названий клієнтом (16.10, victoria_ch_k: «Дякую» → картка товару з фото менеджера)
+    // Реклама/пост, підняті з памʼяті розмови менеджера (managerLedRecover), — не новий товар цього ходу (16.10, victoria_ch_k: «Дякую»
+    // в розмові про обмін → давня реклама з памʼяті → картка костюма).
+    const rec0 = A.recovered || {};
+    const freshPost = !!A.turnSharedPost && !rec0.sharedPost, freshAd = !!A.newEntryAd && !rec0.entryAd;
+    if (u.afterSale && histReturn && (A.history || []).some((h) => h.who === 'manager') && !freshPost && !freshAd &&!A.turnStory && !(ctx.returnFlow && ctx.returnFlow.stage === 'collect') && !(u.productHint && u.productHint.article && !A.turnImage && text.toLowerCase().includes(String(u.productHint.article).toLowerCase()))) { // новий артикул — лише названий клієнтом (16.10, victoria_ch_k: «Дякую» → картка товару з фото менеджера)
         const ttnT = ttnIn(text), card = cardIn(text);
         const what = A.turnImage ? 'фото (накладна / квитанція?) — подивіться в чаті' : card ? 'номер картки для повернення коштів — подивіться в чаті' : ttnT ? 'номер накладної ' + ttnT : '';
         const mgr = (A.history || []).filter((h) => h.who === 'manager').pop();

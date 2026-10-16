@@ -186,6 +186,7 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
     try { turnKeys = Object.assign({}, assets.keys, { __geminiKeys: await geminiKeys(botId, assets.keys) }); } catch (e) { /* лишаємо як є */ }
     const rec = recoverManagerLedSignal(ctx, history, { sharedPost, entryAdId, imageUrl });
     const A = { botId, session, ctx, keys: turnKeys, assets, user: session.user ? { id: session.user.id, firstName: session.user.firstName, username: session.user.username } : {}, trace: [], out: [], turnText: String(text || ''), turnImage: imageUrl || null, turnSharedPost: sharedPost || (ctx.sharedPost && (ctx.hasFreshSignalThisTurn || rec.sharedPost) ? ctx.sharedPost : null), newEntryAd: newEntryAd || rec.entryAd, turnStory: storyId || null, history, botSpokeBefore };
+    A.recovered = rec; // сигнал товару, піднятий з памʼяті розмови менеджера (не з цього ходу) — policy відрізняє його від справді нового
     if (rec.sharedPost || rec.entryAd) A.trace.push({ tool: 'managerLedRecover', sharedPost: !!rec.sharedPost, entryAd: rec.entryAd });
     if (session.isTest || ctx.testMode) ctx.testMode = true;
     const t0 = Date.now();

@@ -1484,7 +1484,8 @@ async function runPolicyInner(A, u) {
     // замовлення?»). Справу веде менеджер — бот про неї не знав і продавав. Аналізатор бачить її з історії (u.afterSale): бот не продає й не
     // перепитує, нове від клієнта (фото, накладна, картка, питання) — менеджеру; клієнту коротке «передала менеджеру», лише якщо є що
     // передати і менеджер не писав у розмові останні 3 год (інакше він на звʼязку — мовчимо). Розмова — на паузу.
-    if (u.afterSale && !A.turnSharedPost && !A.newEntryAd && !A.turnStory && !(ctx.returnFlow && ctx.returnFlow.stage === 'collect') && !(u.productHint && u.productHint.article && !A.turnImage)) {
+    // Лише коли справу вже веде менеджер (є його повідомлення в історії): нова скарга/перше звернення — звичайний шлях повернення (тест 65).
+    if (u.afterSale && (A.history || []).some((h) => h.who === 'manager') && !A.turnSharedPost && !A.newEntryAd && !A.turnStory && !(ctx.returnFlow && ctx.returnFlow.stage === 'collect') && !(u.productHint && u.productHint.article && !A.turnImage)) {
         const ttnT = ttnIn(text), card = cardIn(text);
         const what = A.turnImage ? 'фото (накладна / квитанція?) — подивіться в чаті' : card ? 'номер картки для повернення коштів — подивіться в чаті' : ttnT ? 'номер накладної ' + ttnT : '';
         const mgr = (A.history || []).filter((h) => h.who === 'manager').pop();

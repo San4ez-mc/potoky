@@ -660,9 +660,29 @@ try {
     } catch (e) { __adAlreadyExists = adsList.some(function (a) { return String(a.externalId || '') === String(context.entryAd); }); }
   }
   // Відповідь на сторіз — не реклама: не реєструємо її в CRM /ads (раніше зʼявлялись «Реклама <id сторіз>» без товару).
-  if (context.entryAd && !context.testMode && !__adAlreadyExists && !(context.storyId && String(context.storyId) === String(context.entryAd))) {
+  // 16.10: усі 17 порожніх «Реклама <id>» у CRM виявились сторіз (n_route кладе в entryAd рекламу, пост АБО сторіз). Тепер
+  // id медіа Instagram (не ad_id 1202…) спершу перевіряємо в самому Instagram: сторіз — не реєструємо ніколи; пост/рілс —
+  // записуємо повністю (назва з підпису, посилання, фото, артикул із підпису → товар), а не порожнім «Реклама <id>».
+  var __regIg = null, __regSkip = !!(context.storyId && !context.entryAdId && !context.commentMediaId && !context.postId);
+  if (context.entryAd && !context.testMode && !__adAlreadyExists && !__regSkip && /^1[78]\d{14,16}$/.test(String(context.entryAd)) && keys.INSTAGRAM_ACCESS_TOKEN) {
+    try {
+      var __igAc = new AbortController(); var __igTo = setTimeout(function () { try { __igAc.abort(); } catch (e) {} }, 4000);
+      var __igR = await fetch('https://graph.instagram.com/v21.0/' + encodeURIComponent(String(context.entryAd)) + '?fields=media_product_type,media_type,permalink,caption,thumbnail_url,media_url&access_token=' + encodeURIComponent(String(keys.INSTAGRAM_ACCESS_TOKEN)), { signal: __igAc.signal }).finally(function () { clearTimeout(__igTo); });
+      var __igJ = await __igR.json().catch(function () { return {}; });
+      if (__igR.ok && __igJ && !__igJ.error) __regIg = __igJ;
+    } catch (e) { __regIg = null; }
+    if (__regIg && String(__regIg.media_product_type || '').toUpperCase() === 'STORY') __regSkip = true;
+  }
+  if (context.entryAd && !context.testMode && !__adAlreadyExists && !__regSkip && !(context.storyId && String(context.storyId) === String(context.entryAd))) {
     try {
       var __campaign = (context.lastReferral && context.lastReferral.ads_context_data) || {};
+      var __igCap = __regIg ? String(__regIg.caption || '') : '';
+      var __igLine = __igCap.split('\n').map(function (s) { return s.trim(); }).filter(Boolean)[0] || '';
+      var __igProd = null;
+      if (__igCap) {
+        var __igArts = extractArticles(__igCap).map(function (x) { return String(x).toUpperCase(); });
+        __igProd = all.filter(function (x) { return __igArts.indexOf(String(x.sku || '').toUpperCase()) >= 0 || (x.supplierArticle && __igArts.indexOf(String(x.supplierArticle).toUpperCase()) >= 0); })[0] || null;
+      }
       // 2026-09-10 (власник: "чому фото не отримались?"): органічні/реферальні оголошення
       // (Instagram-допис, на який прийшов клієнт) реєструються тут, ДО щоденної синхронізації
       // Meta Ads (яка бачить лише платні кампанії й ніколи не дійде до цього externalId) —
@@ -670,9 +690,11 @@ try {
       // візія) уже несе саме цей URL — той самий __acd, просто інша локальна змінна.
       var __regThumb = __refImg || String(__campaign.photo_url || __campaign.image_url || __campaign.video_url || '') || '';
       await fetch(base + '/ads', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, hdr()), body: JSON.stringify({
-        externalId: String(context.entryAd), name: String(context.adTitle || __campaign.ad_title || 'Реклама ' + context.entryAd).slice(0, 200),
-        productId: null, campaignName: String(context.adTitle || '').replace(/_group_\d+/i, '').slice(0, 200) || null,
-        thumbnailUrl: __regThumb || null,
+        externalId: String(context.entryAd), name: String(context.adTitle || __campaign.ad_title || (__igLine ? 'Допис в Instagram: ' + __igLine : '') || 'Реклама ' + context.entryAd).slice(0, 200),
+        productId: __igProd ? __igProd.id : null, ...(__igProd ? { productLinkSource: 'auto_article', productLinkNote: 'артикул ' + (__igProd.sku || '') + ' у підписі поста' } : {}),
+        campaignName: String(context.adTitle || '').replace(/_group_\d+/i, '').slice(0, 200) || null,
+        thumbnailUrl: __regThumb || (__regIg ? String(__regIg.thumbnail_url || __regIg.media_url || '') : '') || null,
+        ...(__regIg ? { postId: String(context.entryAd), postUrl: __regIg.permalink || null, captionText: __igCap || null, mediaType: /VIDEO/i.test(String(__regIg.media_type || '')) ? 'video' : 'image', videoUrl: /VIDEO/i.test(String(__regIg.media_type || '')) ? (__regIg.media_url || null) : null } : {}),
         // Пост Instagram без активної реклами (органіка або давня реклама — уточнення власника 02.10), який бот бачить лише з повідомлень клієнтів: окремий «кабінет»
         // у фільтрі CRM і дата першого звернення замість порожньої дати запуску — інакше рядок губився в кінці списку (02.10, Олексій).
         adAccountId: 'instagram_messages', adAccountName: 'Instagram-пости без активної реклами', adCreatedAt: new Date().toISOString(),
@@ -686,7 +708,7 @@ try {
   // Автопривʼязка (adAutoBind: підпис посту з артикулом → фото креативу) пізніше привʼязала її правильно, але вона ходить раз на
   // 3 год. Тепер, якщо товар не визначено, а реклама без товару, — запускаємо ту саму автопривʼязку для ЦІЄЇ реклами одразу
   // (раз на рекламу в розмові, до 25 с) і беремо її результат.
-  if (!found && context.entryAd && !context.testMode && opts.botId && context.autoBindTriedFor !== String(context.entryAd) && !(context.storyId && String(context.storyId) === String(context.entryAd))) {
+  if (!found && context.entryAd && !context.testMode && !__regSkip && opts.botId && context.autoBindTriedFor !== String(context.entryAd) && !(context.storyId && String(context.storyId) === String(context.entryAd))) {
     context.autoBindTriedFor = String(context.entryAd);
     try {
       var __abRow = __adAlreadyExists && Array.isArray(__existsJson && __existsJson.data) ? __existsJson.data[0] : null;

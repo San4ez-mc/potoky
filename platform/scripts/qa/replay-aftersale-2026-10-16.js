@@ -32,7 +32,7 @@ const CASES = [
         const img = (batch.map((b) => (b.metadata || {}).attachment).find((a) => a && a.type === 'photo') || {}).url || null;
         const rc = real.context || {};
         const seed = { testMode: true, replayOf: c.sid, channel: 'meta', psid: rc.psid, igUsername: rc.igUsername, senderName: rc.senderName, agent: {} };
-        for (const k of ['product', 'crmOrderId', 'payStatus', 'supplierTtn', 'orderData', 'colorChoice', 'recommendedSize']) if (rc[k] !== undefined && !/Валерій/.test(c.name)) seed[k] = rc[k];
+        for (const k of ['product', 'crmOrderId', 'payStatus', 'supplierTtn', 'orderData', 'colorChoice', 'recommendedSize']) if (rc[k] !== undefined && !/Валерій/.test(c.name) && !c.fromTurn) seed[k] = rc[k];
         if (c.fromTurn) { const tb = await db.$queryRawUnsafe('select "ctxBefore" cb from agent_turns where "sessionId"=$1 and "createdAt" >= $2 order by "createdAt" asc limit 1', c.sid, at); if (tb[0] && tb[0].cb) Object.assign(seed, tb[0].cb, { testMode: true, replayOf: c.sid, funnelPaused: false }); }
         const ru = await db.user.findUnique({ where: { id: real.userId }, select: { projectId: true } });
         const user = await db.user.create({ data: { telegramId: BigInt(-9100000000000) - BigInt(Math.floor(Math.random() * 1e9)), username: 'replay_as_' + Date.now().toString(36), firstName: 'Replay', metadata: { replay: true }, projectId: ru.projectId } });

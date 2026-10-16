@@ -223,13 +223,16 @@ var top = hits.slice(0, 4);
 // setColorAskList: номер, який реально можна назвати у відповіді, а не просто оздоблення.
 // Назва для клієнта — customerName («Чоловіча вʼязана кофта»), а не внутрішня назва постачальника («Кофта Мажор петля»,
 // Edit 54d934fd); артикул у рядку розрізняє товари з однаковою клієнтською назвою.
-var lines = top.map(function (p, i) { return (i + 1) + '. ' + (p.sku ? ('Артикул ' + p.sku + ' — ') : '') + String(p.customerName || p.name || '').replace(/[.,]?\s*артикул\s*[:#№]?\s*\S*\s*$/i, '').trim() + (Number(p.price) ? (' — ' + Number(p.price) + ' грн') : ''); });
+// Однакові назви в одному списку («Чоловіча вʼязана кофта» двічі — 15.10, Edits 694a2026) — назва з артикулом, щоб клієнт розрізнив.
+function __nm(p) { return String(p.customerName || p.name || '').split('\n')[0].replace(/[.,]?\s*артикул\s*[:#№]?\s*\S*\s*$/i, '').trim(); }
+function __dispName(p) { var n = __nm(p); var dup = top.filter(function (x) { return __nm(x).toLowerCase() === n.toLowerCase(); }).length > 1; return dup && p.sku ? n + ' (арт. ' + p.sku + ')' : n; }
+var lines = top.map(function (p, i) { return (i + 1) + '. ' + (p.sku ? ('Артикул ' + p.sku + ' — ') : '') + __dispName(p) + (Number(p.price) ? (' — ' + Number(p.price) + ' грн') : ''); });
 // 2026-09-11 (Олексій: "люди не розуміють що то за кофти по артикулах — зразу скидати фото і
 // ловити відповідь типу 'хочу сіру чи чорну'"): клієнт бачить фото одразу, не питає артикул.
 // thumbnailUrl у CRM — відносний шлях (/uploads/...), той самий resolveUrl, що й у n_lookup.
 var __publicBase = (keys.CRM_PUBLIC_BASE || 'https://pcrm.fineko.space').replace(/\/$/, '');
 function __resolveUrl(u) { if (!u) return ''; return /^https?:\/\//i.test(u) ? u : (__publicBase + (u.charAt(0) === '/' ? u : '/' + u)); }
-var catalogHintPhotos = top.map(function (p) { return __resolveUrl((Array.isArray(p.images) && p.images[0]) || ''); }).filter(Boolean);
+var catalogHintPhotos = top.map(function (p) { return __resolveUrl(p.thumbnailUrl || (Array.isArray(p.images) && p.images[0]) || ''); }).filter(Boolean);
 // 2026-10-14 (власник, сесія 7cac4f9b: «З замком» → «Донизу» — бот не зрозумів, про яку з двох однакових кофт): кожна позиція
 // списку з номером, фото й КОРОТКИМ ОПИСОМ (з презентації/нотаток CRM) — аналізатор обирає позицію за ознакою, а номер малюється
 // на фото (кожне фото — окремим повідомленням, тож відповідь на фото теж вказує позицію).
@@ -239,7 +242,7 @@ function __desc(p) {
         .filter(function (l) { return l && !/(ціна|грн|₴|знижк|акці|доставк|оплат|пишіть|direct|директ|довіряють|відгук|артикул)/i.test(l); }).join('; ');
     return t.replace(/\s+/g, ' ').trim().slice(0, 320);
 }
-var catalogHintItems = top.map(function (p, i) { return { n: i + 1, sku: String(p.sku || ''), url: __resolveUrl((Array.isArray(p.images) && p.images[0]) || ''), name: String(p.customerName || p.name || '').split('\n')[0].replace(/[.,]?\s*артикул\s*[:#№]?\s*\S*\s*$/i, '').trim(), price: Number(p.price) || 0, desc: __desc(p) }; });
+var catalogHintItems = top.map(function (p, i) { return { n: i + 1, sku: String(p.sku || ''), url: __resolveUrl(p.thumbnailUrl || (Array.isArray(p.images) && p.images[0]) || ''), name: __dispName(p), price: Number(p.price) || 0, desc: __desc(p) }; });
 return { catalogHint: lines.join('\n'), catalogHintCount: top.length, catalogHintTotal: hits.length, catalogHintSkus: top.map(function (p) { return String(p.sku || ''); }).filter(Boolean).join(','), catalogHintPhotos: catalogHintPhotos, catalogHintItems: catalogHintItems, catalogHintAdGuess: __advList ? 'list' : '', catalogCategories: catList, unknownTurns: unknownTurns };
 
 }

@@ -644,7 +644,7 @@ async function answerThenAsk(A, u, askText, o = {}) {
         try {
             const base0 = (A.keys.CRM_PUBLIC_BASE || 'https://pcrm.fineko.space').replace(/\/$/, '');
             const prs = (await catalogProducts(A, (u.questions || []).concat([String(A.turnText || '')]))).slice(0, 3);
-            for (const pr of prs) { const im = (pr.images || [])[0]; if (im) A.out.push({ photoUrls: [/^https?:/.test(im) ? im : base0 + (String(im).charAt(0) === '/' ? im : '/' + im)], caption: String(pr.name || pr.customerName || '').split('\n')[0] + ' — ' + Number(pr.price) + ' грн', step: 'compare_photo' }); }
+            for (const pr of prs) { const im = pr.thumbnailUrl || (pr.images || [])[0]; if (im) A.out.push({ photoUrls: [/^https?:/.test(im) ? im : base0 + (String(im).charAt(0) === '/' ? im : '/' + im)], caption: String(pr.name || pr.customerName || '').split('\n')[0] + ' — ' + Number(pr.price) + ' грн', step: 'compare_photo' }); }
         } catch (e) { /* best-effort */ }
     }
     // «А джинси у вас є?» посеред розмови про інший товар — разом із відповіддю показуємо фото цих товарів (перше фото, не мініатюра).
@@ -656,7 +656,7 @@ async function answerThenAsk(A, u, askText, o = {}) {
     if (showQs.length && !(pp0 && pp0.isSet)) {
         try {
             const base1 =(A.keys.CRM_PUBLIC_BASE || 'https://pcrm.fineko.space').replace(/\/$/, '');
-            for (const pr of await otherCategoryProducts(A, showQs.concat([String(A.turnText || '')]))) { const im = (pr.images || [])[0]; if (im) A.out.push({ photoUrls: [/^https?:/.test(im) ? im : base1 + (String(im).charAt(0) === '/' ? im : '/' + im)], caption: String(pr.customerName || pr.name || '').split('\n')[0].replace(/\.?\s*Артикул:?.*$/i, '').trim() + ' — ' + Number(pr.price) + ' грн', step: 'category_photo' }); }
+            for (const pr of await otherCategoryProducts(A, showQs.concat([String(A.turnText || '')]))) { const im = pr.thumbnailUrl || (pr.images || [])[0]; if (im) A.out.push({ photoUrls: [/^https?:/.test(im) ? im : base1 + (String(im).charAt(0) === '/' ? im : '/' + im)], caption: String(pr.customerName || pr.name || '').split('\n')[0].replace(/\.?\s*Артикул:?.*$/i, '').trim() + ' — ' + Number(pr.price) + ' грн', step: 'category_photo' }); }
         } catch (e) { /* best-effort */ }
     }
     let crmFacts = '';
@@ -1913,7 +1913,9 @@ async function runPolicyInner(A, u) {
     if (u.asksIfBot && !u.wantsHuman && !ctx.agent.botDisclosed) {
         ctx.agent.botDisclosed = Date.now();
         A.out.push({ text: 'Я ' + (A.keys.PERSONA_NAME || 'Оля') + ' — віртуальна помічниця ' + (A.keys.SHOP_TAG || 'магазину') + ' 🙂 Допоможу з вибором і оформленням, а якщо захочете поговорити з менеджером — напишіть, і я покличу.', step: 'bot_disclosure', noMerge: false });
-        Q.coverTopics(A, u, ['other'], 'bot_disclosure', (q) => /бот|робот|людин|жив/i.test(String(q.text)));
+        // Єдине питання ходу і є «хто ви?» (аналізатор: asksIfBot) — закриваємо його будь-якими словами («Це чат gpt?» — 16.10, Edits
+        // 92a98b67: шаблон + ще одна відповідь моделі = «я віртуальна помічниця» двічі в одному повідомленні).
+        Q.coverTopics(A, u, ['other'], 'bot_disclosure', (q) => (u.questions || []).length <= 1 || /бот|робот|людин|жив|gpt|чат|штучн|нейро/i.test(String(q.text)));
     }
     if (u.wantsHuman) {
         ctx.agent.handoffAsked = (ctx.agent.handoffAsked || 0) + 1;
@@ -2003,6 +2005,19 @@ async function runPolicyInner(A, u) {
     // Клієнт пішов від теми, не відповівши: що зібрали — у CRM і менеджеру, далі звичайна розмова.
     if (rfCollecting) await finishReturnCollect(A, { silent: true });
 
+    // ПІСЛЯ ВІДМОВИ (до 24 год) бот не повертає клієнта до замовлення, доки той сам не покаже, що купує (16.10, Edits 92a98b67: дві
+    // відмови прийнято, а на «Це чат gpt?» бот знову надіслав підсумок «Оформляємо?»). Питання — відповідаємо без «наступного кроку».
+    if (ctx.declinedAt && Date.now() - Number(ctx.declinedAt) < 24 * 3600 * 1000 && !ctx.crmOrderId) {
+        const buying = u.ready === 'yes' || /^(product_query|order_yes|give_params)$/.test(String(u.intent || '')) || u.color || u.colorMatched || u.height || u.weight || u.clothingSize
+            || A.turnSharedPost || A.turnImage || A.newEntryAd || A.turnStory || (u.productHint && (u.productHint.article || u.productHint.category || u.productHint.fromList));
+        if (buying) delete ctx.declinedAt;
+        else {
+            if ((u.questions || []).length && !A.out.length) A.out.push({ text: await answerThenAsk(A, u, ''), step: 'post_decline_q' });
+            else if (!A.out.length && /^(thanks|order_no|other)$/.test(String(u.intent || ''))) A.out.push({ text: 'Все добре 🙂 Якщо щось знадобиться — пишіть, я тут 💛', step: 'post_decline_ack' });
+            ctx.agent.lastAsk = '';
+            return;
+        }
+    }
     // 1. Після оформленого замовлення
     if (ctx.crmOrderId && !freshSignal) {
         if ((u.claimsPaid || u.receiptLink || A.turnImage) && ctx.payStatus !== 'confirmed' && Number(ctx.payAmount) > 0) {
@@ -2231,6 +2246,20 @@ async function runPolicyInner(A, u) {
 
     // Кошик: відмова від товару, який бот веде з черги, — лише від нього.
     if (await basketDropFocus(A, u)) return;
+    // ВІДМОВА на будь-якому кроці до оформлення — одне правило (16.10, Edits fab0ab64 «Нетреба», 92a98b67 «не хоче», «Ніякий»: відмову
+    // приймали лише на кроці комплекту, підсумку й оплати — на кроці розміру/кольору бот знову питав колір). Підсумок («Оформляємо?» —
+    // там «ні» буває відмовою від допродажу) і оплата (9a: «що зупиняє?») — своїми правилами нижче.
+    {
+        const la = String(ctx.agent.lastAsk || '');
+        const declineNow = (u.ready === 'no' || u.intent === 'order_no') && P(ctx) && !ctx.crmOrderId && ctx.payStatus !== 'confirmed' && !(u.questions || []).length
+            && u.addUpsell !== false && !(ctx.paymentInfo && ctx.paymentInfo.method) && !/^(оформляємо\?|ті самі дані доставки\?|уточнення адреси НП)$/.test(la)
+            && !A.turnSharedPost && !A.turnImage && !A.newEntryAd && !(u.productHint && (u.productHint.article || u.productHint.category || u.productHint.fromList));
+        if (declineNow) {
+            A.out.push({ text: messageText(A.assets, 'n_declined_msg', ctx, A.session.id), step: 'declined' });
+            ctx.declinedAt = Date.now(); ctx.agent.lastAsk = '';
+            return;
+        }
+    }
     // 2. Товар
     // 2026-09-15 (живий кейс: у комплекті клієнт написав "чорні джинси"/"Чорний" — понял() LLM
     // побачив productHint на артикул джинсів j0032, freshSignal=true, resolveProduct переключив
@@ -2335,7 +2364,7 @@ async function runPolicyInner(A, u) {
             // Фото цього товару — разом із питанням, щоб клієнт бачив, про що мова (тест 147: «Джинси у вас є?» — без фото).
             try {
                 const catR = await loadCatalog(A.botId, A.keys); const prR = catR.products.find((x) => String(x.sku).toUpperCase() === String(cand.sku).toUpperCase());
-                const imR = prR && (prR.images || [])[0];
+                const imR = prR && (prR.thumbnailUrl || (prR.images || [])[0]);
                 if (imR) { const baseR = (A.keys.CRM_PUBLIC_BASE || 'https://pcrm.fineko.space').replace(/\/$/, ''); A.out.push({ photoUrls: [/^https?:/.test(imR) ? imR : baseR + (String(imR).charAt(0) === '/' ? imR : '/' + imR)], caption: '', step: 'replace_add_photo' }); }
             } catch (e) { /* best-effort */ }
             A.out.push({ text: 'Бачу: ' + ctx.agent.pendingReplaceAdd.name.replace(/\.?\s*Артикул:?.*$/i, '').trim() + ' (арт. ' + cand.sku + ') 🙂 Замінити нею ' + String(P(ctx).customerName || P(ctx).name).split('\n')[0].replace(/\.?\s*Артикул:?.*$/i, '').trim().toLowerCase() + ' у замовленні, додати окремою позицією чи залишаємо як було?', step: 'ask_replace_or_add' });
@@ -2503,7 +2532,7 @@ async function runPolicyInner(A, u) {
                     const same = titleRaw.length >= 8 ? catT.products.filter((p0) => !p0.isSet && !p0.outOfStock && [p0.customerName, p0.name].some((nm) => shortName({ name: nm }).toLowerCase() === titleRaw)) : [];
                     if (same.length >= 2 && same.length <= 4) {
                         const baseT = (A.keys.CRM_PUBLIC_BASE || 'https://pcrm.fineko.space').replace(/\/$/, '');
-                        same.forEach((p0, i) => { const im = (p0.images || [])[0]; if (im) A.out.push({ photoUrls: [/^https?:/.test(im) ? im : baseT + (String(im).charAt(0) === '/' ? im : '/' + im)], caption: (i + 1) + '. ' + shortName(p0) + ' — ' + Number(p0.price) + ' грн', step: 'ad_same_name_photo' }); });
+                        same.forEach((p0, i) => { const im = p0.thumbnailUrl || (p0.images || [])[0]; if (im) A.out.push({ photoUrls: [/^https?:/.test(im) ? im : baseT + (String(im).charAt(0) === '/' ? im : '/' + im)], caption: (i + 1) + '. ' + shortName(p0) + ' — ' + Number(p0.price) + ' грн', step: 'ad_same_name_photo' }); });
                         ctx.catalogHintSkus = same.map((p0) => p0.sku).join(',');
                         A.out.push({ text: (A.botSpokeBefore ? '' : 'Вітаю! 💛 Я ' + (A.keys.PERSONA_NAME || 'Оля') + ' з ' + (A.keys.SHOP_TAG || 'магазину') + '.\n') + 'У нас ' + same.length + ' моделі з такою назвою 🙂 Яка саме вас цікавить? Напишіть номер:\n' + same.map((p0, i) => (i + 1) + '. ' + shortName(p0) + ' (арт. ' + p0.sku + ') — ' + Number(p0.price) + ' грн').join('\n'), step: 'ad_same_name_choice' });
                         ctx.agent.lastAsk = 'який із показаних товарів цікавить';

@@ -40,7 +40,7 @@ const CASES = [
         const steps = (r.replies || []).map((o) => o.step).join(',');
         const paused = r.ctx && r.ctx.funnelPaused && r.ctx.pausedBy;
         const ok = c.expect === 'defect_photo' ? (/return_defect_photo/.test(steps) && !/present/.test(steps)) : c.expect === 'aftersale' ? (paused === 'aftersale' && !/present|order_intent|hint|ask_params|phone_invalid|return_easy|post_order/.test(steps)) : paused !== 'aftersale';
-        if (!ok) fail++;
+        if (!ok) { fail++; console.log('    trace: ' + JSON.stringify((r.trace || []).map((x) => x.step || x.tool || x.node || '')).slice(0, 900)); }
         console.log((ok ? '✅ ' : '❌ ') + c.name + '\n    вхід: ' + (text.replace(/\d{12,19}/g, '<число>').replace(/\n/g, ' ⏎ ').slice(0, 120) || '') + (img ? ' [фото]' : '') + '\n    afterSale=' + u.afterSale + ' intent=' + u.intent + ' пауза=' + (paused || '—') + ' кроки=' + (steps || '— (мовчить)') + '\n    відповідь: ' + ((r.replies || []).map((o) => String(o.text || '').replace(/\n/g, ' ')).join(' | ').slice(0, 200) || '—'));
         await db.message.deleteMany({ where: { sessionId: test.id } }); await db.session.delete({ where: { id: test.id } }).catch(() => {}); await db.user.delete({ where: { id: user.id } }).catch(() => {});
     }

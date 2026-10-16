@@ -27,7 +27,8 @@ const CASES = [
         const rc = real.context || {};
         const seed = { testMode: true, replayOf: c.sid, channel: 'meta', psid: rc.psid, igUsername: rc.igUsername, senderName: rc.senderName, agent: {} };
         for (const k of ['product', 'crmOrderId', 'payStatus', 'supplierTtn', 'orderData', 'colorChoice', 'recommendedSize']) if (rc[k] !== undefined && /^(Денис|Валентина)/.test(c.name)) seed[k] = rc[k];
-        const user = await db.user.create({ data: { telegramId: BigInt(-9100000000000) - BigInt(Math.floor(Math.random() * 1e9)), username: 'replay_as_' + Date.now().toString(36), firstName: 'Replay', metadata: { replay: true } } });
+        const ru = await db.user.findUnique({ where: { id: real.userId }, select: { projectId: true } });
+        const user = await db.user.create({ data: { telegramId: BigInt(-9100000000000) - BigInt(Math.floor(Math.random() * 1e9)), username: 'replay_as_' + Date.now().toString(36), firstName: 'Replay', metadata: { replay: true }, projectId: ru.projectId } });
         const test = await db.session.create({ data: { userId: user.id, botId: real.botId, state: 'inbox', isTest: true, context: seed } });
         for (const m of before) await db.message.create({ data: { sessionId: test.id, role: m.role, content: m.content, createdAt: m.createdAt, metadata: m.metadata || {} } });
         for (const b of batch) await db.message.create({ data: { sessionId: test.id, role: 'user', content: b.content, createdAt: new Date(), metadata: b.metadata || {} } });

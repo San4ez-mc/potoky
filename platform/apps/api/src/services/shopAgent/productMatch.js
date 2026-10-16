@@ -673,6 +673,12 @@ try {
     } catch (e) { __regIg = null; }
     if (__regIg && String(__regIg.media_product_type || '').toUpperCase() === 'STORY') __regSkip = true;
   }
+  // Instagram не відповів (токен, збій) — id медіа записуємо лише тоді, коли точно знаємо, що це пост: коментар під ним або
+  // пересланий пост. Інакше краще не записати, ніж знову наплодити «Реклама <id сторіз>» (16.10, власник: «щоб сторіз більше не попадали»).
+  if (!__regSkip && !__regIg && /^1[78]\d{14,16}$/.test(String(context.entryAd || ''))) {
+    var __knownPost = [context.commentMediaId, context.postId, context.sharedPost && context.sharedPost.mediaId].some(function (x) { return x && String(x) === String(context.entryAd); });
+    if (!__knownPost) __regSkip = true;
+  }
   if (context.entryAd && !context.testMode && !__adAlreadyExists && !__regSkip && !(context.storyId && String(context.storyId) === String(context.entryAd))) {
     try {
       var __campaign = (context.lastReferral && context.lastReferral.ads_context_data) || {};

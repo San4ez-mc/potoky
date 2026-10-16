@@ -50,6 +50,14 @@ function check(name, cond, info) { console.log((cond ? '✅ ' : '❌ ') + name +
     const a = posts.find((x) => x.externalId === '120251229300670329') || {};
     check('4. реклама в сторіз — реєструємо саме рекламу з назвою', a.name === 'Допис в Instagram: Чоловічий флісовий костюм_Group_1', JSON.stringify(posts));
 
+    posts = [];
+    await matchProduct({ ...base(), entryAd: '18000000000000009' }, keys, 'ціна?', { botId: 'b' }).catch((e) => console.log('err', e.message));
+    check('5. Instagram не відповів, звідки id невідомо — не реєструємо', posts.length === 0, JSON.stringify(posts));
+
+    posts = [];
+    await matchProduct({ ...base(), entryAd: '18000000000000009', commentMediaId: '18000000000000009' }, keys, 'ціна?', { botId: 'b' }).catch((e) => console.log('err', e.message));
+    check('6. Instagram не відповів, але це коментар під постом — реєструємо', posts.some((x) => x.externalId === '18000000000000009'), JSON.stringify(posts));
+
     console.log(fail ? 'ПРОВАЛЕНО: ' + fail : 'УСЕ ПРОЙШЛО');
     process.exit(fail ? 1 : 0);
 })();

@@ -531,12 +531,15 @@ async function callClaude({ sessionId, systemPrompt, messages, options = {} }) {
         model: options.model || MODEL,
         max_tokens: options.maxTokens || MAX_TOKENS,
         ...(options.temperature != null ? { temperature: options.temperature } : {}),
+        // Кешуємо лише НЕЗМІННУ частину інструкції. Змінна частина (факти ходу) — options.systemSuffix, без кешу: інакше кожен виклик
+        // платив за ЗАПИС у кеш (+25% до ціни вводу), який ніхто не встигав прочитати (16.10: $24.6 з $66 тестів і $7 живого бота за добу).
         system: [
             {
                 type: 'text',
                 text: systemPrompt,
-                cache_control: { type: 'ephemeral' }, // prompt caching
+                ...(options.noCache ? {} : { cache_control: { type: 'ephemeral' } }), // prompt caching
             },
+            ...(options.systemSuffix ? [{ type: 'text', text: String(options.systemSuffix) }] : []),
         ],
         messages,
         ...options.extra,
@@ -644,9 +647,9 @@ async function callClaude({ sessionId, systemPrompt, messages, options = {} }) {
                 try {
                     let result;
                     if (name === 'openai') {
-                        result = await callOpenAI({ apiKey: key, systemPrompt, messages, options });
+                        result = await callOpenAI({ apiKey: key, systemPrompt: systemPrompt + (options.systemSuffix ? '\n\n' + options.systemSuffix : ''), messages, options });
                     } else {
-                        result = await callGemini({ apiKey: key, systemPrompt, messages, options });
+                        result = await callGemini({ apiKey: key, systemPrompt: systemPrompt + (options.systemSuffix ? '\n\n' + options.systemSuffix : ''), messages, options });
                     }
 
                     responseText = result.text;

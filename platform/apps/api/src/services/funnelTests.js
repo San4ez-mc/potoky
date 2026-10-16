@@ -322,9 +322,40 @@ function buildJudgePrompt({ test, transcript, nodeQaEntries, stateText, toolText
     return { system, user };
 }
 
+// ── Запобіжник витрат на тести (16.10, власник: «постав ліміт в 20 доларів витрат на тестування») ──────────────────────────────
+// Сума за поточну добу (з 00:00 за Києвом) — з токенів Claude у api_calls тестових сесій (isTest), за цінами Anthropic; +10% на суддю
+// і службові виклики без сесії. Ліміт — змінна TEST_BUDGET_USD_DAY у .env платформи (за замовчуванням 20).
+const TEST_BUDGET_USD_DAY = () => Number(process.env.TEST_BUDGET_USD_DAY) > 0 ? Number(process.env.TEST_BUDGET_USD_DAY) : 20;
+function kyivDayStart() {
+    const now = new Date();
+    const kyiv = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Kyiv' }));
+    const offsetMs = kyiv.getTime() - new Date(now.toLocaleString('en-US', { timeZone: 'UTC' })).getTime();
+    const mid = new Date(kyiv); mid.setHours(0, 0, 0, 0);
+    return new Date(mid.getTime() - offsetMs);
+}
+async function testSpendTodayUsd() {
+    const rows = await db.$queryRawUnsafe(`select coalesce(sum(
+        case when coalesce(a."requestData"->>'model','') ilike '%haiku%'
+          then coalesce((a."responseData"->>'inputTokens')::numeric,0)*1 + coalesce((a."responseData"->>'outputTokens')::numeric,0)*5 + coalesce((a."responseData"->>'cacheReadTokens')::numeric,0)*0.1 + coalesce((a."responseData"->>'cacheWriteTokens')::numeric,0)*1.25
+          else coalesce((a."responseData"->>'inputTokens')::numeric,0)*3 + coalesce((a."responseData"->>'outputTokens')::numeric,0)*15 + coalesce((a."responseData"->>'cacheReadTokens')::numeric,0)*0.3 + coalesce((a."responseData"->>'cacheWriteTokens')::numeric,0)*3.75 end
+      ),0)/1000000 as usd
+      from api_calls a join sessions s on s.id = a."sessionId"
+      where s."isTest" = true and a.service like 'claude%' and a."createdAt" >= $1`, kyivDayStart());
+    return Math.round(Number((rows[0] && rows[0].usd) || 0) * 1.1 * 100) / 100;
+}
+/** null — можна запускати; інакше текст причини, чому тест не запущено. */
+async function testBudgetBlock() {
+    try {
+        const spent = await testSpendTodayUsd(); const lim = TEST_BUDGET_USD_DAY();
+        return spent >= lim ? 'Денний ліміт витрат на тести вичерпано: ≈$' + spent.toFixed(2) + ' з $' + lim + '. Тести знову запустяться після 00:00 за Києвом (ліміт — змінна TEST_BUDGET_USD_DAY).' : null;
+    } catch (e) { return null; } // не вдалося порахувати — не блокуємо
+}
+
 async function runTest(testId, onProgress = () => {}) {
     const test = await db.funnelTest.findUnique({ where: { id: testId } });
     if (!test) throw new Error('Test not found');
+    const budgetStop = await testBudgetBlock();
+    if (budgetStop) return { runId: null, testId: test.id, status: 'error', budgetStop: true, verdict: { passed: false, reasoning: budgetStop }, sessionId: null, transcript: [] };
 
     const run = await db.testRun.create({
         data: { testId: test.id, botId: test.botId, status: 'running', connectorId: test.connectorId || null },
@@ -549,6 +580,7 @@ async function runAllTests(botId, opts = {}) {
     for (const t of tests) {
         const result = await runTest(t.id);
         results.push(result);
+        if (result && result.budgetStop) break; // денний ліміт на тести вичерпано — решту не запускаємо
     }
     return {
         botId,
@@ -615,6 +647,12 @@ async function startJob({ botId, testIds = null }) {
             item.sessionId = r.sessionId || item.sessionId;
             item.transcript = r.transcript;
             item.finishedAtMs = Date.now();
+            // Денний ліміт на тести вичерпано — решту в черзі не запускаємо, позначаємо тією самою причиною (видно в попапі тестів).
+            if (r.budgetStop) {
+                for (const rest of job.items) if (rest.status === 'pending' || rest.status === 'queued') { rest.status = 'error'; rest.phase = 'done'; rest.verdict = r.verdict; }
+                job.budgetStop = r.verdict && r.verdict.reasoning;
+                break;
+            }
         }
         job.status = 'done';
         job.finishedAtMs = Date.now();
@@ -644,4 +682,7 @@ module.exports = {
     runAllTests,
     startJob,
     getJob,
+    testSpendTodayUsd,
+    testBudgetBlock,
+    TEST_BUDGET_USD_DAY,
 };

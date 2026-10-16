@@ -5,7 +5,7 @@
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
 const API = path.join(__dirname, '..', '..', 'apps', 'api', 'src', 'services');
-const { runTest } = require(path.join(API, 'funnelTests'));
+const { runTest, testSpendTodayUsd, TEST_BUDGET_USD_DAY } = require(path.join(API, 'funnelTests'));
 const { db } = require(path.join(API, 'shopAgent/lib'));
 
 const args = process.argv.slice(2);
@@ -21,12 +21,17 @@ const OUT = opt('--out', '/tmp/funnel-all.json');
     if (only.length) tests = tests.filter((t) => only.some((p) => t.id.startsWith(p)));
     const before = new Map(tests.map((t) => [t.id, t.lastRunStatus || null]));
     console.log('тестів:', tests.length, 'паралельно:', PAR);
+    // Витрати: вже витрачено сьогодні й орієнтовна вартість цього прогону (≈$0.07 за тест-діалог із суддею, за даними 15.10).
+    const spent0 = await testSpendTodayUsd().catch(() => 0); const lim = TEST_BUDGET_USD_DAY();
+    console.log('витрачено на тести сьогодні ≈$' + spent0.toFixed(2) + ' з ліміту $' + lim + '; цей прогін ≈$' + (tests.length * 0.07).toFixed(2));
+    let stop = false;
     const results = []; let next = 0; let done = 0;
     async function worker() {
-        while (next < tests.length) {
+        while (!stop && next < tests.length) {
             const t = tests[next++];
             let r;
             try { r = await runTest(t.id); } catch (e) { r = { status: 'error', error: e.message }; }
+            if (r.budgetStop) { if (!stop) console.log('⛔ ' + (r.verdict && r.verdict.reasoning)); stop = true; break; }
             const v = r.verdict || {};
             results.push({ id: t.id, name: t.name, before: before.get(t.id), status: r.status, reason: String(v.reasoning || r.error || '').slice(0, 600), sessionId: r.sessionId || null });
             done++;

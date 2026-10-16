@@ -122,6 +122,13 @@ function matchColorByPosition(item, text) {
     return (n >= 1 && n <= item.colors.length) ? item.colors[n - 1] : null;
 }
 function ttnIn(text) { const m = String(text || '').match(/(?<!\d)\d{14}(?!\d)/); return m ? m[0] : ''; }
+// Номер банківської картки (16 цифр, з пробілами чи без, контрольна цифра Луна) — це дані, а не телефон (16.10, Денис: номер картки
+// для повернення коштів → «номер телефону некоректний»). Сам номер нікуди не переписуємо.
+function cardIn(text) {
+    const runs = String(text || '').match(/(?<!\d)(?:\d[ -]?){15}\d(?!\d)/g) || [];
+    return runs.some((r) => { const d = r.replace(/\D/g, ''); if (d.length !== 16) return false; let s = 0; for (let i = 0; i < 16; i++) { let x = Number(d[15 - i]); if (i % 2) { x *= 2; if (x > 9) x -= 9; } s += x; } return s % 10 === 0; });
+}
+function maskCards(text) { return String(text || '').replace(/(?<!\d)(?:\d[ -]?){15}\d(?!\d)/g, (r) => { const d = r.replace(/\D/g, ''); return '**** ' + d.slice(-4); }); }
 // 2026-09-15: hideLinks() переїхав у lib.js і застосовується ЦЕНТРАЛЬНО в tools.js:alert() для
 // КОЖНОГО сповіщення — тут його викликати більше не треба (і не можна: подвійне застосування
 // зламало б уже приховані посилання). Див. коментар над buildAdminAlert(...) у tools.js.
@@ -1468,6 +1475,28 @@ async function universalQuestionFallback(A, u) {
 async function runPolicyInner(A, u) {
     const { ctx } = A; ctx.agent = ctx.agent || {};
     Q.init(A, u); // реєстр питань ходу (questions.js) — далі питання змінюються лише через Q.cover/Q.add/compose
+    const text = String(A.turnText || ''); // на початку: блоки нижче (варіант 3, повернення) пишуть текст клієнта в сповіщення
+    // Номер картки — не телефон (аналізатор інколи читає 16 цифр як номер телефону).
+    if (cardIn(text) && u.phone && text.replace(/\D/g, '').includes(String(u.phone).replace(/\D/g, '').replace(/^380/, '0').slice(-9))) u.phone = null;
+    // Повернення/обмін/повернення коштів, що вже триває (16.10, Edits: Валентина — фото накладної, якою відправила костюм на обмін, →
+    // «ваше замовлення в роботі» й «відправимо XXL» + інструкція «Легке повернення», хоча вже відправила; Денис — номер картки для повернення
+    // коштів → картка кофти й «номер телефону некоректний»; Алла — «Зараз» посеред зʼясування, куди пішла посилка, → «Оформляємо
+    // замовлення?»). Справу веде менеджер — бот про неї не знав і продавав. Аналізатор бачить її з історії (u.afterSale): бот не продає й не
+    // перепитує, нове від клієнта (фото, накладна, картка, питання) — менеджеру; клієнту коротке «передала менеджеру», лише якщо є що
+    // передати і менеджер не писав у розмові останні 3 год (інакше він на звʼязку — мовчимо). Розмова — на паузу.
+    if (u.afterSale && !A.turnSharedPost && !A.newEntryAd && !A.turnStory && !(ctx.returnFlow && ctx.returnFlow.stage === 'collect') && !(u.productHint && u.productHint.article && !A.turnImage)) {
+        const ttnT = ttnIn(text), card = cardIn(text);
+        const what = A.turnImage ? 'фото (накладна / квитанція?) — подивіться в чаті' : card ? 'номер картки для повернення коштів — подивіться в чаті' : ttnT ? 'номер накладної ' + ttnT : '';
+        const mgr = (A.history || []).filter((h) => h.who === 'manager').pop();
+        const mgrActive = !!(mgr && mgr.at && Date.now() - new Date(mgr.at).getTime() < 3 * 3600 * 1000);
+        const hasQuestion = Array.isArray(u.questions) && u.questions.length > 0;
+        A.out = [];
+        await pause(A, 'aftersale', null);
+        await T.alert(A, { title: '↩️ Повернення/обмін: клієнт написав', main: 'Клієнт: «' + (maskCards(text).slice(0, 300) || (A.turnImage ? '[фото]' : '')) + '»', details: (what ? 'Надіслав: ' + what + '\n' : '') + 'Бот по суті не відповідав' + (mgrActive ? '' : ' (лише «передала менеджеру»)') + ', розмова на паузі — відповідайте тут.' });
+        if (!mgrActive && (what || hasQuestion)) A.out.push({ text: 'Дякую! Передала менеджеру — він перевірить і відпише вам тут 🙏', step: 'aftersale_handoff' });
+        A.trace.push({ step: 'aftersale', what: !!what, mgrActive, hasQuestion });
+        return;
+    }
     // Розмова, яку вів МЕНЕДЖЕР, після зняття його паузи (варіант 3, рішення власника 14.10): повернення/обмін/скарга/статус посилки —
     // бот не втручається (знову пауза + менеджеру); товар не впізнано — теж мовчить; продаж — бот підхоплює (історія з менеджером є в
     // аналізаторі). Лише перше повідомлення після зняття паузи (до 15 хв).
@@ -1503,7 +1532,6 @@ async function runPolicyInner(A, u) {
         const shoeOos = sp && sp.isSet && Array.isArray(sp.setOutOfStock) ? sp.setOutOfStock.find((nm) => /лофер|взутт|кросів|черевик|туфл|кед/i.test(String(nm))) : null;
         if (u.shoeSize && shoeOos && !ctx.crmOrderId) { A.out.push({ text: shortName({ name: shoeOos }) + ' зараз, на жаль, немає в наявності, тож розмір взуття не знадобиться 🙂', step: 'oos_shoe_note' }); u.shoeSize = null; }
     }
-    const text = String(A.turnText || '');
     // Голий номер («2») у відповідь на показаний список — це вибір пункту, а не кількість: детерміновано (LLM іноді читає як qty і картка не показується).
     if (ctx.agent.lastAsk === 'який із показаних товарів цікавить' && ctx.catalogHintSkus) {
         const bare = String(text).trim().match(/^(?:№\s*)?(\d)\s*[.)!]?$/);
@@ -1830,6 +1858,14 @@ async function runPolicyInner(A, u) {
             await T.alert(A, 'n_return_admin', { details: returnDetails(ctx.returnFlow) });
             return;
         }
+        // Фото замість номера (квитанція / накладна зворотної посилки) — не просимо номер удруге й утретє (15.10, Денис: два фото квитанції
+        // → двічі «напишіть номер нової накладної»): передаємо менеджеру, він звірить.
+        if (A.turnImage) {
+            ctx.returnFlow = { ...ctx.returnFlow, stage: 'done', proofPhoto: true };
+            await T.alert(A, 'n_return_admin', { details: returnDetails(ctx.returnFlow) + '\n📷 Клієнт надіслав фото (ймовірно, накладну зворотної посилки) — номер перевірте в чаті.' });
+            A.out.push({ text: 'Дякую! Передала менеджеру — він звірить накладну й напише вам тут 🙏', step: 'return_confirm_photo' });
+            return;
+        }
         A.out.push({ text: await answerThenAsk(A, u, messageText(A.assets, 'n_agent_return_wait_ask', ctx, A.session.id)), step: 'return_wait' });
         return;
     }
@@ -2022,7 +2058,7 @@ async function runPolicyInner(A, u) {
     // з чужим номером. Телефон приймаємо лише якщо в тексті є рівно 10 цифр з 0 (або 380 + 9); інакше просимо виправити.
     let __phoneNote = '';
     {
-        const runs = String(text).replace(/[\s\-()+.]/g, '').match(/\d{9,13}/g) || [];
+        const runs = cardIn(text) ? [] : (String(text).replace(/[\s\-()+.]/g, '').match(/\d{9,13}/g) || []);
         // Номер, який виділив аналізатор, стоїть у тексті ОКРЕМИМ числом (не частиною довшого) — він правильний, навіть якщо поруч
         // інші цифри: «Київ нп 339⏎0688874470» склеювалось у «3390688874470» і бот казав «номер некоректний» (правка 8a8c27b8, 01.10).
         const phoneAlone = !!(u.phone && /^0\d{9}$/.test(u.phone) && new RegExp('(?<![0-9])(?:\\+?3[\\s\\-()]*8[\\s\\-()]*)?' + u.phone.split('').join('[\\s\\-()]*') + '(?![0-9])').test(String(text)));

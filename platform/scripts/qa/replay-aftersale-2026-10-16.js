@@ -12,6 +12,7 @@ const CASES = [
     { name: 'Алла: «Зараз» посеред зʼясування повернення', sid: '933c290b-48fc-4c71-8d3c-81380384194a', at: '2026-10-13T17:44:00Z', expect: 'aftersale' },
     { name: 'Алла: «Костюм вам не прийшов?»', sid: '933c290b-48fc-4c71-8d3c-81380384194a', at: '2026-10-13T17:54:00Z', expect: 'aftersale' },
     { name: 'КОНТРОЛЬ Валерій: продаж менеджера з рядком «Обмін/повернення 14 днів»', sid: 'ae1985ac-b833-4fec-88ea-7eb39fd7f36f', at: '2026-10-13T10:22:00Z', expect: 'not_aftersale' },
+    { name: 'Катя: фото браку після «надішліть фото» (стан бота — як перед тим ходом)', sid: 'b12ef797-4287-4fcd-86b7-e97241ddc5a1', at: '2026-10-16T14:54:50Z', expect: 'defect_photo', fromTurn: true },
     { name: 'КОНТРОЛЬ (живе хибне 16.10): «кофту отримали, сподобалась, як прати?»', sid: '16f7db52-84fd-407a-8460-8e08d071c827', at: '2026-10-16T14:42:00Z', expect: 'not_aftersale' },
 ];
 
@@ -28,6 +29,7 @@ const CASES = [
         const rc = real.context || {};
         const seed = { testMode: true, replayOf: c.sid, channel: 'meta', psid: rc.psid, igUsername: rc.igUsername, senderName: rc.senderName, agent: {} };
         for (const k of ['product', 'crmOrderId', 'payStatus', 'supplierTtn', 'orderData', 'colorChoice', 'recommendedSize']) if (rc[k] !== undefined && !/Валерій/.test(c.name)) seed[k] = rc[k];
+        if (c.fromTurn) { const tb = await db.$queryRawUnsafe('select "ctxBefore" cb from agent_turns where "sessionId"=$1 and "createdAt" >= $2 order by "createdAt" asc limit 1', c.sid, at); if (tb[0] && tb[0].cb) Object.assign(seed, tb[0].cb, { testMode: true, replayOf: c.sid, funnelPaused: false }); }
         const ru = await db.user.findUnique({ where: { id: real.userId }, select: { projectId: true } });
         const user = await db.user.create({ data: { telegramId: BigInt(-9100000000000) - BigInt(Math.floor(Math.random() * 1e9)), username: 'replay_as_' + Date.now().toString(36), firstName: 'Replay', metadata: { replay: true }, projectId: ru.projectId } });
         const test = await db.session.create({ data: { userId: user.id, botId: real.botId, state: 'inbox', isTest: true, context: seed } });
@@ -37,7 +39,7 @@ const CASES = [
         const u = r.understanding || {};
         const steps = (r.replies || []).map((o) => o.step).join(',');
         const paused = r.ctx && r.ctx.funnelPaused && r.ctx.pausedBy;
-        const ok = c.expect === 'aftersale' ? (paused === 'aftersale' && !/present|order_intent|hint|ask_params|phone_invalid|return_easy|post_order/.test(steps)) : paused !== 'aftersale';
+        const ok = c.expect === 'defect_photo' ? (/return_defect_photo/.test(steps) && !/present/.test(steps)) : c.expect === 'aftersale' ? (paused === 'aftersale' && !/present|order_intent|hint|ask_params|phone_invalid|return_easy|post_order/.test(steps)) : paused !== 'aftersale';
         if (!ok) fail++;
         console.log((ok ? '✅ ' : '❌ ') + c.name + '\n    вхід: ' + (text.replace(/\d{12,19}/g, '<число>').replace(/\n/g, ' ⏎ ').slice(0, 120) || '') + (img ? ' [фото]' : '') + '\n    afterSale=' + u.afterSale + ' intent=' + u.intent + ' пауза=' + (paused || '—') + ' кроки=' + (steps || '— (мовчить)') + '\n    відповідь: ' + ((r.replies || []).map((o) => String(o.text || '').replace(/\n/g, ' ')).join(' | ').slice(0, 200) || '—'));
         await db.message.deleteMany({ where: { sessionId: test.id } }); await db.session.delete({ where: { id: test.id } }).catch(() => {}); await db.user.delete({ where: { id: user.id } }).catch(() => {});

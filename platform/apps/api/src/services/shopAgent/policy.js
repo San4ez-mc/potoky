@@ -796,7 +796,7 @@ async function finishReturnCollect(A, opts = {}) {
     await T.returnCreate(A).catch(() => false);
     rf.stage = opts.silent ? 'done' : 'await_ttn'; rf.at = Date.now();
     if (!opts.silent) A.out.push({ text: messageTextMultiline(A.assets, 'n_return_easy_msg', ctx, A.session.id), step: 'return_easy' });
-    await T.alert(A, 'n_agent_return_request_admin', { details: returnDetails(rf) + (opts.silent ? '\nℹ️ Клієнт не відповів на уточнення — бот повернувся до звичайної розмови, інструкцію не надсилав.' : '') });
+    await T.alert(A, 'n_agent_return_request_admin', { details: returnDetails(rf) + (opts.note ? '\n' + opts.note : opts.silent ? '\nℹ️ Клієнт не відповів на уточнення — бот повернувся до звичайної розмови, інструкцію не надсилав.' : '') });
 }
 /** «Зріст (см), Вага (кг), Розмір взуття (EU)» (назви параметрів категорій CRM) → «ваш зріст і вагу, а також розмір взуття (EU)».
  * Власник 02.10: сирий перелік через кому звучав як анкета. Зріст і вага — одна фраза, решта — з малої літери після «а також». */
@@ -1496,7 +1496,7 @@ async function runPolicyInner(A, u) {
         const hasQuestion = Array.isArray(u.questions) && u.questions.length > 0;
         A.out = [];
         await pause(A, 'aftersale', null);
-        await T.alert(A, { title: '↩️ Повернення/обмін: клієнт написав', main: 'Клієнт: «' + (maskCards(text).slice(0, 300) || (A.turnImage ? '[фото]' : '')) + '»', details: (what ? 'Надіслав: ' + what + '\n' : '') + 'Бот по суті не відповідав' + (mgrActive ? '' : ' (лише «передала менеджеру»)') + ', розмова на паузі — відповідайте тут.' });
+        await T.alert(A, { title: (u.isComplaint || (ctx.returnFlow && ctx.returnFlow.defect)) ? '⚠️ Скарга на якість / брак: клієнт написав' : '↩️ Повернення/обмін: клієнт написав', main: 'Клієнт: «' + (maskCards(text).slice(0, 300) || (A.turnImage ? '[фото]' : '')) + '»', details: (what ? 'Надіслав: ' + what + '\n' : '') + 'Бот по суті не відповідав' + (mgrActive ? '' : ' (лише «передала менеджеру»)') + ', розмова на паузі — відповідайте тут.' });
         if (!mgrActive && (what || hasQuestion)) A.out.push({ text: 'Дякую! Передала менеджеру — він перевірить і відпише вам тут 🙏', step: 'aftersale_handoff' });
         A.trace.push({ step: 'aftersale', what: !!what, mgrActive, hasQuestion });
         return;
@@ -1875,6 +1875,15 @@ async function runPolicyInner(A, u) {
     }
     const rfCollecting = ctx.returnFlow && ctx.returnFlow.stage === 'collect';
     const returnSignal = u.returnRequest || u.returnType || u.returnReason || u.exchangeFor;
+    // Фото у відповідь на «надішліть фото браку» — це фото браку, а не пошук товару (16.10, Катя Верзан: два фото нерівної вʼязки →
+    // бот закрив скаргу як «пішла від теми» і показав картку тієї самої кофти). Менеджеру — зі скаргою; клієнту — подяка; пауза.
+    if (rfCollecting && ctx.returnFlow.defect && A.turnImage && !A.turnSharedPost && !A.newEntryAd && !returnSignal) {
+        const rf = ctx.returnFlow; rf.defectPhotos = (rf.defectPhotos || 0) + 1;
+        await finishReturnCollect(A, { silent: true, note: '📷 Клієнт надіслав фото браку — подивіться в чаті й запропонуйте рішення (обмін або повернення коштів).' });
+        A.out.push({ text: 'Дякую за фото 🙏 Передала менеджеру — він подивиться й запропонує рішення (обмін або повернення коштів) тут, у чаті.', step: 'return_defect_photo' });
+        await pause(A, 'complaint', null);
+        return;
+    }
     if (u.returnRequest || (rfCollecting && returnSignal)) {
         const rf = ctx.returnFlow = rfCollecting ? ctx.returnFlow : { stage: 'collect', at: Date.now(), asks: 0, firstText: text.slice(0, 300) };
         if (u.returnType) rf.type = u.returnType;

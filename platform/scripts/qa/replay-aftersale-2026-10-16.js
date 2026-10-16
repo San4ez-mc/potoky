@@ -13,12 +13,15 @@ const CASES = [
     { name: 'Алла: «Костюм вам не прийшов?»', sid: '933c290b-48fc-4c71-8d3c-81380384194a', at: '2026-10-13T17:54:00Z', expect: 'aftersale' },
     { name: 'КОНТРОЛЬ Валерій: продаж менеджера з рядком «Обмін/повернення 14 днів»', sid: 'ae1985ac-b833-4fec-88ea-7eb39fd7f36f', at: '2026-10-13T10:22:00Z', expect: 'not_aftersale' },
     { name: 'Катя: фото браку після «надішліть фото» (стан бота — як перед тим ходом)', sid: 'b12ef797-4287-4fcd-86b7-e97241ddc5a1', at: '2026-10-16T14:54:40Z', expect: 'defect_photo', fromTurn: true },
+    { name: 'КОНТРОЛЬ (живе хибне 16.10): відгук «гарна якість, ви молодці»', sid: '9a55776d', at: '2026-10-16T15:51:00Z', expect: 'not_aftersale', fromTurn: true },
+    { name: 'Вікторія: «Дякую» в розмові про обмін — без картки товару', sid: '5843b175', at: '2026-10-16T16:01:00Z', expect: 'no_present', fromTurn: true },
     { name: 'КОНТРОЛЬ (живе хибне 16.10): «кофту отримали, сподобалась, як прати?»', sid: '16f7db52-84fd-407a-8460-8e08d071c827', at: '2026-10-16T14:42:00Z', expect: 'not_aftersale' },
 ];
 
 (async () => {
     let fail = 0;
     for (const c of CASES) {
+        if (c.sid.length < 36) c.sid = ((await db.$queryRawUnsafe('select id from sessions where id::text like $1 limit 1', c.sid + '%'))[0] || {}).id;
         const real = await db.session.findUnique({ where: { id: c.sid } });
         const at = new Date(c.at);
         const all = await db.message.findMany({ where: { sessionId: c.sid }, orderBy: { createdAt: 'asc' }, select: { role: true, content: true, metadata: true, createdAt: true } });
@@ -39,7 +42,7 @@ const CASES = [
         const u = r.understanding || {};
         const steps = (r.replies || []).map((o) => o.step).join(',');
         const paused = r.ctx && r.ctx.funnelPaused && r.ctx.pausedBy;
-        const ok = c.expect === 'defect_photo' ? (/return_defect_photo/.test(steps) && !/present/.test(steps)) : c.expect === 'aftersale' ? (paused === 'aftersale' && !/present|order_intent|hint|ask_params|phone_invalid|return_easy|post_order/.test(steps)) : paused !== 'aftersale';
+        const ok = c.expect === 'no_present' ? !/present/.test(steps) : c.expect === 'defect_photo' ? (/return_defect_photo/.test(steps) && !/present/.test(steps)) : c.expect === 'aftersale' ? (paused === 'aftersale' && !/present|order_intent|hint|ask_params|phone_invalid|return_easy|post_order/.test(steps)) : paused !== 'aftersale';
         if (!ok) { fail++; console.log('    trace: ' + JSON.stringify((r.trace || []).map((x) => x.step || x.tool || x.node || '')).slice(0, 900)); }
         console.log((ok ? '✅ ' : '❌ ') + c.name + '\n    вхід: ' + (text.replace(/\d{12,19}/g, '<число>').replace(/\n/g, ' ⏎ ').slice(0, 120) || '') + (img ? ' [фото]' : '') + '\n    afterSale=' + u.afterSale + ' intent=' + u.intent + ' пауза=' + (paused || '—') + ' кроки=' + (steps || '— (мовчить)') + '\n    відповідь: ' + ((r.replies || []).map((o) => String(o.text || '').replace(/\n/g, ' ')).join(' | ').slice(0, 200) || '—'));
         await db.message.deleteMany({ where: { sessionId: test.id } }); await db.session.delete({ where: { id: test.id } }).catch(() => {}); await db.user.delete({ where: { id: user.id } }).catch(() => {});

@@ -1488,7 +1488,7 @@ async function runPolicyInner(A, u) {
     // Запобіжник (16.10, хибне спрацювання: «кофту отримали, сподобалась, як прати?» → «передала менеджеру» й пауза): у розмові справді
     // йшлося про повернення/обмін (рядок умов «Обмін/повернення 14 днів» з картки товару не рахується) або клієнт надіслав номер картки.
     const histReturn = (A.history || []).some((h) => /поверн|обмін|обміня|поміня|возврат|обмен/i.test(String(h.text || '')) && !/обмін\/повернення\s*14/i.test(String(h.text || ''))) || cardIn(text) || !!ctx.returnFlow;
-    if (u.afterSale && histReturn && (A.history || []).some((h) => h.who === 'manager') &&!A.turnSharedPost && !A.newEntryAd && !A.turnStory && !(ctx.returnFlow && ctx.returnFlow.stage === 'collect') && !(u.productHint && u.productHint.article && !A.turnImage)) {
+    if (u.afterSale && histReturn && (A.history || []).some((h) => h.who === 'manager') &&!A.turnSharedPost && !A.newEntryAd && !A.turnStory && !(ctx.returnFlow && ctx.returnFlow.stage === 'collect') && !(u.productHint && u.productHint.article && !A.turnImage && text.toLowerCase().includes(String(u.productHint.article).toLowerCase()))) { // новий артикул — лише названий клієнтом (16.10, victoria_ch_k: «Дякую» → картка товару з фото менеджера)
         const ttnT = ttnIn(text), card = cardIn(text);
         const what = A.turnImage ? 'фото (накладна / квитанція?) — подивіться в чаті' : card ? 'номер картки для повернення коштів — подивіться в чаті' : ttnT ? 'номер накладної ' + ttnT : '';
         const mgr = (A.history || []).filter((h) => h.who === 'manager').pop();
@@ -1497,7 +1497,9 @@ async function runPolicyInner(A, u) {
         A.out = [];
         await pause(A, 'aftersale', null);
         await T.alert(A, { title: (u.isComplaint || (ctx.returnFlow && ctx.returnFlow.defect)) ? '⚠️ Скарга на якість / брак: клієнт написав' : '↩️ Повернення/обмін: клієнт написав', main: 'Клієнт: «' + (maskCards(text).slice(0, 300) || (A.turnImage ? '[фото]' : '')) + '»', details: (what ? 'Надіслав: ' + what + '\n' : '') + 'Бот по суті не відповідав' + (mgrActive ? '' : ' (лише «передала менеджеру»)') + ', розмова на паузі — відповідайте тут.' });
-        if (!mgrActive && (what || hasQuestion)) A.out.push({ text: 'Дякую! Передала менеджеру — він перевірить і відпише вам тут 🙏', step: 'aftersale_handoff' });
+        // Змістовне повідомлення (не «Зараз»/«+»/«Дякую») — коротка відповідь, щоб клієнт не говорив у порожнечу (16.10, _marichka_7).
+        const substantive = text.replace(/[^p{L}p{N}]+/gu, ' ').trim().split(' ').filter(Boolean).length >= 4;
+        if (!mgrActive && (what || hasQuestion || substantive)) A.out.push({ text: 'Дякую! Передала менеджеру — він перевірить і відпише вам тут 🙏', step: 'aftersale_handoff' });
         A.trace.push({ step: 'aftersale', what: !!what, mgrActive, hasQuestion });
         return;
     }
@@ -3554,7 +3556,7 @@ async function runPolicyInner(A, u) {
     // «по сайтам не переходжу» — бот тричі просив адресу). Незручне посилання — реквізити (wantsManualReq, нижче). Відмова — один раз
     // питаємо, що зупиняє, і пропонуємо реквізити; вдруге — прощаємось і кажемо менеджеру. Не просимо адресу в людини, яка відмовилась.
     // «Ні» на уточнення адреси («ті самі дані?», відділення НП) — не відмова від замовлення.
-    if (!ctx.crmOrderId && ctx.payStatus !== 'confirmed' && (u.ready === 'no' || u.intent === 'order_no') && !/^(ті самі дані доставки\?|уточнення адреси НП)$/.test(String(ctx.agent.lastAsk || '')) && !u.wantsManualReq && !u.wantsCard && !(u.claimsPaid || u.receiptLink)) {
+    if (!ctx.crmOrderId && ctx.payStatus !== 'confirmed' && (u.ready === 'no' || u.intent === 'order_no') && !/^(ті самі дані доставки\?|уточнення адреси НП)$/.test(String(ctx.agent.lastAsk || '')) && !u.wantsManualReq && !u.wantsCard && !(u.claimsPaid || u.receiptLink) && u.addUpsell !== false) { // «Без футболки» — відмова від допродажу, не від замовлення (16.10, sviridenko_inna_)
         if (!ctx.agent.payRefusalAsked) {
             ctx.agent.payRefusalAsked = true;
             A.out.push({ text: 'Зрозуміла 🙏 Підкажіть, будь ласка, що зупиняє? Якщо незручно оплачувати за посиланням — надішлю звичайні реквізити чи номер картки.', step: 'pay_refusal_why' });

@@ -34,14 +34,16 @@ const EXPECT = [
     }
     console.log((fail ? '❌ ' : '✅ ') + 'погоджені приклади: ' + (EXPECT.length - fail) + ' з ' + EXPECT.length);
     // комплект: кофта A0187 у set1112 — той самий розмір, що окремо (для наявних у кофти розмірів S–2XL)
-    const set = cat.products.find((x) => String(x.sku).toUpperCase() === 'SET1112');
+    const set0 = cat.products.find((x) => String(x.sku).toUpperCase() === 'SET1112');
+    // Позиції комплекту — як збирає їх пошук товару (setItems: артикул, назва, розміри компонента з CRM)
+    const set = { ...set0, setItems: (set0.setComponents || []).map((c) => { const cp = cat.products.find((x) => String(x.sku).toUpperCase() === String(c.sku).toUpperCase()) || {}; return { article: c.sku, name: c.name, structuredSizes: cp.sizes || [], sizeChartData: cp.sizeChartData || null }; }) };
     let sf = 0, sc = 0;
     for (const [h, w] of EXPECT) {
         const single = norm(await run(newC, keysNew, base, h, w));
         const cs = await run(newC, keysNew, set, h, w);
-        const m = String(cs.setSizesText || '').match(/A0187[^\n]*\n?[^\n]*?Розмір:\s*([A-Z0-9]+)/i) || String(cs.setSizesText || '').match(/кофта[^\n]*?Розмір:\s*([A-Z0-9]+)/i);
-        if (!m) continue; sc++;
-        const inSet = String(m[1]).toUpperCase().replace(/^2XL$/, 'XXL');
+        const sm = cs.setSizeMap || {}; const key = Object.keys(sm).find((k) => k.toUpperCase() === 'A0187');
+        if (!key) continue; sc++;
+        const inSet = String(sm[key]).toUpperCase().replace(/^2XL$/, 'XXL');
         if (single !== 'OOR' && inSet !== single) { sf++; if (sf <= 10) console.log('❌ комплект ' + h + '/' + w + ': кофта окремо ' + single + ', у комплекті ' + inSet); }
     }
     console.log((sf ? '❌ ' : '✅ ') + 'кофта в комплекті = окремо: ' + (sc - sf) + ' з ' + sc);

@@ -9,12 +9,17 @@ const MODEL = process.env.CLAUDE_MODEL || 'claude-haiku-4-5';
 // Допоміжні виклики (класифікація, зіставлення з базою знань, сторож, суддя тестів) — Haiku 5.5: у 10 разів дешевша за Haiku 4.5
 // ($0.10/$0.50 проти $1/$5 за 1 млн токенів) і кешує вже від 512 токенів (Haiku 4.5 — від 4096, тож короткі виклики не кешувались). 18.10.
 const HELPER_MODEL = process.env.CLAUDE_HELPER_MODEL || 'claude-haiku-5-5';
-// Моделі нового покоління (5.x, Fable, Mythos): temperature/top_p/top_k не приймають (400); Haiku 5.5 за замовчуванням думає —
-// для коротких службових відповідей роздуми вимикаємо (дозволено при effort ≤ high), інакше платимо за невидимі токени.
+// Моделі нового покоління (5.x, Fable, Mythos): temperature/top_p/top_k не приймають (400). Haiku 5.5 — з короткими роздумами
+// (effort low): без роздумів вона гірше зіставляла питання з базою знань (18.10, 30 живих питань: «Яка вартість костюму?» → запис
+// про зміну кольору після оформлення). Роздуми входять у max_tokens — даємо запас, інакше відповідь обріжеться. Ціна роздумів на
+// Haiku 5.5 мізерна ($0.50 за 1 млн токенів відповіді).
 function shapeForModel(body) {
     const m = String(body.model || '');
     if (/claude-(haiku|sonnet|opus)-5|claude-fable|claude-mythos/.test(m)) { delete body.temperature; delete body.top_p; delete body.top_k; }
-    if (/claude-haiku-5/.test(m) && !body.thinking) body.thinking = { type: 'disabled' };
+    if (/claude-haiku-5/.test(m) && !body.thinking) {
+        body.output_config = { effort: 'low', ...(body.output_config || {}) };
+        body.max_tokens = Math.max(Number(body.max_tokens) || 0, 2048);
+    }
     return body;
 }
 const MAX_TOKENS = parseInt(process.env.CLAUDE_MAX_TOKENS || '4096', 10);

@@ -9,7 +9,11 @@
  * Результат: є відповідь → бот відповідає нею; запис без відповіді → лише лічильник +1 (без нового дубля);
  * немає → новий запис із правильним scope. Якщо ШІ недоступний — повертає null, працює словниковий критерій kbSimilarity.
  */
-const { callClaude, HELPER_MODEL } = require('@platform/claude');
+const { callClaude } = require('@platform/claude');
+// Лишається Haiku 4.5 (18.10): на 30 живих питаннях Haiku 5.5 без роздумів хибно зіставляла («Яка вартість костюму?» → зміна кольору),
+// а з роздумами — часто не знаходила правильний запис («рукав 83–85 см» ≠ «довжина рукава A0187»). Перевіряти знову —
+// scripts/qa/kb-match-compare (порівняння двох моделей на живих питаннях), а не за назвою моделі.
+const KB_MODEL = 'claude-haiku-4-5';
 const { crmFetch, logger, loadCatalog } = require('./lib');
 
 const _cache = new Map(); // botId -> { at, items }
@@ -60,7 +64,7 @@ async function kbMatch(A, question) {
             + '\n2) scope — чого стосується САМЕ ЦЕ питання: "shop" — однаково для будь-якого товару (оплата, доставка, знижки, обмін/повернення, гарантія, терміни, примірка, магазин); "category" — категорії загалом (напр. «як сідають джинси»); "product" — конкретного товару (його посадка, деталі, крій, тканина).'
             + '\n3) kind — вид питання: "size" — підбір розміру/посадка під параметри або ЗАМІРИ товару («як підібрати розмір», «чи підійде на 200 см», «M повномірний?», «яка довжина штанів / рукава / по внутрішньому шву», «на який зріст пошито», «обхват грудей у XL») — відповідь дає розмірна сітка; "feature" — властивість/деталь товару, яку видно з опису чи фото (капюшон, блискавка, кишені, матеріал, утеплення); "compare" — чим відрізняються кілька товарів; "policy" — умови магазину (оплата, доставка, обмін, знижки); "other" — інше.'
             + '\nВідповідь ЛИШЕ JSON: {"match": число або null, "scope": "shop"|"category"|"product", "kind": "size"|"feature"|"compare"|"policy"|"other"}';
-        const raw = await callClaude({ sessionId: A.session.id, systemPrompt: 'Ти точно зіставляєш питання клієнтів з базою знань магазину. Відповідаєш лише JSON.', messages: [{ role: 'user', content: prompt }], options: { model: A.keys.KB_MATCH_MODEL || HELPER_MODEL, maxTokens: 80, extra: { temperature: 0 }, noFallbackOnBilling: true } });
+        const raw = await callClaude({ sessionId: A.session.id, systemPrompt: 'Ти точно зіставляєш питання клієнтів з базою знань магазину. Відповідаєш лише JSON.', messages: [{ role: 'user', content: prompt }], options: { model: A.keys.KB_MATCH_MODEL || KB_MODEL, maxTokens: 80, extra: { temperature: 0 }, noFallbackOnBilling: true } });
         const m = String(raw || '').match(/\{[\s\S]*\}/);
         if (m) {
             const j = JSON.parse(m[0]);
@@ -86,7 +90,7 @@ async function sameAsEscalated(A, question, prev) {
     try {
         const prompt = 'Нове питання клієнта: «' + q.slice(0, 300) + '»\nПитання, які вже передано менеджеру в цій розмові:\n' + list.map((x, i) => (i + 1) + '. ' + String(x).slice(0, 200)).join('\n')
             + '\n\nЧи нове питання — те саме по суті, що одне з переданих (клієнт перепитує/наполягає іншими словами, уточнює те саме: «уточніть покрій», «мені треба знати» після питання про крій)? Орієнтуйся на дослівні слова клієнта, а не на переформулювання. Відповідь ЛИШЕ JSON: {"same": true|false}';
-        const raw = await callClaude({ sessionId: A.session.id, systemPrompt: 'Ти порівнюєш питання клієнтів за змістом. Відповідаєш лише JSON.', messages: [{ role: 'user', content: prompt }], options: { model: A.keys.KB_MATCH_MODEL || HELPER_MODEL, maxTokens: 20, extra: { temperature: 0 }, noFallbackOnBilling: true } });
+        const raw = await callClaude({ sessionId: A.session.id, systemPrompt: 'Ти порівнюєш питання клієнтів за змістом. Відповідаєш лише JSON.', messages: [{ role: 'user', content: prompt }], options: { model: A.keys.KB_MATCH_MODEL || KB_MODEL, maxTokens: 20, extra: { temperature: 0 }, noFallbackOnBilling: true } });
         const m = String(raw || '').match(/\{[\s\S]*\}/);
         return m ? JSON.parse(m[0]).same === true : null;
     } catch (e) { return null; }

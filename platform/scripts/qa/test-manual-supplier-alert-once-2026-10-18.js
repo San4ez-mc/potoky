@@ -17,7 +17,7 @@ const BOT = 'fcdee415-bef2-4a74-a650-e6e4b5a12322';
     const mk = (flag) => ({
         botId: BOT, assets, keys: { ...assets.keys, SUPPLIER_ORDERS_DISABLED: '1' }, session: { id: 'qa-manual-once' }, out: [], createAlertCoversManual: flag,
         ctx: { product: { id: 'P1', sku: 'A0187', name: 'Кофта', price: 1279, supplier: 'brewdrop.in.ua' }, orderUnits: [{ color: 'Чорний', size: 'L' }], recommendedSize: 'L', colorChoice: { color: 'Чорний' },
-            payStatus: 'confirmed', payAmount: 200, crmOrderId: 'ORDER-QA', agent: {}, senderName: 'QA', igUsername: 'qa' },
+            payStatus: 'confirmed', payAmount: 200, orderUnitsTotal: 1279, crmOrderId: 'ORDER-QA', agent: {}, senderName: 'QA', igUsername: 'qa' },
     });
     let fail = 0;
     alerts = []; await P.runSupplierDispatch(mk(true));

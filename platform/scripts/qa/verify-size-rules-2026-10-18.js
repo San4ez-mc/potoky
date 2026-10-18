@@ -66,7 +66,7 @@ const EXPECT = [
     const setCrm = { ...set, setItems: set.setItems.map((it) => ({ ...it, fitChart: chartG, sizeRules: RULES })) };
     let sf2 = 0, sc2 = 0;
     for (const [h, w] of EXPECT) {
-        const single = norm(await run(newC, assets.keys, fromCrm, h, w));
+        const single = norm(await run(newC, assets.keys, { ...base, fitChart: chartG, sizeRules: RULES }, h, w));
         const cs = await run(newC, assets.keys, setCrm, h, w);
         const sm = cs.setSizeMap || {}; const key = Object.keys(sm).find((k) => k.toUpperCase() === 'A0187');
         if (!key) continue; sc2++;

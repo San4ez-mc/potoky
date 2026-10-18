@@ -24,7 +24,7 @@ return (async () => {
   if (!context.code) {
     if (platform === 'tiktok') {
       if (!k.TIKTOK_CLIENT_KEY) return msg('⚠️ TikTok OAuth: спершу впиши TIKTOK_CLIENT_KEY і TIKTOK_CLIENT_SECRET у ключі воронки oauth-video (з TikTok for Developers → твій додаток).', { oauthOk: false });
-      var u1 = 'https://www.tiktok.com/v2/auth/authorize/?client_key=' + encodeURIComponent(k.TIKTOK_CLIENT_KEY) + '&scope=' + encodeURIComponent('user.info.basic,video.upload,video.publish') +
+      var u1 = 'https://www.tiktok.com/v2/auth/authorize/?client_key=' + encodeURIComponent(k.TIKTOK_CLIENT_KEY) + '&scope=' + encodeURIComponent('user.info.basic,video.publish') +
         '&response_type=code&redirect_uri=' + encodeURIComponent(redirect) + '&state=kiro';
       return msg('🔗 TikTok: відкрий посилання, увійди в потрібний акаунт і дай згоду. Потім скопіюй з адресного рядка значення code= і надішли його мені.\n' + u1, { oauthOk: true, oauthStep: 'url' });
     }

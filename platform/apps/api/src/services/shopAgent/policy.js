@@ -1094,6 +1094,9 @@ async function runSupplierDispatch(A, opts = {}) {
         ctx.agent.supplierName = g.supplier;
         if (opts.silent) continue;
         if (g.needsManual) {
+            // «НОВЕ ЗАМОВЛЕННЯ» цього ж ходу вже сказав «автооформлення вимкнено — натисніть Оформити» і має кнопку — другий алерт
+            // «оформіть вручну» про те саме не шлемо (Edits b5fb5867: «чому двічі пише»). «Не вказано колір/розмір» — інша дія, шлемо.
+            if (g.status === 'manual_disabled' && A.createAlertCoversManual) continue;
             // Кнопка одна на все замовлення (оформлює всі групи) — тому лише під першим алертом.
             const buttons = (g.status === 'manual_disabled' || g.status === 'incomplete') && !buttonsShown ? supplierButtons(A) : [];
             if (buttons.length) buttonsShown = true;
@@ -1126,6 +1129,7 @@ async function afterOrderAccepted(A) {
         // Автооформлення вимкнено (SUPPLIER_ORDERS_DISABLED=1): менеджер перевіряє замовлення і сам відправляє постачальнику кнопкою.
         // Комплект: склад (колір/розмір кожної речі) — у рядок-комплект замовлення CRM, щоб менеджер бачив і міг виправити його там.
         await syncSetComponents(A).catch(() => false);
+        if (manualSupplierMode(A.keys)) A.createAlertCoversManual = true;
         await T.alert(A, 'n_create', manualSupplierMode(A.keys) ? { details: '⏸ Автооформлення постачальнику вимкнено — перевірте замовлення й натисніть «📦 Оформити постачальнику».', buttons: supplierButtons(A) } : {});
         await T.funnelStage(A, ...(ctx.payStatus === 'confirmed' || Number(ctx.payAmount) === 0 ? STAGES.accepted : STAGES.awaiting));
     } else if (ctx.repeatPass || ctx.payStatus === 'confirmed') {

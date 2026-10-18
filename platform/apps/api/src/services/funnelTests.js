@@ -19,7 +19,7 @@
 
 const crypto = require('crypto');
 const { db } = require('@platform/db');
-const { callClaude, HELPER_MODEL } = require('@platform/claude');
+const { callClaude } = require('@platform/claude');
 const { startTestSession, sendTestTurn, endTestSession } = require('./testSession');
 const shopAgent = require('./shopAgent');
 const { checkInvariants } = require('./funnelInvariants');
@@ -481,7 +481,7 @@ async function runTest(testId, onProgress = () => {}) {
             const toolText = await collectToolEvidence(sessionId);
             const { system, user } = buildJudgePrompt({ test, transcript, nodeQaEntries, stateText, toolText });
             // Суддя інколи починає з прози й упирається в ліміт токенів → невалідний JSON. Даємо запас токенів і ОДИН повтор.
-            // Економія токенів: рутинний суддя — Haiku 5.5 (HELPER_MODEL, з 18.10); якщо він видав «не пройшов» — підозрілий випадок,
+            // Економія токенів: рутинний суддя — Haiku 4.5 (~5× дешевше за Sonnet); якщо він видав «не пройшов» — підозрілий випадок,
             // перевіряємо Sonnet 4.6 і беремо його вердикт (FUNNEL_TEST_JUDGE_MODEL / FUNNEL_TEST_ESCALATE=0 змінюють поведінку).
             const judgeWith = async (model) => {
                 let raw = ''; let v;
@@ -502,7 +502,9 @@ async function runTest(testId, onProgress = () => {}) {
                 }
                 return v;
             };
-            const cheapModel = process.env.FUNNEL_TEST_JUDGE_MODEL || HELPER_MODEL; // Haiku 5.5 (18.10, економія)
+            // Суддя лишається Haiku 4.5 (18.10): Haiku 5.5 суворіша — «провалила» 2 тести, які 4.5 пропускала (Sonnet підтвердив її), тож
+            // заміна змінила б саме мірило посеред роботи. Перехід — окремим рішенням із перепрогоном еталону.
+            const cheapModel = process.env.FUNNEL_TEST_JUDGE_MODEL || 'claude-haiku-4-5-20251001';
             const strongModel = 'claude-sonnet-4-6';
             verdict = await judgeWith(cheapModel);
             const looksFailed = !verdict.passed || (Array.isArray(verdict.nodeVerdicts) && verdict.nodeVerdicts.some((x) => x && x.passed === false));

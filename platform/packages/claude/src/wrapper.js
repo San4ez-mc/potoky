@@ -555,6 +555,9 @@ async function callClaude({ sessionId, systemPrompt, messages, options = {} }) {
                 text: systemPrompt,
                 ...(options.noCache ? {} : { cache_control: { type: 'ephemeral' } }), // prompt caching
             },
+            // Другий кешований блок (18.10): дані, однакові для багатьох розмов (база знань магазину/товару) — між незмінними правилами
+            // й фактами ходу. Читається з кешу будь-якою розмовою з тим самим блоком, а не оплачується щоразу повністю.
+            ...(options.systemCached ? [{ type: 'text', text: String(options.systemCached), ...(options.noCache ? {} : { cache_control: { type: 'ephemeral' } }) }] : []),
             ...(options.systemSuffix ? [{ type: 'text', text: String(options.systemSuffix) }] : []),
         ],
         messages,

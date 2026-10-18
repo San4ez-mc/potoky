@@ -180,9 +180,14 @@ function extractJson(text) {
 async function understand(A) {
     const { ctx, keys } = A;
     const model = process.env.AGENT_UNDERSTAND_MODEL || keys.AGENT_UNDERSTAND_MODEL || 'claude-sonnet-4-6';
-    const hist = (A.history || []).slice(-14).map((m) => (m.who === 'client' ? 'КЛІЄНТ' : m.who === 'manager' ? 'МЕНЕДЖЕР' : 'БОТ') + ': ' + stripLoneSurrogates(String(m.text || '')).replace(/\s+/g, ' ').slice(0, 400)).join('\n');
+    const histLines = (A.history || []).slice(-14).map((m) => (m.who === 'client' ? 'КЛІЄНТ' : m.who === 'manager' ? 'МЕНЕДЖЕР' : 'БОТ') + ': ' + stripLoneSurrogates(String(m.text || '')).replace(/\s+/g, ' ').slice(0, 400));
     const systemPrompt = 'Ти — модуль розуміння повідомлень клієнта Instagram-магазину чоловічого одягу. Не відповідаєш клієнту. Витягуєш наміри й дані у JSON.\n\nСХЕМА ВІДПОВІДІ (усі ключі обовʼязкові, null де даних нема):\n' + SCHEMA + '\n\n' + RULES;
-    const user = summarizeState(ctx) + '\n\nІСТОРІЯ (старіше → новіше):\n' + (hist || '(порожньо)') + '\n\nОСТАННЄ ПОВІДОМЛЕННЯ КЛІЄНТА (розбирай саме його):\n' + stripLoneSurrogates(String(A.turnText || '[фото]')).slice(0, 1500) + (A.turnImage ? '\n[до повідомлення прикріплено фото]' : '') + (A.turnSharedPost ? '\n[клієнт переслав пост/рілс магазину' + (A.turnSharedPost.caption ? ': «' + String(A.turnSharedPost.caption).slice(0, 200) + '»' : '') + ']' : '');
+    // Порядок для кешу (18.10, економія): ІСТОРІЯ першою — кожен рядок окремим блоком, кеш на останньому; на наступному ході той самий
+    // початок читається з кешу (у 10 разів дешевше). СТАН і нове повідомлення (міняються щоходу) — після історії, без кешу.
+    const tail = summarizeState(ctx) + '\n\nОСТАННЄ ПОВІДОМЛЕННЯ КЛІЄНТА (розбирай саме його):\n' +stripLoneSurrogates(String(A.turnText || '[фото]')).slice(0, 1500) + (A.turnImage ? '\n[до повідомлення прикріплено фото]' : '') + (A.turnSharedPost ? '\n[клієнт переслав пост/рілс магазину' + (A.turnSharedPost.caption ? ': «' + String(A.turnSharedPost.caption).slice(0, 200) + '»' : '') + ']' : '');
+    const user = histLines.length
+        ? [{ type: 'text', text: 'ІСТОРІЯ (старіше → новіше):\n' }].concat(histLines.map((l, i) => ({ type: 'text', text: l + '\n', ...(i === histLines.length - 1 ? { cache_control: { type: 'ephemeral' } } : {}) })), [{ type: 'text', text: '\n' + tail }])
+        : 'ІСТОРІЯ (старіше → новіше):\n(порожньо)\n\n' + tail;
     const t0 = Date.now();
     let raw = '';
     let failed = null; let noCredit = false;

@@ -735,11 +735,13 @@ async function oversizeAlternative(A, pp) {
         const cur = cat.products.find((x) => String(x.sku).toUpperCase() === String(pp.sku).toUpperCase()) || pp;
         const curMax = maxOf(cur);
         if (!curMax) return '';
-        // Який розмір потрібен клієнту — за тією ж таблицею SIZE_CHART і тим самим допуском, що й n_calc (вага до +8 кг понад
+        // Який розмір потрібен клієнту — за тією ж сіткою і тим самим допуском, що й n_calc (вага до +8 кг понад
         // найбільший розмір — ще він; більше — не підійде нічого). Пропонуємо лише товари, що йдуть до цього розміру (власник 03.10).
         let need = '';
         try {
-            const chart = JSON.parse(A.keys.SIZE_CHART || '{}'); const w = Number(ctx.sizeInput && ctx.sizeInput.weight) || 0;
+            // сітка — та сама, що бере n_calc: товару → категорії → магазину (CRM, у ctx.product від пошуку товару); ключ воронки — запас
+            const fc = (pp && pp.fitChart) || (ctx.product && ctx.product.fitChart);
+            const chart = (fc && typeof fc === 'object' && Object.keys(fc).length) ? fc : JSON.parse(A.keys.SIZE_CHART || '{}'); const w = Number(ctx.sizeInput && ctx.sizeInput.weight) || 0;
             const keysC = Object.keys(chart).map(nz).filter((k) => ORDER.includes(k)).sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b));
             const rng = (k) => { const r = (chart[k] || chart[k === 'XXL' ? '2XL' : k === 'XXXL' ? '3XL' : k] || {}).weight || []; return [Number(r[0]), Number(r[1])]; };
             if (w && keysC.length) {

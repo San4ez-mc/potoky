@@ -991,14 +991,17 @@ try {
   var price = Number(found.price) || 0;
 
   // ── розмірна сітка / AI-нотатки — прямі поля (без CT_1010/1011/1012) ──
-  // Розміри як дані (CRM 18.10): товар без власних сітки/меж/картинки/таблиці замірів бере їх із категорії; далі (у n_calc) — загальні з воронки.
+  // Розміри як дані (CRM 18.10): товар без власних сітки/меж/картинки/таблиці замірів бере їх із категорії, далі — загальна сітка
+  // магазину (CRM «Налаштування → Загальні», GET /tenant/size-fit). Ключ воронки SIZE_CHART у n_calc — лише запас на час переходу.
   function __hasObj(o) { return !!(o && typeof o === 'object' && !Array.isArray(o) && Object.keys(o).length); }
   function __hasArr(a) { return Array.isArray(a) && a.length > 0; }
   var __cat = categoryFull || {};
+  var __shop = {};
+  try { var __sq = await fetch(base + '/tenant/size-fit', { headers: hdr() }); if (__sq.ok) { var __sj = await __sq.json(); __shop = (__sj && __sj.ok && __sj.data) || {}; } } catch (e) { }
   var __sizeChartUrl = resolveUrl(found.sizeChartImage || __cat.sizeChartImage || '');
   var __sizeChartData = found.sizeChartData || __cat.sizeChartData || null;
-  var __fitChart = __hasObj(found.fitChart) ? found.fitChart : (__hasObj(__cat.fitChart) ? __cat.fitChart : null);
-  var __sizeRules = __hasArr(found.sizeRules) ? found.sizeRules : (__hasArr(__cat.sizeRules) ? __cat.sizeRules : []);
+  var __fitChart = __hasObj(found.fitChart) ? found.fitChart : (__hasObj(__cat.fitChart) ? __cat.fitChart : (__hasObj(__shop.fitChart) ? __shop.fitChart : null));
+  var __sizeRules = __hasArr(found.sizeRules) ? found.sizeRules : (__hasArr(__cat.sizeRules) ? __cat.sizeRules : (__hasArr(__shop.sizeRules) ? __shop.sizeRules : []));
   var __aiInfo = found.aiNotes || '';
   // 2026-09-08 (Vyacheslav: замість сітки прийшов колаж товару — у CRM як «картинка сітки» завантажено фото): текстова
   // таблиця з sizeChartData іде РАЗОМ із картинкою (або замість неї), щоб клієнт завжди отримав точні цифри.
@@ -1072,9 +1075,9 @@ try {
       supplierArticle: (compFull && compFull.supplierArticle) || '',
       colors: cColors, sizes: cSizes, colorPhotos: cColorPhotos,
       structuredSizes: cRawSizes, sizeChartData: (compFull && compFull.sizeChartData) || ((__catById[(compFull && (compFull.categoryId || (compFull.category && compFull.category.id))) || ''] || {}).sizeChartData) || null,
-      // сітка підбору й межі позиції — її власні, інакше її категорії (18.10)
-      fitChart: (function () { var cc = __catById[(compFull && (compFull.categoryId || (compFull.category && compFull.category.id))) || ''] || {}; var o = compFull && compFull.fitChart; if (o && typeof o === 'object' && Object.keys(o).length) return o; return (cc.fitChart && typeof cc.fitChart === 'object' && Object.keys(cc.fitChart).length) ? cc.fitChart : null; })(),
-      sizeRules: (function () { var cc = __catById[(compFull && (compFull.categoryId || (compFull.category && compFull.category.id))) || ''] || {}; if (compFull && Array.isArray(compFull.sizeRules) && compFull.sizeRules.length) return compFull.sizeRules; return Array.isArray(cc.sizeRules) ? cc.sizeRules : []; })(),
+      // сітка підбору й межі позиції — її власні, інакше її категорії, інакше магазину (18.10)
+      fitChart: (function () { var cc = __catById[(compFull && (compFull.categoryId || (compFull.category && compFull.category.id))) || ''] || {}; var o = compFull && compFull.fitChart; if (o && typeof o === 'object' && Object.keys(o).length) return o; return __hasObj(cc.fitChart) ? cc.fitChart : (__hasObj(__shop.fitChart) ? __shop.fitChart : null); })(),
+      sizeRules: (function () { var cc = __catById[(compFull && (compFull.categoryId || (compFull.category && compFull.category.id))) || ''] || {}; if (compFull && Array.isArray(compFull.sizeRules) && compFull.sizeRules.length) return compFull.sizeRules; return __hasArr(cc.sizeRules) ? cc.sizeRules : (__hasArr(__shop.sizeRules) ? __shop.sizeRules : []); })(),
       // 2026-09-13 (тікет ae8c2f85/1790c81b, власник: "фото розмірної сітки, текстом не треба —
       // дуже складно для клієнта"): той самий фікс, що вже є для ОДИНОЧНОГО товару (n_size_photo),
       // тепер і для КОМПОНЕНТА комплекту — resolveUrl тут же, готовий URL для sendPhoto нижче.

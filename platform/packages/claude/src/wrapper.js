@@ -6,6 +6,17 @@ const logger = require('@platform/logger');
 const { ClaudeError } = require('@platform/errors');
 
 const MODEL = process.env.CLAUDE_MODEL || 'claude-haiku-4-5';
+// Допоміжні виклики (класифікація, зіставлення з базою знань, сторож, суддя тестів) — Haiku 5.5: у 10 разів дешевша за Haiku 4.5
+// ($0.10/$0.50 проти $1/$5 за 1 млн токенів) і кешує вже від 512 токенів (Haiku 4.5 — від 4096, тож короткі виклики не кешувались). 18.10.
+const HELPER_MODEL = process.env.CLAUDE_HELPER_MODEL || 'claude-haiku-5-5';
+// Моделі нового покоління (5.x, Fable, Mythos): temperature/top_p/top_k не приймають (400); Haiku 5.5 за замовчуванням думає —
+// для коротких службових відповідей роздуми вимикаємо (дозволено при effort ≤ high), інакше платимо за невидимі токени.
+function shapeForModel(body) {
+    const m = String(body.model || '');
+    if (/claude-(haiku|sonnet|opus)-5|claude-fable|claude-mythos/.test(m)) { delete body.temperature; delete body.top_p; delete body.top_k; }
+    if (/claude-haiku-5/.test(m) && !body.thinking) body.thinking = { type: 'disabled' };
+    return body;
+}
 const MAX_TOKENS = parseInt(process.env.CLAUDE_MAX_TOKENS || '4096', 10);
 const TIMEOUT_MS = parseInt(process.env.CLAUDE_TIMEOUT_MS || '30000', 10);
 // Longer timeout for fallback providers — large generations (e.g. month content plans) need more time
@@ -544,6 +555,7 @@ async function callClaude({ sessionId, systemPrompt, messages, options = {} }) {
         messages,
         ...options.extra,
     };
+    shapeForModel(requestBody);
 
     let responseText = '';
     let statusCode = 200;
@@ -767,4 +779,4 @@ function _sanitizeRequest(body) {
     };
 }
 
-module.exports = { callClaude, resolveFunnelClaudeKey, notifyAdminOfServiceOutage };
+module.exports = { callClaude, resolveFunnelClaudeKey, notifyAdminOfServiceOutage, HELPER_MODEL, shapeForModel };

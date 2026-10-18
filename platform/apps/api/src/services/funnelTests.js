@@ -19,7 +19,7 @@
 
 const crypto = require('crypto');
 const { db } = require('@platform/db');
-const { callClaude } = require('@platform/claude');
+const { callClaude, HELPER_MODEL } = require('@platform/claude');
 const { startTestSession, sendTestTurn, endTestSession } = require('./testSession');
 const shopAgent = require('./shopAgent');
 const { checkInvariants } = require('./funnelInvariants');
@@ -324,8 +324,8 @@ function buildJudgePrompt({ test, transcript, nodeQaEntries, stateText, toolText
 
 // ── Запобіжник витрат на тести (16.10, власник: «постав ліміт в 20 доларів витрат на тестування») ──────────────────────────────
 // Сума за поточну добу (з 00:00 за Києвом) — з токенів Claude у api_calls тестових сесій (isTest), за цінами Anthropic; +10% на суддю
-// і службові виклики без сесії. Ліміт — змінна TEST_BUDGET_USD_DAY у .env платформи (за замовчуванням 20).
-const TEST_BUDGET_USD_DAY = () => Number(process.env.TEST_BUDGET_USD_DAY) > 0 ? Number(process.env.TEST_BUDGET_USD_DAY) : 20;
+// і службові виклики без сесії. Ліміт — змінна TEST_BUDGET_USD_DAY у .env платформи (за замовчуванням 10, з 18.10).
+const TEST_BUDGET_USD_DAY = () => Number(process.env.TEST_BUDGET_USD_DAY) > 0 ? Number(process.env.TEST_BUDGET_USD_DAY) : 10; // 18.10 власник: $10/добу (було $20)
 function kyivDayStart() {
     const now = new Date();
     const kyiv = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Kyiv' }));
@@ -481,7 +481,7 @@ async function runTest(testId, onProgress = () => {}) {
             const toolText = await collectToolEvidence(sessionId);
             const { system, user } = buildJudgePrompt({ test, transcript, nodeQaEntries, stateText, toolText });
             // Суддя інколи починає з прози й упирається в ліміт токенів → невалідний JSON. Даємо запас токенів і ОДИН повтор.
-            // Економія токенів: рутинний суддя — Haiku 4.5 (~5× дешевше); якщо він видав «не пройшов» — підозрілий випадок,
+            // Економія токенів: рутинний суддя — Haiku 5.5 (HELPER_MODEL, з 18.10); якщо він видав «не пройшов» — підозрілий випадок,
             // перевіряємо Sonnet 4.6 і беремо його вердикт (FUNNEL_TEST_JUDGE_MODEL / FUNNEL_TEST_ESCALATE=0 змінюють поведінку).
             const judgeWith = async (model) => {
                 let raw = ''; let v;
@@ -502,7 +502,7 @@ async function runTest(testId, onProgress = () => {}) {
                 }
                 return v;
             };
-            const cheapModel = process.env.FUNNEL_TEST_JUDGE_MODEL || 'claude-haiku-4-5-20251001';
+            const cheapModel = process.env.FUNNEL_TEST_JUDGE_MODEL || HELPER_MODEL; // Haiku 5.5 (18.10, економія)
             const strongModel = 'claude-sonnet-4-6';
             verdict = await judgeWith(cheapModel);
             const looksFailed = !verdict.passed || (Array.isArray(verdict.nodeVerdicts) && verdict.nodeVerdicts.some((x) => x && x.passed === false));

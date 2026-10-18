@@ -103,10 +103,10 @@ async function needsReply(r, histOverride) {
     if (!histOverride && _needsReply.has(r.mid)) return _needsReply.get(r.mid);
     let v;
     try {
-        const { callClaude } = require('@platform/claude');
+        const { callClaude, HELPER_MODEL } = require('@platform/claude');
         const msgs = await db.message.findMany({ where: { sessionId: r.id, role: { in: ['user', 'assistant'] } }, orderBy: { createdAt: 'desc' }, take: 8, select: { role: true, content: true, metadata: true } });
         const hist = histOverride || msgs.reverse().filter((m) => !(m.metadata && m.metadata.hidden)).map((m) => (m.role === 'user' ? 'КЛІЄНТ' : ((m.metadata || {}).source === 'zernio_inbox' ? 'МЕНЕДЖЕР' : 'БОТ')) + ': ' + String(m.content || '').replace(/\s+/g, ' ').slice(0, 300)).join('\n');
-        const raw = await callClaude({ sessionId: r.id, systemPrompt: 'Ти визначаєш, чи клієнт інтернет-магазину чекає відповіді. Відповідаєш лише JSON.', messages: [{ role: 'user', content: 'Розмова (останнє — внизу):\n' + hist + '\n\nЧи потребує ОСТАННЄ повідомлення КЛІЄНТА відповіді або дії менеджера?\nНІ — подяка чи завершення («Є. Дякую», «Да есть, спасибо», «Супер»), підтвердження без питання («Так, зараз», «Добре», «+», «Ок»), обіцянка самого клієнта щось зробити («зараз напишу», «завтра наберу», «подумаю»).\nТАК — питання, прохання, скарга, надіслані дані / фото / квитанція / номер, на які треба відреагувати, нетерплячка («??», «ау», «чекаю»).\nJSON: {"needsReply": true|false}' }], options: { model: 'claude-haiku-4-5', maxTokens: 30, extra: { temperature: 0 } } });
+        const raw = await callClaude({ sessionId: r.id, systemPrompt: 'Ти визначаєш, чи клієнт інтернет-магазину чекає відповіді. Відповідаєш лише JSON.', messages: [{ role: 'user', content: 'Розмова (останнє — внизу):\n' + hist + '\n\nЧи потребує ОСТАННЄ повідомлення КЛІЄНТА відповіді або дії менеджера?\nНІ — подяка чи завершення («Є. Дякую», «Да есть, спасибо», «Супер»), підтвердження без питання («Так, зараз», «Добре», «+», «Ок»), обіцянка самого клієнта щось зробити («зараз напишу», «завтра наберу», «подумаю»).\nТАК — питання, прохання, скарга, надіслані дані / фото / квитанція / номер, на які треба відреагувати, нетерплячка («??», «ау», «чекаю»).\nJSON: {"needsReply": true|false}' }], options: { model: HELPER_MODEL, maxTokens: 30, extra: { temperature: 0 } } });
         const m = String(raw || '').match(/\{[\s\S]*\}/);
         v = m ? JSON.parse(m[0]).needsReply !== false : true;
     } catch (e) {

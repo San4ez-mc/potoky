@@ -39,6 +39,12 @@ const EXPECT = [
     let fc = 0;
     for (const [h, w, want] of EXPECT) { const got = norm(await run(newC, assets.keys, fromCrm, h, w)); if (got !== want) { fc++; if (fc <= 5) console.log('❌ CRM ' + h + '/' + w + ': бот ' + got + ', Олексій ' + want); } }
     console.log((fc ? '❌ ' : '✅ ') + 'ті самі приклади, сітка й межі з товару/категорії CRM: ' + (EXPECT.length - fc) + ' з ' + EXPECT.length);
+    // CRM (JSONB) зберігає ключі сітки не в порядку розмірів (L, M, S, XL, XXL, XXXL) — результат той самий
+    const jsonbOrder = {}; ['L', 'M', 'S', 'XL', 'XXL', 'XXXL'].forEach((k) => { if (chartG[k]) jsonbOrder[k] = chartG[k]; });
+    let fj = 0;
+    for (const [h, w, want] of EXPECT) { const got = norm(await run(newC, assets.keys, { ...full, fitChart: jsonbOrder, sizeRules: RULES }, h, w)); if (got !== want) { fj++; if (fj <= 5) console.log('❌ порядок JSONB ' + h + '/' + w + ': бот ' + got + ', Олексій ' + want); } }
+    console.log((fj ? '❌ ' : '✅ ') + 'сітка з CRM у порядку ключів JSONB (L, M, S…): ' + (EXPECT.length - fj) + ' з ' + EXPECT.length);
+    fc += fj;
     // своя сітка товару справді перекриває загальну: «вузька» сітка, де 170/70 — це XL
     const own = { ...full, fitChart: { S: { height: [150, 160], weight: [40, 50] }, M: { height: [155, 165], weight: [50, 58] }, L: { height: [160, 168], weight: [58, 64] }, XL: { height: [165, 175], weight: [64, 72] }, XXL: { height: [170, 180], weight: [72, 85] } }, sizeRules: [] };
     const ownGot = norm(await run(newC, assets.keys, own, 170, 70)); fc += ownGot === 'XL' ? 0 : 1;

@@ -14,7 +14,9 @@ const BOT = 'fcdee415-bef2-4a74-a650-e6e4b5a12322';
 const MARK0 = '/*oversize-monotonic-2026-10-16*/';
 const MARK = '/*size-rules-2026-10-18*/';
 const HELPER = MARK + "\n" +
-    "function __chartFor(o) { if (o && o.fitChart && typeof o.fitChart === 'object' && !Array.isArray(o.fitChart) && Object.keys(o.fitChart).length) return o.fitChart; try { return JSON.parse(keys.SIZE_CHART || '{}'); } catch (e) { return {}; } }\n" +
+    // Сітка в порядку розмірів S→XXXL: алгоритм нижче бере ПЕРШИЙ збіг у порядку ключів, а JSONB у CRM зберігає ключі в іншому порядку (L, M, S, XL…)
+    "function __chartOrd(c) { var ord = ['XXS','XS','S','M','L','XL','XXL','2XL','XXXL','3XL','4XL','XXXXL','5XL']; var ks = Object.keys(c || {}).sort(function (a, b) { var ia = ord.indexOf(String(a).toUpperCase()), ib = ord.indexOf(String(b).toUpperCase()); return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib); }); var o = {}; ks.forEach(function (k) { o[k] = c[k]; }); return o; }\n" +
+    "function __chartFor(o) { if (o && o.fitChart && typeof o.fitChart === 'object' && !Array.isArray(o.fitChart) && Object.keys(o.fitChart).length) return __chartOrd(o.fitChart); try { return __chartOrd(JSON.parse(keys.SIZE_CHART || '{}')); } catch (e) { return {}; } }\n" +
     "function __rulesFor(o) { if (o && Array.isArray(o.sizeRules) && o.sizeRules.length) return o.sizeRules; try { var g = JSON.parse(keys.SIZE_RULES || '[]'); return Array.isArray(g) ? g : []; } catch (e) { return []; } }\n" +
     "function __sizeRule(h, w, rr) { rr = rr || []; for (var i = 0; i < rr.length; i++) { var r = rr[i] || {}; if (h > 0 && w > 0 && r.size && (r.wMin == null || w >= Number(r.wMin)) && (r.wMax == null || w <= Number(r.wMax)) && (r.hMin == null || h >= Number(r.hMin)) && (r.hMax == null || h <= Number(r.hMax))) return String(r.size).toUpperCase().replace(/^2XL$/, 'XXL').replace(/^3XL$/, 'XXXL'); } return null; }\n";
 // комплект: сітка/межі позиції + вирівнювання + правило

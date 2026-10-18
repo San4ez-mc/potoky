@@ -32,7 +32,22 @@ const EXPECT = [
         const got = norm(await run(newC, keysNew, full, h, w));
         if (got !== want) { fail++; console.log('❌ ' + h + '/' + w + ': бот ' + got + ', Олексій ' + want); }
     }
-    console.log((fail ? '❌ ' : '✅ ') + 'погоджені приклади: ' + (EXPECT.length - fail) + ' з ' + EXPECT.length);
+    console.log((fail ? '❌ ' : '✅ ') + 'погоджені приклади (межі в ключі воронки): ' + (EXPECT.length - fail) + ' з ' + EXPECT.length);
+    // Розміри з CRM (18.10): сітка й межі в товарі (productMatch кладе туди категорію, якщо в товарі порожньо) — ключів воронки не треба
+    const chartG = JSON.parse(assets.keys.SIZE_CHART || '{}');
+    const fromCrm = { ...full, fitChart: chartG, sizeRules: RULES };
+    let fc = 0;
+    for (const [h, w, want] of EXPECT) { const got = norm(await run(newC, assets.keys, fromCrm, h, w)); if (got !== want) { fc++; if (fc <= 5) console.log('❌ CRM ' + h + '/' + w + ': бот ' + got + ', Олексій ' + want); } }
+    console.log((fc ? '❌ ' : '✅ ') + 'ті самі приклади, сітка й межі з товару/категорії CRM: ' + (EXPECT.length - fc) + ' з ' + EXPECT.length);
+    // своя сітка товару справді перекриває загальну: «вузька» сітка, де 170/70 — це XL
+    const own = { ...full, fitChart: { S: { height: [150, 160], weight: [40, 50] }, M: { height: [155, 165], weight: [50, 58] }, L: { height: [160, 168], weight: [58, 64] }, XL: { height: [165, 175], weight: [64, 72] }, XXL: { height: [170, 180], weight: [72, 85] } }, sizeRules: [] };
+    const ownGot = norm(await run(newC, assets.keys, own, 170, 70)); fc += ownGot === 'XL' ? 0 : 1;
+    console.log((ownGot === 'XL' ? '✅ ' : '❌ ') + 'своя сітка товару: 170/70 → ' + ownGot + ' (очікую XL)');
+    // запасний шлях: у товарі й категорії порожньо, межі в ключах не задані → як код до правил
+    let fb = 0;
+    for (const [h, w] of EXPECT) { const a = norm(await run(oldC, assets.keys, full, h, w)); const b = norm(await run(newC, assets.keys, { ...full, fitChart: null, sizeRules: [] }, h, w)); if (a !== b) { fb++; if (fb <= 5) console.log('❌ запасний ' + h + '/' + w + ': було ' + a + ', стало ' + b); } }
+    console.log((fb ? '❌ ' : '✅ ') + 'без даних у CRM і ключах — як раніше: ' + (EXPECT.length - fb) + ' з ' + EXPECT.length);
+    fail += fc + fb;
     // комплект: кофта A0187 у set1112 — той самий розмір, що окремо (для наявних у кофти розмірів S–2XL)
     const set0 = cat.products.find((x) => String(x.sku).toUpperCase() === 'SET1112');
     // Позиції комплекту — як збирає їх пошук товару (setItems: артикул, назва, розміри компонента з CRM)
@@ -47,6 +62,19 @@ const EXPECT = [
         if (single !== 'OOR' && inSet !== single) { sf++; if (sf <= 10) console.log('❌ комплект ' + h + '/' + w + ': кофта окремо ' + single + ', у комплекті ' + inSet); }
     }
     console.log((sf ? '❌ ' : '✅ ') + 'кофта в комплекті = окремо: ' + (sc - sf) + ' з ' + sc);
+    // комплект із даними CRM: межі/сітка в кожній позиції (з її категорії), ключ SIZE_RULES не заданий
+    const setCrm = { ...set, setItems: set.setItems.map((it) => ({ ...it, fitChart: chartG, sizeRules: RULES })) };
+    let sf2 = 0, sc2 = 0;
+    for (const [h, w] of EXPECT) {
+        const single = norm(await run(newC, assets.keys, fromCrm, h, w));
+        const cs = await run(newC, assets.keys, setCrm, h, w);
+        const sm = cs.setSizeMap || {}; const key = Object.keys(sm).find((k) => k.toUpperCase() === 'A0187');
+        if (!key) continue; sc2++;
+        const inSet = String(sm[key]).toUpperCase().replace(/^2XL$/, 'XXL');
+        if (single !== 'OOR' && inSet !== single) { sf2++; if (sf2 <= 5) console.log('❌ комплект CRM ' + h + '/' + w + ': окремо ' + single + ', у комплекті ' + inSet); }
+    }
+    console.log((sf2 ? '❌ ' : '✅ ') + 'комплект, межі з CRM у позиціях = окремо: ' + (sc2 - sf2) + ' з ' + sc2);
+    sf += sf2;
     // сітка: де змінилось проти коду до правил
     let diff = 0; const changes = [];
     for (let h = 155; h <= 195; h += 1) for (let w = 50; w <= 125; w += 1) {

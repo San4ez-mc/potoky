@@ -991,8 +991,14 @@ try {
   var price = Number(found.price) || 0;
 
   // ── розмірна сітка / AI-нотатки — прямі поля (без CT_1010/1011/1012) ──
-  var __sizeChartUrl = resolveUrl(found.sizeChartImage || '');
-  var __sizeChartData = found.sizeChartData || null;
+  // Розміри як дані (CRM 18.10): товар без власних сітки/меж/картинки/таблиці замірів бере їх із категорії; далі (у n_calc) — загальні з воронки.
+  function __hasObj(o) { return !!(o && typeof o === 'object' && !Array.isArray(o) && Object.keys(o).length); }
+  function __hasArr(a) { return Array.isArray(a) && a.length > 0; }
+  var __cat = categoryFull || {};
+  var __sizeChartUrl = resolveUrl(found.sizeChartImage || __cat.sizeChartImage || '');
+  var __sizeChartData = found.sizeChartData || __cat.sizeChartData || null;
+  var __fitChart = __hasObj(found.fitChart) ? found.fitChart : (__hasObj(__cat.fitChart) ? __cat.fitChart : null);
+  var __sizeRules = __hasArr(found.sizeRules) ? found.sizeRules : (__hasArr(__cat.sizeRules) ? __cat.sizeRules : []);
   var __aiInfo = found.aiNotes || '';
   // 2026-09-08 (Vyacheslav: замість сітки прийшов колаж товару — у CRM як «картинка сітки» завантажено фото): текстова
   // таблиця з sizeChartData іде РАЗОМ із картинкою (або замість неї), щоб клієнт завжди отримав точні цифри.
@@ -1032,6 +1038,8 @@ try {
   //    не колажу всього набору).
   var setItems = [];
   var rawComponents = Array.isArray(found.setComponents) ? found.setComponents : [];
+  var __catById = {};
+  if (rawComponents.length) { try { var __cq = await fetch(base + '/categories', { headers: hdr() }); if (__cq.ok) { var __cjj = await __cq.json(); ((__cjj && __cjj.data) || []).forEach(function (c) { __catById[c.id] = c; }); } } catch (e) { } }
   for (var si = 0; si < rawComponents.length && setItems.length < 10; si++) {
     var comp = rawComponents[si];
     var compFull = null;
@@ -1063,11 +1071,14 @@ try {
       supplier: (compFull && compFull.supplier && compFull.supplier.name) || '',
       supplierArticle: (compFull && compFull.supplierArticle) || '',
       colors: cColors, sizes: cSizes, colorPhotos: cColorPhotos,
-      structuredSizes: cRawSizes, sizeChartData: (compFull && compFull.sizeChartData) || null,
+      structuredSizes: cRawSizes, sizeChartData: (compFull && compFull.sizeChartData) || ((__catById[(compFull && (compFull.categoryId || (compFull.category && compFull.category.id))) || ''] || {}).sizeChartData) || null,
+      // сітка підбору й межі позиції — її власні, інакше її категорії (18.10)
+      fitChart: (function () { var cc = __catById[(compFull && (compFull.categoryId || (compFull.category && compFull.category.id))) || ''] || {}; var o = compFull && compFull.fitChart; if (o && typeof o === 'object' && Object.keys(o).length) return o; return (cc.fitChart && typeof cc.fitChart === 'object' && Object.keys(cc.fitChart).length) ? cc.fitChart : null; })(),
+      sizeRules: (function () { var cc = __catById[(compFull && (compFull.categoryId || (compFull.category && compFull.category.id))) || ''] || {}; if (compFull && Array.isArray(compFull.sizeRules) && compFull.sizeRules.length) return compFull.sizeRules; return Array.isArray(cc.sizeRules) ? cc.sizeRules : []; })(),
       // 2026-09-13 (тікет ae8c2f85/1790c81b, власник: "фото розмірної сітки, текстом не треба —
       // дуже складно для клієнта"): той самий фікс, що вже є для ОДИНОЧНОГО товару (n_size_photo),
       // тепер і для КОМПОНЕНТА комплекту — resolveUrl тут же, готовий URL для sendPhoto нижче.
-      sizeChartUrl: (compFull && compFull.sizeChartImage) ? resolveUrl(compFull.sizeChartImage) : '',
+      sizeChartUrl: (compFull && compFull.sizeChartImage) ? resolveUrl(compFull.sizeChartImage) : ((__catById[(compFull && (compFull.categoryId || (compFull.category && compFull.category.id))) || ''] || {}).sizeChartImage ? resolveUrl(__catById[(compFull && (compFull.categoryId || (compFull.category && compFull.category.id))) || ''].sizeChartImage) : ''),
       categoryId: (compFull && (compFull.categoryId || (compFull.category && compFull.category.id))) || null,
       photoUrl: cImgs[0] || '', imageUrls: cImgs.slice(0, 5),
       outOfStock: !!(compFull && compFull.outOfStock)
@@ -1280,6 +1291,7 @@ try {
         || (Array.isArray(found.offers) ? found.offers : []).some(function (o) { return o && o.quantity !== null && o.quantity !== undefined; })
       ),
       sizeChartUrl: __sizeChartUrl, sizeChartText: __sizeChartText, aiInfo: __aiInfo, sizeChartNote: __sizeChartNote, sizeChartData: __sizeChartData,
+      fitChart: __fitChart, sizeRules: __sizeRules,
       // §3 ТЗ — динамічні параметри підбору розміру з CRM Category.requiredParams:
       categoryParams: categoryParams, categoryParamsPrompt: __paramsPrompt, categoryParamsIsHeightWeight: __isHeightWeight
     }

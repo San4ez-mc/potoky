@@ -39,7 +39,8 @@ async function resolveProduct(A, u) {
 }
 
 async function setApply(A) { return tool(A, 'n_set_apply'); }
-async function calcSize(A) { return tool(A, 'n_calc'); }
+// Сітка й межі з CRM перед підбором (товар → категорія → магазин) — навіть якщо товар у памʼяті розмови без них (19.10).
+async function calcSize(A) { await require('./sizeFit').ensureFit(A).catch(() => {}); return tool(A, 'n_calc'); }
 async function checkAvail(A) {
     const r = await tool(A, 'n_avail');
     // Два одержувачі з різними параметрами: n_avail ставить усім одиницям один recommendedSize — підставляємо розмір кожної пари.

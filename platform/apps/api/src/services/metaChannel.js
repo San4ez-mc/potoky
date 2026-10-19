@@ -288,11 +288,28 @@ async function runTurn(sessionId, e) {
             await db.session.update({ where: { id: sessionId }, data: { context: Z.cleanJsonDeep({ ...((s2 && s2.context) || {}), commentPendingPhotos: pending.slice(0, 5) }) } }).catch(() => {});
         }
     } else {
+        if (e.lateAd) {
+            const first = outMsgs.find((om) => !(om.metadata || {}).hidden && String(om.content || '').trim() && !(om.metadata || {}).attachment);
+            if (first) { first.content = 'Бачу, ви з реклами цього товару 👇\n\n' + String(first.content); await db.message.update({ where: { id: first.id }, data: { content: first.content } }).catch(() => {}); }
+        }
         if (!e.commentId) await flushPendingCommentPhotos(botId, sessionId, contactId, outMsgs);
         await deliver(botId, sessionId, contactId, outMsgs);
     }
     if (e.commentId) await postPublicReply(botId, sessionId, e.commentId, dmSent, dmFailed);
     await Z.postTurnChecks(botId, sessionId, ((sess0 && sess0.context) || {}).senderName, text);
+    // Товару й реклами після ходу нема (бот показав список) — Zernio буває отримує рекламу пізніше (30 с – 5 хв): питаємо ще двічі.
+    if (!e.commentId && !e.lateAd) {
+        const s3 = await db.session.findUnique({ where: { id: sessionId }, select: { context: true } }).catch(() => null);
+        const c3 = (s3 && s3.context) || {};
+        if (!(c3.product && c3.product.sku) && !c3.entryAdId && !(c3.agent && c3.agent.lateAdFollowed)) {
+            for (const ms of [60 * 1000, 5 * 60 * 1000]) {
+                setTimeout(() => {
+                    zernioAdFor(botId, contactId).then((za) => (za ? lateAdFollowUp(botId, sessionId, contactId, za, 'zernio') : null))
+                        .catch((er) => logger.warn('[metaChannel] пізня реклама з Zernio: ' + er.message, { sessionId }));
+                }, ms).unref();
+            }
+        }
+    }
 }
 
 /** Чи писав клієнт нам у директ за останні 23 год (будь-яким каналом — це та сама розмова Instagram; коментар — роль event, не user) (тоді відповідаємо звичайним повідомленням, а не приватною відповіддю на коментар). */
@@ -519,7 +536,34 @@ async function lateReferral(botId, igsid, rp, why) {
     const { session } = await sessionFor(botId, igsid, { lastReferral: rp.lastReferral, ...(rp.adTitle ? { adTitle: rp.adTitle } : {}) });
     const pe = _pending.get(session.id) || _waiting.get(session.id);
     if (pe) { pe.ctxPatch.entryAdId = rp.entryAdId; logger.info('[metaChannel] реклама з другої події → хід у черзі', { botId, sessionId: session.id, adId: rp.entryAdId, why }); return; }
-    logger.info('[metaChannel] реклама з другої події прийшла після ходу — записано лише в памʼять', { botId, sessionId: session.id, adId: rp.entryAdId, why });
+    logger.info('[metaChannel] реклама з другої події прийшла після ходу', { botId, sessionId: session.id, adId: rp.entryAdId, why });
+    await lateAdFollowUp(botId, session.id, String(igsid), rp, 'meta').catch((er) => logger.warn('[metaChannel] пізня реклама: ' + er.message, { sessionId: session.id }));
+}
+
+/**
+ * Реклама дійшла ПІЗНІШЕ за відповідь бота (19.10, погоджено власником — «варіант А»): окремою подією Meta або в Zernio через 30 с – 5 хв.
+ * Бот уже показав список (товару не знав), клієнт ще нічого не обрав і не писав — бот сам показує товар саме з цієї реклами:
+ * той самий хід, що й при рекламі одразу (останнє повідомлення клієнта + реклама), з приміткою «Бачу, ви з реклами…». Один раз на розмову.
+ */
+async function lateAdFollowUp(botId, sessionId, contactId, rp, source) {
+    if (!rp || !rp.entryAdId) return 'no_ad';
+    const s = await db.session.findUnique({ where: { id: sessionId }, select: { context: true } });
+    const c = (s && s.context) || {};
+    const skip = (why) => { logger.info('[metaChannel] пізня реклама: без дописування — ' + why, { botId, sessionId, source }); return why; };
+    if (c.product && c.product.sku) return skip('товар уже є');
+    if (c.agent && c.agent.lateAdFollowed) return skip('вже дописували');
+    if (c.paused || c.funnelPaused || c.agentPaused) return skip('пауза');
+    if (_pending.has(sessionId) || _waiting.has(sessionId) || _queue.has(sessionId)) return skip('клієнт уже пише — реклама піде з його ходом');
+    const lastUser = await db.message.findFirst({ where: { sessionId, role: 'user' }, orderBy: { createdAt: 'desc' } });
+    const lastBot = await db.message.findFirst({ where: { sessionId, role: 'assistant' }, orderBy: { createdAt: 'desc' } });
+    if (!lastUser || !lastBot) return skip('нема відповіді бота');
+    if (new Date(lastBot.createdAt) < new Date(lastUser.createdAt)) return skip('клієнт писав після відповіді');
+    if (Date.now() - new Date(lastUser.createdAt).getTime() > 30 * 60 * 1000) return skip('давно');
+    c.agent = { ...(c.agent || {}), lateAdFollowed: Date.now() };
+    await db.session.update({ where: { id: sessionId }, data: { context: Z.cleanJsonDeep(c) } }).catch(() => {});
+    logger.info('[metaChannel] пізня реклама: бот показує товар з реклами', { botId, sessionId, source, adId: rp.entryAdId });
+    enqueue(sessionId, { botId, contactId, texts: [String(lastUser.content || '')], imageUrl: null, imageUrls: [], ctxPatch: { entryAdId: rp.entryAdId, lastReferral: rp.lastReferral, ...(rp.adTitle ? { adTitle: rp.adTitle } : {}) }, timer: null, lateAd: source });
+    return 'sent';
 }
 
 /** Вхідна подія вебхука Meta. webhookBotId — бот із URL вебхука; цільовий — за ZERNIO_FORWARD_BOT_ID (той самий ключ, що для Zernio). */
@@ -789,4 +833,4 @@ const __runsBackground = !process.env.name || process.env.name === 'platform-api
 if (__runsBackground) setTimeout(() => { pollConversations(); setInterval(pollConversations, 2 * 60 * 1000).unref(); }, 100 * 1000).unref();
 if (__runsBackground) setTimeout(() => { retryUnanswered(); setInterval(retryUnanswered, 60 * 1000).unref(); }, 150 * 1000).unref();
 
-module.exports = { handleMetaEvent, scheduleTurn, runTurn, drain, sendText, replyToComment, channelOf, channelOfSync, splitText, _echoes, _pollConversations: pollConversations, _refPatch: refPatch, _takeHeldRef: takeHeldRef, _postbackAsMessage: postbackAsMessage, _parseInbound: parseInbound, _zernioAdFromMeta: zernioAdFromMeta, nudgePoll, _refHold, _enqueue: enqueue, _waiting, _queue, _replyToSkuFor: replyToSkuFor };
+module.exports = { _lateAdFollowUp: lateAdFollowUp, handleMetaEvent, scheduleTurn, runTurn, drain, sendText, replyToComment, channelOf, channelOfSync, splitText, _echoes, _pollConversations: pollConversations, _refPatch: refPatch, _takeHeldRef: takeHeldRef, _postbackAsMessage: postbackAsMessage, _parseInbound: parseInbound, _zernioAdFromMeta: zernioAdFromMeta, nudgePoll, _refHold, _enqueue: enqueue, _waiting, _queue, _replyToSkuFor: replyToSkuFor };

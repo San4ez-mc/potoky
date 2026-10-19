@@ -139,7 +139,9 @@ function extractArticles(txt) {
   if (!txt) return [];
   var s = latinizeLookalikes(String(txt)); var out = []; var m;
   var re1 = /(?:артикул|арт\.?|art|код|sku|#|№)\s*[:#№.\-]?\s*([A-Za-zА-Яа-яІЇЄҐіїєґ]{0,5}\d{2,8})/gi; while ((m = re1.exec(s))) { out.push(m[1].toUpperCase()); }
-  var re2 = /\b([A-Za-z]\d{3,6})\b/g; while ((m = re2.exec(s))) { out.push(m[1].toUpperCase()); }
+  // 1–4 літери + цифри: A0187, D0043, а також set1120, SH617927 (19.10: артикул у готовому питанні реклами «Яка ціна комплекту set1120?»).
+  // Хибні збіги нешкідливі — далі приймається лише артикул, що є в каталозі (matchArticle).
+  var re2 = /\b([A-Za-z]{1,4}\d{3,6})\b/g; while ((m = re2.exec(s))) { out.push(m[1].toUpperCase()); }
   var re3 = /\b(\d{4,8})\b/g; while ((m = re3.exec(s))) { out.push(m[1]); }
   var seen = {}, res = []; for (var i = 0; i < out.length; i++) { if (!seen[out[i]]) { seen[out[i]] = 1; res.push(out[i]); } } return res;
 }

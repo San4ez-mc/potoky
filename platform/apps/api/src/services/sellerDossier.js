@@ -81,6 +81,15 @@ function setField(state, input) {
     if (status === 'not_applicable' && (!note || !quote)) return { ok: false, error: 'not_applicable потребує note (чому не застосовується) і quote (слова експерта)' };
     if ((status === 'from_materials' || status === 'conflict') && !value && !conflict) return { ok: false, error: 'потрібне value або conflict' };
 
+    // Поля з типовим текстом (K9, K10): ✅ лише після того, як експерт цей текст побачив. Доказ: спершу була записана чернетка
+    // (from_materials/conflict) у попередньому виклику, тобто бот показав список і чекав на відповідь.
+    if (status === 'confirmed' && DEFS.get(id).defaultText) {
+        const before = state.fields[id];
+        if (!before || (before.status !== 'from_materials' && before.status !== 'conflict' && before.status !== 'confirmed')) {
+            return { ok: false, error: `${id}: спершу запиши чернетку (status from_materials, source default) і покажи експерту список у повідомленні. confirmed — лише коли він відповів на цей список. Не підтверджуй те, чого експерт не бачив` };
+        }
+    }
+
     const prev = state.fields[id] || {};
     const now = new Date().toISOString();
     state.fields[id] = {
@@ -193,7 +202,7 @@ function renderFull(card, state) {
 
 /** Картка для самого експерта: простою мовою, без службових слів. */
 function renderExpertCard(card) {
-    const L = ['Ось що я зрозумів:'];
+    const L = ['Ось що в мене записано:'];
     for (const r of card.rows) {
         if (r.status === 'not_applicable') { L.push(`• ${r.title}: не застосовується`); continue; }
         const v = r.value || (r.defaultText ? `${r.defaultText} (типово, якщо підходить)` : '— ще не знаю');

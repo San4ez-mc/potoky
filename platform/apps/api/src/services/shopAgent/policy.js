@@ -2848,7 +2848,15 @@ async function runPolicyInner(A, u) {
     // Колір, якого в цієї моделі нема («Я хочу чорну» при чорно-графітовому пуховику) — чесно кажемо, які є, і показуємо модель тієї ж
     // категорії в такому кольорі (20.10, probutuk1974: чотири рази «зріст і вага», а повністю чорний D0043 так і не запропонував).
     // Раз на колір; дані — палітри товарів із CRM, без вгадування.
-    if (!pp.isSet && pp.sku && u.color && colorsOf(pp) && !matchColor(pp, u.color) && !u.colorMatched && ctx.agent.colorAltFor !== norm(u.color).toLowerCase()) {
+    // Товар без палітри (один колір, описаний у тексті, напр. D0098 «чорний верх, графітовий низ»): чи збігається бажаний колір —
+    // з даних не видно, тож реагуємо, коли клієнт називає той самий колір ВДРУГЕ (наполягає), а не з першого слова.
+    let colorInsist = false;
+    if (!pp.isSet && pp.sku && u.color && !colorsOf(pp) && !u.colorMatched) {
+        const key = norm(u.color).toLowerCase().slice(0, 4);
+        const w = ctx.agent.colorWish && ctx.agent.colorWish.sku === pp.sku && ctx.agent.colorWish.key === key ? ctx.agent.colorWish : { sku: pp.sku, key, n: 0 };
+        w.n += 1; ctx.agent.colorWish = w; colorInsist = w.n >= 2;
+    }
+    if (!pp.isSet && pp.sku && u.color && !u.colorMatched && ((colorsOf(pp) && !matchColor(pp, u.color)) || colorInsist) && ctx.agent.colorAltFor !== norm(u.color).toLowerCase()) {
         ctx.agent.colorAltFor = norm(u.color).toLowerCase();
         let alt = null;
         try {
@@ -2862,9 +2870,9 @@ async function runPolicyInner(A, u) {
             }
         } catch (e) { /* best-effort */ }
         const own = colorsOf(pp);
-        let txt = 'Такого кольору в цієї моделі немає 🙏 Є: ' + own + '.';
+        let txt = own ? 'Такого кольору в цієї моделі немає 🙏 Є: ' + own + '.' : 'Ця модель є лише в одному варіанті кольору — саме такому, як на фото 🙏';
         if (alt) txt += '\n\nАле є «' + shortName(alt.x) + '» (арт. ' + alt.x.sku + ') саме в кольорі «' + alt.c + '» — ' + alt.x.price + ' грн. Напишіть «' + alt.x.sku + '», і я покажу її 🙂';
-        else txt += ' Який із них вам ближчий?';
+        else if (own) txt += ' Який із них вам ближчий?';
         A.out.push({ text: txt, step: 'color_alt' });
         return;
     }

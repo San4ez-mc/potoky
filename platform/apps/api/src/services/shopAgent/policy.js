@@ -3694,8 +3694,10 @@ async function runPolicyInner(A, u) {
             const payTpl = messageTextMultiline(A.assets, 'n_pay', ctx, A.session.id + ':pay');
             if (u.questions.length && !A._qAnswered) {
                 A._qAnswered = true;
-                const { text: payQTxt, resolved: payQResolved } = await compose(A, { questions: u.questions, nextStep: Asks.shown(A, 'pay') >= 2 ? 'НІЧОГО більше не питай і не нагадуй про оплату — лише відповідь' : 'потім скажи, що лишилось обрати спосіб оплати (сам список дасть система)', maxSentences: 3, fallback: '' });
+                const { text: payQTxt, resolved: payQResolved } = await compose(A, { questions: u.questions, nextStep: (Asks.shown(A, 'pay') >= 2 || Number(ctx.agent.payRemindN || 0) >= 1) ? 'НІЧОГО більше не питай і не нагадуй про оплату — лише відповідь' : 'потім скажи, що лишилось обрати спосіб оплати (сам список дасть система)', maxSentences: 3, fallback: '' });
                 if (!payQResolved) await escalateUnresolved(A, u.questions[0]);
+                // нагадування «лишилось обрати оплату» у відповіді — раз після списку; далі лише відповіді (20.10, крок pay_q реєстр прохань не рахує)
+                ctx.agent.payRemindN = Number(ctx.agent.payRemindN || 0) + 1;
                 A.out.push({ text: payQTxt, step: 'pay_q' });
                 if (Asks.shown(A, 'pay') >= 1) return; // список способів оплати клієнт уже бачив — не дублюємо його під відповіддю (20.10)
             }

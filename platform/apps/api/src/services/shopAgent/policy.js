@@ -2845,6 +2845,29 @@ async function runPolicyInner(A, u) {
     }
     // Колір з цього (або попереднього) повідомлення — до розміру, щоб питання про колір не повторювалось (див. captureColorChoice).
     if (!pp.isSet) captureColorChoice(A, u, pp);
+    // Колір, якого в цієї моделі нема («Я хочу чорну» при чорно-графітовому пуховику) — чесно кажемо, які є, і показуємо модель тієї ж
+    // категорії в такому кольорі (20.10, probutuk1974: чотири рази «зріст і вага», а повністю чорний D0043 так і не запропонував).
+    // Раз на колір; дані — палітри товарів із CRM, без вгадування.
+    if (!pp.isSet && pp.sku && u.color && colorsOf(pp) && !matchColor(pp, u.color) && !u.colorMatched && ctx.agent.colorAltFor !== norm(u.color).toLowerCase()) {
+        ctx.agent.colorAltFor = norm(u.color).toLowerCase();
+        let alt = null;
+        try {
+            const cat = await loadCatalog(A.botId, A.keys);
+            const catId = pp.categoryId || (pp.category && pp.category.id);
+            const pal = (x) => (Array.isArray(x.offers) ? x.offers : []).map((o) => ((o.properties || []).find((pr) => /кол/i.test(String(pr.name || ''))) || {}).value).filter(Boolean);
+            for (const x of cat.products) {
+                if (x.isSet || x.outOfStock || String(x.sku) === String(pp.sku) || !catId || (x.categoryId !== catId && !(x.category && x.category.id === catId))) continue;
+                const c = matchColor({ colors: pal(x).join(',') }, u.color);
+                if (c) { alt = { x, c }; break; }
+            }
+        } catch (e) { /* best-effort */ }
+        const own = colorsOf(pp);
+        let txt = 'Такого кольору в цієї моделі немає 🙏 Є: ' + own + '.';
+        if (alt) txt += '\n\nАле є «' + shortName(alt.x) + '» (арт. ' + alt.x.sku + ') саме в кольорі «' + alt.c + '» — ' + alt.x.price + ' грн. Напишіть «' + alt.x.sku + '», і я покажу її 🙂';
+        else txt += ' Який із них вам ближчий?';
+        A.out.push({ text: txt, step: 'color_alt' });
+        return;
+    }
     // 4. Розмір
     const needSize = (pp.isClothing || pp.isSet) && !ctx.recommendedSize && !ctx.isSetSizeCalc && !ctx.sizeOutOfRange;
     if (needSize) {

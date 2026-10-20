@@ -42,7 +42,7 @@ const app = express(); app.use(express.json()); app.use('/api/seller-dossier', r
     r = await call('confirm-all', { quote: 'так, усе вірно' });
     assert.deepStrictEqual(r.json.stillNeedExplicit.sort(), ['K4', 'K9']); assert.strictEqual(r.json.closed, '1/11');
     assert.strictEqual(files.length, 1); // один рядок на експерта, оновлюється
-    r = await call('expert-card'); assert.ok(r.json.text.includes('Ось що я зрозумів')); assert.ok(!/K\d/.test(r.json.text), 'експерту не показуємо коди K1-K11');
+    r = await call('expert-card'); assert.ok(r.json.text.includes('Ось що в мене записано')); assert.ok(!/K\d/.test(r.json.text), 'експерту не показуємо коди K1-K11');
     r = await call('owner-card'); assert.ok(r.json.cardText.includes('Не готово: 1/11')); assert.ok(r.json.fullParts.length >= 1);
     srv.close();
     console.log('Роут: усі перевірки пройшли');

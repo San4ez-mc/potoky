@@ -165,7 +165,7 @@ function renderOwnerCard(card, state) {
     L.push(esc(card.verdict));
     L.push('');
     for (const r of card.rows) {
-        const val = r.value ? esc(clip(r.value, 160)) : (r.defaultText && r.status !== 'confirmed' ? '<i>типове значення не підтверджено</i>' : '<i>немає</i>');
+        const val = r.value ? esc(clip(String(r.value).replace(/\s+/g, ' '), 160)) : (r.defaultText && r.status !== 'confirmed' ? '<i>типове значення не підтверджено</i>' : '<i>немає</i>');
         const who = r.status === 'confirmed' || r.status === 'not_applicable'
             ? ` — ${esc(srcLabel(r.source))}, підтвердив експерт ${r.confirmedAt ? r.confirmedAt.slice(0, 16).replace('T', ' ') : ''}`
             : (r.source ? ` — ${esc(srcLabel(r.source))}, не підтверджено` : '');

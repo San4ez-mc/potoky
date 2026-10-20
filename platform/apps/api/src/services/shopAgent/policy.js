@@ -2806,7 +2806,7 @@ async function runPolicyInner(A, u) {
     // просто не надсилає. Обробляємо повторний запит сітки ОКРЕМО від секції розміру — щоб він
     // спрацьовував і після того, як розмір уже відомий.
     // «Не бачу фото» одразу після надісланої сітки — клієнт не отримав зображення: шлемо ще раз (LLM не завжди ставить wantsSizeChart).
-    if (!u.wantsSizeChart && pp.sizeChartUrl && ctx.agent.chartSentFor === pp.sku && /не\s+(бачу|відкрива\S*|завантаж\S*)\s+(фото|сітк\S*|картинк\S*|зображенн\S*)/i.test(String(A.turnText || ''))) u.wantsSizeChart = true;
+    if (!u.wantsSizeChart && pp.sizeChartUrl && ctx.agent.chartSentFor === pp.sku && /не\s+(бачу|відкрива\S*|завантаж\S*)\s+(фото|сітк\S*|картинк\S*|зображенн\S*)/i.test(String(A.turnText || ''))) { u.wantsSizeChart = true; A._forceResendImg = true; } // «не бачу» — шлемо ще раз, повз запобіжник дублів (index.js)
     // Сумнів у порахованому розмірі («не маловат?», «не буде тісно?») — показуємо сітку, а не «підібрала за зростом і вагою» (тест 24).
     if (!u.wantsSizeChart && ctx.recommendedSize && pp.sizeChartUrl && ctx.agent.chartSentFor !== pp.sku && /мал(уват|оват)|тісн|тісно|великуват|завелик|замал|не\s+буде\s+(малий|великий)/i.test(String(A.turnText || ''))) u.wantsSizeChart = true;
     if (u.wantsSizeChart && (ctx.recommendedSize || ctx.agent.chartSentFor === pp.sku) && pp.sizeChartUrl && !A._chartSent) { // явне повторне прохання сітки — надсилаємо знову (FunnelTest 27: обіцяли «ще раз» без вкладення)

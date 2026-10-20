@@ -340,7 +340,7 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
                 const lastMinute = recentMsgs.filter((m) => nowT - new Date(m.createdAt).getTime() < 60 * 1000).map((m) => String(m.content || '').trim()).filter(Boolean);
                 const hadOut = A.out.length; let droppedImg = false;
                 A.out = A.out.map((o) => {
-                    if (o.photoUrls && o.photoUrls.length) {
+                    if (o.photoUrls && o.photoUrls.length && !A._forceResendImg) {
                         const left = o.photoUrls.filter((u) => !sentUrls.has(String(u)));
                         if (!left.length) { droppedImg = true; logger.info('[shopAgent] ту саму картинку не надсилаємо вдруге (<10 хв)', { sessionId, step: o.step }); return null; }
                         if (left.length < o.photoUrls.length) return Object.assign({}, o, { photoUrls: left });

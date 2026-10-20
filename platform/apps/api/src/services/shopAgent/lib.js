@@ -194,8 +194,9 @@ async function loadCatalog(botId, keys, { force } = {}) {
     const [p, a, cats] = await Promise.all([crmFetch(keys, '/products?take=300'), crmFetch(keys, '/ads?take=3000&status=all'), crmFetch(keys, '/categories')]);
     const v = { at: Date.now(), products: Array.isArray(p.data) ? p.data : [], ads: Array.isArray(a.data) ? a.data : [], categories: Array.isArray(cats.data) ? cats.data : [], ok: p.ok };
     if (p.ok) _catalog.set(botId, v);
+    if (v.categories.length) require('./signal').setCategoryWords(v.categories);
     return v;
 }
-async function loadCategories(botId, keys) { const r = await crmFetch(keys, '/categories'); return Array.isArray(r.data) ? r.data : []; }
+async function loadCategories(botId, keys) { const r = await crmFetch(keys, '/categories'); const c = Array.isArray(r.data) ? r.data : []; if (c.length) require('./signal').setCategoryWords(c); return c; }
 
 module.exports = { db, logger, getByPath, setByPath, renderTemplate, safeJsonStringify, stripLoneSurrogates, cleanJsonDeep, norm, hideLinks, mergeConsecutiveTextOutputs, stripRedundantGreeting, pickVariant, loadAssets, nodeCode, nodeData, messageText, messageTextMultiline, alertFields, runNodeCode, crmBase, crmHeaders, crmFetch, loadCatalog, loadCategories };

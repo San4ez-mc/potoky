@@ -15,7 +15,27 @@
  * instead of silently switching), but the signal itself is never swallowed at this layer.
  */
 
-const CATEGORY_STEM_RE = /(кофт|светр|худі?|бомбер|куртк|вітровк|джинс|штан|футболк|лофер|взутт|кросів|черевик|костюм|комплект|накидк|шапк|туфл|кед|підголівник)/i;
+// Базові основи — лише підстраховка, поки каталог ще не завантажено. Справжні слова магазину — назви категорій і
+// Category.synonyms з CRM (setCategoryWords, викликає lib.loadCatalog): 18.10 «А пуховик?» не розпізнавалось як категорія,
+// бо «пуховик» був лише в синонімах CRM, а не в цьому списку, — бот відповів «Пуховиків у нас немає».
+const BASE_STEMS = 'кофт|светр|худі?|бомбер|куртк|вітровк|джинс|штан|футболк|лофер|взутт|кросів|черевик|костюм|комплект|накидк|шапк|туфл|кед|підголівник';
+let CATEGORY_STEM_RE = new RegExp('(' + BASE_STEMS + ')', 'i');
+let _catWordsKey = '';
+/** Слова категорій з CRM: основа назви категорії («Куртки» → «куртк») + усі синоніми. */
+function setCategoryWords(categories) {
+    const words = new Set();
+    for (const c of Array.isArray(categories) ? categories : []) {
+        const st = String((c && c.name) || '').toLowerCase().trim().replace(/[иіїєюя]$/, '');
+        if (st.length >= 3) words.add(st);
+        const syn = Array.isArray(c && c.synonyms) ? c.synonyms : String((c && c.synonyms) || '').split(/[,;\n]+/);
+        for (const w of syn) { const s = String(w || '').toLowerCase().trim(); if (s.length >= 3) words.add(s); }
+    }
+    const list = [...words].sort((a, b) => b.length - a.length);
+    const key = list.join('|');
+    if (!list.length || key === _catWordsKey) return;
+    _catWordsKey = key;
+    CATEGORY_STEM_RE = new RegExp('(' + list.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + '|' + BASE_STEMS + ')', 'i');
+}
 const RECEIPT_HOSTS = ['check.monobank.ua', 'send.monobank.ua', 'pay.mono.ua', 'pb.ua', 'privatbank.ua', 'next.privat24.ua', 'portmone.com.ua', 'check.gov.ua', 'ibanoplata.com'];
 // "замість/натомість/не той а" → клієнт явно хоче ЗАМІНИТИ обговорюваний товар (А8а).
 // 2026-09-22: \b НЕ працює після кириличного символу в звичайних JS-регулярках (\w — лише
@@ -130,4 +150,4 @@ function categoryWordIsMain(text, ctx) {
     return stems.every((st) => mainName.includes(st) || (upN && upN.includes(st)));
 }
 
-module.exports = { classifySignal, hasAnySignal, hasCategoryWord, categoryWordIsUpsell, categoryWordIsSetComponent, categoryWordIsMain };
+module.exports = { classifySignal, hasAnySignal, hasCategoryWord, setCategoryWords,categoryWordIsUpsell, categoryWordIsSetComponent, categoryWordIsMain };

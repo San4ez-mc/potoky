@@ -33,6 +33,8 @@ async function resolveShoppingIntent(A, u, tool) {
         delete ctx.colorChoice; delete ctx.recommendedSize; delete ctx.sizeInput; delete ctx.prevProductSnapshot;
     }
 
+    // Слова категорій магазину (CRM) — до розбору сигналу: каталог кешований на 60 с, тож зазвичай це без запиту.
+    try { await loadCatalog(A.botId, keys); } catch (e) { /* лишаються базові слова */ }
     const signal = classifySignal(A, u, ctx);
     const hadProduct = !!(ctx.product && ctx.product.sku);
     const beforeProduct = ctx.product;

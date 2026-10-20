@@ -40,6 +40,7 @@ t('confirmAll: 🟡→✅, але K4 і K9 потребують окремого
     assert.strictEqual(D.computeCard(s).ready, false);
     D.setField(s, { id: 'K4', status: 'confirmed', value: '2000 грн, передоплата 100%', quote: 'так, 2000 і повна передоплата' });
     D.setField(s, { id: 'K9', status: 'confirmed', value: 'типовий список + знижок не обіцяти', quote: 'так, ще без знижок', source: 'default' });
+    D.setField(s, { id: 'K10', status: 'confirmed', value: 'типовий список', quote: 'підходить', source: 'default' });
     const c = D.computeCard(s);
     assert.strictEqual(c.ready, true); assert.strictEqual(c.done, 11);
 });
@@ -52,9 +53,29 @@ t('not_applicable потребує note і цитати; потім закрив
 });
 t('некритичні поля не блокують запуск', () => {
     const s = D.emptyState();
-    for (const d of D.CRITICAL) D.setField(s, { id: d.id, status: 'confirmed', value: 'v', quote: 'q' });
+    for (const d of D.CRITICAL) {
+        if (d.defaultText) D.setField(s, { id: d.id, status: 'from_materials', value: d.defaultText, source: 'default' }); // чернетка: список показано
+        assert.ok(D.setField(s, { id: d.id, status: 'confirmed', value: 'v', quote: 'q' }).ok, d.id);
+    }
     assert.strictEqual(D.computeCard(s).ready, true);
     assert.ok(D.computeCard(s).optional.every((o) => o.status === 'missing'));
+});
+t('K9/K10: confirmed без попередньої чернетки відхиляється (експерт список не бачив)', () => {
+    const s = D.emptyState();
+    for (const id of ['K9', 'K10']) {
+        const r = D.setField(s, { id, status: 'confirmed', value: 'типовий список', quote: 'підходить' });
+        assert.strictEqual(r.ok, false); assert.ok(/чернетку/.test(r.error));
+    }
+});
+t('K9/K10: після чернетки (from_materials) confirmed проходить', () => {
+    const s = D.emptyState();
+    assert.ok(D.setField(s, { id: 'K10', status: 'from_materials', value: 'скарга, криза…', source: 'default' }).ok);
+    assert.ok(D.setField(s, { id: 'K10', status: 'confirmed', value: 'скарга, криза… + питання про ліки', quote: 'підходить, ще питання про ліки' }).ok);
+    assert.strictEqual(s.fields.K10.status, 'confirmed');
+});
+t('K1–K8, K11 без типового тексту підтверджуються одразу', () => {
+    const s = D.emptyState();
+    for (const id of ['K1', 'K2', 'K3', 'K4', 'K5', 'K6', 'K7', 'K8', 'K11']) assert.ok(D.setField(s, { id, status: 'confirmed', value: 'v', quote: 'q' }).ok, id);
 });
 t('картка власнику: вердикт, HTML екранується, ≤4000 символів', () => {
     const s = D.emptyState();

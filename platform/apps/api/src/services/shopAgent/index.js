@@ -329,6 +329,31 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
             if (dup) logger.info('[shopAgent] дубль повідомлення не надіслано', { sessionId, step: o.step });
             return !dup;
         });
+        // Та сама картинка (сітка, фото товару) вже йшла < 10 хв тому; той самий текст — < 60 с тому, навіть якщо клієнт написав ДО
+        // нашої відповіді (20.10: «Можна таблиця» → «Можна таблицю» за 10 с — два ходи, сітка двічі; «Ось розмірна сітка» коротша за
+        // поріг 25 символів і фото фільтр вище не перевіряв).
+        if (!dryRun) {
+            try {
+                const recentMsgs = await db.message.findMany({ where: { sessionId, role: 'assistant', createdAt: { gte: new Date(nowT - 10 * 60 * 1000) } }, select: { content: true, metadata: true, createdAt: true } });
+                const sentUrls = new Set();
+                for (const m of recentMsgs) { const at = (m.metadata || {}).attachment; if (at) [at.url].concat(Array.isArray(at.urls) ? at.urls : []).filter(Boolean).forEach((u) => sentUrls.add(String(u))); }
+                const lastMinute = recentMsgs.filter((m) => nowT - new Date(m.createdAt).getTime() < 60 * 1000).map((m) => String(m.content || '').trim()).filter(Boolean);
+                const hadOut = A.out.length; let droppedImg = false;
+                A.out = A.out.map((o) => {
+                    if (o.photoUrls && o.photoUrls.length) {
+                        const left = o.photoUrls.filter((u) => !sentUrls.has(String(u)));
+                        if (!left.length) { droppedImg = true; logger.info('[shopAgent] ту саму картинку не надсилаємо вдруге (<10 хв)', { sessionId, step: o.step }); return null; }
+                        if (left.length < o.photoUrls.length) return Object.assign({}, o, { photoUrls: left });
+                        return o;
+                    }
+                    const t = String(o.text || '').trim();
+                    if (t && lastMinute.some((x) => x === t || (t.length >= 25 && sim(t, x) >= 0.9))) { logger.info('[shopAgent] той самий текст за хвилину не дублюємо', { sessionId, step: o.step }); return null; }
+                    return o;
+                }).filter(Boolean);
+                // Усе виявилось повтором, а клієнт просив картинку знову — не мовчимо, коротко показуємо, що вона вже вище.
+                if (hadOut && !A.out.length && droppedImg) A.out.push({ text: 'Надіслала вище ☝️ — гляньте, будь ласка, трохи вище в чаті 🙂', step: 'dup_pointer' });
+            } catch (e) { /* best-effort */ }
+        }
         // Клієнт відповів, а бот збирається надіслати ДОСЛІВНО те саме, що й минулим повідомленням (інваріант I2, 15.10: «Ну я ж відповів
         // на вашу першу історію» → той самий текст удруге). Не мовчимо і не повторюємо — те саме іншими словами з реакцією на репліку.
         const lastBotBefore = clientAt ? hist.filter((m) => m.who === 'bot' && m.text && new Date(m.at).getTime() <= clientAt).slice(-1)[0] : null;

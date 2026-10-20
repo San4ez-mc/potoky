@@ -50,14 +50,14 @@ var base = (keys.CRM_API_BASE || 'http://127.0.0.1:4700/api').replace(/\/$/, '')
 var apiKey = (keys.CRM_API_KEY || '').trim();
 if (!apiKey) return out('', 0, '');
 var hdr = { Authorization: 'Bearer ' + apiKey, Accept: 'application/json' };
-var all = [], cats = {};
+var all = [], cats = {}, catSyn = {};
 try {
   var ac = new AbortController(); var to = setTimeout(function () { try { ac.abort(); } catch (e) {} }, 4000);
   try {
     var r = await fetch(base + '/products?take=300', { headers: hdr, signal: ac.signal });
     var j = await r.json().catch(function () { return {}; }); all = Array.isArray(j.data) ? j.data : [];
     var rc = await fetch(base + '/categories', { headers: hdr, signal: ac.signal });
-    var jc = await rc.json().catch(function () { return {}; }); (Array.isArray(jc.data) ? jc.data : []).forEach(function (c) { cats[c.id] = String(c.name || '').trim(); });
+    var jc = await rc.json().catch(function () { return {}; }); (Array.isArray(jc.data) ? jc.data : []).forEach(function (c) { cats[c.id] = String(c.name || '').trim(); catSyn[c.id] = (Array.isArray(c.synonyms) ? c.synonyms : String(c.synonyms || '').split(/[,;\n]+/)).map(function (w) { return String(w || '').toLowerCase().trim(); }).filter(function (w) { return w.length >= 3; }); });
   } finally { clearTimeout(to); }
 } catch (e) { return out('', 0, ''); }
 // «Немає в наявності» в CRM (outOfStock, 03.10) — не пропонуємо ні в списках, ні вибором за словом.
@@ -134,6 +134,16 @@ var STEMS = [
 ];
 var wants = [];
 for (var i = 0; i < STEMS.length; i++) { if (msg.indexOf(STEMS[i][0]) >= 0) { for (var j2 = 0; j2 < STEMS[i][1].length; j2++) { if (wants.indexOf(STEMS[i][1][j2]) < 0) wants.push(STEMS[i][1][j2]); } } }
+// Слова категорій з CRM (Category.synonyms, 20.10): «А пуховик?» — «пуховик» є лише синонімом «Куртки», у списку вище його
+// нема, і бот казав «Пуховиків немає». Синонім є в назвах товарів — шукаємо саме їх (пуховики), інакше — всю категорію.
+Object.keys(catSyn).forEach(function (id) {
+  (catSyn[id] || []).forEach(function (w) {
+    if (msg.indexOf(w) < 0) return;
+    var inNames = active.some(function (p) { return (String(p.name || '') + ' ' + String(p.customerName || '')).toLowerCase().indexOf(w) >= 0; });
+    var key = inNames ? w : String(cats[id] || '').toLowerCase().replace(/[иіїєюя]$/, '');
+    if (key.length >= 3 && wants.indexOf(key) < 0) wants.push(key);
+  });
+});
 // Матеріал («шкіряні», «кожаные») — ознака товару, а не категорія, коли сам товар названо («лофери шкіряні»): інакше при
 // розкуплених лоферах лишалась «шкіряна» категорія → шкіряний бомбер і куртка (Edit 8a567d2c). Матеріал лишається для сортування.
 var __MATERIAL = ['шкір', 'кожан'];

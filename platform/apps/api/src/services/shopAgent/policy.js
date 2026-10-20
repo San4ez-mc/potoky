@@ -2044,7 +2044,9 @@ async function runPolicyInner(A, u) {
         // Питання про товар після «подумаю» («Чи пухнасті рукава?») — питання, а не рішення купувати (20.10, vasylmuzychuk: після
         // відмови бот знову слав підсумок «Оформляємо?» + футболку). product_query без питання (новий товар/«а ще є…») — купує.
         const buying = u.ready === 'yes' || /^(order_yes|give_params)$/.test(String(u.intent || '')) || (u.intent === 'product_query' && !(u.questions || []).length) || u.color || u.colorMatched || u.height || u.weight || u.clothingSize
-            || A.turnSharedPost || A.turnImage || A.newEntryAd || A.turnStory || (u.productHint && (u.productHint.article || u.productHint.category || u.productHint.fromList));
+            || A.turnSharedPost || A.turnImage || A.newEntryAd || A.turnStory
+            // артикул ПОТОЧНОГО товару аналізатор ставить у кожне питання про нього — це не новий товар (20.10)
+            || (u.productHint && ((u.productHint.article && String(u.productHint.article).toUpperCase() !== String((ctx.product && ctx.product.sku) || '').toUpperCase()) || u.productHint.category || u.productHint.fromList));
         if (buying) delete ctx.declinedAt;
         else {
             if ((u.questions || []).length && !A.out.length) A.out.push({ text: await answerThenAsk(A, u, ''), step: 'post_decline_q' });

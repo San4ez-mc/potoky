@@ -46,6 +46,11 @@ function times(A, slot) {
     const r = ((A.ctx.agent || {}).asks || {})[slot];
     return r ? r.n : 0;
 }
+/** Скільки разів клієнт уже БАЧИВ прохання слота — разом із ходами, де він питав своє (20.10). ≥2 → далі лише відповідаємо. */
+function shown(A, slot) {
+    const r = ((A.ctx.agent || {}).asks || {})[slot];
+    return r ? Number(r.shown || r.n || 0) : 0;
+}
 
 /** Слот кроку виходу (останній сегмент «pay_q+pay_options» → pay_options). */
 function slotOf(step) {
@@ -98,19 +103,22 @@ function record(A, u) {
     const clientAt = Math.max(0, ...(A.history || []).filter((m) => m.who === 'client').map((m) => new Date(m.sentAt || m.at).getTime() || 0));
     // Пачка: клієнт написав ДО того, як побачив попереднє прохання (07.10 tatiananepota: 5 пересилань поста за 14 с) — не рахуємо.
     if (prev && !(clientAt > Number(prev.at || 0))) { prev.at = Date.now(); return { slot: f.slot, n: prev.n, limit: f.limit, step, counted: false }; }
-    if (prev && clientProgressed(u, f.slot)) { prev.at = Date.now(); return { slot: f.slot, n: prev.n, limit: f.limit, step, counted: false, progressed: true }; }
+    // shown (20.10): скільки разів клієнт бачив це прохання, ВКЛЮЧНО з ходами, де він замість відповіді питав своє. n такі ходи не
+    // рахує (щоб не передавати менеджеру «по колу» на кожне питання) — тому бот і дописував те саме прохання до кожної відповіді.
+    const shownNext = (prev ? Number(prev.shown || prev.n || 0) : 0) + 1;
+    if (prev && clientProgressed(u, f.slot)) { prev.at = Date.now(); prev.shown = shownNext; return { slot: f.slot, n: prev.n, limit: f.limit, step, counted: false, progressed: true }; }
     // Дані кроку частинами (адреса: телефон → місто → область → відділення): кожна нова частина, яку прийнято, — рух уперед, а не
     // «знову не те» (16.10, radomur.24_: на третій частині адреси — «щоб не ганяти по колу» і менеджер).
     const od = ctx.orderData || {};
     const fill = f.slot === 'address' ? ['phone', 'fullName', 'city', 'branch', 'region'].filter((k) => od[k]).length : null;
-    if (prev && fill != null && fill > Number(prev.fill || 0)) { prev.at = Date.now(); prev.fill = fill; return { slot: f.slot, n: prev.n, limit: f.limit, step, counted: false, progressed: true }; }
+    if (prev && fill != null && fill > Number(prev.fill || 0)) { prev.at = Date.now(); prev.fill = fill; prev.shown = shownNext; return { slot: f.slot, n: prev.n, limit: f.limit, step, counted: false, progressed: true }; }
     // Звужене питання — це рух уперед, а не повтор (12.10, dk.ukr: «що цікавить?» ×2 → «Така кофта» → бот показав би 3 кофти, а
     // лічильник дорахував до 3 і «зациклився»). Слот «товар»: перехід із «що цікавить» до списку або НОВИЙ список — лічба з початку.
     const key = f.slot === 'unknown' && /^hint/.test(step) ? String(ctx.catalogHintSkus || '') : '';
     const progressed = !!prev && f.slot === 'unknown' && /^hint/.test(step) && (!/^hint/.test(String(prev.step || '')) || (key && key !== String(prev.key || '')));
     const n = prev && !progressed ? prev.n + 1 : 1;
-    asks[f.slot] = { n, at: Date.now(), step, ...(key ? { key } : {}), ...(fill != null ? { fill } : {}) };
+    asks[f.slot] = { n, shown: progressed ? 1 : shownNext, at: Date.now(), step, ...(key ? { key } : {}), ...(fill != null ? { fill } : {}) };
     return { slot: f.slot, n, limit: f.limit, step, counted: true };
 }
 
-module.exports = { SLOTS, filled, times, slotOf, record, clientProgressed };
+module.exports = { SLOTS, filled, times, shown, slotOf, record, clientProgressed };

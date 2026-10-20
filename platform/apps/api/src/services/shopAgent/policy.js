@@ -586,6 +586,13 @@ async function answerThenAsk(A, u, askText, o = {}) {
         A.ctx.agent.repeatEscCount = (A.ctx.agent.repeatEscCount || 0) + 1;
         return ['Менеджер уже в курсі вашого питання й напише сюди, щойно зможе 💛', 'Дякую за терпіння 🙏 Відповідь по цьому питанню вам напише менеджер тут.', 'Питання вже у менеджера — він відповість у цьому чаті 🙂'][A.ctx.agent.repeatEscCount % 3];
     }
+    // Те саме незаповнене прохання (найсвіжіше в реєстрі) клієнт уже бачив 2+ рази, а зараз питає своє — лише відповідаємо, без
+    // нагадування (20.10, звіт: «те саме прохання 3+ рази» — 15 розмов за добу: «Напишіть ПІБ…»/«Оформляємо?» до КОЖНОЇ відповіді).
+    if (askText && qsOpen.length) {
+        const asks0 = (A.ctx.agent && A.ctx.agent.asks) || {};
+        const recent = Object.keys(asks0).filter((sl) => !Asks.filled(A.ctx, sl)).sort((a, b) => Number(asks0[b].at || 0) - Number(asks0[a].at || 0))[0];
+        if (recent && Asks.shown(A, recent) >= 2) { askText = ''; A._answerOnly = recent; }
+    }
     if (repeatOfEscalated || A.ctx.funnelPaused) askText = ''; // після передачі менеджеру («Зараз покличу менеджера») не тиснемо «Оформляємо?»/«дайте дані»
     const nextStep = askText ? 'скажи/спитай (можна своїми словами, зміст той самий): «' + askText + '»' : 'НІЧОГО більше не питай і не пропонуй наступний крок — просто дай коротку відповідь на питання клієнта, без заклику до дії в кінці.';
     // Модель іноді ігнорує запис бази знань і відповідає «зазвичай наступного дня»: підсвічуємо найближчий за словами запис як пряму відповідь.
@@ -885,6 +892,7 @@ async function breakLoop(A, u) {
     if (ctx.funnelPaused || !A.out.length) return false;
     // Реєстр прохань (asks.js) пише ОДИН раз на хід, тут — по фінальному тексту; рахує лише прохання, які клієнт побачив і
     // після яких написав не те (пачка — не рахується, 07.10 tatiananepota), і скидає слот, щойно його заповнено.
+    if (A._answerOnly) for (const o of A.out) { const f = Asks.slotOf(o.step); if (f && f.slot === A._answerOnly) o.step = 'answer_only'; }
     const r = Asks.record(A, u);
     if (!r || !r.counted || r.n < r.limit) return false;
     delete ctx.agent.asks[r.slot];
@@ -3502,6 +3510,11 @@ async function runPolicyInner(A, u) {
             let secondPickLine = '';
             if (ctx.agent.pendingSecondPick && !ctx.agent.secondPickAsked) { ctx.agent.secondPickAsked = true; secondPickLine = '\n\nВи також обирали другий варіант (арт. ' + ctx.agent.pendingSecondPick + ') — додати його окремою позицією чи лише основний? 🙂'; }
             let txt = summary + '\n\n' + askLine + secondPickLine;
+            if (ctx.agent.lastAsk === 'оформляємо?' && !u.questions.length && !hesitating && !A._impatient && Asks.shown(A, 'intent') >= 2) {
+                // «Оформляємо?» клієнт бачив уже 2+ рази, а пише щось без рішення («((((», «Не сяде гарно») — відповідаємо по суті, без тиску (20.10).
+                const { text: soft } = await compose(A, { questions: [], nextStep: 'коротко й тепло відреагуй саме на це повідомлення (сумнів — один реальний аргумент із фактів); НІЧОГО не питай і не пропонуй оформити' });
+                A.out.push({ text: soft || 'Розумію 🙂 Якщо будуть питання — пишіть, я поруч 💛', step: 'answer_only' }); return;
+            }
             if (ctx.agent.lastAsk === 'оформляємо?' && !u.questions.length && !hesitating) {
                 // «Оформляємо?» уже питали, клієнт написав щось без рішення — коротка реакція + те саме питання, без повторного підсумку
                 if (A._impatient) ctx.agent.impatientCount = (Number(ctx.agent.impatientCount) || 0) + 1;
@@ -3527,10 +3540,11 @@ async function runPolicyInner(A, u) {
                 // підсумок уже показано — не повторюємо картку з ціною після кожного питання (FunnelTest 43);
                 // і «Оформляємо замовлення?» не дописуємо до КОЖНОЇ відповіді поспіль — лише через раз.
                 let plainAsk = '';
-                if (summaryAlreadyShown && pre && !isRepeatOfEscalated(A, u)) {
+                if (summaryAlreadyShown && pre && !isRepeatOfEscalated(A, u) && Asks.shown(A, 'intent') < 2) {
                     ctx.agent.sideQAfterSummary = (ctx.agent.sideQAfterSummary || 0) + 1;
                     if (ctx.agent.sideQAfterSummary % 2 === 0) plainAsk = messageText(A.assets, 'n_agent_order_ask_plain', ctx, A.session.id);
                 }
+                if (summaryAlreadyShown && pre && !plainAsk && !hesitating) { A.out.push({ text: pre, step: 'answer_only' }); ctx.agent.lastAsk = 'оформляємо?'; return; }
                 txt = (pre ? pre + (plainAsk || !summaryAlreadyShown || hesitating ? '\n\n' : '') : '') + (hesitating ? summary : (summaryAlreadyShown && pre ? plainAsk : txt));
                 if (!String(txt).trim()) txt = pre || txt;
             }
@@ -3671,9 +3685,10 @@ async function runPolicyInner(A, u) {
             const payTpl = messageTextMultiline(A.assets, 'n_pay', ctx, A.session.id + ':pay');
             if (u.questions.length && !A._qAnswered) {
                 A._qAnswered = true;
-                const { text: payQTxt, resolved: payQResolved } = await compose(A, { questions: u.questions, nextStep: 'потім скажи, що лишилось обрати спосіб оплати (сам список дасть система)', maxSentences: 3, fallback: '' });
+                const { text: payQTxt, resolved: payQResolved } = await compose(A, { questions: u.questions, nextStep: Asks.shown(A, 'pay') >= 2 ? 'НІЧОГО більше не питай і не нагадуй про оплату — лише відповідь' : 'потім скажи, що лишилось обрати спосіб оплати (сам список дасть система)', maxSentences: 3, fallback: '' });
                 if (!payQResolved) await escalateUnresolved(A, u.questions[0]);
                 A.out.push({ text: payQTxt, step: 'pay_q' });
+                if (Asks.shown(A, 'pay') >= 2) return; // список способів оплати клієнт уже бачив 2+ рази — лише відповідь (20.10)
             }
             const payAck = (u.receiptLink || A.turnImage) ? messageTextMultiline(A.assets, 'n_agent_pay_ack_receipt', ctx, A.session.id) + '\n\n' : ((u.phone || u.fullName || u.city || u.branch) ? messageTextMultiline(A.assets, 'n_agent_pay_ack_address', ctx, A.session.id) + '\n\n' : (u.addUpsell === false && ctx.agent.upsellOffered ? messageTextMultiline(A.assets, 'n_agent_pay_ack_no_upsell', ctx, A.session.id) + '\n\n' : ''));
             // Склад замовлення змінився після підсумку («лишіть тільки чорну») — коротко підтверджуємо новий склад і суму перед варіантами оплати.

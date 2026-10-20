@@ -82,17 +82,22 @@ function detectSession(msgs, turns, { from, to, now = Date.now() }) {
         const nextUser = msgs.slice(i + 1).find((x) => x.role === 'user' && !isClosing(String(x.content || '').trim()));
         if (nextUser && nextUser.createdAt.getTime() - t < 3 * 60 * 1000) continue; // не останнє в пачці
         // Хто мав відповідати: останнє наше повідомлення до клієнта — від менеджера, або бот сам передав розмову → менеджер.
-        const lastOurs = msgs.slice(0, i).reverse().find((x) => x.role === 'assistant' && !md(x).hidden);
-        const managerLed = !!lastOurs && (isManager(lastOurs) || (isBot(lastOurs) && HANDOFF_STEPS.test(step(lastOurs))));
+        const lastOurs = msgs.slice(0, i).reverse().find((x) => x.role === 'assistant' && !md(x).hidden && md(x).source !== 'system');
+        // Бот став на паузу одразу на це повідомлення (повернення, скарга, менеджер) — далі відповідає менеджер (20.10: khvro_ «повернув,
+        // завеликий» → пауза aftersale рахувалась як «бот не відповів»).
+        const pausedNow = msgs.slice(i + 1).some((x) => md(x).eventType === 'bot.paused' && x.createdAt.getTime() - m.createdAt.getTime() < 2 * 60 * 1000);
+        const managerLed = pausedNow || (!!lastOurs && (isManager(lastOurs) || (isBot(lastOurs) && HANDOFF_STEPS.test(step(lastOurs))) || md(lastOurs).eventType === 'bot.paused'));
         const waitMs = (managerLed ? 20 : 10) * 60 * 1000; // менеджер — людина, бот — 10 хв
         if (now - t < waitMs) continue; // ще рано судити
-        const reply = msgs.slice(i + 1).find((x) => x.role === 'assistant' && !md(x).hidden && x.createdAt.getTime() - t <= waitMs);
+        const reply = msgs.slice(i + 1).find((x) => x.role === 'assistant' && !md(x).hidden && md(x).source !== 'system' && x.createdAt.getTime() - t <= waitMs);
         if (reply) continue;
         out.push({ cls: managerLed ? 'no_reply_manager' : 'no_reply_bot', at: m.createdAt, detail: c.slice(0, 80) });
     }
     // repeat_ask: те саме прохання 3+ рази
     const counts = {};
-    for (const m of msgs) if (isBot(m) && inWin(m.createdAt) && ASK_STEPS.test(step(m))) { counts[step(m)] = (counts[step(m)] || []); counts[step(m)].push(m); }
+    // Колір/розмір для РІЗНИХ позицій комплекту — різні прохання, а не повтор (20.10: светр, потім джинси рахувались як «те саме ×4»).
+    const askKey = (m) => { const s0 = step(m); if (!/^set_(color|size)_ask$/.test(s0)) return s0; const t0 = String(m.content || ''); const it = (t0.match(/🎨\s*([^\n]+)/) || t0.match(/«([^»]+)»/) || [])[1]; return s0 + (it ? '|' + it.trim().slice(0, 40) : ''); };
+    for (const m of msgs) if (isBot(m) && inWin(m.createdAt) && ASK_STEPS.test(step(m))) { const k = askKey(m); counts[k] = (counts[k] || []); counts[k].push(m); }
     for (const [s, arr] of Object.entries(counts)) if (arr.length >= 3) out.push({ cls: 'repeat_ask', at: arr[2].createdAt, detail: s + ' ×' + arr.length });
     // asked_known_hw, duplicate_bot, send_failed, loop_handoff, complaint
     let prevBot = null;

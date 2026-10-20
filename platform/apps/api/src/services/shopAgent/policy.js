@@ -2041,12 +2041,19 @@ async function runPolicyInner(A, u) {
     // ПІСЛЯ ВІДМОВИ (до 24 год) бот не повертає клієнта до замовлення, доки той сам не покаже, що купує (16.10, Edits 92a98b67: дві
     // відмови прийнято, а на «Це чат gpt?» бот знову надіслав підсумок «Оформляємо?»). Питання — відповідаємо без «наступного кроку».
     if (ctx.declinedAt && Date.now() - Number(ctx.declinedAt) < 24 * 3600 * 1000 && !ctx.crmOrderId) {
-        const buying = u.ready === 'yes' || /^(product_query|order_yes|give_params)$/.test(String(u.intent || '')) || u.color || u.colorMatched || u.height || u.weight || u.clothingSize
+        // Питання про товар після «подумаю» («Чи пухнасті рукава?») — питання, а не рішення купувати (20.10, vasylmuzychuk: після
+        // відмови бот знову слав підсумок «Оформляємо?» + футболку). product_query без питання (новий товар/«а ще є…») — купує.
+        const buying = u.ready === 'yes' || /^(order_yes|give_params)$/.test(String(u.intent || '')) || (u.intent === 'product_query' && !(u.questions || []).length) || u.color || u.colorMatched || u.height || u.weight || u.clothingSize
             || A.turnSharedPost || A.turnImage || A.newEntryAd || A.turnStory || (u.productHint && (u.productHint.article || u.productHint.category || u.productHint.fromList));
         if (buying) delete ctx.declinedAt;
         else {
             if ((u.questions || []).length && !A.out.length) A.out.push({ text: await answerThenAsk(A, u, ''), step: 'post_decline_q' });
-            else if (!A.out.length && /^(thanks|order_no|other)$/.test(String(u.intent || ''))) A.out.push({ text: 'Все добре 🙂 Якщо щось знадобиться — пишіть, я тут 💛', step: 'post_decline_ack' });
+            else if (!A.out.length && /^(thanks|order_no)$/.test(String(u.intent || ''))) A.out.push({ text: 'Все добре 🙂 Якщо щось знадобиться — пишіть, я тут 💛', step: 'post_decline_ack' });
+            else if (!A.out.length && String(A.turnText || '').trim()) {
+                // Сумнів/реакція без питання («Не сяде гарно», «((((») — коротко по суті з фактів, без тиску й без «Оформляємо?» (20.10).
+                const { text: pdr } = await compose(A, { questions: [], nextStep: 'коротко й тепло відреагуй саме на це повідомлення (сумнів — один реальний аргумент із фактів, напр. розмір підібрано за параметрами, обмін 14 днів); НІЧОГО не питай і не пропонуй оформити' });
+                A.out.push({ text: pdr || 'Розумію 🙂 Якщо будуть питання — пишіть, я поруч 💛', step: 'post_decline_reply' });
+            }
             ctx.agent.lastAsk = '';
             return;
         }
@@ -3688,7 +3695,7 @@ async function runPolicyInner(A, u) {
                 const { text: payQTxt, resolved: payQResolved } = await compose(A, { questions: u.questions, nextStep: Asks.shown(A, 'pay') >= 2 ? 'НІЧОГО більше не питай і не нагадуй про оплату — лише відповідь' : 'потім скажи, що лишилось обрати спосіб оплати (сам список дасть система)', maxSentences: 3, fallback: '' });
                 if (!payQResolved) await escalateUnresolved(A, u.questions[0]);
                 A.out.push({ text: payQTxt, step: 'pay_q' });
-                if (Asks.shown(A, 'pay') >= 2) return; // список способів оплати клієнт уже бачив 2+ рази — лише відповідь (20.10)
+                if (Asks.shown(A, 'pay') >= 1) return; // список способів оплати клієнт уже бачив — не дублюємо його під відповіддю (20.10)
             }
             const payAck = (u.receiptLink || A.turnImage) ? messageTextMultiline(A.assets, 'n_agent_pay_ack_receipt', ctx, A.session.id) + '\n\n' : ((u.phone || u.fullName || u.city || u.branch) ? messageTextMultiline(A.assets, 'n_agent_pay_ack_address', ctx, A.session.id) + '\n\n' : (u.addUpsell === false && ctx.agent.upsellOffered ? messageTextMultiline(A.assets, 'n_agent_pay_ack_no_upsell', ctx, A.session.id) + '\n\n' : ''));
             // Склад замовлення змінився після підсумку («лишіть тільки чорну») — коротко підтверджуємо новий склад і суму перед варіантами оплати.

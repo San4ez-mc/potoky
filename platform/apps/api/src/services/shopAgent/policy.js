@@ -1048,7 +1048,9 @@ function crmOrderStatusText(o) {
     const names = [...new Set((o.items || []).map((it) => String((it.product && (it.product.customerName || it.product.name)) || it.name || '').split(NL)[0].replace(/\.?\s*Артикул:?.*$/i, '').trim()).filter(Boolean))].slice(0, 3);
     const what = names.length ? ' (' + names.join(', ') + ')' : '';
     const ttn = (Array.isArray(o.ttn) ? o.ttn : []).filter(Boolean);
-    if (ttn.length) return 'Ваше замовлення' + what + ' вже відправлено 📦 ТТН: ' + ttn.join(', ') + (o.ttnStatus ? NL + 'Статус у Новій пошті: ' + o.ttnStatus : '') + NL + 'Відстежити можна в застосунку Нової пошти 🙂';
+    // Дата доставки — з CRM (вона сама питає Нову пошту, 20.10); минула або нема — не пишемо.
+    const eta = o.ttnEta && new Date(o.ttnEta).getTime() > Date.now() - 864e5 ? new Date(o.ttnEta).toLocaleDateString('uk-UA', { day: 'numeric', month: 'long', timeZone: 'Europe/Kyiv' }) : '';
+    if (ttn.length) return 'Ваше замовлення' + what + ' вже відправлено 📦 ТТН: ' + ttn.join(', ') + (o.ttnStatus ? NL + 'Статус у Новій пошті: ' + o.ttnStatus : '') + (eta && !/отриман|одержан/i.test(String(o.ttnStatus || '')) ? NL + 'Очікувана дата доставки за Новою поштою: ' + eta : '') + NL + 'Відстежити можна в застосунку Нової пошти 🙂';
     const date = new Date(o.createdAt).toLocaleDateString('uk-UA', { day: 'numeric', month: 'long', timeZone: 'Europe/Kyiv' });
     return 'Бачу ваше замовлення від ' + date + what + (o.stage && o.stage.name ? ' — зараз етап «' + o.stage.name + '»' : '') + ' 🙌' + NL + 'Відправка — до 5 робочих днів з моменту оформлення (субота й неділя — вихідні). Номер ТТН надішлю сюди одразу після відправки 📦';
 }

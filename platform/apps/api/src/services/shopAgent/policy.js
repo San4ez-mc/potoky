@@ -1596,11 +1596,48 @@ async function applyPersons(A, u) {
     }
 }
 
+/** Менше штук того самого товару («Один костюм та одна футболка», 21.10 kobrinruslan: у замовленні 3 костюми, клієнт хоче 1 — бот показав
+ *  знову 3 і спитав «що зупиняє?»). Скільки лишити — аналізатор (qty / changeRequest «до 1 шт»); які саме — колір, названий цим чи
+ *  наступним повідомленням; кольори різні й не названо — питаємо. Склад і суму перераховує n_avail. true — хід завершено. */
+async function reduceSameItemQty(A, u) {
+    const { ctx } = A; const p = P(ctx);
+    if (!(p && !p.isSet && !ctx.crmOrderId && Array.isArray(ctx.orderUnits) && ctx.orderUnits.length > 1 && (u.changeRequest || ctx.agent.pendingQtyReduce))) return false;
+    const WN = { 'одн': 1, 'один': 1, 'дв': 2, 'тр': 3, 'чотир': 4 };
+    const cr = String(u.changeRequest || '');
+    const mN = cr.match(/до\s+(\d+)|(\d+)\s*шт/i) || cr.toLowerCase().match(/(?:до|лиш\S*|тільки)\s+(одн|один|дв|тр|чотир)/);
+    let n = mN ? (Number(mN[1] || mN[2]) || WN[String(mN[1]).toLowerCase()] || 0) : 0;
+    if (!n && u.changeRequest && Number(u.qty) >= 1) n = Number(u.qty);
+    if (!n && ctx.agent.pendingQtyReduce) n = Number(ctx.agent.pendingQtyReduce.n) || 0;
+    if (!(n >= 1 && n < ctx.orderUnits.length)) return false;
+    const said = [u.colorMatched, u.color].filter(Boolean).map((c) => String(c).toLowerCase());
+    const units = ctx.orderUnits;
+    const distinct = [...new Set(units.map((x) => String(x.color || '').toLowerCase()))];
+    let keep = null;
+    if (distinct.length === 1) keep = units.slice(0, n);
+    else if (said.length) { const k = units.filter((x) => said.some((c) => String(x.color || '').toLowerCase().startsWith(c.slice(0, 4)))); if (k.length >= n) keep = k.slice(0, n); }
+    if (!keep) {
+        ctx.agent.pendingQtyReduce = { n, at: Date.now() };
+        A.out.push({ text: 'Добре, ' + n + ' шт 👍 Який колір лишаємо' + (n > 1 ? ' (' + n + ')' : '') + ': ' + [...new Set(units.map((x) => x.color).filter(Boolean))].join(', ') + '?', step: 'qty_reduce_which' });
+        ctx.agent.lastAsk = 'колір'; return true;
+    }
+    delete ctx.agent.pendingQtyReduce; delete ctx.agent.pairSizes; delete ctx.agent.pairWho; delete ctx.agent.pendingUnits; delete ctx.agent.pendingQty;
+    ctx.colorChoice = n === 1 ? { color: keep[0].color, qty: 1 } : { colors: keep.map((x) => x.color), qty: n };
+    if (keep[0].size) ctx.recommendedSize = keep[0].size;
+    delete ctx.orderUnits; delete ctx.orderUnitsText; delete ctx.orderUnitsTotal;
+    await T.checkAvail(A);
+    if (ctx.payAmount) await T.payAmount(A);
+    const us = upsellSummary(ctx, p);
+    const total = Number(ctx.orderUnitsTotal || p.price) || 0;
+    A.out.push({ text: 'Змінила 👍 Ваше замовлення:' + NL + String(p.customerName || p.name).split(NL)[0] + (ctx.orderUnitsText ? ' — ' + String(ctx.orderUnitsText).trim() : '') + ' — ' + total + ' грн' + (us ? NL + '+ ' + us.text + NL + 'Разом: ' + (total + us.sum) + ' грн' : ''), step: 'qty_reduced' });
+    Q.cover(A, u, () => true, 'qty_reduce');
+    return true;
+}
 async function runPolicyInner(A, u) {
     const { ctx } = A; ctx.agent = ctx.agent || {};
     Q.init(A, u); // реєстр питань ходу (questions.js) — далі питання змінюються лише через Q.cover/Q.add/compose
     const text = String(A.turnText || ''); // на початку: блоки нижче (варіант 3, повернення) пишуть текст клієнта в сповіщення
-    if (A.foreignShare && !text.trim()) {
+    if (await reduceSameItemQty(A, u)) return;
+    if (A.foreignShare && !text.replace(/\[переслав[^\]]*\][^\n]*/gi, '').trim()) {
         A.out.push({ text: 'Бачу, ви переслали відео з іншої сторінки 🙂 Якщо шукаєте щось у нас — напишіть, що саме цікавить, або перешліть допис з нашої сторінки 💛', step: 'foreign_share' });
         return;
     }
@@ -2691,38 +2728,6 @@ async function runPolicyInner(A, u) {
     if (u.wantsPhoto && !A.turnImage && !A.out.some((o) => o.photoUrls) && !p.isSet) {
         const urlsW = firstPhotoUrls(p);
         if (urlsW.length) A.out.push({ photoUrls: urlsW, caption: '', step: 'photo_on_request' });
-    }
-    // Менше штук того самого товару («Один костюм та одна футболка», 21.10 kobrinruslan: у замовленні 3 костюми, клієнт хоче 1 — бот
-    // показав знову 3 і спитав «що зупиняє?»). Скільки лишити — аналізатор (changeRequest «зменшити до 1 шт»); які саме — колір, що
-    // клієнт назвав цим чи наступним повідомленням; кольори різні й не названо — питаємо. Склад і суму перераховує n_avail.
-    if (p && !p.isSet && !ctx.crmOrderId && Array.isArray(ctx.orderUnits) && ctx.orderUnits.length > 1 && (u.changeRequest || ctx.agent.pendingQtyReduce)) {
-        const WN = { 'одн': 1, 'один': 1, 'дв': 2, 'тр': 3, 'чотир': 4 };
-        const cr = String(u.changeRequest || '');
-        const mN = cr.match(/до\s+(\d+)|(\d+)\s*шт/i) || cr.toLowerCase().match(/(?:до|лиш\S*|тільки)\s+(одн|один|дв|тр|чотир)/);
-        let n = mN ? (Number(mN[1] || mN[2]) || WN[String(mN[1]).toLowerCase()] || 0) : 0;
-        if (!n && ctx.agent.pendingQtyReduce) n = Number(ctx.agent.pendingQtyReduce.n) || 0;
-        if (n >= 1 && n < ctx.orderUnits.length) {
-            const said = [u.colorMatched, u.color].filter(Boolean).map((c) => String(c).toLowerCase());
-            const units = ctx.orderUnits;
-            const distinct = [...new Set(units.map((x) => String(x.color || '').toLowerCase()))];
-            let keep = null;
-            if (distinct.length === 1) keep = units.slice(0, n);
-            else if (said.length) { const k = units.filter((x) => said.some((c) => String(x.color || '').toLowerCase().startsWith(c.slice(0, 4)))); if (k.length >= n) keep = k.slice(0, n); }
-            if (!keep) {
-                ctx.agent.pendingQtyReduce = { n, at: Date.now() };
-                A.out.push({ text: 'Добре, ' + n + ' шт 👍 Який колір лишаємо' + (n > 1 ? ' (' + n + ')' : '') + ': ' + [...new Set(units.map((x) => x.color).filter(Boolean))].join(', ') + '?', step: 'qty_reduce_which' });
-                ctx.agent.lastAsk = 'колір'; return;
-            }
-            delete ctx.agent.pendingQtyReduce; delete ctx.agent.pairSizes; delete ctx.agent.pairWho; delete ctx.agent.pendingUnits; delete ctx.agent.pendingQty;
-            ctx.colorChoice = n === 1 ? { color: keep[0].color, qty: 1 } : { colors: keep.map((x) => x.color), qty: n };
-            if (keep[0].size) ctx.recommendedSize = keep[0].size;
-            delete ctx.orderUnits; delete ctx.orderUnitsText; delete ctx.orderUnitsTotal;
-            await T.checkAvail(A);
-            if (ctx.payAmount) await T.payAmount(A);
-            u.wantsOrderSummary = true; ctx.agent.lastSummaryKey = ctx.agent.lastSummaryKey || 'qty_reduce';
-            if (u.intent === 'order_no') u.intent = 'other'; if (u.ready === 'no') u.ready = null; // це зміна кількості, а не відмова («що зупиняє?»)
-            Q.cover(A, u, () => true, 'qty_reduce');
-        }
     }
     // «Покажіть ще раз замовлення» — показуємо поточний склад, а не «питання вже у менеджера» (сесія f9c2ae98).
     if (ctx.agent.lastSummaryKey && u.wantsOrderSummary) {

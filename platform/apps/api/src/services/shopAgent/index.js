@@ -188,7 +188,7 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
     const rec = recoverManagerLedSignal(ctx, history, { sharedPost, entryAdId, imageUrl });
     const A = { botId, session, ctx, keys: turnKeys, assets, user: session.user ? { id: session.user.id, firstName: session.user.firstName, username: session.user.username } : {}, trace: [], out: [], turnText: String(text || ''), turnImage: imageUrl || null, turnSharedPost: sharedPost || (ctx.sharedPost && (ctx.hasFreshSignalThisTurn || rec.sharedPost) ? ctx.sharedPost : null), newEntryAd: newEntryAd || rec.entryAd, turnStory: storyId || null, history, botSpokeBefore };
     // Чужий допис без тексту клієнта — не сигнал товару (21.10, fedoriakryslana): ні пошуку за ним, ні старої реклами; policy коротко перепитає.
-    if (A.turnSharedPost && A.turnSharedPost.foreign && !String(text || '').trim()) { A.foreignShare = A.turnSharedPost; A.turnSharedPost = null; delete ctx.sharedPost; delete ctx.hasFreshSignalThisTurn; }
+    if (A.turnSharedPost && A.turnSharedPost.foreign && !String(text || '').replace(/\[переслав[^\]]*\][^\n]*/gi, '').trim()) { A.foreignShare = A.turnSharedPost; A.turnSharedPost = null; delete ctx.sharedPost; delete ctx.hasFreshSignalThisTurn; }
     A.recovered = rec; // сигнал товару, піднятий з памʼяті розмови менеджера (не з цього ходу) — policy відрізняє його від справді нового
     if (rec.sharedPost || rec.entryAd) A.trace.push({ tool: 'managerLedRecover', sharedPost: !!rec.sharedPost, entryAd: rec.entryAd });
     if (session.isTest || ctx.testMode) ctx.testMode = true;

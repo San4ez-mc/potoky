@@ -849,6 +849,28 @@ function sendSizeChart(A, pp, u) {
     Q.coverTopics(A, u, ['size_chart'], 'size_chart'); // прохання сітки закрите фото; питання про заміри (fit) лишаються — на них відповідаємо цифрами
 }
 
+    // Сітка для КОМПЛЕКТУ (20.10, Edit b397e68b: «Можна розмірну сітку на кофту?» під set1111 → «точної сітки для цієї кофти немає»):
+    // у самого комплекту сітки нема — вона в речей. Шлемо сітку названої речі (за назвою позиції), не названо — усіх речей із сіткою.
+    // Прохання — від аналізатора (wantsSizeChart або тема питання size_chart), не ключові слова.
+function sendSetItemCharts(A, pp, u) {
+    const { ctx } = A;
+    if (pp.isSet && !pp.sizeChartUrl && !A._chartSent && Array.isArray(pp.setItems) && pp.setItems.length
+        && (u.wantsSizeChart || (u.questionTopics || []).includes('size_chart'))) {
+        const withChart = pp.setItems.filter((it) => it.sizeChartUrl);
+        const low = String(A.turnText || '').toLowerCase();
+        const named = withChart.filter((it) => String(it.name || '').toLowerCase().split(/[^а-яіїєґa-z]+/i).filter((w) => w.length >= 4).some((w) => low.includes(w.slice(0, 5))));
+        const send = (named.length ? named : withChart).filter((it, i, a) => a.findIndex((x) => x.sizeChartUrl === it.sizeChartUrl) === i).slice(0, 4);
+        if (send.length) {
+            A._chartSent = true;
+            for (const it of send) {
+                A.out.push({ photoUrls: [it.sizeChartUrl], caption: 'Розмірна сітка: ' + String(it.name || '').split(NL)[0].replace(/\.?\s*Артикул:?.*$/i, '').trim(), step: 'size_chart' });
+                const lines = chartLinesFor(it, A.turnText); if (lines) A.out.push({ text: lines, step: 'size_chart_numbers', noMerge: true });
+            }
+            ctx.agent.chartSentFor = pp.sku;
+            Q.coverTopics(A, u, ['size_chart'], 'size_chart');
+        }
+    }
+}
 async function resolveSetParams(A, pp) {
     if (!Array.isArray(pp.setItems) || !pp.setItems.length) return { params: [], prompt: '', isOnlyHW: false, categoryNames: {} };
     let categories = []; try { categories = await loadCategories(A.botId, A.keys); } catch (e) { categories = []; }
@@ -2773,6 +2795,7 @@ async function runPolicyInner(A, u) {
                 rememberSetItemColors(ctx, u);
             }
         }
+        sendSetItemCharts(A, p, u); // сітка речі комплекту — до питання «весь комплект чи окремі» (20.10, Edit b397e68b)
         if (!multiHandled) {
         // Клієнт дав параметри/колір/згоду або просить змінити склад, не обравши окрему річ → хоче весь комплект
         const impliedSet = !u.setChoice && !u.setArticle && (u.height || u.weight || u.clothingSize || u.ready === 'yes' || u.changeRequest || u.colorMatched || u.color || (Array.isArray(u.itemColors) && u.itemColors.length > 1));
@@ -2848,25 +2871,7 @@ async function runPolicyInner(A, u) {
     // не виконується для цього товару. LLM продовжує чесно обіцяти фото (бо URL є), а код його
     // просто не надсилає. Обробляємо повторний запит сітки ОКРЕМО від секції розміру — щоб він
     // спрацьовував і після того, як розмір уже відомий.
-    // Сітка для КОМПЛЕКТУ (20.10, Edit b397e68b: «Можна розмірну сітку на кофту?» під set1111 → «точної сітки для цієї кофти немає»):
-    // у самого комплекту сітки нема — вона в речей. Шлемо сітку названої речі (за назвою позиції), не названо — усіх речей із сіткою.
-    // Прохання — від аналізатора (wantsSizeChart або тема питання size_chart), не ключові слова.
-    if (pp.isSet && !pp.sizeChartUrl && !A._chartSent && Array.isArray(pp.setItems) && pp.setItems.length
-        && (u.wantsSizeChart || (u.questionTopics || []).includes('size_chart'))) {
-        const withChart = pp.setItems.filter((it) => it.sizeChartUrl);
-        const low = String(A.turnText || '').toLowerCase();
-        const named = withChart.filter((it) => String(it.name || '').toLowerCase().split(/[^а-яіїєґa-z]+/i).filter((w) => w.length >= 4).some((w) => low.includes(w.slice(0, 5))));
-        const send = (named.length ? named : withChart).filter((it, i, a) => a.findIndex((x) => x.sizeChartUrl === it.sizeChartUrl) === i).slice(0, 4);
-        if (send.length) {
-            A._chartSent = true;
-            for (const it of send) {
-                A.out.push({ photoUrls: [it.sizeChartUrl], caption: 'Розмірна сітка: ' + String(it.name || '').split(NL)[0].replace(/\.?\s*Артикул:?.*$/i, '').trim(), step: 'size_chart' });
-                const lines = chartLinesFor(it, A.turnText); if (lines) A.out.push({ text: lines, step: 'size_chart_numbers', noMerge: true });
-            }
-            ctx.agent.chartSentFor = pp.sku;
-            Q.coverTopics(A, u, ['size_chart'], 'size_chart');
-        }
-    }
+    sendSetItemCharts(A, pp, u);
     // «Не бачу фото» одразу після надісланої сітки — клієнт не отримав зображення: шлемо ще раз (LLM не завжди ставить wantsSizeChart).
     if (!u.wantsSizeChart && pp.sizeChartUrl && ctx.agent.chartSentFor === pp.sku && /не\s+(бачу|відкрива\S*|завантаж\S*)\s+(фото|сітк\S*|картинк\S*|зображенн\S*)/i.test(String(A.turnText || ''))) { u.wantsSizeChart = true; A._forceResendImg = true; } // «не бачу» — шлемо ще раз, повз запобіжник дублів (index.js)
     // Сумнів у порахованому розмірі («не маловат?», «не буде тісно?») — показуємо сітку, а не «підібрала за зростом і вагою» (тест 24).

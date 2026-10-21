@@ -129,6 +129,9 @@ async function decide(k, prods, ad, resolve) {
     // Артикул у підписі є, але такого товару в CRM нема — за фото «найсхожіший» НЕ шукаємо (2026-09-29: A0084 плащівка → A0189 фліс).
     const explicitArts = [...String(info.caption || ad.captionText || '').matchAll(/(?:артикул|арт\.)\s*[:#№.\-]?\s*([A-Za-z]{0,5}\d{3,8})/gi)].map((x) => x[1].toUpperCase());
     if (explicitArts.length) return { product: null, note: 'артикулу ' + [...new Set(explicitArts)].join(', ') + ' немає в CRM — додайте товар або привʼяжіть вручну' };
+    // Без артикула — спершу факти підпису (ціна, кольори, розміри) проти CRM; фото схожих моделей плутає (21.10: 5 дописів A0068 → SH617927).
+    const byFacts = require('./shopAgent/captionFacts').pickByCaptionFacts(info.caption || ad.captionText || '', prods);
+    if (byFacts) return { product: byFacts.product, source: 'auto_caption_facts', note: 'підпис: ціна, кольори, розміри → ' + byFacts.product.sku + ' (' + byFacts.score + ')' };
     if (!(k.__geminiKeys || []).length) return { product: null, note: 'немає GEMINI_API_KEY' };
     const adImg = await fetchImage(info.image);
     if (!adImg) return { product: null, note: 'не вдалось дістати обкладинку' };

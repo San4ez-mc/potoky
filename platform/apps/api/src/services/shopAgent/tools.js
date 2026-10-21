@@ -48,7 +48,26 @@ async function calcSize(A) {
     const p = A.ctx.product;
     const fill = p && !(Array.isArray(p.sizes) && p.sizes.length) ? require('./catalogFacts').productSizes(p) : [];
     if (fill.length) p.sizes = fill;
-    try { return await tool(A, 'n_calc'); } finally { if (fill.length && p) p.sizes = []; }
+    let r;
+    try { r = await tool(A, 'n_calc'); } finally { if (fill.length && p) p.sizes = []; }
+    // Потрібного за сіткою розміру в моделі немає — n_calc мовчки бере найближчий і пише «сяде як влитий» (20.10, dlmetrlus: 180/80 → L,
+    // у куртці A0156 лише S/XL/XXL → «рекомендую XL, впевнена»). Рахуємо ще раз «як якщо б були всі розміри» і чесно кажемо про заміну.
+    try {
+        const c = A.ctx; const got = c.recommendedSize;
+        const real = p ? require('./catalogFacts').productSizes(p).map((z) => String(z).toUpperCase()) : [];
+        if (got && !c.sizeOutOfRange && !c.isSetSizeCalc && real.length && real.every((z) => /^(XS|S|M|L|XL|XXL|XXXL)$/.test(z))) {
+            const ORDER = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL'];
+            const probe = JSON.parse(JSON.stringify(c)); probe.product.sizes = ORDER.slice();
+            await runNodeCode(nodeCode(A.assets, 'n_calc'), { ctx: probe, keys: A.keys, user: A.user, session: A.session, input: c.lastUserMessage || '', label: 'n_calc_probe' });
+            const want = String(probe.recommendedSize || '').toUpperCase();
+            if (want && !probe.sizeOutOfRange && want !== String(got).toUpperCase() && !real.includes(want) && c.sizeSource !== 'client' && c.sizeSource !== 'client_override') {
+                const looser = ORDER.indexOf(String(got).toUpperCase()) > ORDER.indexOf(want);
+                c.sizeSubstitute = { want, got };
+                c.sizeReplyText = 'За вашими параметрами підходить ' + want + ', але ' + want + ' у цієї моделі немає 😔 Найближчий — ' + got + ' (сидітиме трохи ' + (looser ? 'вільніше' : 'щільніше') + ') 📏 Якщо хочете саме ' + want + ' — підкажу інші моделі 🙂';
+            }
+        }
+    } catch (e) { /* best-effort: лишається відповідь n_calc */ }
+    return r;
 }
 async function checkAvail(A) {
     const r = await tool(A, 'n_avail');

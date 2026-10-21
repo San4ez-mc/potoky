@@ -1827,6 +1827,19 @@ async function runPolicyInner(A, u) {
         const firstN = Number((String(text).match(/\d+/) || [])[0]);
         if (!u.productHint.fromList && ctx.agent.lastAsk === 'який із показаних товарів цікавить' && skusN.length && firstN >= 1 && skusN[firstN - 1]) u.productHint = { ...u.productHint, fromList: skusN[firstN - 1] };
     }
+    // «Той що 4 цікавить» після списку, коли між ними вже показано картку іншого товару (21.10, lilitvinovvva: список костюмів →
+    // посилання на рілс → картка SH617927 → «Той що 4» = A0068 за 1799, а бот лишився на SH617927 за 2179). catalogHintSkus після
+    // картки очищено — номер беремо з останнього показаного списку (agent.hintList «N. Артикул X — …»), це ДАНІ, не здогад.
+    {
+        const fl = u.productHint && u.productHint.fromList ? String(u.productHint.fromList) : '';
+        const nFl = (fl.match(/^\s*(\d{1,2})\s*[.)]/) || [])[1];
+        const hl = String(ctx.agent.hintList || '');
+        if (nFl && hl && !String(ctx.catalogHintSkus || '').trim()) {
+            const line = hl.split(NL).map((l) => l.trim()).find((l) => l.startsWith(nFl + '.'));
+            const sku = line && (line.match(/Артикул\s+([A-Za-z0-9-]+)/) || [])[1];
+            if (sku && !(P(ctx) && String(P(ctx).sku).toUpperCase() === sku.toUpperCase())) u.productHint = { ...u.productHint, fromList: sku };
+        }
+    }
     if (u.compare) { u.productHint = { ...u.productHint, article: null, fromList: null }; if (!u.questions.length) Q.add(A, u, String(text).trim(), 'compare'); }
     if (!u.productHint.article && !A.turnSharedPost && !u.compare) {
         try {
@@ -2835,6 +2848,25 @@ async function runPolicyInner(A, u) {
     // не виконується для цього товару. LLM продовжує чесно обіцяти фото (бо URL є), а код його
     // просто не надсилає. Обробляємо повторний запит сітки ОКРЕМО від секції розміру — щоб він
     // спрацьовував і після того, як розмір уже відомий.
+    // Сітка для КОМПЛЕКТУ (20.10, Edit b397e68b: «Можна розмірну сітку на кофту?» під set1111 → «точної сітки для цієї кофти немає»):
+    // у самого комплекту сітки нема — вона в речей. Шлемо сітку названої речі (за назвою позиції), не названо — усіх речей із сіткою.
+    // Прохання — від аналізатора (wantsSizeChart або тема питання size_chart), не ключові слова.
+    if (pp.isSet && !pp.sizeChartUrl && !A._chartSent && Array.isArray(pp.setItems) && pp.setItems.length
+        && (u.wantsSizeChart || (u.questionTopics || []).includes('size_chart'))) {
+        const withChart = pp.setItems.filter((it) => it.sizeChartUrl);
+        const low = String(A.turnText || '').toLowerCase();
+        const named = withChart.filter((it) => String(it.name || '').toLowerCase().split(/[^а-яіїєґa-z]+/i).filter((w) => w.length >= 4).some((w) => low.includes(w.slice(0, 5))));
+        const send = (named.length ? named : withChart).filter((it, i, a) => a.findIndex((x) => x.sizeChartUrl === it.sizeChartUrl) === i).slice(0, 4);
+        if (send.length) {
+            A._chartSent = true;
+            for (const it of send) {
+                A.out.push({ photoUrls: [it.sizeChartUrl], caption: 'Розмірна сітка: ' + String(it.name || '').split(NL)[0].replace(/\.?\s*Артикул:?.*$/i, '').trim(), step: 'size_chart' });
+                const lines = chartLinesFor(it, A.turnText); if (lines) A.out.push({ text: lines, step: 'size_chart_numbers', noMerge: true });
+            }
+            ctx.agent.chartSentFor = pp.sku;
+            Q.coverTopics(A, u, ['size_chart'], 'size_chart');
+        }
+    }
     // «Не бачу фото» одразу після надісланої сітки — клієнт не отримав зображення: шлемо ще раз (LLM не завжди ставить wantsSizeChart).
     if (!u.wantsSizeChart && pp.sizeChartUrl && ctx.agent.chartSentFor === pp.sku && /не\s+(бачу|відкрива\S*|завантаж\S*)\s+(фото|сітк\S*|картинк\S*|зображенн\S*)/i.test(String(A.turnText || ''))) { u.wantsSizeChart = true; A._forceResendImg = true; } // «не бачу» — шлемо ще раз, повз запобіжник дублів (index.js)
     // Сумнів у порахованому розмірі («не маловат?», «не буде тісно?») — показуємо сітку, а не «підібрала за зростом і вагою» (тест 24).

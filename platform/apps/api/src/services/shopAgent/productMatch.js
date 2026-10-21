@@ -253,6 +253,11 @@ try {
   // підпис збігається з підписом дописів, уже привʼязаних у CRM /ads до ОДНОГО товару — беремо цей товар («Стриманий
   // мінімалізм…» без артикула в підписі = 234286). Кілька різних товарів з тим самим підписом — не вгадуємо.
   var __spCap = context.sharedPost && context.sharedPost.caption;
+  // Факти підпису (ціна, кольори, розміри) проти CRM — раніше за прив'язки дописів: прив'язку за фото робила машина й плутала схожі
+  // товари (21.10, lilitvinovvva: 5 дописів «Останні дні розпродажу…» → SH617927, а за ціною/кольорами/розмірами — A0068).
+  if (!found && __spCap && !extractArticles(__spCap).length) {
+    try { var __cf = require('./captionFacts').pickByCaptionFacts(__spCap, all); if (__cf) { found = __cf.product; via = 'caption_facts:' + __cf.score; mk = 'cf_' + __cf.product.id; } } catch (e) { /* best-effort */ }
+  }
   if (!found && __spCap && adsList.length) {
     var __capKey = function (s) { return String(s || '').toLowerCase().replace(/[’'`ʼ]/g, '').replace(/[^a-zа-яіїєґ0-9]+/gi, ' ').trim().slice(0, 70); };
     var __ck = __capKey(__spCap);
@@ -437,35 +442,6 @@ try {
   // (тест 123, 01.10; правило власника 29.09 — не підставляти схожий товар, чесно передати менеджеру).
   // (Нове фото клієнта цього ходу — окремий сигнал, його розпізнаємо як завжди.)
   var __capArtUnknown = !found && !context.lastUserImageUrl && extractArticles(((context.sharedPost && context.sharedPost.caption) || '') + '\n' + (__adCaption || '')).length > 0;
-
-  // ПРІОРИТЕТ 2.4 (21.10, lilitvinovvva): підпис поста без артикула — за ФАКТАМИ з підпису проти даних CRM: ціна («Нова ціна: 1799 ₴»),
-  // кольори («Кольори: чорний, графітовий, хакі…»), розміри («Розміри: … XXXL»). Слова «флісовий костюм полар-фліс» є в назвах трьох
-  // костюмів, і пошук за словами взяв SH617927 (2179 грн), хоча ціна, кольори й розміри в підписі — A0068. Обираємо лише явного лідера.
-  var __factSrc = (context.sharedPost && context.sharedPost.caption) || __adCaption || '';
-  if (!found && __factSrc && !__capArtUnknown) {
-    try {
-      var __fs = String(__factSrc);
-      var __prices = (__fs.match(/(\d[\d\s]{2,6})\s*(?:₴|грн)/gi) || []).map(function (x) { return Number(String(x).replace(/[^\d]/g, '')); }).filter(function (n) { return n >= 100; });
-      var __colLine = (__fs.match(/Кольор[иа]?\s*:\s*([^\n]+)/i) || [])[1] || '';
-      var __capCols = __colLine.split(/[,;]+/).map(function (c) { return c.toLowerCase().replace(/[^а-яіїєґa-z-]/gi, '').slice(0, 5); }).filter(function (c) { return c.length >= 3; });
-      var __sizLine = ((__fs.match(/Розмір[и]?\s*:\s*([^\n]+)/i) || [])[1] || '').toUpperCase();
-      var __capSizes = __sizLine.match(/(?<![A-Z0-9])(XXXL|XXL|XL|XS|S|M|L|3XL|2XL)(?![A-Z0-9])/g) || [];
-      if (__prices.length && (__capCols.length || __capSizes.length)) {
-        var __pCols = function (p) { var s = {}; (p.offers || []).forEach(function (o) { (o.properties || []).forEach(function (q) { if (/кол|цвет/i.test(q.name || '')) s[String(q.value || '').toLowerCase().replace(/[^а-яіїєґa-z-]/gi, '').slice(0, 5)] = 1; }); }); return Object.keys(s); };
-        var __pSizes = function (p) { var l = (Array.isArray(p.sizes) && p.sizes.length ? p.sizes : []).concat(...(p.offers || []).map(function (o) { return o.effectiveSizes || []; })); return l.map(function (z) { return String(z).toUpperCase().replace(/^3XL$/, 'XXXL').replace(/^2XL$/, 'XXL'); }); };
-        var __capSz = __capSizes.map(function (z) { return z.replace(/^3XL$/, 'XXXL').replace(/^2XL$/, 'XXL'); });
-        var __fScored = all.filter(function (p) { return !p.isSet && Number(p.price) > 0 && __prices.indexOf(Number(p.price)) >= 0; }).map(function (p) {
-          var pc = __pCols(p); var ps = __pSizes(p);
-          var colHit = __capCols.filter(function (c) { return pc.indexOf(c) >= 0; }).length, colMiss = __capCols.length - colHit;
-          var szHit = __capSz.length ? __capSz.filter(function (z) { return ps.indexOf(z) >= 0; }).length - (__capSz.length - __capSz.filter(function (z) { return ps.indexOf(z) >= 0; }).length) : 0;
-          return { p: p, score: 3 + colHit - colMiss + szHit };
-        }).sort(function (a, b) { return b.score - a.score; });
-        if (__fScored.length && __fScored[0].score >= 5 && (__fScored.length === 1 || __fScored[0].score - __fScored[1].score >= 2)) {
-          found = __fScored[0].p; via = 'caption_facts:' + __fScored[0].score; mk = 'cf_' + __fScored[0].p.id;
-        }
-      }
-    } catch (e) { /* best-effort — далі пошук за словами */ }
-  }
 
   // ПРІОРИТЕТ 2.5: keyword-overlap підпису проти displayName, тай-брейк за ціною
   // Джерело слів: підпис пересланого поста, а якщо його нема — назва реклами (відповідь на рекламу

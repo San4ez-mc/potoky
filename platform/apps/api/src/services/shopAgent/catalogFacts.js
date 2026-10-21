@@ -156,4 +156,16 @@ function sizeTokens(text) {
     return t.match(/(?<![A-Z0-9])(XXXL|XXL|3XL|2XL|XL|XS|S|M|L)(?![A-Z0-9])/g) || [];
 }
 
-module.exports = { catalogFacts, catalogProducts, otherCategoryProducts, colorHasSize, productSizes, sizeKey, sizeTokens };
+/**
+ * Чи є товар у цьому розмірі В НАЯВНОСТІ хоч в одному кольорі (21.10, iaroslavgavrilishen: «А які є костюми? XXXL» — бот показав
+ * чотири костюми, XXXL був лише в одного). Дані CRM: офери в наявності з їхніми розмірами, інакше — розміри товару.
+ */
+function productHasSize(p, size) {
+    if (!p || !size || p.outOfStock) return false;
+    const k = sizeKey(size);
+    const lists = (Array.isArray(p.offers) ? p.offers : []).filter((o) => o.inStock !== false).map(offerSizes).filter(Boolean);
+    if (lists.length) return lists.some((l) => l.map(sizeKey).includes(k));
+    return productSizes(p).map(sizeKey).includes(k);
+}
+
+module.exports = { catalogFacts, catalogProducts, otherCategoryProducts, colorHasSize, productSizes, productHasSize, sizeKey, sizeTokens };

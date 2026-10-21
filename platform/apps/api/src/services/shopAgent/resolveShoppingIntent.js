@@ -76,8 +76,9 @@ async function resolveShoppingIntent(A, u, tool) {
         ctx.lookupProductsRaw = cat0.products; ctx.lookupAdsRaw = cat0.ads; ctx.lookupCategoriesRaw = cat0.categories || [];
         ctx.catalogHintCategoriesRaw = await loadCategories(A.botId, keys);
         ctx._hintNoRef = true; delete ctx.catalogHintPick; ctx._hintSearch = !!(u && Array.isArray(u.searchFeatures) && u.searchFeatures.length);
+        ctx._needSize = (ctx.agent && ctx.agent.needSize) || ''; // розмір, якого клієнту бракувало в попередній моделі — список лише з ним
         Object.assign(ctx, await computeCatalogHint(ctx, keys, text));
-        delete ctx._hintNoRef; delete ctx._hintSearch;
+        delete ctx._hintNoRef; delete ctx._hintSearch; delete ctx._needSize;
         let st = null;
         if (ctx.catalogHintPick) { Object.assign(ctx, await matchProduct(ctx, keys, text, { botId: A.botId })); if (ctx.product && ctx.product.sku && !ctx.productUnknown) st = 'found'; }
         else if (ctx.catalogHint) st = 'hint';
@@ -181,8 +182,9 @@ async function resolveShoppingIntent(A, u, tool) {
         // Реклама не прийшла (≈22% розмов Zernio) — catalogHint бере найімовірніший товар серед активних реклам категорії.
         ctx._hintNoRef = !hadProduct && !signal.photoUrl && !signal.adReferral && !signal.forwardedPost && !ctx.entryAdId;
         ctx._hintSearch = !!(u && Array.isArray(u.searchFeatures) && u.searchFeatures.length); // шукає за ознаками («спортивний») — список, а не одна рекламована картка (тест 34)
+        ctx._needSize = (ctx.agent && ctx.agent.needSize) || ''; // розмір, якого клієнту бракувало в попередній моделі — список лише з ним
         Object.assign(ctx, await computeCatalogHint(ctx, keys, text));
-        delete ctx._hintNoRef; delete ctx._hintSearch;
+        delete ctx._hintNoRef; delete ctx._hintSearch; delete ctx._needSize;
         if (ctx.catalogHintPick) {
             delete ctx.productUnknown;
             Object.assign(ctx, await matchProduct(ctx, keys, text, { botId: A.botId }));

@@ -40,7 +40,16 @@ async function resolveProduct(A, u) {
 
 async function setApply(A) { return tool(A, 'n_set_apply'); }
 // Сітка й межі з CRM перед підбором (товар → категорія → магазин) — навіть якщо товар у памʼяті розмови без них (19.10).
-async function calcSize(A) { await require('./sizeFit').ensureFit(A).catch(() => {}); return tool(A, 'n_calc'); }
+async function calcSize(A) {
+    await require('./sizeFit').ensureFit(A).catch(() => {});
+    // n_calc звіряє розмір лише з product.sizes, а в частини товарів CRM розміри є лише в кольорах (оферах) чи в описі — тоді він
+    // не бачив, що розміру немає (21.10, iaroslavgavrilishen: светр A0148 до XL, 184/120 → «Ваш розмір XXXL, сяде ідеально»).
+    // Розміри — з одного джерела (catalogFacts.productSizes), лише на час розрахунку.
+    const p = A.ctx.product;
+    const fill = p && !(Array.isArray(p.sizes) && p.sizes.length) ? require('./catalogFacts').productSizes(p) : [];
+    if (fill.length) p.sizes = fill;
+    try { return await tool(A, 'n_calc'); } finally { if (fill.length && p) p.sizes = []; }
+}
 async function checkAvail(A) {
     const r = await tool(A, 'n_avail');
     // Два одержувачі з різними параметрами: n_avail ставить усім одиницям один recommendedSize — підставляємо розмір кожної пари.

@@ -13,7 +13,7 @@ const { syncSetComponents } = require('./orderSource');
 const { hasCategoryWord, categoryWordIsUpsell, categoryWordIsSetComponent, categoryWordIsMain } = require('./signal');
 const { resolveColorMention } = require('./cart');
 const { classifyKbQuestion, kbSimilarity, kbSimilar } = require('./kbRules');
-const { catalogFacts, catalogProducts, otherCategoryProducts, colorHasSize, productSizes, sizeKey, sizeTokens } = require('./catalogFacts');
+const { catalogFacts, catalogProducts, otherCategoryProducts, colorHasSize, productSizes, productHasSize, sizeKey, sizeTokens } = require('./catalogFacts');
 const { kbMatch, sameAsEscalated } = require('./kbMatch');
 const { extractHeightWeight } = require('./understand');
 const { matchProduct } = require('./productMatch');
@@ -725,25 +725,24 @@ async function oosText(A, oos, o = {}) {
     return t;
 }
 
-/** Клієнт більший за найбільший розмір товару: що запропонувати — з каталогу CRM. Товари в наявності (не outOfStock, не
- *  комплекти, не взуття), у яких є більші розміри, групуємо за категорією («костюми — до ХХХЛ»). Нічого — порожньо
- *  (тоді чесне «такого розміру немає»). Розміри — Product.sizes, інакше sizeChartData.sizes. */
+/** Клієнт більший за найбільший розмір товару: що запропонувати — з каталогу CRM. Лише КОНКРЕТНІ товари в наявності, у яких
+ *  потрібний клієнту розмір справді є хоч в одному кольорі (catalogFacts.productHasSize), спершу з тієї ж категорії; лише
+ *  категорії, що підбираються за зростом і вагою (дані категорії CRM, не назва). 21.10 (iaroslavgavrilishen): було «костюми — до
+ *  ХХХЛ» за категорією — клієнт отримав чотири костюми, а XXXL був лише в одного. Нічого — порожньо (чесне «такого розміру немає»).
+ *  Потрібний розмір запамʼятовуємо (agent.needSize) — наступний список товарів фільтрується за ним. */
 async function oversizeAlternative(A, pp) {
     const { ctx } = A;
     const ORDER = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL', '4XL'];
     const LABEL = { S: 'S', M: 'M', L: 'L', XL: 'ХЛ', XXL: 'ХХЛ', XXXL: 'ХХХЛ', '4XL': '4ХЛ' };
     const nz = (x) => { const t = String(x || '').toUpperCase().trim(); return t === '2XL' ? 'XXL' : t === '3XL' ? 'XXXL' : t; };
-    const maxOf = (p) => {
-        const list = (Array.isArray(p.sizes) && p.sizes.length ? p.sizes : ((p.sizeChartData && p.sizeChartData.sizes) || [])).map(nz).filter((s) => ORDER.includes(s));
-        return list.reduce((m, s) => (ORDER.indexOf(s) > ORDER.indexOf(m) ? s : m), '');
-    };
+    const maxOf = (p) => productSizes(p).map(nz).filter((z) => ORDER.includes(z)).reduce((m, z) => (ORDER.indexOf(z) > ORDER.indexOf(m) ? z : m), '');
     try {
         const cat = await loadCatalog(A.botId, A.keys);
         const cur = cat.products.find((x) => String(x.sku).toUpperCase() === String(pp.sku).toUpperCase()) || pp;
         const curMax = maxOf(cur);
         if (!curMax) return '';
         // Який розмір потрібен клієнту — за тією ж сіткою і тим самим допуском, що й n_calc (вага до +8 кг понад
-        // найбільший розмір — ще він; більше — не підійде нічого). Пропонуємо лише товари, що йдуть до цього розміру (власник 03.10).
+        // найбільший розмір — ще він; більше — не підійде нічого).
         let need = '';
         try {
             // сітка — та сама, що бере n_calc: товару → категорії → магазину (CRM, у ctx.product від пошуку товару); ключ воронки — запас
@@ -759,20 +758,23 @@ async function oversizeAlternative(A, pp) {
                 else if (w > topMax + 8) return ''; // більший за всю таблицю — запропонувати нічого
             }
         } catch (e) { need = ''; }
-        const byCat = new Map();
-        for (const p of cat.products) {
-            if (p.outOfStock || p.isSet || String(p.sku) === String(pp.sku)) continue;
-            const catName = String((p.category && p.category.name) || '').trim();
-            if (!catName || /взутт/i.test(catName)) continue;
+        if (!need && ctx.recommendedSize && ORDER.indexOf(nz(ctx.recommendedSize)) > ORDER.indexOf(curMax)) need = nz(ctx.recommendedSize);
+        if (need) ctx.agent.needSize = need;
+        // Категорії, що підбираються за зростом і вагою (requiredParams у CRM) — взуття й аксесуари сюди не потрапляють.
+        const hwCats = new Set((cat.categories || []).filter((c) => (Array.isArray(c.requiredParams) ? c.requiredParams : []).some((q) => /зріст|ріст|height|вага|weight/i.test(String((q && q.name) || '')))).map((c) => String(c.id)));
+        const fits = (p) => {
+            if (p.outOfStock || p.isSet || String(p.sku) === String(pp.sku)) return false;
+            if (hwCats.size && !hwCats.has(String(p.categoryId || (p.category && p.category.id) || ''))) return false;
             const m = maxOf(p);
-            if (!m || ORDER.indexOf(m) <= ORDER.indexOf(curMax)) continue;
-            if (need && ORDER.indexOf(m) < ORDER.indexOf(need)) continue; // не дотягує до потрібного клієнту розміру
-            const prev = byCat.get(catName);
-            if (!prev || ORDER.indexOf(m) > ORDER.indexOf(prev)) byCat.set(catName, m);
-        }
-        if (!byCat.size) return '';
-        const offer = [...byCat.entries()].map(([c, m]) => c.toLowerCase() + ' — до ' + (LABEL[m] || m)).join(', ');
-        return 'На жаль, цей товар йде тільки до ' + (LABEL[curMax] || curMax) + ' розміру, і він вам буде малий. Можу запропонувати ' + offer + '.';
+            if (!m || ORDER.indexOf(m) <= ORDER.indexOf(curMax)) return false;
+            return need ? productHasSize(p, need) : true;
+        };
+        const sameCat = String(cur.categoryId || (cur.category && cur.category.id) || '');
+        const list = cat.products.filter(fits).sort((a, b) => (String(b.categoryId) === sameCat) - (String(a.categoryId) === sameCat) || (Number(a.price) || 0) - (Number(b.price) || 0)).slice(0, 4);
+        if (!list.length) return '';
+        const name = (p) => String(p.customerName || p.name || '').split(NL)[0].replace(/\.?\s*Артикул:?.*$/i, '').trim();
+        return 'На жаль, цей товар йде тільки до ' + (LABEL[curMax] || curMax) + ' розміру, і він вам буде малий. ' + (need ? 'У розмірі ' + (LABEL[need] || need) + ' зараз є: ' : 'Більші розміри є в: ')
+            + list.map((p) => '«' + name(p) + '» (арт. ' + p.sku + ')' + (Number(p.price) > 0 ? ' — ' + Number(p.price) + ' грн' : '')).join('; ') + '. Напишіть артикул — покажу 🙂';
     } catch (e) { return ''; }
 }
 /** Рядок допродажу в підсумку («Футболка оверсайз база — 2 шт (Білий XL ×2) — 799 грн») і його сума. 03.10 (Edit e86adb58):
@@ -1681,6 +1683,32 @@ async function runPolicyInner(A, u) {
     }
     // Російською «спасибо, подумаю»/«позже»/«не сейчас» — м'яка відмова (як «подумаю»), без тиску й повтору картки.
     if (!ctx.crmOrderId && ctx.product && ctx.product.sku && /(^|\s)(подума(ю|ем|ть)|позже|потом\s+напишу|пока\s+не\s+над|не\s+сейчас|отложу)/i.test(text) && u.intent !== 'hesitate') u.intent = 'hesitate';
+    // Щойно показано список товарів, а клієнт пише лише розмір («Xxxl») — це про СПИСОК, а не про попередню модель (21.10,
+    // iaroslavgavrilishen: після списку костюмів «Xxxl» → бот знову про светр «розміру XXXL немає», клієнт: «максимально не розумію»).
+    // Відповідаємо даними CRM: у яких позиціях списку цей розмір є в наявності.
+    {
+        const onlySize = String(text).trim().match(/^(?:а\s+|є\s+|чи\s+є\s+)?(XXXL|XXL|XL|XS|S|M|L|2XL|3XL|ХХХЛ|ХХЛ|ХЛ)\s*[?!.]*$/i);
+        const listSkus = String(ctx.catalogHintSkus || '').split(',').map((x) => x.trim()).filter(Boolean);
+        // Товар уже обрано з цього списку — тоді розмір стосується його (звичайний шлях нижче).
+        const pickedFromList = !!(ctx.product && ctx.product.sku && listSkus.some((x) => x.toUpperCase() === String(ctx.product.sku).toUpperCase()));
+        if (onlySize && listSkus.length >= 2 && !pickedFromList && !ctx.crmOrderId) {
+            const want = sizeKey(String(onlySize[1]).toUpperCase().replace(/^ХХХЛ$/, 'XXXL').replace(/^ХХЛ$/, 'XXL').replace(/^ХЛ$/, 'XL'));
+            const catL = await loadCatalog(A.botId, A.keys);
+            const items = listSkus.map((sku, i) => ({ n: i + 1, p: catL.products.find((x) => String(x.sku).toUpperCase() === sku.toUpperCase()) })).filter((x) => x.p);
+            const ok = items.filter((x) => productHasSize(x.p, want));
+            ctx.agent.needSize = want;
+            const nm = (p) => String(p.customerName || p.name || '').split(NL)[0].replace(/\.?\s*Артикул:?.*$/i, '').trim();
+            if (ok.length) {
+                A.out.push({ text: 'Розмір ' + want + ' зі списку вище є ' + (ok.length === 1 ? 'лише в цієї моделі' : 'в цих моделях') + ':' + NL + ok.map((x) => x.n + '. ' + nm(x.p) + ' (арт. ' + x.p.sku + ') — ' + Number(x.p.price) + ' грн').join(NL) + NL + NL + (ok.length === 1 ? 'Показати її детальніше? 🙂' : 'Яку показати детальніше? Напишіть номер 🙂'), step: 'list_size_filter' });
+                ctx.agent.lastAsk = 'який із показаних товарів цікавить';
+            } else {
+                A.out.push({ text: 'На жаль, розміру ' + want + ' зараз немає в жодній моделі зі списку вище 😔 Підказати, що є в цьому розмірі в інших категоріях? 🙂', step: 'list_size_filter_none' });
+                ctx.agent.lastAsk = 'інша модель';
+            }
+            Q.coverTopics(A, u, ['sizes', 'availability'], 'list_size_filter');
+            return;
+        }
+    }
     // Розмір більший за наявні («2XXL», «3XL», «XXXL») для товару без такого розміру: чесно називаємо наявні, не читаємо як XXL.
     {
         const big = text.match(/(?<![A-Za-z0-9])(2XXL|3XL|3XXL|XXXL|2XL|ХХХЛ)(?![A-Za-z])/i);
@@ -2967,6 +2995,14 @@ async function runPolicyInner(A, u) {
                 // Альтернатива — з каталогу CRM, а не зашитий у n_calc текст («флісові костюми… взуття до 46»: пропонував і те,
                 // чого немає в наявності — власник 03.10). n_calc вирішує, ЧИ клієнт більший за товар; ЩО запропонувати — тут.
                 if (ctx.sizeOorAlternative) ctx.sizeOorAlternative = await oversizeAlternative(A, pp);
+                // 21.10: альтернатива тепер — конкретні моделі в наявності з потрібним розміром і «напишіть артикул — покажу». Бот веде
+                // далі сам (без паузи, інакше клієнт пише артикул — а бот мовчить); менеджеру — лише сповіщення.
+                if (ctx.sizeOorAlternative) {
+                    A.out.push({ text: ctx.sizeOorAlternative, step: 'size_oor_alt' });
+                    await T.alert(A, 'n_size_oor_admin', { details: '💬 Клієнту запропоновано: «' + ctx.sizeOorAlternative + '» — бот веде далі сам.' });
+                    ctx.agent.lastAsk = 'інша модель';
+                    return;
+                }
                 const oorNode = ctx.sizeOorAlternative ? 'n_size_oor_msg' : 'n_size_oor_no_alt_msg';
                 const oorText = messageText(A.assets, oorNode, ctx, A.session.id);
                 A.out.push({ text: oorText, step: 'size_oor' });
@@ -3070,6 +3106,16 @@ async function runPolicyInner(A, u) {
     //     в цьому розмірі нема, знімаємо й чесно кажемо, що є (раніше графітові джинси XL пішли в замовлення, хоча шиються лише XS/L).
     if (!pp.isSet && ctx.recommendedSize && !ctx.crmOrderId) {
         narrowColorsToSize(pp, ctx.recommendedSize);
+        // Розміру немає в ЖОДНОМУ кольорі — narrowColorsToSize лишає всю палітру, і бот писав «у XXXL немає, у XXXL є: [усі кольори]»
+        // по колу (21.10, iaroslavgavrilishen). Чесно: розміру немає + що є в цьому розмірі з каталогу CRM.
+        const allC = String(pp.colorsAll || pp.colors || '').split(',').map((c) => c.trim()).filter(Boolean);
+        if (Array.isArray(pp.offers) && pp.offers.length && allC.length && !allC.some((c) => colorHasSize(pp, c, ctx.recommendedSize))) {
+            const sz = ctx.recommendedSize; const real = productSizes(pp);
+            const alt = await oversizeAlternative(A, pp);
+            ctx.colorChoice = null; delete ctx.agent.availKey; ctx.sizeOutOfRange = true; ctx.recommendedSize = null;
+            A.out.push({ text: await answerThenAsk(A, u, 'Розміру ' + sz + ' у цієї моделі зараз немає в жодному кольорі 😔' + (real.length ? ' Є: ' + real.join(', ') + '.' : '') + (alt ? ' ' + alt.replace(/^На жаль[^.]*\.\s*/, '') : ' Можу підібрати іншу модель — напишіть, що шукаєте 🙂')), step: 'size_unavailable_all' });
+            ctx.agent.lastAsk = 'інша модель'; return;
+        }
         const chosen = ctx.colorChoice ? (Array.isArray(ctx.colorChoice.colors) && ctx.colorChoice.colors.length ? ctx.colorChoice.colors : [ctx.colorChoice.color]).filter(Boolean) : [];
         const missingC = [...new Set(chosen.filter((c) => !colorHasSize(pp, c, ctx.recommendedSize)))];
         if (missingC.length) {

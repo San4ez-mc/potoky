@@ -194,6 +194,9 @@ if (__hintColorWords.length) {
 var __mw = msg.replace(/[^a-zа-яіїєґ0-9\s]/gi, ' ').split(/\s+/).filter(function (w) { return w.length >= 4; }).map(function (w) { return w.slice(0, 5); });
 function __ov(p) { var h = hay(p); var n = 0; __mw.forEach(function (w) { if (h.indexOf(w) >= 0 && !wants.some(function (s) { return w.indexOf(s.slice(0, 4)) === 0; })) n++; }); return n; }
 hits.sort(function (a, b) { return (__ov(b) - __ov(a)) || ((Number(a.price) || 0) - (Number(b.price) || 0)); });
+// Клієнту потрібен конкретний розмір (більший за попередню модель — agent.needSize; 21.10, iaroslavgavrilishen: «А які є костюми? XXXL» —
+// показано чотири костюми, XXXL лише в одного): у списку лише товари, де цей розмір є в наявності. Жодного — список як є.
+if (context._needSize) { var __hasSz = require('./catalogFacts').productHasSize; var __bySz = hits.filter(function (p) { return __hasSz(p, context._needSize); }); if (__bySz.length) hits = __bySz; }
 // 2026-10-03 (категорія «Розпізнавання товару»; Edits fafba197/af603158/951031bf, рішення власника): ≈22% розмов Zernio приходять
 // без даних реклами — клієнт пише «Яка ціна кофти?» у відповідь на рекламу, а бот бачить лише слово «кофта» і показує
 // перші 3–4 кофти каталогу за ціною (рекламованої серед них часто нема). Тоді найімовірніший товар — серед тих, що ЗАРАЗ

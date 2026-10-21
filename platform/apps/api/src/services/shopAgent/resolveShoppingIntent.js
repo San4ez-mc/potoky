@@ -69,6 +69,22 @@ async function resolveShoppingIntent(A, u, tool) {
     // «Які кольори доступні?», «Як оформити замовлення?») — кандидати з активних реклам (catalogHint, Edits 3d2614c8/22fd060e),
     // а не «що вас цікавить — костюми, куртки…». Зміст питання — від аналізатора (intent / вид питання), не ключові слова.
     const productAsk = !hadProduct && u && (u.intent === 'product_query' || u.intent === 'order_yes' || (Array.isArray(u.questions) && u.questions.some((q) => classifyKbQuestion(q).kind === 'catalog')));
+    // Показано список, клієнт уточнює ознакою без категорії («Мені потрібні зимові», 21.10 Дмитро Колісник) — новий список тих самих
+    // категорій лише з цією ознакою (аналізатор: searchFeatures), а не «що вас цікавить?».
+    async function refineShownList() {
+        const feats = (u && Array.isArray(u.searchFeatures)) ? u.searchFeatures.filter(Boolean) : [];
+        if (hadProduct || !feats.length || !String(ctx.catalogHintSkus || '').trim()) return null;
+        const cat0 = await loadCatalog(A.botId, keys);
+        ctx.lookupProductsRaw = cat0.products; ctx.lookupAdsRaw = cat0.ads; ctx.lookupCategoriesRaw = cat0.categories || [];
+        ctx.catalogHintCategoriesRaw = await loadCategories(A.botId, keys);
+        ctx._searchFeatures = feats; ctx._hintSearch = true; ctx._needSize = (ctx.agent && ctx.agent.needSize) || '';
+        const before = String(ctx.catalogHintSkus || '');
+        const res = await computeCatalogHint(ctx, keys, text);
+        delete ctx._hintSearch; delete ctx._needSize; delete ctx._searchFeatures;
+        delete ctx.lookupProductsRaw; delete ctx.lookupAdsRaw; delete ctx.lookupCategoriesRaw; delete ctx.catalogHintCategoriesRaw;
+        if (res && res.catalogHint && String(res.catalogHintSkus || '') && String(res.catalogHintSkus) !== before) { Object.assign(ctx, res); return { status: 'hint', skipPresentation: true, signal, action: 'SET_MAIN' }; }
+        return null;
+    }
     async function advertisedFallback() {
         // Нерозпізнане фото клієнта — теж сигнал («ось ця річ»), не «сигналу нема»: рекламовані товари тут — чужа відповідь (aze111274).
         if (!productAsk || ctx.entryAdId || String(ctx.catalogHintSkus || '') || (ctx.agent && ctx.agent.unknownPhotoAt && Date.now() - ctx.agent.unknownPhotoAt < 2 * 3600 * 1000)) return null;
@@ -77,8 +93,9 @@ async function resolveShoppingIntent(A, u, tool) {
         ctx.catalogHintCategoriesRaw = await loadCategories(A.botId, keys);
         ctx._hintNoRef = true; delete ctx.catalogHintPick; ctx._hintSearch = !!(u && Array.isArray(u.searchFeatures) && u.searchFeatures.length);
         ctx._needSize = (ctx.agent && ctx.agent.needSize) || ''; // розмір, якого клієнту бракувало в попередній моделі — список лише з ним
+        ctx._searchFeatures = (u && Array.isArray(u.searchFeatures)) ? u.searchFeatures : []; // ознаки («зимові») — список лише з ними
         Object.assign(ctx, await computeCatalogHint(ctx, keys, text));
-        delete ctx._hintNoRef; delete ctx._hintSearch; delete ctx._needSize;
+        delete ctx._hintNoRef; delete ctx._hintSearch; delete ctx._needSize; delete ctx._searchFeatures;
         let st = null;
         if (ctx.catalogHintPick) { Object.assign(ctx, await matchProduct(ctx, keys, text, { botId: A.botId })); if (ctx.product && ctx.product.sku && !ctx.productUnknown) st = 'found'; }
         else if (ctx.catalogHint) st = 'hint';
@@ -87,6 +104,7 @@ async function resolveShoppingIntent(A, u, tool) {
     }
     if (!hasAnySignal(signal) && !nameTry) {
         // А6 — немає жодного сигналу про товар цього ходу: не чіпаємо активний товар.
+        const rf = await refineShownList(); if (rf) return rf;
         const fb = await advertisedFallback(); if (fb) return fb;
         return { status: hadProduct ? 'kept' : 'none', skipPresentation: true, signal, action: 'NONE' };
     }
@@ -122,6 +140,7 @@ async function resolveShoppingIntent(A, u, tool) {
         // Пошук лише за назвою не дав точного збігу — нічого не підставляємо (жодних «найближчих» товарів на «Дякую» тощо).
         for (const k of Object.keys(ctx)) { if (!(k in ctxSnapshotBefore)) delete ctx[k]; }
         Object.assign(ctx, ctxSnapshotBefore);
+        const rf = await refineShownList(); if (rf) return rf;
         const fb = await advertisedFallback(); if (fb) return fb;
         return { status: 'none', skipPresentation: true, signal, action: 'NONE' };
     }
@@ -183,8 +202,9 @@ async function resolveShoppingIntent(A, u, tool) {
         ctx._hintNoRef = !hadProduct && !signal.photoUrl && !signal.adReferral && !signal.forwardedPost && !ctx.entryAdId;
         ctx._hintSearch = !!(u && Array.isArray(u.searchFeatures) && u.searchFeatures.length); // шукає за ознаками («спортивний») — список, а не одна рекламована картка (тест 34)
         ctx._needSize = (ctx.agent && ctx.agent.needSize) || ''; // розмір, якого клієнту бракувало в попередній моделі — список лише з ним
+        ctx._searchFeatures = (u && Array.isArray(u.searchFeatures)) ? u.searchFeatures : []; // ознаки («зимові») — список лише з ними
         Object.assign(ctx, await computeCatalogHint(ctx, keys, text));
-        delete ctx._hintNoRef; delete ctx._hintSearch; delete ctx._needSize;
+        delete ctx._hintNoRef; delete ctx._hintSearch; delete ctx._needSize; delete ctx._searchFeatures;
         if (ctx.catalogHintPick) {
             delete ctx.productUnknown;
             Object.assign(ctx, await matchProduct(ctx, keys, text, { botId: A.botId }));

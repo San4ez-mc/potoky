@@ -83,6 +83,20 @@ async function refreshTokens() {
 }
 setTimeout(refreshTokens, 2 * 60 * 1000).unref(); setInterval(refreshTokens, 12 * 3600 * 1000).unref();
 
+const _mediaOwn = new Map(); // mediaId -> {v, until}
+/** Чи медіа з нашого акаунта: true / false (чужий: код 100, підкод 33) / null (не вдалося перевірити — нічого не вирішуємо). */
+async function mediaIsOwn(botId, mediaId) {
+    const c = _mediaOwn.get(String(mediaId)); if (c && c.until > Date.now()) return c.v;
+    let v = null;
+    try {
+        const r = await fetch(GRAPH + '/' + encodeURIComponent(String(mediaId)) + '?fields=username&access_token=' + encodeURIComponent(await token(botId)));
+        const j = await r.json().catch(() => ({}));
+        if (r.ok && j.username) v = true;
+        else if (j.error && Number(j.error.code) === 100 && Number(j.error.error_subcode) === 33) v = false;
+    } catch (e) { v = null; }
+    if (v !== null) _mediaOwn.set(String(mediaId), { v, until: Date.now() + 24 * 3600 * 1000 });
+    return v;
+}
 async function ownIgId(botId) {
     const row = await db.funnelKey.findFirst({ where: { botId, key: 'INSTAGRAM_BUSINESS_ID' }, select: { value: true } });
     return String((row && row.value) || '').trim();
@@ -638,6 +652,7 @@ async function handleMetaEvent(webhookBotId, body) {
                 if (m.message_edit && m.message_edit.text && !(own && m.sender && String(m.sender.id) === own)) {
                     const me = m.message_edit;
                     m.message = { mid: String(me.mid || '') + ':edit' + (Number(me.num_edit) || 1), text: String(me.text) };
+                    m._editOf = String(me.mid || '');
                     delete m.message_edit;
                 }
                 // Готове питання реклами (icebreaker) Meta шле подією postback: текст — postback.title, реклама — postback.referral
@@ -690,17 +705,41 @@ async function handleMetaEvent(webhookBotId, body) {
                 let text = p.text;
                 if (!text && p.audioUrl) { const tr = await Z.transcribeVoice(botId, p.audioUrl).catch(() => ''); if (tr) text = tr; }
                 let sharedPost = p.sharedPost;
-                if (sharedPost && sharedPost.kind === 'reel' && sharedPost.mediaId) { try { const fr = await Z.getReelVideoFramesForVision(botId, sharedPost.mediaId); if (fr.length) sharedPost = { ...sharedPost, frameUrls: fr }; } catch (er) { /* кадри — best-effort */ } }
+                // Пересланий допис НЕ з нашого акаунта (21.10, fedoriakryslana: рілс АЗС → бот показав кофти зі старої реклами): наш токен
+                // бачить лише наші медіа — чужий Instagram відповідає кодом 100/33. Позначаємо, щоб бот не шукав у ньому товар.
+                if (sharedPost && sharedPost.mediaId && (await mediaIsOwn(botId, sharedPost.mediaId)) === false) sharedPost = { ...sharedPost, foreign: true };
+                if (sharedPost && !sharedPost.foreign && sharedPost.kind === 'reel' && sharedPost.mediaId) { try { const fr = await Z.getReelVideoFramesForVision(botId, sharedPost.mediaId); if (fr.length) sharedPost = { ...sharedPost, frameUrls: fr }; } catch (er) { /* кадри — best-effort */ } }
                 const photo = p.media.find((x) => x.type === 'photo') || (p.story && p.story.url ? { type: 'photo', url: p.story.url } : null);
                 // Пара message + postback з різними id і тим самим текстом (див. вище) — друга подія не окреме повідомлення.
                 if (text && !photo && !sharedPost) {
                     const twin = await db.message.findFirst({ where: { sessionId: session.id, role: 'user', content: text, createdAt: { gte: new Date(p.at.getTime() - 30 * 1000), lte: new Date(p.at.getTime() + 30 * 1000) } }, select: { metadata: true } }).catch(() => null);
                     if (twin && (m._fromPostback || (twin.metadata && twin.metadata.postback))) { if (rpNow) await lateReferral(botId, String(igsid), rpNow, 'same_text'); skipped++; continue; }
                 }
+                // Редагування повідомлення, на яке бот ще НЕ відповів (21.10, kobrinruslan: «176 см 68 кг Графит» двічі відредаговано на
+                // «Черный», потім «Серый», бот був на паузі й після неї прочитав три повідомлення = «три костюми для трьох людей»): це те саме
+                // повідомлення з новим текстом — замінюємо текст в історії й у пачці, що чекає, а не додаємо нове. Уже відповіли — як раніше
+                // (16.10: дописав телефон у відповіле повідомлення — це нова інформація, на неї треба відповісти).
+                let editInPlace = false;
+                if (m._editOf && text) {
+                    const orig = await db.message.findFirst({ where: { sessionId: session.id, role: 'user', OR: [{ metadata: { path: ['mid'], equals: m._editOf } }, { metadata: { path: ['editOf'], equals: m._editOf } }] }, orderBy: { createdAt: 'desc' }, select: { id: true, content: true, createdAt: true, metadata: true } }).catch(() => null);
+                    if (orig) {
+                        const answered = await db.message.findFirst({ where: { sessionId: session.id, role: 'assistant', createdAt: { gt: orig.createdAt }, NOT: { metadata: { path: ['source'], equals: 'system' } } }, select: { id: true } }).catch(() => ({ id: 'err' }));
+                        if (!answered) {
+                            const om = orig.metadata || {};
+                            await db.message.update({ where: { id: orig.id }, data: { content: text, metadata: Z.cleanJsonDeep({ ...om, edited: (Number(om.edited) || 0) + 1, textBeforeEdit: om.textBeforeEdit || orig.content }) } }).catch(() => {});
+                            let inBatch = false;
+                            for (const map of [_pending, _waiting]) { const pe = map.get(session.id); if (pe && Array.isArray(pe.texts)) { const i = pe.texts.lastIndexOf(orig.content); if (i >= 0) { pe.texts[i] = text; inBatch = true; } } }
+                            logger.info('[metaChannel] клієнт відредагував повідомлення до відповіді — замінюємо текст', { botId, sessionId: session.id, inBatch });
+                            processed++;
+                            if (inBatch) continue; // пачка ще не відпрацювала — вона вже з новим текстом
+                            editInPlace = true; // окремого рядка не створюємо; далі — звичайний хід (якщо бот не на паузі)
+                        }
+                    }
+                }
                 const isEmpty = !text && !p.media.length && !sharedPost && !p.audioUrl && !p.story && !patch.entryAdId;
                 const label = isEmpty ? (p.unsupported ? '[Instagram: непідтримуваний тип повідомлення]' : (p.other.length ? '[службове вкладення Instagram: ' + p.other.map((o) => o.type).join(', ') + ']' : '[порожнє повідомлення]')) : text || (sharedPost && sharedPost.caption ? ('[переслав ' + sharedPost.kind + '] ' + String(sharedPost.caption).slice(0, 80).replace(/\s+/g, ' ')) : (p.media.length > 1 ? '[' + p.media.length + ' медіа]' : p.media[0] ? (p.media[0].type === 'video' ? '[відео]' : '[фото]') : p.audioUrl ? '[голосове]' : p.story ? '[відповідь на сторіз]' : '[порожнє повідомлення]'));
-                await db.message.create({ data: Z.cleanJsonDeep({ sessionId: session.id, role: 'user', content: label, createdAt: p.at, metadata: {
-                    source: 'meta', channel: 'meta', mid: p.mid, platformMessageId: p.mid, channelCreatedAt: p.at.toISOString(), ...(m._fromPostback ? { postback: true } : {}),
+                if (!editInPlace) await db.message.create({ data: Z.cleanJsonDeep({ sessionId: session.id, role: 'user', content: label, createdAt: p.at, metadata: {
+                    source: 'meta', channel: 'meta', mid: p.mid, platformMessageId: p.mid, channelCreatedAt: p.at.toISOString(), ...(m._fromPostback ? { postback: true } : {}), ...(m._editOf ? { editOf: m._editOf } : {}),
                     ...(photo ? { attachment: { type: 'photo', url: photo.url } } : p.media[0] ? { attachment: p.media[0] } : {}),
                     ...(p.media.length > 1 ? { attachments: p.media } : {}), ...(sharedPost ? { sharedPost } : {}),
                     ...(patch.entryAdId ? { adId: patch.entryAdId, referral: patch.lastReferral } : {}), ...(p.story ? { storyId: p.story.id || null } : {}),
@@ -711,7 +750,7 @@ async function handleMetaEvent(webhookBotId, body) {
                     ...(isEmpty && !p.unsupported ? { hidden: true, hiddenReason: 'empty_or_service_attachment' } : {}),
                 } }) });
                 await db.session.update({ where: { id: session.id }, data: { lastActive: new Date() } }).catch(() => {});
-                processed++;
+                if (!editInPlace) processed++;
                 if (isEmpty) { logger.info('[metaChannel] повідомлення без змісту — без ходу', { botId, sessionId: session.id, other: p.other.map((o) => o.type).join(','), unsupported: p.unsupported }); continue; }
                 const _sc = session.context || {}; // профіль від Meta міг не прийти — нікнейм, збережений раніше
                 if (await isBlockedByTestMode(botId, [prof.username, prof.name, _sc.igUsername, _sc.senderName])) continue;
@@ -738,7 +777,7 @@ async function handleMetaEvent(webhookBotId, body) {
                 }
                 // Точний повтор попереднього повідомлення клієнта за 2 хв, на яке бот уже відповів (подвійне натискання кнопки-питання
                 // реклами, 12.10 _marian28_06_: «Яка ціна кофти?» ×2 → картка, а потім ще раз ціна) — записали, окремо не відповідаємо.
-                if (text && !photo && !sharedPost && !patch.entryAdId) {
+                if (text && !photo && !sharedPost && !patch.entryAdId && !editInPlace) {
                     const prevU = await db.message.findFirst({ where: { sessionId: session.id, role: 'user', createdAt: { lt: p.at, gte: new Date(p.at.getTime() - 120 * 1000) } }, orderBy: { createdAt: 'desc' }, select: { content: true, createdAt: true } });
                     const norm = (x) => String(x || '').toLowerCase().replace(/\s+/g, ' ').replace(/[?!.…\s]+$/, '').trim();
                     if (prevU && norm(prevU.content) === norm(text)) {

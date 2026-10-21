@@ -1600,6 +1600,10 @@ async function runPolicyInner(A, u) {
     const { ctx } = A; ctx.agent = ctx.agent || {};
     Q.init(A, u); // реєстр питань ходу (questions.js) — далі питання змінюються лише через Q.cover/Q.add/compose
     const text = String(A.turnText || ''); // на початку: блоки нижче (варіант 3, повернення) пишуть текст клієнта в сповіщення
+    if (A.foreignShare && !text.trim()) {
+        A.out.push({ text: 'Бачу, ви переслали відео з іншої сторінки 🙂 Якщо шукаєте щось у нас — напишіть, що саме цікавить, або перешліть допис з нашої сторінки 💛', step: 'foreign_share' });
+        return;
+    }
     // Номер картки — не телефон (аналізатор інколи читає 16 цифр як номер телефону).
     if (cardIn(text) && u.phone && text.replace(/\D/g, '').includes(String(u.phone).replace(/\D/g, '').replace(/^380/, '0').slice(-9))) u.phone = null;
     // Повернення/обмін/повернення коштів, що вже триває (16.10, Edits: Валентина — фото накладної, якою відправила костюм на обмін, →
@@ -1941,7 +1945,10 @@ async function runPolicyInner(A, u) {
     }
     // Закриття після відмови (14.10, аудит B7: «Скасовую» → «Добре» знову відкрило замовлення; «Гарного дня 🫶» → підсумок).
     // Коротка «згода» без жодних даних протягом доби після відмови — прощання, а не «оформляємо».
-    if (ctx.declinedAt && Date.now() - Number(ctx.declinedAt) < 24 * 3600 * 1000 && (u.ready === 'yes' || u.intent === 'thanks') && !ctx.crmOrderId
+    // «Добре, я куплю» / «Ну так я хочу купити у Вас» (21.10, Дмитро Колісник: двічі «Дякую, гарного дня») — явне бажання купити (аналізатор:
+    // order_yes), а не голе «Добре»: закриваємо лише подяку, голу згоду одним словом або згоду без наміру купити.
+    const bareAck = String(text || '').trim().split(/\s+/).length <= 1;
+    if (ctx.declinedAt && Date.now() - Number(ctx.declinedAt) < 24 * 3600 * 1000 && (u.intent === 'thanks' || (u.ready === 'yes' && (u.intent !== 'order_yes' || bareAck))) && !ctx.crmOrderId
         && !u.productHint.article && !u.productHint.fromList && !u.payMethod && !u.phone && !u.color && !u.colorMatched && !u.clothingSize && !(u.questions || []).length
         && String(text || '').trim().split(/\s+/).length <= 4) {
         A.out.push({ text: 'Дякую! Гарного дня 💛 Якщо передумаєте — пишіть, я тут 🙂', step: 'post_decline_thanks' });
@@ -2684,6 +2691,38 @@ async function runPolicyInner(A, u) {
     if (u.wantsPhoto && !A.turnImage && !A.out.some((o) => o.photoUrls) && !p.isSet) {
         const urlsW = firstPhotoUrls(p);
         if (urlsW.length) A.out.push({ photoUrls: urlsW, caption: '', step: 'photo_on_request' });
+    }
+    // Менше штук того самого товару («Один костюм та одна футболка», 21.10 kobrinruslan: у замовленні 3 костюми, клієнт хоче 1 — бот
+    // показав знову 3 і спитав «що зупиняє?»). Скільки лишити — аналізатор (changeRequest «зменшити до 1 шт»); які саме — колір, що
+    // клієнт назвав цим чи наступним повідомленням; кольори різні й не названо — питаємо. Склад і суму перераховує n_avail.
+    if (p && !p.isSet && !ctx.crmOrderId && Array.isArray(ctx.orderUnits) && ctx.orderUnits.length > 1 && (u.changeRequest || ctx.agent.pendingQtyReduce)) {
+        const WN = { 'одн': 1, 'один': 1, 'дв': 2, 'тр': 3, 'чотир': 4 };
+        const cr = String(u.changeRequest || '');
+        const mN = cr.match(/до\s+(\d+)|(\d+)\s*шт/i) || cr.toLowerCase().match(/(?:до|лиш\S*|тільки)\s+(одн|один|дв|тр|чотир)/);
+        let n = mN ? (Number(mN[1] || mN[2]) || WN[String(mN[1]).toLowerCase()] || 0) : 0;
+        if (!n && ctx.agent.pendingQtyReduce) n = Number(ctx.agent.pendingQtyReduce.n) || 0;
+        if (n >= 1 && n < ctx.orderUnits.length) {
+            const said = [u.colorMatched, u.color].filter(Boolean).map((c) => String(c).toLowerCase());
+            const units = ctx.orderUnits;
+            const distinct = [...new Set(units.map((x) => String(x.color || '').toLowerCase()))];
+            let keep = null;
+            if (distinct.length === 1) keep = units.slice(0, n);
+            else if (said.length) { const k = units.filter((x) => said.some((c) => String(x.color || '').toLowerCase().startsWith(c.slice(0, 4)))); if (k.length >= n) keep = k.slice(0, n); }
+            if (!keep) {
+                ctx.agent.pendingQtyReduce = { n, at: Date.now() };
+                A.out.push({ text: 'Добре, ' + n + ' шт 👍 Який колір лишаємо' + (n > 1 ? ' (' + n + ')' : '') + ': ' + [...new Set(units.map((x) => x.color).filter(Boolean))].join(', ') + '?', step: 'qty_reduce_which' });
+                ctx.agent.lastAsk = 'колір'; return;
+            }
+            delete ctx.agent.pendingQtyReduce; delete ctx.agent.pairSizes; delete ctx.agent.pairWho; delete ctx.agent.pendingUnits; delete ctx.agent.pendingQty;
+            ctx.colorChoice = n === 1 ? { color: keep[0].color, qty: 1 } : { colors: keep.map((x) => x.color), qty: n };
+            if (keep[0].size) ctx.recommendedSize = keep[0].size;
+            delete ctx.orderUnits; delete ctx.orderUnitsText; delete ctx.orderUnitsTotal;
+            await T.checkAvail(A);
+            if (ctx.payAmount) await T.payAmount(A);
+            u.wantsOrderSummary = true; ctx.agent.lastSummaryKey = ctx.agent.lastSummaryKey || 'qty_reduce';
+            if (u.intent === 'order_no') u.intent = 'other'; if (u.ready === 'no') u.ready = null; // це зміна кількості, а не відмова («що зупиняє?»)
+            Q.cover(A, u, () => true, 'qty_reduce');
+        }
     }
     // «Покажіть ще раз замовлення» — показуємо поточний склад, а не «питання вже у менеджера» (сесія f9c2ae98).
     if (ctx.agent.lastSummaryKey && u.wantsOrderSummary) {

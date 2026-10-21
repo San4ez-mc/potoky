@@ -152,6 +152,13 @@ if (wants.some(function (w) { return __MATERIAL.indexOf(w) < 0; })) wants = want
 // кандидати — усі товари, що ЗАРАЗ рекламуються (те саме правило активних реклам нижче: один/явний лідер → картка, інакше список
 // рекламованих), а не питання «що цікавить — костюми, куртки…». Без активних реклам — як раніше.
 var __noCatAds = false;
+// Ознаки від аналізатора («зимові», «утеплені») — 21.10, Дмитро Колісник: «Куртки» → список з бомберами, «Мені потрібні зимові» → «що шукаєте?»,
+// «Куртки зимові» → знову бомбери. Уточнення показаного списку без категорії — категорії беремо з товарів цього списку.
+var __feat = Array.isArray(context._searchFeatures) ? context._searchFeatures.map(String).filter(Boolean) : [];
+if (!wants.length && __feat.length && String(context.catalogHintSkus || '')) {
+  var __onScreen = String(context.catalogHintSkus).split(',').map(function (x) { return x.trim().toUpperCase(); });
+  all.filter(function (p) { return __onScreen.indexOf(String(p.sku).toUpperCase()) >= 0; }).forEach(function (p) { var cn = String(cats[p.categoryId] || '').toLowerCase().replace(/[иіїєюя]$/, ''); if (cn.length >= 3 && wants.indexOf(cn) < 0) wants.push(cn); });
+}
 if (!wants.length) {
   if (context._hintNoRef !== true || context.entryAdId || String(context.catalogHintSkus || '')) return out('', 0, catList);
   __noCatAds = true;
@@ -196,6 +203,14 @@ function __ov(p) { var h = hay(p); var n = 0; __mw.forEach(function (w) { if (h.
 hits.sort(function (a, b) { return (__ov(b) - __ov(a)) || ((Number(a.price) || 0) - (Number(b.price) || 0)); });
 // Клієнту потрібен конкретний розмір (більший за попередню модель — agent.needSize; 21.10, iaroslavgavrilishen: «А які є костюми? XXXL» —
 // показано чотири костюми, XXXL лише в одного): у списку лише товари, де цей розмір є в наявності. Жодного — список як є.
+// Список — лише товари з цією ознакою в даних CRM (назва, текст картки, нотатки, категорія: «Сезон: осінь, зима»). Короткі слова — за 3 літерами
+// («зимові» ≈ «зима»), довші — за 5. Жодного збігу — список як є (картка кожного товару чесно скаже, що він такий).
+if (__feat.length) {
+  var __fst = __feat.map(function (f) { var w = String(f).toLowerCase().replace(/[^а-яіїєґa-z]/gi, ''); return w.length <= 6 ? w.slice(0, 3) : w.slice(0, 5); }).filter(function (x) { return x.length >= 3; });
+  var __ptext = function (p) { return [p.name, p.customerName, p.presentationText, p.aiNotes, p.description, cats[p.categoryId]].filter(Boolean).join(' ').toLowerCase(); };
+  var __byF = __fst.length ? hits.filter(function (p) { var t = __ptext(p); return __fst.every(function (st) { return t.indexOf(st) >= 0; }); }) : [];
+  if (__byF.length) hits = __byF;
+}
 if (context._needSize) { var __hasSz = require('./catalogFacts').productHasSize; var __bySz = hits.filter(function (p) { return __hasSz(p, context._needSize); }); if (__bySz.length) hits = __bySz; }
 // 2026-10-03 (категорія «Розпізнавання товару»; Edits fafba197/af603158/951031bf, рішення власника): ≈22% розмов Zernio приходять
 // без даних реклами — клієнт пише «Яка ціна кофти?» у відповідь на рекламу, а бот бачить лише слово «кофта» і показує

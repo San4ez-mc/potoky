@@ -47,7 +47,8 @@ function stripAskSentences(text, isAsk) {
 function paragraphize(text) {
     const s = String(text || '').trim();
     if (s.length < 140 || s.includes('\n')) return s;
-    const parts = s.split(/(?<=[^\d\s][.!?…])\s+(?=[А-ЯІЇЄҐA-Z«"])|(?<=\p{Extended_Pictographic}️?)\s+(?=[А-ЯІЇЄҐA-Z«"])/u).map((x) => x.trim()).filter(Boolean);
+    // Крапка скорочення («арт. D0043», «грн.», «напр.») — не кінець речення (21.10, Edit 9fc5267f: абзац усередині «(арт. D0043)»).
+    const parts = s.split(/(?<=[^\d\s][.!?…])(?<!(?:^|[\s(])(?:арт|Арт|АРТ|грн|шт|напр|див|вул|обл|тис|см|кг|ст|м)\.)\s+(?=[А-ЯІЇЄҐA-Z«"])|(?<=\p{Extended_Pictographic}️?)\s+(?=[А-ЯІЇЄҐA-Z«"])/u).map((x) => x.trim()).filter(Boolean);
     const paras = [];
     for (const p of parts) { if (paras.length && paras[paras.length - 1].length < 40) paras[paras.length - 1] += ' ' + p; else paras.push(p); }
     // Нумерований перелік в одному реченні («1. Кофта … 2. Джинси …») — кожен пункт з нового рядка.
@@ -186,6 +187,8 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
     try { turnKeys = Object.assign({}, assets.keys, { __geminiKeys: await geminiKeys(botId, assets.keys) }); } catch (e) { /* лишаємо як є */ }
     const rec = recoverManagerLedSignal(ctx, history, { sharedPost, entryAdId, imageUrl });
     const A = { botId, session, ctx, keys: turnKeys, assets, user: session.user ? { id: session.user.id, firstName: session.user.firstName, username: session.user.username } : {}, trace: [], out: [], turnText: String(text || ''), turnImage: imageUrl || null, turnSharedPost: sharedPost || (ctx.sharedPost && (ctx.hasFreshSignalThisTurn || rec.sharedPost) ? ctx.sharedPost : null), newEntryAd: newEntryAd || rec.entryAd, turnStory: storyId || null, history, botSpokeBefore };
+    // Чужий допис без тексту клієнта — не сигнал товару (21.10, fedoriakryslana): ні пошуку за ним, ні старої реклами; policy коротко перепитає.
+    if (A.turnSharedPost && A.turnSharedPost.foreign && !String(text || '').trim()) { A.foreignShare = A.turnSharedPost; A.turnSharedPost = null; delete ctx.sharedPost; delete ctx.hasFreshSignalThisTurn; }
     A.recovered = rec; // сигнал товару, піднятий з памʼяті розмови менеджера (не з цього ходу) — policy відрізняє його від справді нового
     if (rec.sharedPost || rec.entryAd) A.trace.push({ tool: 'managerLedRecover', sharedPost: !!rec.sharedPost, entryAd: rec.entryAd });
     if (session.isTest || ctx.testMode) ctx.testMode = true;

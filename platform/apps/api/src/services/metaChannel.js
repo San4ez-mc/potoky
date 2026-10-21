@@ -52,6 +52,37 @@ async function token(botId) {
     if (!t || t === 'REPLACE_ME') throw new Error('немає INSTAGRAM_ACCESS_TOKEN');
     return t;
 }
+// ── Автооновлення токена Instagram (21.10): токен живе 60 днів, Meta продовжує його ще на 60, лише поки він живий (і старший за
+// добу). 20.10 о 23:10 токен goverla сплив — бот ~11 год не міг відповісти жодному клієнту, а продовжити вже було неможливо.
+// Раз на 12 год продовжуємо токен кожної воронки з INBOUND_CHANNEL; не вийшло — сигнал у групу менеджерів (раз на 6 год).
+const _tokAlertAt = new Map();
+async function refreshTokens() {
+    try {
+        const bots = await db.funnelKey.findMany({ where: { key: 'INBOUND_CHANNEL' }, select: { botId: true } });
+        for (const { botId } of bots) {
+            const row = await db.funnelKey.findFirst({ where: { botId, key: 'INSTAGRAM_ACCESS_TOKEN' }, select: { value: true } });
+            const t = String((row && row.value) || '').trim();
+            if (!t || t === 'REPLACE_ME') continue;
+            let err = '';
+            try {
+                const r = await fetch('https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token&access_token=' + encodeURIComponent(t));
+                const j = await r.json().catch(() => ({}));
+                if (r.ok && j.access_token) {
+                    if (j.access_token !== t) await db.funnelKey.update({ where: { botId_key: { botId, key: 'INSTAGRAM_ACCESS_TOKEN' } }, data: { value: j.access_token } });
+                    logger.info('[metaChannel] токен Instagram продовжено', { botId, days: Math.round(Number(j.expires_in || 0) / 86400) });
+                    continue;
+                }
+                err = (j.error && j.error.message) || ('HTTP ' + r.status);
+            } catch (e) { err = e.message; }
+            logger.warn('[metaChannel] токен Instagram не продовжено: ' + err, { botId });
+            if (Date.now() - (_tokAlertAt.get(botId) || 0) < 6 * 3600 * 1000) continue;
+            _tokAlertAt.set(botId, Date.now());
+            await Z.sendTelegramAlert(botId, '⚠️ Токен Instagram не вдалося продовжити: ' + String(err).slice(0, 200) + '\nЯкщо він сплив — бот не може відповідати клієнтам. Потрібен новий токен у ключі воронки INSTAGRAM_ACCESS_TOKEN (Meta for Developers → застосунок → Instagram → Generate token).', null).catch(() => {});
+        }
+    } catch (e) { logger.warn('[metaChannel] refreshTokens: ' + e.message); }
+}
+setTimeout(refreshTokens, 2 * 60 * 1000).unref(); setInterval(refreshTokens, 12 * 3600 * 1000).unref();
+
 async function ownIgId(botId) {
     const row = await db.funnelKey.findFirst({ where: { botId, key: 'INSTAGRAM_BUSINESS_ID' }, select: { value: true } });
     return String((row && row.value) || '').trim();

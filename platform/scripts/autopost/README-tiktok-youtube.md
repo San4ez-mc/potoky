@@ -40,7 +40,7 @@ content2 (планувальник) → воронка `content-scheduler` → �
 3. У тому ж розділі: **Redirect URL** = https://flows.fineko.space/webhook/bot/oauth-video ; акаунт Instagram додати в **Instagram testers** (App roles → Roles) і прийняти запрошення в застосунку Instagram.
 4. Скопіювати **Instagram app ID** і **Instagram app secret** у ключі воронки oauth-video (IG_APP_ID, IG_APP_SECRET).
 5. POST /webhook/bot/oauth-video {"platform":"instagram"} → у Telegram посилання → згода в Instagram → з адресного рядка скопіювати code= (без #_) → POST {"platform":"instagram","code":"..."} → «Instagram підключено».
-6. Токен довгий (60 днів) і оновлюється сам. Публікація без медіа неможлива (текст без картинки Instagram не приймає). PNG автоматично конвертується в JPEG через content2 (/api/public-jpeg).
+6. Токен довгий (60 днів) і оновлюється сам. Публікація без медіа неможлива (текст без картинки Instagram не приймає). PNG автоматично конвертується в JPEG через content2 (/api/webhooks/public-jpeg).
 7. Режим розробки Meta: публікувати можуть лише акаунти-тестери додатку; для чужих акаунтів потрібен App Review (для власного акаунта KIRO не потрібен).
 8. Увімкнути в мережі KIRO Instagram: post_directly = true, autopost_slug = publish-instagram.
 

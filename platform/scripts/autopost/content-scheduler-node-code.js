@@ -80,7 +80,8 @@ if (mode === 'digest') {
         const chain = [];
         for (const item of (post.items||[])) {
           const t = (item.content||'').trim();
-          if (!t) continue;
+          // слайди каруселі Instagram можуть бути без тексту (лише картинка) — їх не відкидаємо; для інших мереж порожній item пропускаємо як раніше
+          if (!t && !(item.imagePath && /^instagram/.test(String(post.platform || '')))) continue;
           const one = { text: t };
           if (item.imagePath) {
             const u = item.imagePath.startsWith('http') ? item.imagePath : NEXTAUTH_URL+item.imagePath;

@@ -58,7 +58,7 @@ return (async () => {
     u = String(u || '');
     if (!u || /\.(jpe?g)(\?|$)/i.test(u)) return u;
     var m = u.match(/^https?:\/\/[^/]+(\/uploads\/[^?#]+)/i);
-    return m ? (c2 + '/api/public-jpeg?p=' + encodeURIComponent(m[1])) : u;
+    return m ? (c2 + '/api/webhooks/public-jpeg?p=' + encodeURIComponent(m[1])) : u;
   }
   var images = items.map(function (x) { return x && x.imageUrl ? jpegUrl(x.imageUrl) : ''; }).filter(Boolean).slice(0, 10);
   var video = first.videoUrl || '';

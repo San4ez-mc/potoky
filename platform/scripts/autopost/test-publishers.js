@@ -374,7 +374,7 @@ async function t(name, fn) { try { await fn(); passed++; console.log('✅', name
         const calls = igMock();
         await run('publish-instagram-node-code.js', { items: [{ text: 'підпис', imageUrl: 'https://content2.fineko.space/uploads/media/p1/a.png' }] }, igKeys);
         const body = decodeURIComponent(String(has(calls, '/igu/media', 'POST')[0].body));
-        assert.ok(body.includes('image_url=https://content2.fineko.space/api/public-jpeg?p=%2Fuploads%2Fmedia%2Fp1%2Fa.png'), body);
+        assert.ok(body.includes('image_url=https://content2.fineko.space/api/webhooks/public-jpeg?p=%2Fuploads%2Fmedia%2Fp1%2Fa.png'), body);
         assert.ok(!body.includes('media_type'), 'для одного фото media_type не потрібен');
     });
     await t('instagram: кілька фото → карусель (діти + батьківський контейнер)', async () => {

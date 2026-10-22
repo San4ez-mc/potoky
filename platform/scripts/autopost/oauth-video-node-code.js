@@ -18,7 +18,44 @@ return (async () => {
     return true;
   }
 
-  if (platform !== 'tiktok' && platform !== 'youtube') return msg('⚠️ OAuth відео: вкажи platform = "tiktok" або "youtube".', { oauthOk: false });
+  if (platform !== 'tiktok' && platform !== 'youtube' && platform !== 'instagram') return msg('⚠️ OAuth: вкажи platform = "tiktok", "youtube" або "instagram".', { oauthOk: false });
+
+  // ── Instagram (Instagram API with Instagram Login): публікація фото/каруселей/Reels ───────────────
+  // Ключі цієї воронки: IG_APP_ID, IG_APP_SECRET (Meta for Developers → додаток → Instagram → API setup with Instagram login),
+  // PUBLISH_INSTAGRAM_BOT_ID. Токен: код → короткий токен → довгий (60 днів); публікатор сам його оновлює.
+  if (platform === 'instagram') {
+    var igRedirect = k.IG_REDIRECT_URI || redirect;
+    if (!context.code) {
+      if (!k.IG_APP_ID) return msg('⚠️ Instagram OAuth: спершу впиши IG_APP_ID і IG_APP_SECRET у ключі воронки oauth-video (Meta for Developers → додаток → Instagram → API setup with Instagram login).', { oauthOk: false });
+      var iu = 'https://www.instagram.com/oauth/authorize?client_id=' + encodeURIComponent(k.IG_APP_ID) + '&redirect_uri=' + encodeURIComponent(igRedirect) +
+        '&response_type=code&scope=' + encodeURIComponent('instagram_business_basic,instagram_business_content_publish') + '&state=kiro';
+      return msg('🔗 Instagram: відкрий посилання в браузері, де виконано вхід в акаунт Instagram, який публікуватиме (професійний: Business або Creator), і дай згоду. Потім скопіюй з адресного рядка значення code= (без #_ наприкінці) і надішли його мені.\n' + iu, { oauthOk: true, oauthStep: 'url' });
+    }
+    var icode = String(context.code).replace(/#_$/, '').replace(/#.*$/, '');
+    try { icode = decodeURIComponent(icode); } catch (e) {}
+    try {
+      var sr = await fetch('https://api.instagram.com/oauth/access_token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'client_id=' + encodeURIComponent(k.IG_APP_ID) + '&client_secret=' + encodeURIComponent(k.IG_APP_SECRET) + '&grant_type=authorization_code&redirect_uri=' + encodeURIComponent(igRedirect) + '&code=' + encodeURIComponent(icode) });
+      var sj = await sr.json().catch(function () { return {}; });
+      var short = (sj && sj.data && sj.data[0]) ? sj.data[0] : sj;          // Meta віддає або {access_token,user_id}, або {data:[{…}]}
+      if (!short || !short.access_token) return msg('⚠️ Instagram OAuth: не вдалось обміняти code (він одноразовий і живе кілька хвилин).\n' + JSON.stringify(sj).slice(0, 400), { oauthOk: false });
+      var lr = await fetch('https://graph.instagram.com/access_token?grant_type=ig_exchange_token&client_secret=' + encodeURIComponent(k.IG_APP_SECRET) + '&access_token=' + encodeURIComponent(short.access_token));
+      var lj = await lr.json().catch(function () { return {}; });
+      if (!lj.access_token) return msg('⚠️ Instagram OAuth: не вдалось отримати довгий токен.\n' + JSON.stringify(lj).slice(0, 400), { oauthOk: false });
+      var mr = await fetch('https://graph.instagram.com/v21.0/me?fields=user_id,username,account_type&access_token=' + encodeURIComponent(lj.access_token));
+      var mj = await mr.json().catch(function () { return {}; });
+      var igId = String(mj.user_id || short.user_id || '');
+      if (!igId) return msg('⚠️ Instagram OAuth: токен є, але не вдалось дізнатись id акаунта. ' + JSON.stringify(mj).slice(0, 200), { oauthOk: false });
+      var ib = k.PUBLISH_INSTAGRAM_BOT_ID;
+      await writeKey(ib, 'IG_USER_ID', igId, 'Instagram user id', false);
+      await writeKey(ib, 'IG_ACCESS_TOKEN', lj.access_token, 'Instagram long-lived access token (оновлюється автоматично)', true);
+      await writeKey(ib, 'IG_TOKEN_ISSUED_AT', Date.now(), 'Коли токен Instagram видано/оновлено (мс)', false);
+      var warn = (mj.account_type && mj.account_type !== 'BUSINESS' && mj.account_type !== 'MEDIA_CREATOR') ? '\n⚠️ Акаунт має тип ' + mj.account_type + ' — для публікації потрібен професійний (Business або Creator).' : '';
+      return msg('✅ Instagram підключено: @' + (mj.username || '?') + ' (' + (mj.account_type || 'тип невідомий') + '). Токен записано у воронку publish-instagram (діє ~60 днів, оновлюється автоматично).' + warn, { oauthOk: true, oauthStep: 'done' });
+    } catch (e) {
+      return msg('⚠️ OAuth instagram: ' + String(e.message).slice(0, 300), { oauthOk: false });
+    }
+  }
 
   // ── крок 1: посилання для авторизації ───────────────────────────────────
   if (!context.code) {

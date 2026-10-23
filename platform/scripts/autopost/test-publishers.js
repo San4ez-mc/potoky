@@ -349,5 +349,103 @@ async function t(name, fn) { try { await fn(); passed++; console.log('✅', name
         const cbs = has(calls, 'c2/done').map((c) => JSON.parse(c.body)); assert.strictEqual(cbs.length, 1); assert.strictEqual(cbs[0].status, 'published');
     });
 
+    // ── Instagram: публікатор (Reels / фото / карусель) і OAuth ─────────────────────────────────────
+    const igKeys = { IG_USER_ID: 'igu', IG_ACCESS_TOKEN: 'IGTOK', IG_TOKEN_ISSUED_AT: String(Date.now()), SELF_BOT_ID: 'ig-bot', MCP_SECRET: 'm' };
+    const isIgMedia = (u, o) => /\/igu\/media(\?|$)/.test(u) && (o.method || 'GET') === 'POST';
+    const igMock = (extra) => mockFetch([].concat(extra || [], [
+        { when: (u) => u.includes('?fields=status_code'), reply: resp({ status_code: 'FINISHED' }) },
+        { when: (u) => u.includes('/media_publish'), reply: resp({ id: 'm-final' }) },
+        { when: (u) => u.includes('?fields=permalink'), reply: resp({ permalink: 'https://www.instagram.com/reel/XYZ/' }) },
+        { when: (u, o) => isIgMedia(u, o), reply: (u, o, calls) => resp({ id: 'c' + calls.filter((c) => /\/igu\/media(\?|$)/.test(c.url) && c.method === 'POST').length }) },
+        { when: (u) => u.includes('/api/mcp-edit'), reply: resp({ result: {} }) },
+    ]));
+    await t('instagram: відео → Reels (контейнер → FINISHED → публікація), callback з permalink, повідомлення зі схованим посиланням', async () => {
+        const calls = igMock();
+        const r = await run('publish-instagram-node-code.js', { items: [{ text: 'Привіт <KIRO> & друзі', videoUrl: 'https://c2/v.mp4' }], postGroupId: 'g1', callbackUrl: 'https://c2/cb' }, igKeys);
+        assert.strictEqual(r.publishError, null); assert.strictEqual(r.mediaId, 'm-final');
+        const body = decodeURIComponent(String(has(calls, '/igu/media', 'POST')[0].body));
+        assert.ok(body.includes('media_type=REELS') && body.includes('video_url=https://c2/v.mp4') && body.includes('share_to_feed=true'));
+        assert.ok(r.publishedMessage.startsWith('✅ <a href="https://www.instagram.com/reel/XYZ/">Опубліковано в Instagram</a> (Reels)'), r.publishedMessage);
+        assert.ok(r.publishedMessage.includes('Привіт &lt;KIRO&gt; &amp; друзі'));
+        const cb = JSON.parse(has(calls, 'c2/cb')[0].body); assert.strictEqual(cb.status, 'published'); assert.strictEqual(cb.externalId, 'm-final'); assert.strictEqual(cb.platform, 'instagram');
+        assert.strictEqual(has(calls, 'refresh_access_token').length, 0, 'свіжий токен не оновлюємо');
+    });
+    await t('instagram: PNG з content2 йде через конвертер у JPEG; одне фото без media_type', async () => {
+        const calls = igMock();
+        await run('publish-instagram-node-code.js', { items: [{ text: 'підпис', imageUrl: 'https://content2.fineko.space/uploads/media/p1/a.png' }] }, igKeys);
+        const body = decodeURIComponent(String(has(calls, '/igu/media', 'POST')[0].body));
+        assert.ok(body.includes('image_url=https://content2.fineko.space/api/webhooks/public-jpeg?p=%2Fuploads%2Fmedia%2Fp1%2Fa.png'), body);
+        assert.ok(!body.includes('media_type'), 'для одного фото media_type не потрібен');
+    });
+    await t('instagram: кілька фото → карусель (діти + батьківський контейнер)', async () => {
+        const calls = igMock();
+        const r = await run('publish-instagram-node-code.js', { items: [{ text: 'x', imageUrl: 'https://h/1.jpg' }, { imageUrl: 'https://h/2.jpg' }, { imageUrl: 'https://h/3.jpg' }] }, igKeys);
+        assert.strictEqual(r.publishError, null);
+        const posts = calls.filter((c) => /\/igu\/media(\?|$)/.test(c.url) && c.method === 'POST').map((c) => decodeURIComponent(String(c.body)));
+        assert.strictEqual(posts.length, 4, '3 діти + 1 батьківський');
+        assert.ok(posts.slice(0, 3).every((b) => b.includes('is_carousel_item=true')));
+        assert.ok(posts[3].includes('media_type=CAROUSEL') && posts[3].includes('children=c1,c2,c3'), posts[3]);
+        assert.ok(/карусель \(3\)/.test(r.publishedMessage));
+    });
+    await t('instagram: без медіа — чесна помилка і callback failed; без ключів — підказка підключити', async () => {
+        const calls = igMock();
+        let r = await run('publish-instagram-node-code.js', { items: [{ text: 'лише текст' }], postGroupId: 'g2', callbackUrl: 'https://c2/cb' }, igKeys);
+        assert.ok(/NO_MEDIA/.test(r.publishError)); assert.strictEqual(has(calls, '/igu/media', 'POST').length, 0);
+        assert.strictEqual(JSON.parse(has(calls, 'c2/cb')[0].body).status, 'failed');
+        mockFetch([]);
+        r = await run('publish-instagram-node-code.js', { items: [{ text: 'x', videoUrl: 'https://v/x.mp4' }] }, {});
+        assert.ok(/NEED_INSTAGRAM_KEYS/.test(r.publishError));
+    });
+    await t('instagram: помилка контейнера ERROR → failed без публікації; тимчасовий збій публікації повторюється', async () => {
+        let calls = mockFetch([
+            { when: (u, o) => isIgMedia(u, o), reply: resp({ id: 'cx' }) },
+            { when: (u) => u.includes('?fields=status_code'), reply: resp({ status_code: 'ERROR', status: 'bad video' }) },
+        ]);
+        let r = await run('publish-instagram-node-code.js', { items: [{ text: 'x', videoUrl: 'https://v/x.mp4' }] }, igKeys);
+        assert.ok(/MEDIA_FAILED ERROR/.test(r.publishError)); assert.strictEqual(has(calls, '/media_publish').length, 0);
+        let tries = 0;
+        calls = igMock([{ when: (u) => u.includes('/media_publish'), reply: () => (++tries < 3 ? resp({ error: { code: 2, message: 'tmp' } }, { status: 500 }) : resp({ id: 'm-final' })) }]);
+        r = await run('publish-instagram-node-code.js', { items: [{ text: 'x', videoUrl: 'https://v/x.mp4' }] }, igKeys);
+        assert.strictEqual(r.publishError, null); assert.strictEqual(tries, 3);
+    });
+    await t('instagram: токен старший за 30 днів → оновлюється й записується в ключі', async () => {
+        const old = Object.assign({}, igKeys, { IG_TOKEN_ISSUED_AT: String(Date.now() - 40 * 86400000) });
+        const calls = igMock([{ when: (u) => u.includes('refresh_access_token'), reply: resp({ access_token: 'NEWIG', expires_in: 5184000 }) }]);
+        const r = await run('publish-instagram-node-code.js', { items: [{ text: 'x', videoUrl: 'https://v/x.mp4' }] }, old);
+        assert.strictEqual(r.publishError, null);
+        const writes = has(calls, '/api/mcp-edit').map((c) => JSON.parse(c.body).params.arguments);
+        assert.deepStrictEqual(writes.map((w) => w.key).sort(), ['IG_ACCESS_TOKEN', 'IG_TOKEN_ISSUED_AT']);
+        assert.strictEqual(writes.find((w) => w.key === 'IG_ACCESS_TOKEN').value, 'NEWIG');
+        assert.ok(decodeURIComponent(has(calls, '/igu/media', 'POST')[0].body).includes('access_token=NEWIG'), 'публікація вже новим токеном');
+    });
+    await t('oauth: Instagram — крок 1 дає посилання з потрібними правами; code → довгий токен у publish-instagram', async () => {
+        const iKeys = { IG_APP_ID: 'app1', IG_APP_SECRET: 'sec1', MCP_SECRET: 'm', PUBLISH_INSTAGRAM_BOT_ID: 'ig-bot' };
+        let r = await run('oauth-video-node-code.js', { platform: 'instagram' }, iKeys);
+        assert.ok(r.oauthMessage.includes('instagram.com/oauth/authorize?client_id=app1') && r.oauthMessage.includes('instagram_business_content_publish'));
+        r = await run('oauth-video-node-code.js', { platform: 'instagram' }, {}); assert.ok(/IG_APP_ID/.test(r.oauthMessage)); assert.strictEqual(r.oauthOk, false);
+        const calls = mockFetch([
+            { when: (u) => u.includes('api.instagram.com/oauth/access_token'), reply: resp({ data: [{ access_token: 'SHORT', user_id: 7, permissions: 'x' }] }) },
+            { when: (u) => u.includes('ig_exchange_token'), reply: resp({ access_token: 'LONG', expires_in: 5184000 }) },
+            { when: (u) => u.includes('/me?fields='), reply: resp({ user_id: '1789', username: 'kiro.ukraine', account_type: 'BUSINESS' }) },
+            { when: (u) => u.includes('mcp-edit'), reply: resp({ result: {} }) },
+        ]);
+        r = await run('oauth-video-node-code.js', { platform: 'instagram', code: 'AQabc#_' }, iKeys);
+        assert.strictEqual(r.oauthOk, true); assert.ok(r.oauthMessage.includes('@kiro.ukraine'));
+        const exch = String(has(calls, 'api.instagram.com/oauth/access_token')[0].body);
+        assert.ok(exch.endsWith('code=AQabc'), '#_ відрізано: ' + exch);
+        const writes = has(calls, 'mcp-edit').map((c) => JSON.parse(c.body).params.arguments);
+        assert.deepStrictEqual(writes.map((w) => w.key).sort(), ['IG_ACCESS_TOKEN', 'IG_TOKEN_ISSUED_AT', 'IG_USER_ID']);
+        assert.ok(writes.every((w) => w.botId === 'ig-bot'));
+        assert.strictEqual(writes.find((w) => w.key === 'IG_ACCESS_TOKEN').value, 'LONG');
+        mockFetch([
+            { when: (u) => u.includes('api.instagram.com/oauth/access_token'), reply: resp({ access_token: 'S', user_id: 7 }) },
+            { when: (u) => u.includes('ig_exchange_token'), reply: resp({ access_token: 'L' }) },
+            { when: (u) => u.includes('/me?fields='), reply: resp({ user_id: '1', username: 'x', account_type: 'PERSONAL' }) },
+            { when: (u) => u.includes('mcp-edit'), reply: resp({}) },
+        ]);
+        r = await run('oauth-video-node-code.js', { platform: 'instagram', code: 'c' }, iKeys);
+        assert.ok(/професійний/.test(r.oauthMessage), 'особистий акаунт → попередження');
+    });
+
     console.log(process.exitCode ? '\nFAILED' : `\nAll ${passed} publisher tests passed`);
 })();

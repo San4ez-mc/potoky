@@ -33,5 +33,16 @@ content2 (планувальник) → воронка `content-scheduler` → �
 Після підключення: у мережі KIRO TikTok → `post_directly = true`, `autopost_slug = publish-tiktok`; YouTube → `publish-youtube-shorts`.
 Один раз спробувати на одному ролику; результат прийде в Telegram і в календар.
 
+## Instagram (Reels, фото, каруселі)
+Публікатор: воронка **publish-instagram** (код publish-instagram-node-code.js, мок-тести test-publishers.js). Використовує Instagram API з входом через Instagram (без Facebook-сторінки).
+1. Акаунт Instagram має бути **професійним** (Business або Creator): Instagram → Налаштування → Тип акаунта.
+2. https://developers.facebook.com → додаток → **Add product → Instagram → API setup with Instagram login**. Права: instagram_business_basic, instagram_business_content_publish.
+3. У тому ж розділі: **Redirect URL** = https://flows.fineko.space/webhook/bot/oauth-video ; акаунт Instagram додати в **Instagram testers** (App roles → Roles) і прийняти запрошення в застосунку Instagram.
+4. Скопіювати **Instagram app ID** і **Instagram app secret** у ключі воронки oauth-video (IG_APP_ID, IG_APP_SECRET).
+5. POST /webhook/bot/oauth-video {"platform":"instagram"} → у Telegram посилання → згода в Instagram → з адресного рядка скопіювати code= (без #_) → POST {"platform":"instagram","code":"..."} → «Instagram підключено».
+6. Токен довгий (60 днів) і оновлюється сам. Публікація без медіа неможлива (текст без картинки Instagram не приймає). PNG автоматично конвертується в JPEG через content2 (/api/webhooks/public-jpeg).
+7. Режим розробки Meta: публікувати можуть лише акаунти-тестери додатку; для чужих акаунтів потрібен App Review (для власного акаунта KIRO не потрібен).
+8. Увімкнути в мережі KIRO Instagram: post_directly = true, autopost_slug = publish-instagram.
+
 ## Що ще не зроблено
-Instagram Reels (потрібен публікатор через Meta Graph API: `media_type=REELS`).
+Кросс-постинг одного ролика одразу в TikTok / Reels / Shorts (зараз кожна мережа має свої пости).

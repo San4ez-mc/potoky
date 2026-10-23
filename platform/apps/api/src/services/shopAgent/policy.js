@@ -1642,6 +1642,27 @@ async function runPolicyInner(A, u) {
     Q.init(A, u); // реєстр питань ходу (questions.js) — далі питання змінюються лише через Q.cover/Q.add/compose
     const text = String(A.turnText || ''); // на початку: блоки нижче (варіант 3, повернення) пишуть текст клієнта в сповіщення
     if (await reduceSameItemQty(A, u)) return;
+    // Після передачі менеджеру бот НЕ на паузі (рішення власника 23.10). Повідомлення без нових даних («Ау?», «Є хто?», те саме ще раз) —
+    // коротко «менеджер уже в курсі», а не скрипт продажу заново (тест 123: «Ау?» → «що вас цікавить — костюми, куртки…»).
+    {
+        const lh = ctx.agent.lastHandoff;
+        if (lh && Date.now() - Number(lh.at || 0) < 3 * 3600 * 1000 && !ctx.crmOrderId) {
+            const newData = u.height || u.weight || u.color || u.colorMatched || u.clothingSize || u.phone || u.city || u.branch || u.fullName || u.payMethod
+                || u.ready === 'yes' || u.wantsPhoto || u.wantsSizeChart || u.wantsUpsellPhoto || u.wantsOrderSummary || A.turnImage || A.turnSharedPost || A.newEntryAd || A.turnStory
+                || (u.productHint && (u.productHint.article || u.productHint.fromList || u.productHint.category)) || (u.questions || []).length || u.changeRequest || u.returnRequest || u.statusQuestion;
+            if (!newData) {
+                const upset = /^(complaint|annoyed|unresolved_insist|loop)$/.test(String(lh.reason || ''));
+                A.out.push({ text: (upset ? 'Розумію 🙏 ' : '') + 'Менеджер уже в курсі й напише вам тут найближчим часом' + (upset ? '.' : ' 🙏 Якщо маєте ще питання — пишіть, я поруч.'), step: 'handoff_wait' });
+                return;
+            }
+        }
+    }
+    // «Скиньте ще фото» на будь-якому етапі, зокрема під час вибору оплати (тест 121: після скарги бот проігнорував прохання фото й удруге
+    // запропонував способи оплати) — фото товару одразу, далі — звичайний хід.
+    if (u.wantsPhoto && P(ctx) && !P(ctx).isSet && !A.turnImage && !A.turnSharedPost && !(u.productHint && (u.productHint.article || u.productHint.fromList)) && ctx.agent.lastSummaryKey) {
+        const urlsW0 = firstPhotoUrls(P(ctx));
+        if (urlsW0.length) { A.out.push({ photoUrls: urlsW0, caption: '', step: 'photo_on_request' }); u.wantsPhoto = false; Q.coverTopics(A, u, ['photo'], 'photo_on_request'); }
+    }
     if (A.foreignShare && !text.replace(/\[переслав[^\]]*\][^\n]*/gi, '').trim()) {
         A.out.push({ text: 'Бачу, ви переслали відео з іншої сторінки 🙂 Якщо шукаєте щось у нас — напишіть, що саме цікавить, або перешліть допис з нашої сторінки 💛', step: 'foreign_share' });
         return;

@@ -177,6 +177,11 @@ export const api = {
     startFunnelTestJob: (testId) => req('POST', `/admin/tests/${testId}/run-async`),
     getFunnelTestJob: (jobId) => req('GET', `/admin/test-jobs/${jobId}`),
 
+    // ШІ-продавці експертів (дані в content2, проксі через /api/sellers)
+    getSellers: () => req('GET', '/sellers'),
+    getSeller: (projectId) => req('GET', `/sellers/${projectId}`),
+    saveSeller: (projectId, patch) => req('PUT', `/sellers/${projectId}`, patch),
+
     // Broadcasts
     getBroadcastEligibleBots: () => req('GET', '/broadcasts/eligible-bots'),
     getBroadcastSubscribers: (botIds) => req('GET', `/broadcasts/subscribers?botIds=${botIds.join(',')}`),

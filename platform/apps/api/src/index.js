@@ -25,6 +25,7 @@ const funnelsRouter = require('./routes/funnels');
 const ragRouter = require('./routes/rag');
 const webSearchRouter = require('./routes/websearch');
 const sellerDossierRouter = require('./routes/sellerDossier');
+const { createSellersRouter } = require('./routes/sellers');
 const remindersRouter = require('./routes/reminders');
 const alertsRouter = require('./routes/alerts');
 const connectorsRouter = require('./routes/connectors');
@@ -205,6 +206,8 @@ app.use('/api/rag', ragRouter);
 app.use('/api/websearch', webSearchRouter);
 // Досьє експерта (онбординг ШІ-продавця): секрет у заголовку, не сесія адмінки.
 app.use('/api/seller-dossier', sellerDossierRouter);
+// Сторінка «ШІ-продавці»: налаштування продавців експертів (дані в content2). Лише superadmin.
+app.use('/api/sellers', authMiddleware, requireSuperadmin, createSellersRouter({ db: require('@platform/db').db }));
 app.use('/api/reminders', remindersRouter);
 // Технічні сповіщення власнику: свій секрет у заголовку, не сесія адмінки.
 app.use('/api/alerts', alertsRouter);

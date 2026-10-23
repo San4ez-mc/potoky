@@ -14,7 +14,11 @@ const { db } = require('@platform/db');
 
 const SLUG = 'onboard-seller';
 const PROJECT_SLUG = 'content-platform-sales';
-const TELEGRAM_CONNECTOR_ID = 'eb411228-6318-4e15-8ddb-286d3776fe8b'; // @fineko_content_bot, той самий, що в onboard
+// 2026-10-19: онбординг живе на боті Дена (@den_fineko_bot, вебхук належить bot-sales-automation 3131ff8f).
+// Маршрут /start <слаг> шукає воронку ЛИШЕ в проєкті воронки з вебхуком, тому onboard-seller перенесено в її проєкт
+// (/autonatisations_sales). FUNNEL_CHANNELS цій воронці НЕ ставимо: інакше channelSync перебʼє вебхук Дена.
+const TELEGRAM_CONNECTOR_ID = '1cd281cb-1bcc-4210-8f64-1dfca80c0af9';
+const DEN_WEBHOOK_BOT_ID = '3131ff8f-f341-48dd-a1aa-a3cf816185cd';
 const CLAUDE_CONNECTOR_ID = '4f9fbe29-e85a-40dd-93ed-4ed1b5f9fba6';
 const ADMIN_TELEGRAM_ID = '345126254';
 const read = (f) => fs.readFileSync(path.join(__dirname, 'onboard-seller', f), 'utf8');
@@ -91,10 +95,14 @@ async function main() {
         console.log('bot created', bot.id);
     }
     const botId = bot.id;
+    // слаг-маршрутизація працює лише в проєкті бота з вебхуком Дена — тримаємо воронку там
+    const den = await db.bot.findUnique({ where: { id: DEN_WEBHOOK_BOT_ID }, select: { projectId: true } });
+    if (den && bot.projectId !== den.projectId) await db.bot.update({ where: { id: botId }, data: { projectId: den.projectId } });
 
     const keys = [
         ['CLAUDE_CONNECTOR_ID', CLAUDE_CONNECTOR_ID, 'Claude для контент-платформи', false],
-        ['TELEGRAM_CONNECTOR_ID', TELEGRAM_CONNECTOR_ID, 'Telegram — Контент бот', false],
+        ['TELEGRAM_CONNECTOR_ID', TELEGRAM_CONNECTOR_ID, 'Telegram — Ден (den_fineko_bot)', false],
+        ['TELEGRAM_BOT_USERNAME', 'den_fineko_bot', 'Telegram Bot Username', false],
         ['ADMIN_TELEGRAM_ID', ADMIN_TELEGRAM_ID, 'Кому слати картку запуску (власник)', false],
         ['SELLER_DOSSIER_URL', 'http://127.0.0.1:3000/api/seller-dossier', 'Сховище досьє експерта (Flows API)', false],
         ['FETCH_PAGE_URL', 'http://127.0.0.1:3000/api/websearch/page', 'Роут читання сторінки в текст', false],
@@ -108,7 +116,10 @@ async function main() {
     const start = f.nodes.find((n) => n.type === 'start');
     await callTool('update_node', { botId, nodeId: start.id, data: { label: 'Старт /start ' + SLUG, trigger: '/start ' + SLUG } });
 
-    const prompt = read('system-prompt.md').trim();
+    // з 2026-10-22 до промпту додається розділ про режими розмови (edit-mode-prompt.md), а граф має режими й умову:
+    // коли воронка вже в новому вигляді (є нода «Стан досьє»), цей скрипт оновлює лише тексти й НЕ чіпає ребра.
+    const NEW_GRAPH = f.nodes.some((n) => n.data && n.data.label === 'Стан досьє');
+    const prompt = read('system-prompt.md').trim() + '\n\n' + read('edit-mode-prompt.md').trim();
     const cardCode = read('card-node-code.js');
     new (Object.getPrototypeOf(async function () {}).constructor)('context', 'user', 'session', 'keys', 'fetch', cardCode); // синтаксис
 
@@ -116,7 +127,7 @@ async function main() {
     const agentId = await ensureNode(botId, nodes, 'Онбординг-агент експерта', 'agent', { x: 200, y: 160 }, {
         model: 'claude-sonnet-4-6', connectorId: '{{env.CLAUDE_CONNECTOR_ID}}', systemPrompt: prompt, tools: tools(),
         dialogMode: true, finishTool: 'finish_onboarding', outputVar: 'context.sellerResult', maxTokens: 8192, maxIterations: 10,
-        startTrigger: 'Почни онбординг експерта: виклич get_dossier, привітайся (імʼя в Telegram: {{user.firstName}}) і веди далі за інструкцією.',
+        startTrigger: 'Режим розмови: {{context.dossierMode}}. Виклич get_dossier, привітайся (імʼя в Telegram: {{user.firstName}}) і дій за правилами цього режиму.',
         messagesTemplate: '{{conversationHistory}}', qaExpectation: QA_AGENT,
     });
     const cardId = await ensureNode(botId, nodes, 'Зібрати картку запуску', 'js', { x: 200, y: 320 }, {
@@ -134,7 +145,8 @@ async function main() {
     const f2 = await callTool('get_funnel', { botId });
     const has = (a, b) => f2.edges.some((e) => e.source === a && e.target === b);
     const chain = [start.id, agentId, cardId, n1, n2, n3, doneId];
-    for (let i = 0; i < chain.length - 1; i++) if (!has(chain[i], chain[i + 1])) await callTool('create_edge', { botId, source: chain[i], target: chain[i + 1] });
+    if (NEW_GRAPH) console.log('граф з режимами (patch-onboard-seller-edit-2026-10-22): ребра не чіпаю, оновлено лише тексти й ноди');
+    else for (let i = 0; i < chain.length - 1; i++) if (!has(chain[i], chain[i + 1])) await callTool('create_edge', { botId, source: chain[i], target: chain[i + 1] });
     try { await callTool('auto_layout', { botId }); } catch (e) { /* косметика */ }
     console.log(JSON.stringify({ ok: true, botId, slug: SLUG, deepLink: 'https://t.me/fineko_content_bot?start=' + SLUG, nodes: chain.length }, null, 2));
 }

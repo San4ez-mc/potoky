@@ -198,7 +198,7 @@ async function main() {
             const b = await run({ id: 'o2', createdAt: new Date().toISOString(), ttn: ['20451234567890'], ttnStatus: 'Прямує до міста одержувача', isRefused: false, returns: [], stage: { name: 'Відправлено' }, items: [] });
             check('38.1 замовлення з ТТН — номер і статус Нової пошти', /20451234567890/.test((b.out[0] || {}).text || '') && /Прямує/.test((b.out[0] || {}).text || ''), (b.out[0] || {}).text);
             const c = await run(null);
-            check('38.1 замовлення в CRM нема — менеджер, без обіцянок термінів', c.out.map((o) => o.step).join(',') === 'question_waiting_handoff' && !/5 робочих днів/.test(c.out[0].text) && c.ctx.funnelPaused, c.out.map((o) => o.step).join(','));
+            check('38.1 замовлення в CRM нема — менеджер, без обіцянок термінів', c.out.map((o) => o.step).join(',') === 'question_waiting_handoff' && !/5 робочих днів/.test(c.out[0].text) && c.ctx.handoffKind && !c.ctx.funnelPaused, c.out.map((o) => o.step).join(','));
             const d = await run({ id: 'o3', createdAt: new Date().toISOString(), ttn: [], isRefused: false, returns: [], stage: { name: 'Скасовано' }, items: [] });
             check('38.1 скасоване замовлення — менеджер', d.out.map((o) => o.step).join(',') === 'question_waiting_handoff', d.out.map((o) => o.step).join(','));
         } finally { T.clientOrder = orig; }
@@ -231,7 +231,7 @@ async function main() {
         const u = freshU({ intent: 'other' });
         await runPolicy(A, u);
         const steps = A.out.map((o) => o.step).join(',');
-        check('39.1 Квитанція в оформленні менеджера — передаємо менеджеру, не «Оформляємо?»/способи оплати', steps === 'manager_checkout_handoff' && A.ctx.funnelPaused, 'steps: ' + steps);
+        check('39.1 Квитанція в оформленні менеджера — передаємо менеджеру, не «Оформляємо?»/способи оплати', steps === 'manager_checkout_handoff' && A.ctx.handoffKind && !A.ctx.funnelPaused, 'steps: ' + steps);
         const B = freshA({ turnText: 'Скільки коштує кофта?' }); B.ctx.product = { sku: 'A0187', name: 'Кофта', price: 1279 }; B.history = A.history;
         await runPolicy(B, freshU({ intent: 'question', questions: ['Скільки коштує кофта?'] }));
         check('39.2 Звичайне питання в такій розмові — не перехоплюється', !B.out.some((o) => o.step === 'manager_checkout_handoff'), B.out.map((o) => o.step).join(','));
@@ -440,7 +440,7 @@ async function main() {
         check('52.1 «Ви людина?» — відповідь «віртуальна помічниця», без паузи', /bot_disclosure/.test(steps) && !A.ctx.funnelPaused && /помічниця/.test(A.out[0].text), steps);
         const B = freshA({ turnText: 'Покличте менеджера' });
         await runPolicy(B, freshU({ intent: 'other', wantsHuman: true }));
-        check('52.1 «Покличте менеджера» — передача й пауза', B.ctx.funnelPaused === true && /handoff/.test(B.out.map((o) => o.step).join(',')), B.out.map((o) => o.step).join(','));
+        check('52.1 «Покличте менеджера» — передача менеджеру, бот не вимикається (23.10)', !!B.ctx.handoffKind && !B.ctx.funnelPaused && /handoff/.test(B.out.map((o) => o.step).join(',')), B.out.map((o) => o.step).join(','));
     }
 
     // ── 59.1 Нагадування бота (власник 14.10: 2 год і 20 год, лише вдень, у вікні Meta 24 год).
@@ -930,7 +930,7 @@ async function main() {
         const A2 = freshA({ ctx: { testMode: true, agent: { unresolvedStreak: 1 } } });
         A2._unresolvedThisTurn = true;
         await enforceInsistLimit(A2);
-        check('2-га ескалація поспіль зупиняє бота (кличе менеджера)', A2.ctx.funnelPaused === true && A2.ctx.pausedBy === 'unresolved_insist', JSON.stringify({ paused: A2.ctx.funnelPaused, pausedBy: A2.ctx.pausedBy }));
+        check('2-га ескалація поспіль — кличе менеджера, бот не вимикається (23.10)', A2.ctx.handoffKind === 'unresolved_insist' && !A2.ctx.funnelPaused, JSON.stringify({ paused: A2.ctx.funnelPaused, pausedBy: A2.ctx.pausedBy }));
         check('Текст заміняється на передачу менеджеру, а не черговий редирект', A2.out.length === 1 && A2.out[0].step === 'insist_handoff', JSON.stringify(A2.out));
 
         const A3 = freshA({ ctx: { testMode: true, agent: { unresolvedStreak: 1 } } });
@@ -1248,7 +1248,7 @@ async function main() {
             let broke = false;
             // клієнт щоразу пише ПІСЛЯ прохання бота (бачив його)
             for (let i = 0; i < 4; i++) { A.history = [{ who: 'client', text: 'x', at: new Date(Date.now() + 1000), sentAt: new Date(Date.now() + 1000) }]; A.out = [{ text: 'Напишіть, будь ласка, для відправки Новою Поштою: ПІБ, телефон, № відділення 📦', step: 'ask_address' }]; broke = await breakLoop(A); }
-            check('32.1 4-те прохання адреси поспіль → передача менеджеру й пауза', broke && A.ctx.funnelPaused && A.ctx.pausedBy === 'loop' && A.out.length === 1 && A.out[0].step === 'loop_handoff', JSON.stringify(A.out).slice(0, 120));
+            check('32.1 4-те прохання адреси поспіль → передача менеджеру без паузи (23.10)', broke && A.ctx.handoffKind === 'loop' && !A.ctx.funnelPaused && A.out.length === 1 && A.out[0].step === 'loop_handoff', JSON.stringify(A.out).slice(0, 120));
             const B = freshA({ turnText: 'Дякую' });
             let b2 = false;
             for (const st of ['ask_address', 'order_intent', 'ask_address', 'order_intent']) { B.out = [{ text: 'x'.repeat(30), step: st }]; b2 = await breakLoop(B); }

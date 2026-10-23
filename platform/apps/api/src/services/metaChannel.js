@@ -490,7 +490,13 @@ async function deliver(botId, sessionId, igsid, outMsgs) {
                 const rep = { planned: urls.length, sent: urls.length, failed: [] };
                 const mid = await Z.sendMetaPhotoAlbum(botId, igsid, urls.slice(0, 10), rep);
                 if (mid) rememberSent(mid);
-                await Z.logDelivery(sessionId, botId, 'ig_photo_album', true, rep.failed.length ? ('не надіслано ' + rep.failed.length + ' з ' + rep.planned) : null, { nodeId: m.nodeId || null, count: rep.sent, channel: 'meta' });
+                await Z.logDelivery(sessionId, botId, 'ig_photo_album', true, rep.failed.length ? ('не надіслано ' + rep.failed.length + ' з ' + rep.planned + ': ' + rep.failed.map((f) => f.error).join('; ').slice(0, 200)) : null, { nodeId: m.nodeId || null, count: rep.sent, channel: 'meta', ...(rep.failed.length ? { failed: rep.failed } : {}) });
+                // Фото, що не потрапило в альбом (21.10, Edit 69126cde: з трьох кольорів бомбера дійшли два), — досилаємо окремим повідомленням.
+                for (const f of rep.failed) {
+                    await new Promise((r) => setTimeout(r, 2000));
+                    try { const fid = await Z.sendMetaPhoto(botId, igsid, f.url); if (fid) rememberSent(fid); await Z.logDelivery(sessionId, botId, 'ig_photo', !!fid, null, { nodeId: m.nodeId || null, channel: 'meta', resend: true }); }
+                    catch (e) { await Z.logDelivery(sessionId, botId, 'ig_photo', false, 'досилання: ' + e.message, { nodeId: m.nodeId || null, channel: 'meta' }); }
+                }
                 await db.message.update({ where: { id: om.id }, data: { metadata: { ...m, metaMessageId: mid || null, status: 'sent' } } }).catch(() => {});
                 const cap = String(att.caption || '').trim();
                 if (cap) { const cid = await sendText(botId, igsid, cap); await Z.logDelivery(sessionId, botId, 'meta_text', true, null, { nodeId: m.nodeId || null, text: cap.slice(0, 160), messageId: cid }); }

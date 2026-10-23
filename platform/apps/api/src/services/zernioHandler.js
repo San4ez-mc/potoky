@@ -570,7 +570,7 @@ async function sendMetaPhotoAlbum(botId, igsid, imageUrls, report) {
                 if (ur.ok && ud.attachment_id) id = ud.attachment_id; else lastErr = (ud.error && ud.error.message) || ('upload HTTP ' + ur.status);
             } catch (e) { lastErr = e.message; }
         }
-        if (id) ids.push(id); else failed.push({ url: String(u).slice(0, 200), error: lastErr });
+        if (id) ids.push(id); else failed.push({ url: String(u), error: lastErr }); // повний URL — щоб дослати фото окремо
     }
     if (report) Object.assign(report, { planned: urls.length, sent: ids.length, failed });
     if (!ids.length) throw new Error('жодне фото не завантажилось у Meta');

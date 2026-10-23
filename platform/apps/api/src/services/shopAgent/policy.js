@@ -593,7 +593,7 @@ async function answerThenAsk(A, u, askText, o = {}) {
         const recent = Object.keys(asks0).filter((sl) => !Asks.filled(A.ctx, sl)).sort((a, b) => Number(asks0[b].at || 0) - Number(asks0[a].at || 0))[0];
         if (recent && Asks.shown(A, recent) >= 2) { askText = ''; A._answerOnly = recent; }
     }
-    if (repeatOfEscalated || A.ctx.funnelPaused) askText = ''; // після передачі менеджеру («Зараз покличу менеджера») не тиснемо «Оформляємо?»/«дайте дані»
+    if (repeatOfEscalated || A.ctx.funnelPaused || A._handedOff) askText = ''; // після передачі менеджеру («Зараз покличу менеджера») не тиснемо «Оформляємо?»/«дайте дані»
     const nextStep = askText ? 'скажи/спитай (можна своїми словами, зміст той самий): «' + askText + '»' : 'НІЧОГО більше не питай і не пропонуй наступний крок — просто дай коротку відповідь на питання клієнта, без заклику до дії в кінці.';
     // Модель іноді ігнорує запис бази знань і відповідає «зазвичай наступного дня»: підсвічуємо найближчий за словами запис як пряму відповідь.
     let directKb = '';
@@ -890,7 +890,12 @@ async function resolveSetParams(A, pp) {
 }
 
 async function pause(A, reason, alertNode, extraDetails) {
-    A.ctx.funnelPaused = true; A.ctx.pausedBy = reason; A.ctx.pausedAt = new Date().toISOString(); A.ctx.adminEngaged = true; A.ctx.handoffKind = reason;
+    // 23.10 (власник): «все, що приходить в телеграм, що бот сумнівається — ок, нехай так і приходить, але бота не виключай, нехай
+    // продовжує відповідати». Передача менеджеру = сповіщення в групу; бот лишається ввімкненим. Справжня пауза — лише коли розмову
+    // веде менеджер (manager_message) або коли воронка явно просить стару поведінку (ключ BOT_HANDOFF_PAUSE=1).
+    const hardPause = reason === 'manager_message' || String(A.keys.BOT_HANDOFF_PAUSE || '') === '1';
+    if (hardPause) { A.ctx.funnelPaused = true; A.ctx.pausedBy = reason; A.ctx.pausedAt = new Date().toISOString(); A.ctx.adminEngaged = true; }
+    A.ctx.handoffKind = reason; A.ctx.agent.lastHandoff = { reason, at: Date.now() }; A._handedOff = true;
     if (alertNode) await T.alert(A, alertNode, { details: extraDetails });
     // Оплату підтверджено, а замовлення в CRM ще нема (14.10, аудит M1: scherbakan, tatyanka.miteva, ivanbidon — пауза між оплатою й
     // повною адресою, і замовлення так і не створилось). Будь-яка передача після оплати — окремий сигнал «оплачено — оформіть».
@@ -899,7 +904,7 @@ async function pause(A, reason, alertNode, extraDetails) {
         c.agent.paidNoOrderAlerted = Date.now();
         const od = c.orderData || {};
         const miss = [!od.fullName && 'ПІБ', !od.phone && 'телефон', !od.city && 'місто', !od.branch && 'відділення'].filter(Boolean);
-        await T.alert(A, { title: '💰 Оплачено, а замовлення в CRM не створено — оформіть', main: 'Товар: ' + ((P(c) && (P(c).customerName || P(c).name || P(c).sku)) || '—') + (c.payAmount ? ' · оплачено ' + c.payAmount + ' грн' : ''), details: (miss.length ? 'Бракує: ' + miss.join(', ') + '. ' : 'Дані доставки є. ') + 'Бот став на паузу (' + reason + ') до створення замовлення.' }).catch(() => {});
+        await T.alert(A, { title: '💰 Оплачено, а замовлення в CRM не створено — оформіть', main: 'Товар: ' + ((P(c) && (P(c).customerName || P(c).name || P(c).sku)) || '—') + (c.payAmount ? ' · оплачено ' + c.payAmount + ' грн' : ''), details: (miss.length ? 'Бракує: ' + miss.join(', ') + '. ' : 'Дані доставки є. ') + 'Бот передав вам (' + reason + ') — оформіть замовлення.' }).catch(() => {});
     }
 }
 
@@ -913,7 +918,7 @@ async function pause(A, reason, alertNode, extraDetails) {
 const LOOP_FAMILIES = Asks.SLOTS.map((s) => ({ fam: s.slot, re: s.re, limit: s.limit }));
 async function breakLoop(A, u) {
     const { ctx } = A;
-    if (ctx.funnelPaused || !A.out.length) return false;
+    if (ctx.funnelPaused || A._handedOff || !A.out.length) return false;
     // Реєстр прохань (asks.js) пише ОДИН раз на хід, тут — по фінальному тексту; рахує лише прохання, які клієнт побачив і
     // після яких написав не те (пачка — не рахується, 07.10 tatiananepota), і скидає слот, щойно його заповнено.
     if (A._answerOnly) for (const o of A.out) { const f = Asks.slotOf(o.step); if (f && f.slot === A._answerOnly) o.step = 'answer_only'; }
@@ -1475,7 +1480,7 @@ async function basketDropFocus(A, u) {
  * отримав відповідь) — саме "продовжує діалог" з прохання власника. */
 async function enforceInsistLimit(A) {
     const { ctx } = A;
-    if (ctx.funnelPaused) { ctx.agent.unresolvedStreak = 0; return; }
+    if (ctx.funnelPaused || A._handedOff) { ctx.agent.unresolvedStreak = 0; return; }
     if (!A._unresolvedThisTurn) { ctx.agent.unresolvedStreak = 0; return; }
     ctx.agent.unresolvedStreak = (ctx.agent.unresolvedStreak || 0) + 1;
     if (ctx.agent.unresolvedStreak < 2) return;
@@ -1508,7 +1513,7 @@ async function universalQuestionFallback(A, u) {
     // підсумок — уже covered (Q.cover), на що відповіла модель — answered; лишились лише ті, яких ніхто не торкнувся.
     // Раніше тут були прапорці A._questionEngaged / A.justPresented: будь-яка секція, що викликала compose, «гасила» всі питання
     // ходу, а свіжа картка — навіть ті, на які вона не відповідає (тканина, доставка) → «спитав — отримав лише зріст і вагу».
-    if (!u || A.ctx.funnelPaused) return;
+    if (!u || A.ctx.funnelPaused || A._handedOff) return;
     if (!A.qs) Q.init(A, u);
     if (!Q.open(A).length) return;
     // Через ТУ САМУ функцію відповіді, що й скрізь (answerThenAsk: вид питання, сітка з цифрами, факти CRM, база знань; Edit f44b9da3).

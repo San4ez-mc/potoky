@@ -33,11 +33,39 @@ async function syncSetComponents(A) {
     if (!order || !Array.isArray(order.items)) return false;
     const setItem = order.items.find((it) => (it.productId && it.productId === p.id) || (it.product && up(it.product.sku) === up(p.sku)));
     if (!setItem || (Array.isArray(setItem.components) && setItem.components.length)) return false;
+    // Склад змінено (ціна комплекту 0, речі окремими рядками): рядок-комплект лише плутає менеджерів і двоїть речі
+    // постачальнику (Edits 1d2c3460/9b26a155, 26.10) — прибираємо його, лишаються самі речі.
+    const selSkus = new Set(ctx.setSelection.map((s) => up(s.article)).filter(Boolean));
+    if (!(Number(setItem.price) > 0) && order.items.some((it) => it.id !== setItem.id && it.product && selSkus.has(up(it.product.sku)))) {
+        const rest = order.items.filter((it) => it.id !== setItem.id).map(itemPayload);
+        const w = await crmFetch(keys, '/orders/' + ctx.crmOrderId + '/items', { method: 'PUT', body: JSON.stringify({ items: rest, source: 'funnel' }) }, 8000);
+        if (!w.ok) logger.warn('[orderSource] drop zero set line failed', { sessionId: A.session.id, status: w.status, error: w.json && w.json.error });
+        return !!w.ok;
+    }
     const components = ctx.setSelection.map((s) => ({ productId: s.id || null, sku: s.article || '', name: s.name || '', color: s.color || '', size: s.size || '', qty: Number(s.qty) || 1 }));
     const items = order.items.map((it) => (it.id === setItem.id ? { ...itemPayload(it), components } : itemPayload(it)));
     const w = await crmFetch(keys, '/orders/' + ctx.crmOrderId + '/items', { method: 'PUT', body: JSON.stringify({ items, source: 'funnel' }) }, 8000);
     if (!w.ok) logger.warn('[orderSource] set components sync failed', { sessionId: A.session.id, status: w.status, error: w.json && w.json.error });
     return !!w.ok;
+}
+
+/** Артикули речей, що лежать у замовленні окремими рядками (не комплект). */
+function separateSkus(items, find) {
+    const out = new Set();
+    for (const it of items || []) {
+        const sku = (it.product && it.product.sku) || '';
+        const prod = find(it.productId, sku);
+        if ((Array.isArray(it.components) && it.components.length) || (prod && prod.isSet)) continue;
+        if (sku) out.add(up(sku));
+    }
+    return out;
+}
+/** Артикули складу рядка-комплекту: із components, інакше з каталогу (setItems). */
+function setPartsSkus(it, prod, find) {
+    const comps = Array.isArray(it.components) ? it.components : [];
+    if (comps.length) return comps.map((c) => up(c.sku || ((find(c.productId, c.sku) || {}).sku))).filter(Boolean);
+    const parts = (prod && (prod.setComponents || prod.setOf || prod.setItems)) || [];
+    return parts.map((c) => up(c.sku || c.article || (c.componentProduct && c.componentProduct.sku) || ((find(c.productId || c.id, '') || {}).sku))).filter(Boolean);
 }
 
 /** Позиції для постачальника з замовлення CRM (формат buildLines). */
@@ -47,11 +75,15 @@ async function linesFromCrm(A, order) {
     const bySku = new Map(cat.products.map((p) => [up(p.sku), p]));
     const find = (id, sku) => (id && byId.get(id)) || (sku && bySku.get(up(sku))) || null;
     const lines = [];
+    const separate = separateSkus(order.items, find);
     for (const it of order.items || []) {
         const sku = (it.product && it.product.sku) || '';
         const prod = find(it.productId, sku);
         const qty = Number(it.quantity) || 1;
         const comps = Array.isArray(it.components) ? it.components : [];
+        // Склад комплекту змінено в розмові: рядок-комплект з ціною 0 лишається для довідки, а речі йдуть окремими
+        // рядками. Розгорнути його ще раз = подвоєння в постачальника (26.10, 12 замовлень: set1112 0 + A0187 + j0032 + L0056).
+        if ((comps.length || (prod && prod.isSet)) && !(Number(it.price) > 0) && setPartsSkus(it, prod, find).some((k) => separate.has(k))) continue;
         if (comps.length || (prod && prod.isSet)) {
             let parts = comps.map((c) => {
                 const cp = find(c.productId, c.sku);

@@ -1372,6 +1372,22 @@ async function main() {
                 check('53.1 Змінений комплект: сума = позиції (3318), «решта 3118», не 5517', Number(c.orderTotal) === 3318 && /решта 3118 грн/.test(String(c.payLabel)), c.orderTotal + ' / ' + c.payLabel);
             }
         }
+        // 54. Комплект зі зміненим складом у CRM: рядок-комплект з ціною 0 + ті самі речі окремо (26.10, 12 замовлень,
+        // _sivriunya_/dimas_lbr — постачальнику пішло по 2 шт кожної речі). Постачальнику — лише окремі рядки.
+        {
+            const { linesFromCrm } = require('../orderSource');
+            const comps = [['A0187', 'Чорний', 'S'], ['L0056', 'Білий', 'S']].map(([sku, color, size]) => ({ sku, name: sku, color, size, qty: 1 }));
+            const order = { items: [
+                { productId: null, product: { sku: 'set1112' }, name: 'Комплект', price: 0, quantity: 1, components: comps },
+                { productId: null, product: { sku: 'A0187' }, name: 'Кофта', price: 1279, quantity: 1, properties: [{ name: 'Колір', value: 'Чорний' }, { name: 'Розмір', value: 'S' }] },
+                { productId: null, product: { sku: 'L0056' }, name: 'Футболка', price: 449, quantity: 1, properties: [{ name: 'Колір', value: 'Білий' }, { name: 'Розмір', value: 'S' }] },
+            ] };
+            const ls = await linesFromCrm({ botId: BOT, keys: assets.keys, ctx: {}, session: { id: 'test' } }, order);
+            check('54.1 Змінений комплект у CRM: постачальнику по 1 шт кожної речі, без повтору', ls.length === 2 && ls.every((l) => l.qty === 1 && l.price > 0), ls.map((l) => l.sku + '×' + l.qty + ' ' + l.price).join(' + '));
+            order.items = [{ ...order.items[0], price: 1590 }];
+            const ls2 = await linesFromCrm({ botId: BOT, keys: assets.keys, ctx: {}, session: { id: 'test' } }, order);
+            check('54.2 Звичайний комплект (ціна є, речей окремо нема) розгортається на склад', ls2.length === 2 && Math.round(ls2.reduce((s, l) => s + l.price * l.qty, 0)) === 1590, ls2.map((l) => l.sku + '×' + l.qty + ' ' + l.price).join(' + '));
+        }
         check('31.2 Текст із переносами не чіпається', paragraphize('Рядок один.\nРядок два, досить довгий, щоб перевищити межу в сто сорок символів, і ще трохи тексту, щоб точно перевищити.') === 'Рядок один.\nРядок два, досить довгий, щоб перевищити межу в сто сорок символів, і ще трохи тексту, щоб точно перевищити.', '');
     }
 

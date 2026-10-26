@@ -175,9 +175,16 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
         const adNow = entryAdId || ctx.entryAdId;
         if (adNow) {
             const t = ctx.adTouch || {};
-            if (!t.first) { t.first = { externalId: String(adNow), at: new Date().toISOString(), name: ctx.adTitle || null }; adTouchChanged = true; }
+            // Перший дотик «за дописом» (postId) CRM міг не знайти (допис без реклами) — справжнє оголошення його замінює; знайдений CRM не перезапише.
+            if (!t.first || !t.first.externalId) { t.first = { externalId: String(adNow), at: new Date().toISOString(), name: ctx.adTitle || null }; adTouchChanged = true; }
             if (!t.last || t.last.externalId !== String(adNow)) { t.last = { externalId: String(adNow), at: new Date().toISOString(), name: ctx.adTitle || null }; adTouchChanged = true; }
             ctx.adTouch = t;
+        } else if (sharedPost && sharedPost.mediaId && !sharedPost.foreign && !(ctx.adTouch && ctx.adTouch.first)) {
+            // Meta не передала рекламу, а клієнт переслав наш допис (у Instagram — «Відповідь на рекламу» з рілсом): CRM знайде
+            // оголошення цього допису (Ad.postId). Лише як перший дотик, коли іншого немає (20.10, Edits 44c07e5b/ae75528c).
+            const at = new Date().toISOString();
+            ctx.adTouch = { first: { postId: String(sharedPost.mediaId), at, name: null }, last: { postId: String(sharedPost.mediaId), at, name: null } };
+            adTouchChanged = true;
         }
     }
     const history = await buildHistory(sessionId);

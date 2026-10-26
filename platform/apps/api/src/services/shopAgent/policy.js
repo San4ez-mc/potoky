@@ -774,7 +774,7 @@ async function oversizeAlternative(A, pp) {
         if (!list.length) return '';
         const name = (p) => String(p.customerName || p.name || '').split(NL)[0].replace(/\.?\s*Артикул:?.*$/i, '').trim();
         return 'На жаль, цей товар йде тільки до ' + (LABEL[curMax] || curMax) + ' розміру, і він вам буде малий. ' + (need ? 'У розмірі ' + (LABEL[need] || need) + ' зараз є: ' : 'Більші розміри є в: ')
-            + list.map((p) => '«' + name(p) + '» (арт. ' + p.sku + ')' + (Number(p.price) > 0 ? ' — ' + Number(p.price) + ' грн' : '')).join('; ') + '. Напишіть артикул — покажу 🙂';
+            + list.map((p) => '«' + name(p) + '» (арт. ' + p.sku + ')' + (Number(p.price) > 0 ? ' — ' + Number(p.price) + ' грн' : '')).join('; ') + '. Яку з них вам показати? 🙂';
     } catch (e) { return ''; }
 }
 /** Рядок допродажу в підсумку («Футболка оверсайз база — 2 шт (Білий XL ×2) — 799 грн») і його сума. 03.10 (Edit e86adb58):
@@ -1418,7 +1418,11 @@ async function basketIntake(A, u) {
         Q.coverTopics(A, u, ['availability', 'sizes', 'price'], 'oos_basket');
     }
     if (res.length < 2) { A.trace.push({ step: 'basket_intake_skip', resolved: res.length }); return; }
-    const cur = P(ctx);
+    // Поточна модель клієнту замала (n_calc: sizeOutOfRange) — вона не лишається головною: «Можна обидва» про запропоновані
+    // альтернативи вело далі по бомберу й питало ЙОГО колір (26.10, _mikhail.k / A0165).
+    const curP = P(ctx);
+    const curOor = !!(curP && !curP.isSet && ctx.sizeOutOfRange && !(ctx.recommendedSize && productHasSize(curP, ctx.recommendedSize)));
+    const cur = curOor ? null : curP;
     const catIdOf = (name) => { const c = (cat.categories || []).find((x) => String(x.name) === String(name)); return c ? c.id : null; };
     const curCat = cur && (cur.categoryId || (cur.category && cur.category.id));
     let fi = cur ? res.findIndex((x) => x.r.sku && up(x.r.sku) === up(cur.sku)) : -1;
@@ -1642,6 +1646,19 @@ async function runPolicyInner(A, u) {
     Q.init(A, u); // реєстр питань ходу (questions.js) — далі питання змінюються лише через Q.cover/Q.add/compose
     const text = String(A.turnText || ''); // на початку: блоки нижче (варіант 3, повернення) пишуть текст клієнта в сповіщення
     if (await reduceSameItemQty(A, u)) return;
+    // Допис називає речі, яких під його артикулом у CRM немає («гольф та брюки», а set1120 у CRM = светр + джинси; productMatch →
+    // captionMismatch). Чужий товар не показуємо: чесно — уточню в менеджера, і питання, щоб розмова не завмерла (26.10, artur_jurievich).
+    if (ctx.captionMismatch && Date.now() - Number(ctx.captionMismatch.at || 0) < 5 * 60 * 1000 && !ctx.crmOrderId) {
+        const mm = ctx.captionMismatch; delete ctx.captionMismatch;
+        const what = (mm.items || []).join(' та ') || 'цей товар';
+        const cur = P(ctx); const curName = cur ? shortName(cur) : '';
+        A.out.push({ text: 'Дякую, що надіслали 🙏 «' + what + '» з цього допису я зараз не бачу в каталозі — уточню в менеджера, він напише вам сюди.'
+            + (curName ? ' Поки чекаємо — продовжимо з «' + curName + '»?' : ' Поки чекаємо — підказати щось інше?'), step: 'caption_mismatch' });
+        await T.alert(A, 'n_agent_post_extra_admin', { details: '🔎 Клієнт переслав допис «' + what + '» (у підписі артикул ' + mm.sku + '), а в CRM ' + mm.sku + ' — «' + String(mm.crmName || '').split('\n')[0] + '». Бот чужий товар не показав — підкажіть клієнту й виправте товар/підпис у CRM.' });
+        Q.coverTopics(A, u, ['availability', 'sizes', 'price', 'other'], 'caption_mismatch');
+        ctx.agent.lastAsk = curName ? 'продовжимо з товаром' : 'що шукаєте';
+        return;
+    }
     // Після передачі менеджеру бот НЕ на паузі (рішення власника 23.10). Повідомлення без нових даних («Ау?», «Є хто?», те саме ще раз) —
     // коротко «менеджер уже в курсі», а не скрипт продажу заново (тест 123: «Ау?» → «що вас цікавить — костюми, куртки…»).
     {
@@ -1990,6 +2007,20 @@ async function runPolicyInner(A, u) {
                 let parents = catS.products.filter((s) => s.isSet && !s.outOfStock && compsOf(s).includes(String(cur.sku).toUpperCase()));
                 const nIn1 = (String(text).match(/(\d)\s*в\s*1/i) || [])[1];
                 if (nIn1 && parents.length > 1) { const byN = parents.filter((s) => compsOf(s).length === Number(nIn1) || new RegExp(nIn1 + '\\s*в\\s*1', 'i').test(String(s.name || '') + ' ' + String(s.customerName || ''))); if (byN.length) parents = byN; }
+                // Підпис пересланого допису перелічує речі («кофта, джинси, футболка, лофери») — комплект, у якому категорії ВСІХ речей
+                // названі в підписі й нічого зайвого (25.10, vasilbuchkovsky / Edits 4507d1fc: «який комплект?» на допис «4 в 1»).
+                // Категорії й синоніми — з CRM.
+                const capS = String(((A.turnSharedPost && A.turnSharedPost.caption) || (ctx.sharedPost && ctx.sharedPost.caption) || '')).toLowerCase();
+                if (capS && parents.length > 1) {
+                    const st = (w) => String(w || '').toLowerCase().replace(/[^а-яіїєґa-z]/gi, '').slice(0, 4);
+                    const capWords = new Set(capS.split(/[^а-яіїєґa-zʼ']+/i).filter((w) => w.length >= 4).map(st));
+                    const catOf = (c) => { const p0 = catS.products.find((x) => String(x.id) === String(c.productId) || (c.sku && String(x.sku).toUpperCase() === String(c.sku).toUpperCase())); const cid = p0 && (p0.categoryId || (p0.category && p0.category.id)); return (catS.categories || []).find((k) => String(k.id) === String(cid)) || null; };
+                    const named = (k) => !!k && [k.name].concat(Array.isArray(k.synonyms) ? k.synonyms : []).some((w) => capWords.has(st(w)));
+                    const itemCats = new Set(catS.products.filter((x) => !x.isSet).map((x) => String(x.categoryId || (x.category && x.category.id) || ''))); // «комплект» у підписі — не річ
+                    const capKinds = (catS.categories || []).filter((k) => itemCats.has(String(k.id)) && named(k)).length;
+                    const byCap = parents.filter((s) => { const ks = (s.setComponents || []).map(catOf); const uniq = [...new Set(ks.map((k) => k && k.id))]; return ks.length && ks.every(named) && uniq.length === capKinds; });
+                    if (byCap.length === 1) parents = byCap;
+                }
                 if (parents.length === 1) {
                     const setSku = String(parents[0].sku);
                     if (ctx.colorChoice && ctx.colorChoice.color) ctx.agent.setItemColorHints = (ctx.agent.setItemColorHints || []).concat([{ item: cur.sku, color: ctx.colorChoice.color }]).slice(-8);
@@ -3212,6 +3243,27 @@ async function runPolicyInner(A, u) {
         }
     }
 
+    // 4.9 Клієнт більший за модель (n_calc: sizeOutOfRange), а розміру в товару немає — далі (колір, підсумок) не йдемо, доки
+    //     клієнт не назве розмір сам чи не обере іншу модель. 23.10 (vetal_botsman, D0005 до XXL): на «Дякую» після «буде малий»
+    //     бот показав підсумок «XXXL — 2179 грн» і «Оформляємо?» (Edits 826ef293).
+    if (!pp.isSet && ctx.sizeOutOfRange && !ctx.crmOrderId && !(ctx.recommendedSize && productHasSize(pp, ctx.recommendedSize))) {
+        // recommendedSize не стираємо: за ним видно, що нові зріст/вага треба перерахувати (sizeCalcKey вище).
+        const real = productSizes(pp);
+        ctx.colorChoice = null; delete ctx.agent.availKey;
+        // Кожна відповідь тут закінчується питанням — інакше клієнт не відповідає і розмова завмирає (власник, 26.10).
+        const alt = await oversizeAlternative(A, pp);
+        const thanks = (u.intent === 'thanks' || u.intent === 'other') && !u.questions.length && !u.ready;
+        const yes = (u.ready === 'yes' || u.intent === 'order_yes') && !u.questions.length;
+        let txt;
+        if (yes && alt) txt = alt; // «так» / «давайте» на «яку показати?» — ще раз список моделей вашого розміру з питанням
+        else if (yes) {
+            txt = 'Добре 🙂 Передала менеджеру — він підбере модель вашого розміру й напише сюди. Підкажіть поки, що саме шукаєте: куртку, кофту чи щось інше?';
+            await T.alert(A, 'n_size_oor_admin', { details: '📏 Клієнту замала модель ' + (pp.sku || '') + ', моделей його розміру в каталозі немає — підберіть вручну.' });
+        } else if (thanks) txt = alt ? 'Будь ласка 🙂 Котру з цих моделей вам показати детальніше?' : 'Будь ласка 🙂 Підібрати вам іншу модель вашого розміру?';
+        else txt = await answerThenAsk(A, u, 'Ця модель вам, на жаль, буде замала' + (real.length ? ' (найбільший розмір — ' + real[real.length - 1] + ')' : '') + ' 😔 ' + (alt ? 'Котру з моделей вашого розміру показати?' : 'Підібрати вам іншу модель вашого розміру?'));
+        A.out.push({ text: txt, step: 'size_oor_hold' });
+        ctx.agent.lastAsk = 'інша модель'; return;
+    }
     // 5.0 Колір × розмір (2026-10-05, Edit 26658740): палітра товару — лише кольори підібраного розміру; уже обраний колір, якого
     //     в цьому розмірі нема, знімаємо й чесно кажемо, що є (раніше графітові джинси XL пішли в замовлення, хоча шиються лише XS/L).
     if (!pp.isSet && ctx.recommendedSize && !ctx.crmOrderId) {
@@ -3520,7 +3572,8 @@ async function runPolicyInner(A, u) {
                 
                 const _repeatSet = Asks.times(A, 'color') >= 1 && ctx.agent.lastAsk === 'колір позицій комплекту';
                 const _nm = String(askItem.name).split('\n')[0];
-                const _shortSet = _repeatSet && Asks.times(A, 'color') >= 2 ? ['Ще лишилось обрати колір для «' + _nm + '» 🙂 Напишіть назву або номер зі списку вище.', 'Коли визначитесь із кольором для «' + _nm + '» — напишіть номер чи назву, і оформлюємо 💛'][Asks.times(A, 'color') % 2] : '';
+                // Список кольорів уже стоїть вище — повтор лише коротким нагадуванням, а не тим самим списком (26.10, Edits c1e3e3a7: «двічі одне й те саме»).
+                const _shortSet = _repeatSet ? ['Ще лишилось обрати колір для «' + _nm + '» 🙂 Напишіть назву або номер зі списку вище.', 'Коли визначитесь із кольором для «' + _nm + '» — напишіть номер чи назву, і оформлюємо 💛'][Asks.times(A, 'color') % 2] : '';
                 A.out.push({ text: await answerThenAsk(A, u, _shortSet || ((_repeatSet ? 'Нагадаю, лишилось обрати колір 🙂\n\n' : '') + messageTextMultiline(A.assets, 'n_agent_set_color_ask', ctx, A.session.id))), step: 'set_color_ask' });
                 ctx.agent.lastAsk = 'колір позицій комплекту';
                 return;

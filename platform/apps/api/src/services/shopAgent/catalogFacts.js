@@ -116,7 +116,7 @@ async function otherCategoryProducts(A, texts) {
 
 /** Розміри, у яких шиється колір: CRM effectiveSizes (або власноруч задані availableSizes). null — даних нема (колір вважається наявним). */
 function offerSizes(o) { if (Array.isArray(o.effectiveSizes) && o.effectiveSizes.length) return o.effectiveSizes; if (o.sizesCustomized && Array.isArray(o.availableSizes)) return o.availableSizes; return null; }
-const sizeKey = (s) => String(s || '').toUpperCase().trim().replace(/^2XL$/, 'XXL').replace(/^3XL$/, 'XXXL').replace(/^4XL$/, 'XXXXL');
+const sizeKey = (s) => String(s || '').toUpperCase().trim().replace(/Х/g, 'X').replace(/Л/g, 'L').replace(/М/g, 'M').replace(/С/g, 'S').replace(/^2XL$/, 'XXL').replace(/^3XL$/, 'XXXL').replace(/^4XL$/, 'XXXXL');
 /** Чи є колір у розмірі за даними CRM (2026-10-05, Edit 26658740: графітові джинси j0032 — лише XS і L). Єдине джерело для
  * питання про колір, звірки обраного кольору й речей комплекту. */
 function colorHasSize(product, color, size) {

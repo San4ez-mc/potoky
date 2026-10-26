@@ -53,4 +53,28 @@ function pickByCaptionFacts(caption, products) {
     return scored[0];
 }
 
-module.exports = { parseCaption, pickByCaptionFacts, scoreProduct };
+/**
+ * Підпис називає склад у дужках («Чоловічий комплект (гольф та брюки). Артикул: set1120»), а в CRM під цим артикулом — зовсім
+ * інші речі («светр та кофта» = A0148 + j0032): жодна річ із дужок не збігається з назвами товару, його складу та їхніх категорій.
+ * Тоді товар за артикулом не той, що в дописі (26.10, artur_jurievich, Edits ad69b0a6) — повертає {items}, інакше null.
+ * Без дужок — не судимо (прикметники в назві допису не мають збігатися з CRM). Синоніми категорій не беремо: «гольф» — синонім
+ * «Кофти», але гольф ≠ светр, який лежить під артикулом (а помилка тут = чужий товар клієнту; сумнів → менеджер).
+ */
+function captionItemsMismatch(caption, product, all) {
+    const title = String(caption || '').split(/\n/)[0].split(/Артикул/i)[0];
+    const inPar = (title.match(/\(([^)]{3,80})\)/) || [])[1];
+    if (!inPar || !product) return null;
+    const stem = (w) => String(w || '').toLowerCase().replace(/[’'`ʼ]/g, '').replace(/[^а-яіїєґa-z]/gi, '').slice(0, 4);
+    const items = inPar.split(/\s+(?:та|і|й|and)\s+|[,+/&]/i).map((s) => s.trim()).filter(Boolean);
+    if (!items.length) return null;
+    const byId = new Map((all || []).map((p) => [String(p.id), p]));
+    const parts = [product].concat((Array.isArray(product.setComponents) ? product.setComponents : []).map((c) => byId.get(String(c.productId)) || { name: c.name }));
+    const words = new Set();
+    for (const p of parts) for (const s of [p.name, p.customerName, p.displayName, p.category && p.category.name]) {
+        for (const w of String(s || '').split(/[\s().,:;«»"-]+/)) if (w.length >= 4) words.add(stem(w));
+    }
+    const hit = items.some((it) => String(it).split(/\s+/).some((w) => w.length >= 4 && words.has(stem(w))));
+    return hit ? null : { items };
+}
+
+module.exports = { parseCaption, pickByCaptionFacts, scoreProduct, captionItemsMismatch };

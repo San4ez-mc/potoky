@@ -183,7 +183,18 @@ const _echoes = new Set(); // фонові перевірки «луни» (дл
 
 // Збій відправки → менеджеру одразу (05–07.10: 81 збій Zernio за 2,5 год без жодного сигналу). Не частіше разу на 15 хв на бота.
 const _sendAlertAt = new Map();
+// «The requested resource does not exist» — Instagram не пускає до ОДНОГО співрозмовника (25.10, Edits 601b720c: інший магазин
+// climber.cv написав нам рекламу, відповісти йому API не дає). Це не поломка бота — групу менеджерів не смикаємо, доки таке не
+// трапилось із ≥3 різними людьми за годину (тоді вже схоже на збій каналу).
+const _missingPeer = new Map(); // botId → Map(sessionId → ts)
 async function alertSendFailure(botId, sessionId, err) {
+    if (/requested resource does not exist|no matching user/i.test(String(err || ''))) {
+        const m = _missingPeer.get(botId) || new Map(); _missingPeer.set(botId, m);
+        m.set(String(sessionId), Date.now());
+        for (const [k, ts] of m) if (Date.now() - ts > 3600 * 1000) m.delete(k);
+        logger.warn('[metaChannel] співрозмовник недоступний для відповіді', { botId, sessionId, peers: m.size });
+        if (m.size < 3) return;
+    }
     if (Date.now() - (_sendAlertAt.get(botId) || 0) < 15 * 60 * 1000) return;
     _sendAlertAt.set(botId, Date.now());
     await Z.sendTelegramAlert(botId, '⚠️ Instagram не прийняв відповідь бота: ' + String(err || '?').slice(0, 200) + '\nСесія: https://flows.fineko.space/sessions/' + sessionId, sessionId).catch(() => {});

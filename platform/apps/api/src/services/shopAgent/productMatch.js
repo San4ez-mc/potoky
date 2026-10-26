@@ -435,6 +435,15 @@ try {
     }
     // 2b) артикул на рівні товару (sku / supplierArticle / будь-який offer.sku)
     if (!found) { for (var b = 0; b < cc.length && !found; b++) { var pm = matchArticle(all, cc[b]); if (pm) { found = pm; via = 'article:' + cc[b]; mk = 'art_' + cc[b]; } } }
+    // Артикул узято з підпису допису (клієнт сам його не писав), а склад у дужках підпису — зовсім інші речі, ніж у CRM під цим
+    // артикулом («гольф та брюки» ≠ светр + джинси, 26.10 artur_jurievich): це не той товар — не показуємо чужий, далі гілка
+    // «артикул з підпису, товару нема» (чесно → менеджер).
+    if (found && !preFromUser && fromUser.map(function (x) { return String(x).toUpperCase(); }).indexOf(String(found.sku || '').toUpperCase()) < 0 && context.sharedPost && context.sharedPost.caption) {
+      try {
+        var __mm = require('./captionFacts').captionItemsMismatch(context.sharedPost.caption, found, all);
+        if (__mm) { context.captionMismatch = { sku: found.sku, items: __mm.items, crmName: found.customerName || found.name, at: Date.now() }; found = null; via = ''; mk = ''; preColor = ''; preSize = ''; }
+      } catch (e) { /* best-effort */ }
+    }
   }
 
   // Підпис поста/реклами НАЗИВАЄ артикул, а в CRM його нема (новинка чи знятий) — товар визначено однозначно, просто його нема.

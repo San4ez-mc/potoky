@@ -13,6 +13,7 @@ export const NAV = [
     { to: '/projects', icon: '📁', label: 'Проєкти', pageId: 'projects' },
     { to: '/sessions', icon: '💬', label: 'Сесії', unreadKey: true },
     { to: '/broadcasts', icon: '📣', label: 'Розсилки', pageId: 'broadcasts' },
+    { to: '/sellers', icon: '🤖', label: 'ШІ-продавці', pageId: 'sellers' },
     { to: '/dashboard', icon: '📊', label: 'Дашборд', pageId: 'dashboard' },
     { to: '/connectors', icon: '🔌', label: 'Конектори', pageId: 'connectors' },
     { to: '/subscribers', icon: '👥', label: 'Підписники' },

@@ -772,6 +772,7 @@ async function oversizeAlternative(A, pp) {
         const sameCat = String(cur.categoryId || (cur.category && cur.category.id) || '');
         const list = cat.products.filter(fits).sort((a, b) => (String(b.categoryId) === sameCat) - (String(a.categoryId) === sameCat) || (Number(a.price) || 0) - (Number(b.price) || 0)).slice(0, 4);
         if (!list.length) return '';
+        ctx.agent.oorAltSkus = list.map((p) => p.sku); // «покажіть / обидва» → 4.9 веде першу з них
         const name = (p) => String(p.customerName || p.name || '').split(NL)[0].replace(/\.?\s*Артикул:?.*$/i, '').trim();
         return 'На жаль, цей товар йде тільки до ' + (LABEL[curMax] || curMax) + ' розміру, і він вам буде малий. ' + (need ? 'У розмірі ' + (LABEL[need] || need) + ' зараз є: ' : 'Більші розміри є в: ')
             + list.map((p) => '«' + name(p) + '» (арт. ' + p.sku + ')' + (Number(p.price) > 0 ? ' — ' + Number(p.price) + ' грн' : '')).join('; ') + '. Яку з них вам показати? 🙂';
@@ -3255,6 +3256,14 @@ async function runPolicyInner(A, u) {
         const thanks = (u.intent === 'thanks' || u.intent === 'other') && !u.questions.length && !u.ready;
         const yes = (u.ready === 'yes' || u.intent === 'order_yes') && !u.questions.length;
         let txt;
+        const altSkus = alt && Array.isArray(ctx.agent.oorAltSkus) ? ctx.agent.oorAltSkus.filter(Boolean) : [];
+        if ((yes || u.intent === 'product_query') && altSkus.length && ctx.agent.lastAsk === 'інша модель') {
+            // «Можна обидва» / «покажіть» на список моделей вашого розміру — показуємо першу (26.10, _mikhail.k: аналізатор не завжди
+            // розкладає «обидва» на товари — тоді бот лишався на замалому бомбері). Розкладені аналізатором товари веде кошик (basketIntake).
+            A._refocus = { u: neutralU({ intent: 'product_query', productHint: { article: altSkus[0], category: null, fromList: null } }), text: 'артикул ' + altSkus[0] };
+            delete ctx.agent.oorAltSkus; ctx.agent.lastAsk = null;
+            return;
+        }
         if (yes && alt) txt = alt; // «так» / «давайте» на «яку показати?» — ще раз список моделей вашого розміру з питанням
         else if (yes) {
             txt = 'Добре 🙂 Передала менеджеру — він підбере модель вашого розміру й напише сюди. Підкажіть поки, що саме шукаєте: куртку, кофту чи щось інше?';

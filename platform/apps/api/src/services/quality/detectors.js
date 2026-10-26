@@ -132,7 +132,9 @@ async function qualityForPeriod(botId, from, to, { now = Date.now() } = {}) {
     const sess = await db.$queryRawUnsafe(`select distinct m."sessionId" id from messages m join sessions s on s.id = m."sessionId"
         where s."botId" = $1 and not s."isTest" and m."createdAt" between $2 and $3`, botId, from, to);
     const ids = sess.map((r) => r.id);
-    const res = { botId, from, to, clientConversations: 0, botConversations: 0, defectSessions: 0, byClass: {}, examples: {} };
+    // managerInvolved — розмови бота, де довелось долучати людину (26.10, власник): менеджер сам писав клієнту (managerWrote) або бот
+    // передав розмову менеджеру — крок передачі / пауза (botHandoff). Решта розмов бота — повністю самостійні (autonomous).
+    const res = { botId, from, to, clientConversations: 0, botConversations: 0, defectSessions: 0, byClass: {}, examples: {}, managerInvolved: 0, managerWrote: 0, botHandoff: 0, autonomous: 0, managerExamples: [] };
     for (let i = 0; i < ids.length; i += 200) {
         const chunk = ids.slice(i, i + 200);
         const msgs = await db.message.findMany({ where: { sessionId: { in: chunk }, createdAt: { gte: new Date(from.getTime() - 24 * 3600 * 1000), lte: new Date(to.getTime() + 15 * 60 * 1000) } }, orderBy: { createdAt: 'asc' }, select: { sessionId: true, role: true, content: true, createdAt: true, metadata: true } });
@@ -144,7 +146,16 @@ async function qualityForPeriod(botId, from, to, { now = Date.now() } = {}) {
             const inWin = list.filter((m) => m.createdAt >= from && m.createdAt <= to);
             if (inWin.some((m) => m.role === 'user')) res.clientConversations++;
             const botHere = inWin.some(isBot);
-            if (botHere) res.botConversations++;
+            if (botHere) {
+                res.botConversations++;
+                const wrote = inWin.some(isManager);
+                // Пауза через те, що написав менеджер («⏸ … написав менеджер»), — не передача ботом, а наслідок managerWrote.
+                const handed = inWin.some((m) => (isBot(m) && HANDOFF_STEPS.test(step(m))) || (md(m).eventType === 'bot.paused' && !/написав менеджер|manager/i.test(String(m.content || '') + ' ' + String(md(m).reason || ''))));
+                if (wrote) res.managerWrote++;
+                if (handed) res.botHandoff++;
+                if (wrote || handed) { res.managerInvolved++; if (res.managerExamples.length < 30) res.managerExamples.push({ sessionId: sid, wrote, handed }); }
+                else res.autonomous++;
+            }
             const defects = detectSession(list, turnsBy[sid] || [], { from, to, now });
             const botDefect = defects.some((d) => BOT_CLASSES.includes(d.cls));
             if (botDefect) res.defectSessions++;
@@ -169,6 +180,14 @@ function formatReport(res, prev, { shopTag = '', dayLabel = '' } = {}) {
     lines.push((shopTag ? '🏪 ' + shopTag + '\n' : '') + '📊 Якість бота' + (dayLabel ? ' за ' + dayLabel : ''));
     const d = prev && prev.botConversations ? ' (учора ' + pct(prev.defectRate) + ')' : '';
     lines.push('Розмов, де відповідав бот: ' + res.botConversations + ' · з помилкою: ' + res.defectSessions + ' — ' + pct(res.defectRate) + d);
+    // Самостійність бота (26.10, власник): скільки розмов бот провів сам, а де довелось долучати менеджера.
+    if (res.botConversations && res.managerInvolved !== undefined) {
+        const share = (n) => pct(n / res.botConversations);
+        const was = (k) => (prev && prev.botConversations && prev[k] !== undefined ? ' (учора ' + pct(prev[k] / prev.botConversations) + ')' : '');
+        lines.push('🤖 Повністю самостійно: ' + res.autonomous + ' — ' + share(res.autonomous) + was('autonomous'));
+        lines.push('👤 Долучали менеджера: ' + res.managerInvolved + ' — ' + share(res.managerInvolved) + was('managerInvolved')
+            + ' (менеджер писав клієнту: ' + res.managerWrote + ', бот передав менеджеру: ' + res.botHandoff + ')');
+    }
     const order = Object.keys(CLASS_LABEL).filter((k) => res.byClass[k]).sort((a, b) => res.byClass[b] - res.byClass[a]);
     if (!order.length) lines.push('Помилок за детекторами не знайдено ✅');
     for (const k of order) {

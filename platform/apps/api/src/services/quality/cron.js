@@ -48,7 +48,7 @@ async function dailyReport(botId, dayStr, { send = true } = {}) {
     const prevDay = kyivDay(new Date(from.getTime() - 12 * 3600 * 1000));
     const prevRow = await db.$queryRawUnsafe('select stats from quality_daily where "botId" = $1 and "day" = $2::date', botId, prevDay).catch(() => []);
     const prev = prevRow[0] && prevRow[0].stats;
-    const stats = { clientConversations: res.clientConversations, botConversations: res.botConversations, defectSessions: res.defectSessions, defectRate: res.defectRate, byClass: res.byClass, examples: res.examples };
+    const stats = { clientConversations: res.clientConversations, botConversations: res.botConversations, defectSessions: res.defectSessions, defectRate: res.defectRate, byClass: res.byClass, examples: res.examples, managerInvolved: res.managerInvolved, managerWrote: res.managerWrote, botHandoff: res.botHandoff, autonomous: res.autonomous, managerExamples: res.managerExamples };
     await db.$executeRawUnsafe('insert into quality_daily ("id","botId","day","stats") values ($1,$2,$3::date,$4::jsonb) on conflict ("botId","day") do update set stats = excluded.stats, "createdAt" = now()',
         require('crypto').randomUUID(), botId, dayStr, JSON.stringify(stats));
     const k = await keysOf(botId, ['TELEGRAM_BOT_TOKEN', 'OWNER_TELEGRAM_ID', 'ADMIN_TELEGRAM_ID', 'SHOP_TAG']);

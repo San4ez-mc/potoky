@@ -1196,13 +1196,16 @@ async function main() {
         // 28. Колір × розмір (26658740): графітові джинси j0032 шиються лише XS/L.
         const jeans = await load('j0032');
         if (jeans && jeans.sku) {
+            // Розмір беремо з даних CRM: є в інших кольорах, але не в графітовому (26.10 Олексій змінив розміри j0032 — XL зник зовсім).
+            const { colorHasSize: _chs, productHasSize: _phs } = require('../catalogFacts');
+            const _sz = ['XL', 'XXL', 'S', 'XXXL', 'M'].find((z) => _phs(jeans, z) && !_chs(jeans, 'Графітовий', z)) || 'XL';
             const A = freshA({ turnText: 'Графітовий' });
-            Object.assign(A.ctx, { product: JSON.parse(JSON.stringify(jeans)), recommendedSize: 'XL', colorChoice: { color: 'Графітовий' }, sizeInput: { height: 185, weight: 90 } });
+            Object.assign(A.ctx, { product: JSON.parse(JSON.stringify(jeans)), recommendedSize: _sz, colorChoice: { color: 'Графітовий' }, sizeInput: { height: 185, weight: 90 } });
             A.ctx.agent.presentedSku = jeans.sku;
             await runPolicy(A, freshU({ intent: 'give_color' }));
-            check('28.1 Колір, якого нема в підібраному розмірі (графітові XL) → знято й пояснено, палітра лише кольори XL', A.out.some((o) => o.step === 'color_size_unavailable') && !/Графіт/.test(String(A.ctx.product.colors)), 'steps ' + A.out.map((o) => o.step).join(',') + ' | colors ' + A.ctx.product.colors);
+            check('28.1 Колір, якого нема в підібраному розмірі (графітові ' + _sz + ') → знято й пояснено, палітра лише кольори цього розміру', A.out.some((o) => o.step === 'color_size_unavailable') && !/Графіт/.test(String(A.ctx.product.colors)), 'steps ' + A.out.map((o) => o.step).join(',') + ' | colors ' + A.ctx.product.colors);
             const jCat = cat.products.find((p) => String(p.sku).toLowerCase() === 'j0032');
-            check('28.2 Постачальнику рядок «графітові XL» не йде (missingVariant)', missingVariant({ sku: 'j0032', color: 'Графітовий', size: 'XL' }, jCat).length > 0, JSON.stringify(missingVariant({ sku: 'j0032', color: 'Графітовий', size: 'XL' }, jCat)));
+            check('28.2 Постачальнику рядок «графітові XL» не йде (missingVariant)', missingVariant({ sku: 'j0032', color: 'Графітовий', size: _sz }, jCat).length > 0, JSON.stringify(missingVariant({ sku: 'j0032', color: 'Графітовий', size: _sz }, jCat)));
         } else check('28.0 j0032 завантажується', false, '');
         // 29. Кольори, названі до розміру, не губляться (39dc3ff6, c83d677f).
         const kof = await load('C0043');

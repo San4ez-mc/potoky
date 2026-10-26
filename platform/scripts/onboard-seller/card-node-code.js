@@ -22,4 +22,5 @@ try {
   out.ownerCardText = 'Онбординг експерта завершився, але картку не вдалося зібрати: ' + e.message + '. Telegram ID ' + user.telegramId + '. Досьє в Flows, сесія ' + session.id + '.';
 }
 if (context.c2Summary) out.ownerCardText = String(out.ownerCardText || '') + '\n\n' + context.c2Summary; // C2_SUMMARY
+if (context.provisionText) out.ownerCardText = String(out.ownerCardText || '') + '\n\n' + context.provisionText; // PROVISION
 return out;

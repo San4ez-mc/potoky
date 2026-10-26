@@ -181,6 +181,7 @@ export const api = {
     getSellers: () => req('GET', '/sellers'),
     getSeller: (projectId) => req('GET', `/sellers/${projectId}`),
     saveSeller: (projectId, patch) => req('PUT', `/sellers/${projectId}`, patch),
+    provisionSeller: (projectId) => req('POST', `/sellers/${projectId}/provision`, {}),
 
     // Broadcasts
     getBroadcastEligibleBots: () => req('GET', '/broadcasts/eligible-bots'),

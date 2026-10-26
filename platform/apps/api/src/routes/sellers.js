@@ -71,6 +71,46 @@ function createSellersRouter({ db, fetchImpl = fetch, env = process.env }) {
         res.json({ ok: true, data: sellers.map((s) => ({ ...s, clone: clones[s.projectId] || null })) });
     }));
 
+    // Вивантаження відповідей онбордингу для аналізу (зустріч 22.10, п. «Перевірка»): усі експерти × усі поля досьє.
+    // ?format=csv (за замовчуванням, UTF-8 з BOM для Excel) | json. Токени й паролі в досьє не зберігаються.
+    router.get('/export', asyncHandler(async (req, res) => {
+        const files = await db.file.findMany({ where: { fileType: 'seller_dossier' }, orderBy: { updatedAt: 'desc' } });
+        const users = await db.user.findMany({ where: { id: { in: files.map((f) => f.userId) } }, select: { id: true, firstName: true, lastName: true, username: true, telegramId: true } });
+        const um = Object.fromEntries(users.map((u) => [u.id, u]));
+        const rows = [];
+        for (const f of files) {
+            let st; try { st = JSON.parse(f.content); } catch { continue; }
+            const u = um[f.userId] || {};
+            const name = [u.firstName, u.lastName].filter(Boolean).join(' ');
+            const who = { expert: name, username: u.username || '', telegramId: u.telegramId ? String(u.telegramId) : '' };
+            for (const fld of Object.values((st && st.fields) || {})) {
+                rows.push({
+                    ...who, field: fld.id, title: fld.title, status: fld.status, value: fld.value || '', quote: fld.quote || '',
+                    source: fld.source || '', weak: fld.quality && fld.quality.weak ? 'так' : '', weakHint: fld.quality && fld.quality.weak ? fld.quality.hint : '',
+                    note: fld.note || '', conflict: fld.conflict || '', updatedAt: fld.updatedAt || '',
+                });
+            }
+            for (const q of (st && st.specialistRequests) || []) {
+                rows.push({ ...who, field: 'ЗАПИТ_ФАХІВЦЮ', title: q.topic || '', status: '', value: q.reason || '', quote: '', source: '', weak: '', weakHint: '', note: '', conflict: '', updatedAt: q.at || '' });
+            }
+        }
+        if (String(req.query.format || 'csv') === 'json') return res.json({ ok: true, data: rows });
+        const cols = ['expert', 'username', 'telegramId', 'field', 'title', 'status', 'value', 'quote', 'source', 'weak', 'weakHint', 'note', 'conflict', 'updatedAt'];
+        const cell = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+        const csv = '﻿' + cols.join(',') + '\r\n' + rows.map((r) => cols.map((c) => cell(r[c])).join(',')).join('\r\n');
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', 'attachment; filename="onboarding-answers.csv"');
+        res.send(csv);
+    }));
+
+    // Створити (або показати наявний) клон продавця для експерта: вручну, якщо автоматика онбордингу не спрацювала.
+    router.post('/:projectId/provision', asyncHandler(async (req, res) => {
+        const { provisionSeller } = require('../services/sellerProvision');
+        const { callTool } = require('../../../../apps/mcp/src/tools-flows');
+        const r = await provisionSeller({ db, callTool, projectId: req.params.projectId, fetchImpl });
+        res.json({ ok: true, data: r });
+    }));
+
     router.get('/:projectId', asyncHandler(async (req, res) => {
         const r = await c2({ action: 'get', projectId: req.params.projectId });
         const clones = await clonesByProject([req.params.projectId]);

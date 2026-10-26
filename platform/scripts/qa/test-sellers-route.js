@@ -30,6 +30,10 @@ const fakeDb = {
             return [{ key: 'CONTENT2_URL', value: 'http://c2/' }, { key: 'CONTENT2_WEBHOOK_SECRET', value: 'SECRET' }];
         },
     },
+    file: {
+        findMany: async () => [{ userId: 'U1', content: JSON.stringify({ fields: { K1: { id: 'K1', title: 'Хто експерт', status: 'confirmed', value: 'Психолог, "тривожність"', quote: 'так', source: 'expert', quality: { weak: true, hint: 'уточни' } } }, specialistRequests: [{ at: '2026-10-26T10:00:00Z', topic: 'ціна', reason: 'не знаю' }] }) }, { userId: 'U2', content: 'не json' }],
+    },
+    user: { findMany: async () => [{ id: 'U1', firstName: 'Тетяна', lastName: 'К', username: 'tk', telegramId: BigInt(861111578) }] },
 };
 
 (async () => {
@@ -60,6 +64,18 @@ const fakeDb = {
     ok(calls[calls.length - 1].body.patch.sellerName === 'Ден', 'патч доходить до content2 без змін');
     r = await j('PUT', '/P2', { status: 'live' });
     ok(r.s === 400 && /Не можна запустити/.test(r.j.error.message) && r.j.error.missing[0] === 'ціна послуги', 'запуск, коли не готово: 400 і що саме бракує');
+
+    console.log('вивантаження відповідей онбордингу');
+    const ex = await fetch(base + '/export');
+    const buf = Buffer.from(await ex.arrayBuffer());
+    const csv = '﻿'.repeat(buf[0] === 0xEF && buf[1] === 0xBB && buf[2] === 0xBF ? 1 : 0) + buf.toString('utf8').replace(/^﻿/, '');
+    ok(ex.status === 200 && /text\/csv/.test(ex.headers.get('content-type')) && /attachment/.test(ex.headers.get('content-disposition')), 'CSV віддається файлом');
+    ok(csv.charCodeAt(0) === 0xFEFF && /"Тетяна К","tk","861111578","K1"/.test(csv), 'BOM для Excel, експерт і поле в рядку');
+    ok(/"Психолог, ""тривожність"""/.test(csv) && /"так","уточни"/.test(csv), 'лапки екрануються, позначка «розмито» і підказка є');
+    ok(/ЗАПИТ_ФАХІВЦЮ/.test(csv), 'запити допомоги фахівця теж у вивантаженні');
+    ok(!/не json/.test(csv), 'зіпсований запис пропускається');
+    r = await j('GET', '/export?format=json');
+    ok(r.s === 200 && r.j.data.length === 2 && r.j.data[0].weak === 'так', 'формат json');
 
     console.log('збої');
     c2mode = 'down';

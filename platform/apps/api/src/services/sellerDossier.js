@@ -55,6 +55,34 @@ function emptyState() {
 
 const clip = (s, n) => { s = String(s == null ? '' : s).trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
 
+// Контроль якості відповіді (24.10, зустріч 22.10: «формальна відповідь не завжди хороша»). Не блокує запис і запуск,
+// але повертає агентові підказку, що саме вдруге перепитати, а власнику показує позначку «розмито».
+const GENERIC = /(якісн|індивідуальн\S* підхід|комплексн|професійн|широкий спектр|допомага\S* людям|вирішу\S* проблем|під ключ|усе для|все для|різн\S* (питан|задач))/i;
+const MIN_LEN = { K1: 30, K3: 70, K5: 50, K6: 40, K8: 25, K11: 20, O10: 70, O11: 40, O13: 40 };
+const QUALITY_HINT = {
+    K1: 'Спитай конкретніше: з ким саме працює і з якою ситуацією.',
+    K3: 'Спитай про формат, тривалість, кроки і що людина отримає на виході.',
+    K4: 'Потрібна сума (або «безкоштовно»), умови оплати і повернення, а не загальні слова.',
+    K5: 'Спитай окремо: кому підходить (з прикладом) і кому ні, кого ввічливо відмовляє.',
+    K6: 'Спитай, які 3-5 речей треба знати про людину перед пропозицією (ситуація, досвід, ціль, терміновість, бюджет).',
+    K8: 'Спитай, що саме відбувається після того, як людина погодилась (посилання, переписка, час, годинник).',
+    K11: 'Спитай «ти» чи «ви», мови і слова, яких уникати.',
+    O10: 'Потрібні 2-3 справжні запитання клієнтів і суть відповіді на кожне, а не загальні слова.',
+    O11: 'Спитай: хто, з чим приходить, що вже пробував.',
+    O13: 'Спитай про конкретний досвід, цифри, регалії, що можна називати.',
+};
+function assessQuality(id, value, status) {
+    if (!value || status === 'not_applicable' || status === 'missing') return { weak: false, hint: '' };
+    const v = String(value).replace(/\s+/g, ' ').trim();
+    const min = MIN_LEN[id];
+    if (/^(нема|немає|не маю)\b/i.test(v)) return { weak: false, hint: '' };
+    if (id === 'K4' && !/\d|безкоштовн|free|без оплат/i.test(v)) return { weak: true, hint: QUALITY_HINT.K4 };
+    if (min && v.length < min) return { weak: true, hint: QUALITY_HINT[id] || 'Відповідь закоротка: проси одне конкретне уточнення.' };
+    if (id !== 'K9' && id !== 'K10' && GENERIC.test(v) && v.length < 160) return { weak: true, hint: (QUALITY_HINT[id] || 'Загальні слова: проси конкретику.') + ' У відповіді загальні слова без прикладу.' };
+    if (id === 'K7' && !/(запис|оплат|заявк|консультац|дзвін|зустріч)/i.test(v)) return { weak: true, hint: 'Не зрозуміло, яка саме дія: запис, оплата чи заявка.' };
+    return { weak: false, hint: '' };
+}
+
 /**
  * Записати поле. Жорсткі правила (не залежать від моделі):
  *  - confirmed тільки з цитатою слів експерта (quote) і значенням;
@@ -92,9 +120,10 @@ function setField(state, input) {
 
     const prev = state.fields[id] || {};
     const now = new Date().toISOString();
+    const quality = assessQuality(id, value, status);
     state.fields[id] = {
         id, title: DEFS.get(id).title,
-        value, status, source, quote, note, conflict,
+        value, status, source, quote, note, conflict, quality,
         confirmedBy: status === 'confirmed' || status === 'not_applicable' ? 'expert' : null,
         confirmedAt: status === 'confirmed' || status === 'not_applicable' ? now : null,
         updatedAt: now,
@@ -120,6 +149,18 @@ function confirmAll(state, quote) {
     return { ok: true, confirmed, skippedNeedExplicit: skipped };
 }
 
+/** Запит «потрібна допомога фахівця»: зберігається в досьє, власник бачить його в картці. */
+function addSpecialistRequest(state, input) {
+    const topic = clip(input && input.topic, 200);
+    const reason = clip(input && input.reason, 500);
+    if (!reason && !topic) return { ok: false, error: 'потрібні reason (чому не вдається відповісти) або topic' };
+    state.specialistRequests = state.specialistRequests || [];
+    const rec = { at: new Date().toISOString(), topic, reason };
+    state.specialistRequests.push(rec);
+    state.updatedAt = rec.at;
+    return { ok: true, request: rec };
+}
+
 function addMaterial(state, m) {
     state.materials.push({ kind: clip(m.kind, 20), ref: clip(m.ref, 300), at: new Date().toISOString() });
 }
@@ -135,6 +176,7 @@ function computeCard(state) {
             value: f ? f.value : '', source: f ? f.source : '', quote: f ? f.quote : '',
             confirmedBy: f ? f.confirmedBy : null, confirmedAt: f ? f.confirmedAt : null,
             note: f ? f.note : '', conflict: f ? f.conflict : '',
+            weak: !!(f && f.quality && f.quality.weak), weakHint: f && f.quality ? f.quality.hint : '',
         };
     });
     const ok = (r) => r.status === 'confirmed' || r.status === 'not_applicable';
@@ -152,6 +194,8 @@ function computeCard(state) {
             ? `Готово до запуску: ${CRITICAL.length}/${CRITICAL.length} ✅`
             : `Не готово: ${done}/${CRITICAL.length} ✅. Не вистачає: ${blockers.map((b) => `${b.id} ${b.mark}`).join(', ')}`,
         rows, blockers, optional, conflicts,
+        weak: Object.values(state.fields).filter((f) => f.quality && f.quality.weak && f.status !== 'missing').map((f) => ({ id: f.id, title: f.title, hint: f.quality.hint })),
+        specialistRequests: state.specialistRequests || [],
     };
 }
 
@@ -171,11 +215,18 @@ function renderOwnerCard(card, state) {
             : (r.source ? ` — ${esc(srcLabel(r.source))}, не підтверджено` : '');
         L.push(`${r.mark} <b>${r.id} ${esc(r.title)}</b>: ${val}${who}`);
         if (r.conflict) L.push(`   ⚠️ суперечність: ${esc(clip(r.conflict, 200))}`);
+        if (r.weak) L.push(`   🔍 відповідь розмита, варто уточнити: ${esc(clip(r.weakHint, 160))}`);
         if (r.note) L.push(`   ℹ️ ${esc(clip(r.note, 160))}`);
     }
     if (card.conflicts.length) {
         L.push(''); L.push('<b>Суперечності між джерелами</b>');
         for (const c of card.conflicts) L.push(`• ${c.id}: ${esc(clip(c.conflict, 220))}`);
+    }
+    const optWeak = card.weak.filter((w) => !card.rows.some((r) => r.id === w.id));
+    for (const w of optWeak) L.push(`🔍 ${esc(w.id)} ${esc(w.title)}: відповідь розмита. ${esc(clip(w.hint, 140))}`);
+    if (card.specialistRequests.length) {
+        L.push(''); L.push('<b>🙋 Експерт просив допомоги фахівця</b>');
+        for (const q of card.specialistRequests.slice(-3)) L.push(`• ${esc(clip(q.topic || '', 80))} ${esc(clip(q.reason || '', 220))}`);
     }
     const optFilled = card.optional.filter((o) => o.status !== 'missing');
     const optEmpty = card.optional.filter((o) => o.status === 'missing' && !o.id.startsWith('T'));
@@ -212,4 +263,4 @@ function renderExpertCard(card) {
     return L.join('\n');
 }
 
-module.exports = { STATUS, CRITICAL, OPTIONAL, emptyState, setField, confirmAll, addMaterial, computeCard, renderOwnerCard, renderFull, renderExpertCard, isCritical };
+module.exports = { STATUS, CRITICAL, OPTIONAL, emptyState, setField, confirmAll, addMaterial, addSpecialistRequest, assessQuality, computeCard, renderOwnerCard, renderFull, renderExpertCard, isCritical };

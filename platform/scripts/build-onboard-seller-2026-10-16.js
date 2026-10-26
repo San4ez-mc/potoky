@@ -67,6 +67,9 @@ function tools() {
             method: 'POST', headers: SECRET_HDR, url: '{{env.FETCH_PAGE_URL}}',
             inputSchema: { type: 'object', required: ['url'], properties: { url: { type: 'string' }, maxChars: { type: 'number' } } },
         },
+        dossierTool('request_specialist', 'request-specialist',
+            'Передати питання фахівцям (Тетяні, Надії, Олександру): експерт просить допомоги або двічі не зміг відповісти. Виклич лише з його згоди. Повертає message, яке треба переказати експерту.',
+            { type: 'object', required: ['reason'], properties: { topic: { type: 'string', description: 'про що (наприклад, «ціна», «кому підходить»)' }, reason: { type: 'string', description: 'що саме не виходить, коротко' } } }),
         {
             name: 'finish_onboarding',
             description: 'Завершити онбординг: усі критичні поля закриті АБО експерт хоче зупинитись (тоді картка піде власнику з відміткою «не готово»).',

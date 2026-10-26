@@ -90,4 +90,28 @@ t('повні відповіді ріжуться на частини ≤3900', 
     const parts = D.renderFull(D.computeCard(s), s);
     assert.ok(parts.length >= 2); assert.ok(parts.every((p) => p.length <= 3900));
 });
+t('якість: загальні слова й закоротка відповідь розмиті, конкретна — ні', () => {
+    assert.strictEqual(D.assessQuality('K1', 'Допомагаю людям вирішувати проблеми', 'confirmed').weak, true);
+    assert.strictEqual(D.assessQuality('K3', 'Консультація', 'confirmed').weak, true);
+    assert.strictEqual(D.assessQuality('K4', 'Недорого, індивідуально', 'confirmed').weak, true);
+    assert.strictEqual(D.assessQuality('K4', '1500 грн, повна передоплата, повернення за 3 дні', 'confirmed').weak, false);
+    assert.strictEqual(D.assessQuality('K4', 'безкоштовно', 'confirmed').weak, false);
+    assert.strictEqual(D.assessQuality('O12', 'нема', 'confirmed').weak, false);
+    assert.strictEqual(D.assessQuality('K3', 'Онлайн-розбір 60 хвилин у Zoom: дивимось воронку, на виході план із 3 кроків і запис розмови', 'confirmed').weak, false);
+});
+t('якість не блокує запис і запуск, але потрапляє в картку власнику', () => {
+    const s = D.emptyState();
+    const r = D.setField(s, { id: 'K1', status: 'confirmed', value: 'Допомагаю людям', quote: 'так' });
+    assert.ok(r.ok); assert.strictEqual(r.field.quality.weak, true);
+    const c = D.computeCard(s);
+    assert.strictEqual(c.weak.length, 1);
+    assert.ok(D.renderOwnerCard(c, s).includes('розмита'));
+});
+t('запит фахівця зберігається й видно в картці власнику', () => {
+    const s = D.emptyState();
+    assert.strictEqual(D.addSpecialistRequest(s, {}).ok, false);
+    assert.ok(D.addSpecialistRequest(s, { topic: 'ціна', reason: 'Не знаю, скільки просити' }).ok);
+    const text = D.renderOwnerCard(D.computeCard(s), s);
+    assert.ok(text.includes('допомоги фахівця')); assert.ok(text.includes('Не знаю, скільки просити'));
+});
 console.log(`\nВсі ${n} тестів пройшли`);

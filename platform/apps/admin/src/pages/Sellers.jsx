@@ -41,7 +41,10 @@ function SellerList() {
 
     return (
         <div className="p-6 max-w-5xl">
-            <h1 className="text-lg font-semibold text-white">ШІ-продавці</h1>
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+                <h1 className="text-lg font-semibold text-white">ШІ-продавці</h1>
+                <a href="/api/sellers/export?format=csv" download className="px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:text-white text-xs">⬇ Вивантажити відповіді онбордингу (CSV)</a>
+            </div>
             <p className="text-sm text-gray-400 mt-1 mb-4">Продавці експертів. Їх налаштування заповнює онбординг-бот; тут ви перевіряєте, виправляєте і запускаєте. Дані зберігаються в content2.</p>
             {rows.length === 0 && <p className="text-sm text-gray-500">Поки нікого: продавець зʼявляється після онбордингу експерта.</p>}
             <div className="space-y-2">
@@ -134,7 +137,10 @@ function SellerDetail({ projectId }) {
                 {clone && <Link to={`/funnel/${clone.botId}`} className="px-2.5 py-1 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:text-white">Воронка {clone.slug}</Link>}
                 {clone && <Link to={`/bots/${clone.botId}/sessions`} className="px-2.5 py-1 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:text-white">Розмови (сесії)</Link>}
                 {clone && clone.link && <a href={clone.link} target="_blank" rel="noreferrer" className="px-2.5 py-1 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:text-white">Відкрити в Telegram ↗</a>}
-                {!clone && <span className="px-2.5 py-1 text-yellow-400">Воронку ще не створено (її клонує скрипт clone-expert-seller)</span>}
+                {!clone && (
+                    <button onClick={async () => { setSaving(true); setMsg(null); try { const r = await api.provisionSeller(projectId); setMsg({ ok: true, text: r.created ? `Воронку створено: ${r.link}` : 'Воронка вже є' }); await load(); } catch (e) { setMsg({ ok: false, text: e.message }); } finally { setSaving(false); } }}
+                        disabled={saving} className="px-2.5 py-1 rounded-lg bg-brand hover:bg-brand-light text-white disabled:opacity-60">Створити воронку продавця</button>
+                )}
             </section>
 
             <section>

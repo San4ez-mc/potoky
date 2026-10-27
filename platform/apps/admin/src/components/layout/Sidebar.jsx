@@ -10,6 +10,7 @@ import clsx from 'clsx';
 export const NAV = [
     { to: '/funnels', icon: '🗺', label: 'Воронки' },
     { to: '/funnels-compare', icon: '📈', label: 'Аналітика' },
+    { to: '/knowledge', icon: '📚', label: 'База знань' },
     { to: '/projects', icon: '📁', label: 'Проєкти', pageId: 'projects' },
     { to: '/sessions', icon: '💬', label: 'Сесії', unreadKey: true },
     { to: '/broadcasts', icon: '📣', label: 'Розсилки', pageId: 'broadcasts' },

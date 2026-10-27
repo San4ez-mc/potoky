@@ -8,7 +8,11 @@ const { validateParams } = require('../middleware/validateParams');
 const { NotFoundError } = require('@platform/errors');
 const { allowedProjectIds, isProjectAllowed } = require('../middleware/rbac');
 
+const { createContent2Client } = require('../services/content2Client');
+const { loadProjectKnowledge } = require('../services/projectKnowledge');
+
 const router = Router();
+const content2 = createContent2Client({ db });
 
 // Гард обʼєктного доступу: 404 (не 403 — щоб не розкривати існування) на чужий проєкт.
 function guardProject(req, res, next) {
@@ -36,6 +40,17 @@ router.get('/:id',
         const project = await db.project.findUnique({ where: { id: req.params.id } });
         if (!project) throw new NotFoundError('Project', req.params.id);
         res.json({ ok: true, data: project });
+    })
+);
+
+// GET /api/projects/:id/knowledge — «База знань проєкту»: зведення з content2 про експерта проєкту (лише читання; доступ — як до самого проєкту)
+router.get('/:id/knowledge',
+    validateParams({ params: z.object({ id: z.string().uuid() }) }),
+    guardProject,
+    asyncHandler(async (req, res) => {
+        const data = await loadProjectKnowledge({ db, content2, projectId: req.params.id });
+        if (!data) throw new NotFoundError('Project', req.params.id);
+        res.json({ ok: true, data });
     })
 );
 

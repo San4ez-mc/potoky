@@ -42,13 +42,13 @@ router.get('/',
                 sessions: { some: { isTest: false } },
             } : {}),
             // Hide system/webhook/test accounts by username pattern
+            // Людина без @username у Telegram (username = NULL) НЕ службова: SQL «NOT(NULL…)» ховав їх із «Підписників»
+            // (27.10: знайдено при перевірці доступів) — тож явно пропускаємо username IS NULL.
             ...(realOnly ? {
-                NOT: {
-                    OR: [
-                        { username: { startsWith: 'test_' } },
-                        { username: { contains: 'webhook' } },
-                    ],
-                },
+                OR: [
+                    { username: null },
+                    { NOT: { OR: [{ username: { startsWith: 'test_' } }, { username: { contains: 'webhook' } }] } },
+                ],
             } : {}),
             ...(search ? {
                 AND: [{

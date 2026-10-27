@@ -22,6 +22,7 @@ import { FunnelAnalytics } from './pages/FunnelAnalytics.jsx';
 import { FunnelStages } from './pages/FunnelStages.jsx';
 import { FunnelsCompare } from './pages/FunnelsCompare.jsx';
 import { Sellers } from './pages/Sellers.jsx';
+import { Knowledge } from './pages/Knowledge.jsx';
 
 function ProtectedRoute({ children }) {
     const { isAuthenticated, isLoading } = useAuthStore();
@@ -85,6 +86,7 @@ export default function App() {
                     <Route path="dashboard" element={<Dashboard />} />
                     <Route path="content" element={<ContentStudio />} />
                     <Route path="broadcasts" element={<Broadcasts />} />
+                    <Route path="knowledge" element={<Knowledge />} />
                     <Route path="sellers" element={<Sellers />} />
                     <Route path="sellers/:projectId" element={<Sellers />} />
                     <Route path="connectors" element={<Connectors />} />

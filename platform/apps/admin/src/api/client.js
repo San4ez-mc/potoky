@@ -45,6 +45,7 @@ export const api = {
 
     // Projects
     getProjects: () => req('GET', '/projects'),
+    getProjectKnowledge: (id) => req('GET', `/projects/${id}/knowledge`),
     getProjectStats: (id) => req('GET', `/projects/${id}/stats`),
     getProjectBots: (id) => req('GET', `/projects/${id}/bots`),
     createProject: (name, slug, description) => req('POST', '/projects', { name, slug, description }),

@@ -43,7 +43,7 @@ function Column({ col }) {
                     {!col.inGraph && <div className="text-amber-400">немає в графі</div>}
                 </div>
             </div>
-            <div className="p-2 space-y-2 overflow-y-auto" style={{ maxHeight: '68vh' }}>
+            <div className="kb-scroll p-2 space-y-2 overflow-y-auto" style={{ maxHeight: '68vh' }}>
                 {col.cards.length === 0 && <div className="text-[11px] text-gray-600 px-1 py-3 text-center">порожньо</div>}
                 {col.cards.map((c) => <Card key={c.sessionId} c={c} />)}
                 {hidden > 0 && <div className="text-[11px] text-gray-500 text-center py-1">ще {hidden} (показано {col.cards.length})</div>}
@@ -109,7 +109,7 @@ export function FunnelStages() {
                 {board && board.length > 0 && (
                     <>
                         <div className="mt-4 text-xs text-gray-500">Людей у воронці за період: <span className="text-gray-300 tabular-nums">{total}</span></div>
-                        <div className="mt-3 flex gap-3 overflow-x-auto pb-4 items-start">
+                        <div className="kb-scroll mt-3 flex gap-3 overflow-x-auto pb-3 items-start">
                             {main.map((c) => <Column key={c.stageName} col={c} />)}
                             {side.length > 0 && (
                                 <div className="shrink-0 self-stretch flex items-center px-1">

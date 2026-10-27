@@ -1321,6 +1321,29 @@ function TagNodeEditor({ data, update }) {
     );
 }
 
+function FlowStageNodeEditor({ data, update }) {
+    return (
+        <div className="space-y-3">
+            <Field label="Назва етапу">
+                <TextInput value={data.stageName} onChange={v => update({ stageName: v })} placeholder="Записався на консультацію" />
+            </Field>
+            <Field label="Порядковий номер">
+                <input
+                    type="number"
+                    value={data.stageOrder ?? 1}
+                    onChange={e => update({ stageOrder: Number(e.target.value) || 0 })}
+                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+                />
+            </Field>
+            <label className="flex items-center gap-2 text-xs text-gray-300">
+                <input type="checkbox" checked={!!data.side} onChange={e => update({ side: e.target.checked })} />
+                Бічний вихід (не частина основного шляху: «думає», «не актуально»)
+            </label>
+            <div className="text-xs text-gray-500">Нода тихо записує, що розмова дійшла сюди. Етапи самі збираються на сторінці «Воронка» за номером.</div>
+        </div>
+    );
+}
+
 function ABTestNodeEditor({ data, update }) {
     return (
         <div className="space-y-3">
@@ -1638,6 +1661,7 @@ export function NodeEditor({ embedded = false, onClose }) {
             case 'sendDocument': return <SendDocumentNodeEditor data={data} update={update} />;
             case 'notifyAdmin': return <NotifyAdminNodeEditor data={data} update={update} />;
             case 'tag': return <TagNodeEditor data={data} update={update} />;
+            case 'flowStage': return <FlowStageNodeEditor data={data} update={update} />;
             case 'abtest': return <ABTestNodeEditor data={data} update={update} />;
             case 'generateDocument': return <GenerateDocumentNodeEditor data={data} update={update} />;
             case 'fetchTelegramProfile': return <FetchTelegramProfileNodeEditor />;

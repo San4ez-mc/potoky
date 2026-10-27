@@ -464,6 +464,13 @@ export const FunnelStageNode = memo(({ id, selected, data }) => (
     </BaseNode>
 ));
 
+// ─── Flow Stage Node (етап воронки всередині Flows — сторінка «Воронка») ──────
+export const FlowStageNode = memo(({ id, selected, data }) => (
+    <BaseNode id={id} selected={selected} color="bg-emerald-700" icon="🎯" label={data.label || 'Етап (Flows)'} description={data.description}>
+        {data.stageName && <div className="text-emerald-300 text-[11px]">#{data.stageOrder ?? 0} · {data.stageName}</div>}
+    </BaseNode>
+));
+
 // ─── HTTP Request Node ─────────────────────────────────────────────────────────
 export const HttpRequestNode = memo(({ id, selected, data }) => {
     const bodyPreview = data.bodyFields
@@ -552,6 +559,7 @@ export const NODE_TYPES = {
     knowledgeBase: KnowledgeBaseNode,
     agent: AgentNode,
     funnelStage: FunnelStageNode,
+    flowStage: FlowStageNode,
 };
 
 // ─── Node palette items (for drag sidebar) ────────────────────────────────────
@@ -629,6 +637,9 @@ export const NODE_PALETTE = [
     { type: 'funnelStage', icon: '🎯', label: 'Етап воронки', color: 'border-indigo-700', group: 'Аналітика',
         description: 'Контрольна точка для графіка-воронки в CRM (звідки будується конверсія по етапах). Назва/порядок — довільні, задає автор ЦІЄЇ воронки. Потрібні ключі CRM_API_URL + CRM_API_KEY. Best-effort — не блокує виконання.',
         defaultData: { label: 'Етап воронки', stageName: '', stageOrder: 1 } },
+    { type: 'flowStage', icon: '🎯', label: 'Етап (Flows)', color: 'border-emerald-700', group: 'Аналітика',
+        description: 'Етап воронки всередині Flows: лише назва і порядковий номер. Етапи самі складаються на сторінці «Воронка» (🎯 у списку воронок): скільки людей дійшло, конверсія, хто саме. Не потребує CRM.',
+        defaultData: { label: 'Етап (Flows)', stageName: '', stageOrder: 1 } },
     { type: 'wait', icon: '⏳', label: 'Очікування', color: 'border-gray-600', group: 'Очікування',
         description: 'Затримка виконання: через N хвилин/годин або до конкретного часу',
         defaultData: { label: 'Очікування', duration: 5, unit: 'minutes', waitType: 'duration' } },

@@ -478,6 +478,28 @@ router.delete('/:botId/edges/:edgeId',
     })
 );
 
+// ── ЕТАПИ ВОРОНКИ (нода flowStage, 2026-10-27) ─────────────
+
+// GET /api/funnels/:botId/stages?period=24h|7d|30d|all&includeTest=true — етапи з лічильниками й конверсією
+router.get('/:botId/stages',
+    validateParams({ params: z.object({ botId: z.string().uuid() }) }),
+    asyncHandler(async (req, res) => {
+        const { getStages } = require('../services/stageEvents');
+        const data = await getStages(req.params.botId, { period: req.query.period || '30d', includeTest: req.query.includeTest === 'true' });
+        res.json({ ok: true, data });
+    }));
+
+// GET /api/funnels/:botId/stages/sessions?stage=Назва&period=&includeTest=&onlyStopped=true — хто пройшов етап
+router.get('/:botId/stages/sessions',
+    validateParams({ params: z.object({ botId: z.string().uuid() }) }),
+    asyncHandler(async (req, res) => {
+        const { getStageSessions } = require('../services/stageEvents');
+        const stage = String(req.query.stage || '').trim();
+        if (!stage) return res.status(400).json({ ok: false, error: 'Вкажіть stage' });
+        const data = await getStageSessions(req.params.botId, stage, { period: req.query.period || '30d', includeTest: req.query.includeTest === 'true', onlyStopped: req.query.onlyStopped === 'true' });
+        res.json({ ok: true, data });
+    }));
+
 // ── NODE STATS (Gap #9: get_node_stats for monitoring) ─────
 
 // GET /api/funnels/:botId/nodes/:nodeId/stats — node performance stats

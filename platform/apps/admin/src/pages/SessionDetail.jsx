@@ -595,7 +595,7 @@ const NODE_ICON = {
     connector: '🔌', wait: '⏳', wait_payment: '💳', httpRequest: '🌐', httpEncode: '🔑',
     sendPhoto: '📸', sendDocument: '📎', sendFile: '📎', notifyAdmin: '📣', notifyTg: '📨',
     fbEvent: '📊', saveFile: '💾', loadFile: '📂', readFile: '📄', generateDocument: '📝',
-    knowledgeBase: '📚', fetchTelegramProfile: '👤', tag: '🏷️', abtest: '🔬',
+    knowledgeBase: '📚', fetchTelegramProfile: '👤', tag: '🏷️', abtest: '🔬', flowStage: '🎯', funnelStage: '🎯',
 };
 
 function prettyVal(raw) {

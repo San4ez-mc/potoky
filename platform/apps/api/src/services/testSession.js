@@ -2023,7 +2023,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
         // натрапляють на першу "не тиху" ноду (вона ще встигає їх прочитати), і реально
         // чистяться на самому початку ноди ПІСЛЯ неї. Детермінований (код, не "здогадка"
         // моделі) спосіб сказати "щось щойно сталось", без прив'язки до id нод.
-        const SILENT_PASSTHROUGH_TYPES = new Set(['condition', 'js', 'funnelStage']);
+        const SILENT_PASSTHROUGH_TYPES = new Set(['condition', 'js', 'funnelStage', 'flowStage']);
         if (runtime.__pendingClearArmed) {
             for (const k of (runtime.__pendingClearFlags || [])) delete ctx[k];
             runtime.__pendingClearFlags = [];
@@ -4281,6 +4281,21 @@ ${sourceContent || '(немає даних)'}
                 }
             } catch (e) {
                 console.warn('[funnelStage] best-effort fail:', e.message);
+            }
+            runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
+            continue;
+        }
+
+        if (node.type === 'flowStage') {
+            // Етап воронки ВСЕРЕДИНІ Flows (2026-10-27): лише назва і порядковий номер, запис у funnel_stage_events —
+            // з цього будується сторінка «Воронка» (етапи, хто їх пройшов). Без CRM і ключів; не блокує виконання.
+            try {
+                const stageName = renderTemplate(String(data.stageName || data.label || ''), scope).trim();
+                if (stageName) {
+                    await require('./stageEvents').recordStage({ botId: session.botId, sessionId: session.id, userId: session.userId, stageName, stageOrder: data.stageOrder, isTest: ctx.testMode || session.isTest === true });
+                }
+            } catch (e) {
+                console.warn('[flowStage] best-effort fail:', e.message);
             }
             runtime.currentNodeId = pickNextNodeId(flow.edges, node.id);
             continue;

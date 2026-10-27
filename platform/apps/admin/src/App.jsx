@@ -19,6 +19,7 @@ import { Connectors } from './pages/Connectors.jsx';
 import { ContentStudio } from './pages/ContentStudio.jsx';
 import { Broadcasts } from './pages/Broadcasts.jsx';
 import { FunnelAnalytics } from './pages/FunnelAnalytics.jsx';
+import { FunnelStages } from './pages/FunnelStages.jsx';
 import { FunnelsCompare } from './pages/FunnelsCompare.jsx';
 import { Sellers } from './pages/Sellers.jsx';
 
@@ -55,6 +56,15 @@ export default function App() {
                     element={
                         <ProtectedRoute>
                             <FunnelAnalytics />
+                        </ProtectedRoute>
+                    }
+                />
+
+                <Route
+                    path="/funnel/:botId/stages"
+                    element={
+                        <ProtectedRoute>
+                            <FunnelStages />
                         </ProtectedRoute>
                     }
                 />

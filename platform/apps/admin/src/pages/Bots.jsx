@@ -435,6 +435,7 @@ export function Bots() {
                                         <button onClick={() => navigate(`/funnel/${bot.id}`)} className="flex-1 px-3 py-2 bg-brand/20 text-brand-light text-xs rounded-lg font-medium">Редагувати</button>
                                         <button onClick={() => navigate(`/bots/${bot.id}/sessions`)} className="px-3 py-2 bg-gray-800 text-gray-300 text-xs rounded-lg">Сесії</button>
                                         <button onClick={() => navigate(`/funnel/${bot.id}/analytics`)} className="px-3 py-2 bg-gray-800 text-gray-300 text-xs rounded-lg">📊</button>
+                                        <button onClick={() => navigate(`/funnel/${bot.id}/stages`)} title="Воронка: етапи і люди" className="px-3 py-2 bg-gray-800 text-gray-300 text-xs rounded-lg">🎯</button>
                                         <button onClick={() => handleRunAllTests(bot)} title="Запустити всі тести воронки" className="px-3 py-2 bg-emerald-900/30 text-emerald-400 text-xs rounded-lg">▶</button>
                                         <button onClick={() => setEditInfoBot(bot)} className="px-3 py-2 bg-gray-800 text-gray-300 text-xs rounded-lg">ℹ</button>
                                         <button onClick={() => setArchiveConfirm(bot.id)} className="px-3 py-2 bg-gray-800 text-gray-500 text-xs rounded-lg">📦</button>
@@ -546,6 +547,7 @@ export function Bots() {
                                                     <button onClick={() => navigate(`/funnel/${bot.id}`)} title="Редагувати" className="w-7 h-7 flex items-center justify-center bg-brand/20 hover:bg-brand/30 text-brand-light text-sm rounded-lg transition-colors">✏️</button>
                                                     <button onClick={() => navigate(`/bots/${bot.id}/sessions`)} title="Сесії" className="w-7 h-7 flex items-center justify-center bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-colors">💬</button>
                                                     <button onClick={() => navigate(`/funnel/${bot.id}/analytics`)} title="Аналітика" className="w-7 h-7 flex items-center justify-center bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-colors">📊</button>
+                                                    <button onClick={() => navigate(`/funnel/${bot.id}/stages`)} title="Воронка: етапи і люди" className="w-7 h-7 flex items-center justify-center bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-colors">🎯</button>
                                                     <button onClick={() => handleRunAllTests(bot)} title="Запустити всі тести воронки" className="w-7 h-7 flex items-center justify-center bg-emerald-900/30 hover:bg-emerald-900/50 text-emerald-400 text-sm rounded-lg transition-colors">▶</button>
                                                     <button onClick={() => setArchiveConfirm(bot.id)} title="Архівувати" className="w-7 h-7 flex items-center justify-center bg-gray-800 hover:bg-orange-900/30 text-gray-500 hover:text-orange-400 text-sm rounded-lg transition-colors">📦</button>
                                                 </>

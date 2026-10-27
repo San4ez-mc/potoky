@@ -91,6 +91,8 @@ export const api = {
     revealFunnelKey: (botId, key) => req('GET', `/funnels/${botId}/keys/${key}/reveal`),
     getNodeStats: (botId, nodeId, period = '30d') => req('GET', `/funnels/${botId}/nodes/${nodeId}/stats?period=${period}`),
     getFunnelAnalytics: (botId, period = '30d', includeTest = false) => req('GET', `/funnels/${botId}/analytics?period=${period}${includeTest ? '&includeTest=true' : ''}`),
+    getFunnelStages: (botId, period = '30d', includeTest = false) => req('GET', `/funnels/${botId}/stages?period=${period}${includeTest ? '&includeTest=true' : ''}`),
+    getStageSessions: (botId, stage, period = '30d', includeTest = false, onlyStopped = false) => req('GET', `/funnels/${botId}/stages/sessions?stage=${encodeURIComponent(stage)}&period=${period}${includeTest ? '&includeTest=true' : ''}${onlyStopped ? '&onlyStopped=true' : ''}`),
     getFunnelsCompare: (period = '30d', projectId = '', includeTest = false) => req('GET', `/funnels/analytics/compare?period=${period}${projectId ? `&projectId=${projectId}` : ''}${includeTest ? '&includeTest=true' : ''}`),
 
     // Channel deep links (persistent per-network links) — reqWithMeta so we keep { channels }

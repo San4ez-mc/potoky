@@ -119,7 +119,7 @@ function addStagesBySpec(nodesIn, edgesIn, specs) {
 
 module.exports = { PLANS, addStagesBySpec };
 
-if (require.main === module) {
+if (require.main === module || process.env.RUN_PATCH === '1') { // RUN_PATCH=1: запуск через stdin (node -)
     const path = require('path'); const fs = require('fs');
     const ROOT = process.env.PLATFORM_ROOT || path.join(__dirname, '..');
     require('dotenv').config({ path: path.join(ROOT, '.env') });

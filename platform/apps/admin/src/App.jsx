@@ -12,11 +12,9 @@ import { SessionDetail } from './pages/SessionDetail.jsx';
 import { Users } from './pages/Users.jsx';
 import { UserDetail } from './pages/UserDetail.jsx';
 import { Errors } from './pages/Errors.jsx';
-import { ApiLogs } from './pages/ApiLogs.jsx';
 import { Logs } from './pages/Logs.jsx';
 import { Settings } from './pages/Settings.jsx';
 import { Connectors } from './pages/Connectors.jsx';
-import { ContentStudio } from './pages/ContentStudio.jsx';
 import { Broadcasts } from './pages/Broadcasts.jsx';
 import { FunnelAnalytics } from './pages/FunnelAnalytics.jsx';
 import { FunnelStages } from './pages/FunnelStages.jsx';
@@ -84,7 +82,6 @@ export default function App() {
                     <Route path="funnels-compare" element={<FunnelsCompare />} />
                     <Route path="projects" element={<Projects />} />
                     <Route path="dashboard" element={<Dashboard />} />
-                    <Route path="content" element={<ContentStudio />} />
                     <Route path="broadcasts" element={<Broadcasts />} />
                     <Route path="knowledge" element={<Knowledge />} />
                     <Route path="sellers" element={<Sellers />} />
@@ -98,11 +95,9 @@ export default function App() {
                     <Route path="subscribers" element={<Users />} />
                     <Route path="users/:id" element={<UserDetail />} />
                     <Route path="subscribers/:id" element={<UserDetail />} />
-                    <Route path="api-logs" element={<ApiLogs />} />
                     <Route path="errors" element={<Errors />} />
                     <Route path="logs" element={<Logs />} />
                     <Route path="settings" element={<Settings />} />
-                    <Route path="mcp" element={<Navigate to="/settings" replace />} />
                 </Route>
 
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />

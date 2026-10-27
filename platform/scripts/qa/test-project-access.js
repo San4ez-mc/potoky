@@ -53,16 +53,10 @@ const ok = (c, m) => { if (c) { pass++; console.log('  ✔ ' + m); } else { fail
         r = await get('/api/funnels/analytics/compare?period=all&includeTest=true');
         const bn = JSON.stringify(r.j);
         ok(r.s === 200 && bn.includes(A.bot.slug) && !bn.includes(B.bot.slug), 'порівняння воронок: лише своя');
-        r = await get('/api/funnels/' + A.bot.id + '/stages?period=all&includeTest=true');
-        ok(r.s === 200 && r.j.data.length === 1 && r.j.data[0].stageName === 'Етап A', 'етапи своєї воронки відкриваються');
-        r = await get('/api/funnels/' + B.bot.id + '/stages?period=all&includeTest=true');
-        ok(r.s === 404, 'етапи чужої воронки — 404');
         r = await get('/api/funnels/' + A.bot.id + '/stages/board?period=all&includeTest=true');
         ok(r.s === 200 && r.j.data[0].cards.length === 1 && r.j.data[0].cards[0].sessionId === A.session.id, 'канбан своєї воронки з карткою людини');
         r = await get('/api/funnels/' + B.bot.id + '/stages/board?period=all&includeTest=true');
         ok(r.s === 404, 'канбан чужої воронки — 404');
-        r = await get('/api/funnels/' + B.bot.id + '/stages/sessions?stage=' + encodeURIComponent('Етап B') + '&period=all&includeTest=true');
-        ok(r.s === 404, 'люди чужого етапу — 404');
         r = await get('/api/projects/' + A.project.id + '/knowledge');
         ok(r.s === 200 && r.j.data.project.id === A.project.id && r.j.data.funnels.length === 1, 'база знань свого проєкту відкривається');
         r = await get('/api/projects/' + B.project.id + '/knowledge');
@@ -86,8 +80,8 @@ const ok = (c, m) => { if (c) { pass++; console.log('  ✔ ' + m); } else { fail
 
         // суперадмін бачить усе
         role.current = { isAdmin: true, role: 'superadmin' };
-        r = await get('/api/funnels/' + B.bot.id + '/stages?period=all&includeTest=true');
-        ok(r.s === 200, 'суперадмін бачить етапи будь-якої воронки');
+        r = await get('/api/funnels/' + B.bot.id + '/stages/board?period=all&includeTest=true');
+        ok(r.s === 200, 'суперадмін бачить дошку будь-якої воронки');
     } finally {
         if (server) server.close();
         for (const X of [A, B]) {

@@ -3,7 +3,7 @@
 // Запуск: DATABASE_URL=... NODE_PATH="<main platform>/node_modules" node scripts/qa/test-stage-events.js
 const crypto = require('crypto');
 const { db } = require('@platform/db');
-const { recordStage, getStages, getStageSessions, getBoard, ensureTable } = require('../../apps/api/src/services/stageEvents');
+const { recordStage, getStages, getBoard, ensureTable } = require('../../apps/api/src/services/stageEvents');
 
 let pass = 0; let fail = 0;
 const ok = (c, m) => { if (c) { pass++; console.log('  ✔ ' + m); } else { fail++; console.log('  ✘ ПРОВАЛ: ' + m); } };
@@ -46,20 +46,14 @@ const id = () => crypto.randomUUID();
         list = await getStages(bot.id, { period: '30d', includeTest: true });
         ok(list[0].sessions === 4, 'з тестовими — 4');
 
-        const ppl = await getStageSessions(bot.id, 'Привітання', { period: '30d' });
-        ok(ppl.length === 3 && !ppl.some((p) => p.isTest), 'на першому етапі 3 людини без тестової');
-        const p1 = ppl.find((p) => p.sessionId === s1.id);
-        ok(p1 && p1.wentFurther && p1.furthest === 'Записався' && p1.name === 'Тест1', 'людина, що пішла далі: найдальший етап і імʼя');
-        const stopped = await getStageSessions(bot.id, 'Привітання', { period: '30d', onlyStopped: true });
-        ok(stopped.length === 1 && stopped[0].sessionId === s3.id, 'фільтр «зупинилися»: лише s3');
-        ok(typeof stopped[0].telegramId === 'string', 'telegramId віддається рядком (BigInt не ламає JSON)');
-        ok(JSON.stringify(ppl).length > 10, 'відповідь серіалізується');
-
         const board = await getBoard(bot.id, { period: '30d' });
         const col = (n) => board.find((c) => c.stageName === n);
         ok(col('Привітання').here === 1 && col('Привітання').cards[0].sessionId === s3.id, 'канбан: у «Привітання» лише s3 (та, що зупинилась)');
         ok(col('Записався').here === 1 && col('Записався').cards[0].sessionId === s1.id && col('Побачив пропозицію').here === 0, 'канбан: s1 у «Записався», а не в усіх пройдених');
         ok(col('Думає').here === 1 && col('Думає').cards[0].sessionId === s2.id && col('Привітання').sessions === 3, 'канбан: s2 у бічній колонці; «пройшли» лишається накопичувальним (3)');
+        const card1 = col('Записався').cards[0];
+        ok(card1.name === 'Тест1' && typeof card1.telegramId === 'string', 'картка: імʼя і telegramId рядком (BigInt не ламає JSON)');
+        ok(!board.some((c) => c.cards.some((k) => k.isTest)) && JSON.stringify(board).length > 10, 'тестова розмова на дошці не показується, відповідь серіалізується');
         ok(board.reduce((a, c) => a + c.here, 0) === 3, 'канбан: кожна людина рівно в одній колонці (3 без тестової)');
 
         // етап, якого вже нема в графі, але події є

@@ -92,31 +92,6 @@ async function getStages(botId, { period = '30d', includeTest = false } = {}) {
     return list;
 }
 
-/** Люди, які пройшли етап: розмова, контакт, чи пішли далі, найдальший етап. */
-async function getStageSessions(botId, stageName, { period = '30d', includeTest = false, onlyStopped = false, limit = 200 } = {}) {
-    await ensureTable();
-    const from = periodFrom(period);
-    const rows = await db.$queryRaw`
-        SELECT e.session_id, e.first_at, e.last_at, e.count, e.is_test, s.state, s."lastActive", s."isActive",
-               u.id AS user_id, u."firstName", u."lastName", u.username, u."telegramId",
-               EXISTS (SELECT 1 FROM funnel_stage_events x WHERE x.session_id = e.session_id AND x.stage_order > e.stage_order) AS went_further,
-               (SELECT x.stage_name FROM funnel_stage_events x WHERE x.session_id = e.session_id ORDER BY x.stage_order DESC, x.last_at DESC LIMIT 1) AS furthest
-        FROM funnel_stage_events e
-        LEFT JOIN sessions s ON s.id = e.session_id
-        LEFT JOIN users u ON u.id = COALESCE(e.user_id, s."userId")
-        WHERE e.bot_id = ${botId} AND e.stage_name = ${String(stageName)} AND e.first_at >= ${from} AND (${!!includeTest} OR e.is_test = false)
-        ORDER BY e.last_at DESC LIMIT ${Math.min(Number(limit) || 200, 500)}`;
-    return rows
-        .map((r) => ({
-            sessionId: r.session_id, userId: r.user_id,
-            name: [r.firstName, r.lastName].filter(Boolean).join(' ') || null,
-            username: r.username || null, telegramId: r.telegramId != null ? String(r.telegramId) : null,
-            firstAt: r.first_at, lastAt: r.last_at, lastActive: r.lastActive, times: r.count, isTest: r.is_test,
-            wentFurther: !!r.went_further, furthest: r.furthest, state: r.state, active: r.isActive,
-        }))
-        .filter((r) => !onlyStopped || !r.wentFurther);
-}
-
 /** Канбан: колонки = етапи, картка = людина в колонці свого НАЙДАЛЬШОГО етапу (де зараз стоїть). */
 async function getBoard(botId, { period = '30d', includeTest = false, perColumn = 60 } = {}) {
     const columns = await getStages(botId, { period, includeTest });
@@ -146,4 +121,4 @@ async function getBoard(botId, { period = '30d', includeTest = false, perColumn 
     });
 }
 
-module.exports = { recordStage, getStages, getStageSessions, getBoard, ensureTable };
+module.exports = { recordStage, getStages, getBoard, ensureTable };

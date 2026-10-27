@@ -62,7 +62,6 @@ export const api = {
     archiveBot: (id) => req('PATCH', `/bots/${id}`, { isActive: false }),
     unarchiveBot: (id) => req('PATCH', `/bots/${id}`, { isActive: true }),
     getAllBots: () => req('GET', '/projects/bots/all'),
-    getBotSessions: (id, page = 0) => req('GET', `/bots/${id}/sessions?page=${page}`),
     createFunnel: (projectId, data) => req('POST', `/projects/${projectId}/bots`, data),
     deleteFunnel: (projectId, botId) => req('DELETE', `/projects/${projectId}/bots/${botId}`),
 
@@ -92,9 +91,7 @@ export const api = {
     revealFunnelKey: (botId, key) => req('GET', `/funnels/${botId}/keys/${key}/reveal`),
     getNodeStats: (botId, nodeId, period = '30d') => req('GET', `/funnels/${botId}/nodes/${nodeId}/stats?period=${period}`),
     getFunnelAnalytics: (botId, period = '30d', includeTest = false) => req('GET', `/funnels/${botId}/analytics?period=${period}${includeTest ? '&includeTest=true' : ''}`),
-    getFunnelStages: (botId, period = '30d', includeTest = false) => req('GET', `/funnels/${botId}/stages?period=${period}${includeTest ? '&includeTest=true' : ''}`),
     getStageBoard: (botId, period = '30d', includeTest = false) => req('GET', `/funnels/${botId}/stages/board?period=${period}${includeTest ? '&includeTest=true' : ''}`),
-    getStageSessions: (botId, stage, period = '30d', includeTest = false, onlyStopped = false) => req('GET', `/funnels/${botId}/stages/sessions?stage=${encodeURIComponent(stage)}&period=${period}${includeTest ? '&includeTest=true' : ''}${onlyStopped ? '&onlyStopped=true' : ''}`),
     getFunnelsCompare: (period = '30d', projectId = '', includeTest = false) => req('GET', `/funnels/analytics/compare?period=${period}${projectId ? `&projectId=${projectId}` : ''}${includeTest ? '&includeTest=true' : ''}`),
 
     // Channel deep links (persistent per-network links) — reqWithMeta so we keep { channels }
@@ -107,7 +104,6 @@ export const api = {
 
     // Saved Connectors (instances with real credentials)
     getSavedConnectors: () => req('GET', '/saved-connectors'),
-    getSavedConnector: (id) => req('GET', `/saved-connectors/${id}`),
     createSavedConnector: (data) => req('POST', '/saved-connectors', data),
     updateSavedConnector: (id, data) => req('PUT', `/saved-connectors/${id}`, data),
     deleteSavedConnector: (id) => req('DELETE', `/saved-connectors/${id}`),
@@ -158,25 +154,16 @@ export const api = {
         return req('GET', `/admin/errors${q ? '?' + q : ''}`);
     },
     resolveError: (id) => req('PATCH', `/admin/errors/${id}/resolve`),
-    getApiLogs: (params = {}) => {
-        const q = new URLSearchParams(params).toString();
-        return req('GET', `/admin/api-logs${q ? '?' + q : ''}`);
-    },
     getLogs: (limit = 150) => req('GET', `/admin/api-logs?limit=${limit}`),
     getMcpConfig: () => req('GET', '/admin/mcp-config'),
-    runBotRegression: (botId) => req('POST', `/admin/bots/${botId}/run-regression`),
     runWebhookTest: (botId, body) => req('POST', `/admin/bots/${botId}/webhook-test`, body),
-    runProjectRegressions: (projectSlug) => req('POST', `/admin/projects/${projectSlug}/run-regressions`),
 
     // Funnel tests (повноцінна система тестування)
     listFunnelTests: (botId) => req('GET', `/admin/bots/${botId}/tests`),
-    getFunnelTest: (testId) => req('GET', `/admin/tests/${testId}`),
     createFunnelTest: (botId, data) => req('POST', `/admin/bots/${botId}/tests`, data),
     updateFunnelTest: (testId, data) => req('PUT', `/admin/tests/${testId}`, data),
     deleteFunnelTest: (testId) => req('DELETE', `/admin/tests/${testId}`),
     duplicateFunnelTest: (testId) => req('POST', `/admin/tests/${testId}/duplicate`),
-    runFunnelTest: (testId) => req('POST', `/admin/tests/${testId}/run`),
-    runAllFunnelTests: (botId) => req('POST', `/admin/bots/${botId}/tests/run-all`),
     startAllFunnelTestsJob: (botId) => req('POST', `/admin/bots/${botId}/tests/run-all-async`),
     startFunnelTestJob: (testId) => req('POST', `/admin/tests/${testId}/run-async`),
     getFunnelTestJob: (jobId) => req('GET', `/admin/test-jobs/${jobId}`),
@@ -192,7 +179,6 @@ export const api = {
     getBroadcastSubscribers: (botIds) => req('GET', `/broadcasts/subscribers?botIds=${botIds.join(',')}`),
     getBroadcasts: () => req('GET', '/broadcasts'),
     createBroadcast: (data) => req('POST', '/broadcasts', data),
-    updateBroadcast: (id, data) => req('PATCH', `/broadcasts/${id}`, data),
     approveBroadcast: (id, scheduledAt) => req('POST', `/broadcasts/${id}/approve`, scheduledAt ? { scheduledAt } : {}),
     cancelBroadcast: (id) => req('DELETE', `/broadcasts/${id}`),
 
@@ -202,10 +188,4 @@ export const api = {
         req('PUT', `/system-keys/${key}`, { value, label, description, isSecret }),
     revealSystemKey: (key) => req('GET', `/system-keys/${key}/reveal`),
 
-    // Global Keys
-    getGlobalKeys: (projectId) => req('GET', `/projects/${projectId}/global-keys`),
-    upsertGlobalKey: (projectId, key, label, value, isSecret, description) =>
-        req('PUT', `/projects/${projectId}/global-keys/${key}`, { label, value, isSecret, description }),
-    deleteGlobalKey: (projectId, key) => req('DELETE', `/projects/${projectId}/global-keys/${key}`),
-    revealGlobalKey: (projectId, key) => req('GET', `/projects/${projectId}/global-keys/${key}/reveal`),
 };

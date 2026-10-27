@@ -23,9 +23,7 @@ function routeMeta(pathname, search) {
     if (pathname.startsWith('/sessions')) return { title: 'Сесії' };
     if (pathname.startsWith('/users/')) return { title: 'Деталі користувача', backTo: '/users' };
     if (pathname.startsWith('/users')) return { title: 'Користувачі' };
-    if (pathname.startsWith('/api-logs')) return { title: 'API логи' };
     if (pathname.startsWith('/errors')) return { title: 'Помилки' };
-    if (pathname.startsWith('/content')) return { title: 'Content Studio' };
     if (pathname.startsWith('/broadcasts')) return { title: 'Розсилки' };
     if (pathname.startsWith('/sellers/')) return { title: 'ШІ-продавець', backTo: '/sellers' };
     if (pathname.startsWith('/sellers')) return { title: 'ШІ-продавці' };

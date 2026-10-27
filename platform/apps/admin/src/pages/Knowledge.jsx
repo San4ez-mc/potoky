@@ -36,7 +36,7 @@ function Section({ s, base, cid }) {
     );
 }
 
-function SellerBox({ v, base, isSuper }) {
+function SellerBox({ v, isSuper }) {
     const sl = v.seller;
     if (!sl) return null;
     return (
@@ -46,7 +46,6 @@ function SellerBox({ v, base, isSuper }) {
                     <span className={`ml-2 text-[11px] px-2 py-0.5 rounded-full ${sl.status === 'live' ? 'bg-emerald-900/50 text-emerald-300' : 'bg-gray-800 text-gray-300'}`}>{STATUS[sl.status] || sl.status}</span>
                 </div>
                 <div className="flex gap-3">
-                    <ExtLink href={`${base}${sl.path}?projectId=${encodeURIComponent(v.projectId)}`}>Налаштування в content2</ExtLink>
                     {isSuper && <Link to={`/sellers/${v.projectId}`} className="text-xs text-emerald-400 hover:text-emerald-300">Керування у Flows →</Link>}
                 </div>
             </div>
@@ -135,7 +134,7 @@ export function Knowledge() {
                                         <div className="text-base font-medium text-white">👤 {v.projectName}</div>
                                         <ExtLink href={`${data.content2Url}/user-data?projectId=${encodeURIComponent(v.projectId)}`}>Усе про експерта в content2</ExtLink>
                                     </div>
-                                    <div className="mt-3"><SellerBox v={v} base={data.content2Url} isSuper={isSuper} /></div>
+                                    <div className="mt-3"><SellerBox v={v} isSuper={isSuper} /></div>
                                     {v.dossier && v.dossier.started && (
                                         <div className="mt-3 rounded-xl border border-gray-800 bg-gray-900/60 p-4 text-sm">
                                             <div className="font-medium text-white">📝 Анкета експерта (онбординг)</div>

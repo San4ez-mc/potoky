@@ -33,6 +33,7 @@ try {
   if (d && d.ok && d.link) {
     out.provisionLink = d.link;
     out.provisionText = (d.created ? '🤖 Автоматично створено ШІ-продавця (чернетка, поки нікому не відповідає): ' : '🤖 ШІ-продавець: ') + d.link + (d.status ? ' · статус «' + d.status + '»' : '') + '. Налаштування: https://flows.fineko.space/sellers/' + context.c2ProjectId;
+    if (d.accessText) out.provisionText += '\n' + d.accessText;
   } else if (d && d.ok === false) {
     out.provisionText = '⚠️ Продавця автоматично не створено: ' + String(d.error || 'невідома помилка') + '. Можна створити кнопкою на https://flows.fineko.space/sellers/' + context.c2ProjectId;
   }

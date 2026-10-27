@@ -714,6 +714,17 @@ async function resolveTargetBot(botId, startPayload, userId) {
                     return { targetBotId: argSlugBot.id, lessonSlug: null, startArg };
                 }
             }
+            // Клони ШІ-продавців експертів (sell-*) живуть у ВЛАСНИХ проєктах Flows (щоб експерт бачив лише своє), тож шукаємо їх по всій системі.
+            // Лише за префіксом sell-: решта воронок і далі резолвиться в межах проєкту, як було.
+            const cloneSlug = startPayload.split(/\s+/)[0];
+            if (/^sell-[a-z0-9-]+$/.test(cloneSlug)) {
+                const cloneBot = await db.bot.findFirst({ where: { slug: cloneSlug, isActive: true }, select: { id: true } });
+                if (cloneBot) {
+                    logger.info('[platformBotHandler] Routed expert clone by slug', { slug: cloneSlug, targetBotId: cloneBot.id });
+                    const arg = startPayload.slice(cloneSlug.length).trim();
+                    return arg ? { targetBotId: cloneBot.id, lessonSlug: null, startArg: arg } : { targetBotId: cloneBot.id, lessonSlug: null };
+                }
+            }
             logger.warn('[platformBotHandler] Slug not found in project, using webhook bot', { slug: startPayload, botId });
         }
         return { targetBotId: botId, lessonSlug: null };

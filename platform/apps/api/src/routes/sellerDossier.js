@@ -127,8 +127,17 @@ router.post('/provision', wrap(async (req, res, ctx) => {
     if (!projectId) return res.json({ ok: true, skipped: 'no_project' });
     try {
         const { provisionSeller } = require('../services/sellerProvision');
+        const { grantExpertAccess, accessText } = require('../services/expertAccess');
         const { callTool } = require('../../../../apps/mcp/src/tools-flows');
-        res.json(await provisionSeller({ db, callTool, projectId }));
+        const out = await provisionSeller({ db, callTool, projectId });
+        // Акаунт експерта в SSO і доступ до його «компанії» (Flows + content2): автоматично, якщо в анкеті є пошта (T3)
+        if (out && out.ok) {
+            const user = await db.user.findUnique({ where: { id: ctx.session.userId }, select: { firstName: true, lastName: true } }).catch(() => null);
+            const expertName = user ? [user.firstName, user.lastName].filter(Boolean).join(' ') : '';
+            out.access = await grantExpertAccess({ db, state: ctx.state, flowsProjectId: out.flowsProjectId, content2ProjectId: projectId, expertName });
+            out.accessText = accessText(out.access);
+        }
+        res.json(out);
     } catch (e) {
         logger.error('[sellerDossier] provision: ' + e.message);
         res.json({ ok: false, error: e.message });

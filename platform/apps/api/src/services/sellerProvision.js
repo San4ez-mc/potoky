@@ -38,10 +38,10 @@ async function c2Post(c2, route, body, fetchImpl) {
 async function findClone(db, projectId) {
     const k = await db.funnelKey.findFirst({ where: { key: 'EXPERT_PROJECT_ID', value: projectId }, select: { botId: true } });
     if (!k) return null;
-    const bot = await db.bot.findUnique({ where: { id: k.botId }, select: { id: true, slug: true } });
+    const bot = await db.bot.findUnique({ where: { id: k.botId }, select: { id: true, slug: true, projectId: true } });
     if (!bot || bot.slug === TEMPLATE_SLUG) return null;
     const un = await db.funnelKey.findFirst({ where: { botId: bot.id, key: 'TELEGRAM_BOT_USERNAME' }, select: { value: true } });
-    return { botId: bot.id, slug: bot.slug, link: un ? 'https://t.me/' + un.value + '?start=' + bot.slug : '' };
+    return { botId: bot.id, slug: bot.slug, flowsProjectId: bot.projectId || '', link: un ? 'https://t.me/' + un.value + '?start=' + bot.slug : '' };
 }
 
 async function provisionSeller({ db, callTool, projectId, fetchImpl = fetch }) {
@@ -67,8 +67,12 @@ async function provisionSeller({ db, callTool, projectId, fetchImpl = fetch }) {
     const username = (conn.config || {}).username;
     if (!username) throw new Error('у спільного конектора нема username');
     const denBot = await db.bot.findUnique({ where: { id: DEN_WEBHOOK_BOT_ID }, select: { project: { select: { slug: true } } } });
-    const projectSlug = denBot && denBot.project && denBot.project.slug;
-    if (!projectSlug) throw new Error('не знайдено проєкт воронки з вебхуком спільного бота');
+    if (!(denBot && denBot.project && denBot.project.slug)) throw new Error('не знайдено проєкт воронки з вебхуком спільного бота');
+    // «Компанія» експерта: власний проєкт у Flows (лише його воронка), щоб за доступом SSO він бачив тільки своє.
+    // Маршрутизація /start sell-… знаходить такі клони по всій системі (platformBotHandler, правило для префікса sell-).
+    const { ensureExpertFlowsProject } = require('./expertAccess');
+    const flowsProject = await ensureExpertFlowsProject({ db, content2ProjectId: projectId, expertName: brief.projectName, slugHint: slugify(brief.projectName) });
+    const projectSlug = flowsProject.slug;
 
     const base = 'sell-' + (slugify(brief.projectName) || projectId.slice(-6));
     let slug = base; let n = 1;
@@ -97,7 +101,7 @@ async function provisionSeller({ db, callTool, projectId, fetchImpl = fetch }) {
     await key('TEMPLATE_VERSION', TEMPLATE_VERSION, 'Версія шаблону');
 
     await c2Post(c2, '/api/webhooks/seller-config', { projectId, funnelBotId: bot.id, templateVersion: TEMPLATE_VERSION }, fetchImpl);
-    return { ok: true, created: true, botId: bot.id, slug, link: 'https://t.me/' + username + '?start=' + slug, status: brief.status || 'draft', ready: !!(brief.readiness && brief.readiness.ready), missing: (brief.readiness && brief.readiness.missing) || [] };
+    return { ok: true, created: true, botId: bot.id, slug, flowsProjectId: flowsProject.id, link: 'https://t.me/' + username + '?start=' + slug, status: brief.status || 'draft', ready: !!(brief.readiness && brief.readiness.ready), missing: (brief.readiness && brief.readiness.missing) || [] };
 }
 
 module.exports = { provisionSeller, findClone, slugify };

@@ -136,6 +136,17 @@ export function Knowledge() {
                                         <ExtLink href={`${data.content2Url}/user-data?projectId=${encodeURIComponent(v.projectId)}`}>Усе про експерта в content2</ExtLink>
                                     </div>
                                     <div className="mt-3"><SellerBox v={v} base={data.content2Url} isSuper={isSuper} /></div>
+                                    {v.dossier && v.dossier.started && (
+                                        <div className="mt-3 rounded-xl border border-gray-800 bg-gray-900/60 p-4 text-sm">
+                                            <div className="font-medium text-white">📝 Анкета експерта (онбординг)</div>
+                                            <div className="mt-1.5 text-xs text-gray-400">
+                                                Критичних полів закрито: <span className="text-white tabular-nums">{v.dossier.closed}</span> із {v.dossier.critical}
+                                                {v.dossier.fromMaterials > 0 && <span> · з матеріалів, потребують перевірки: {v.dossier.fromMaterials}</span>}
+                                                {v.dossier.weak > 0 && <span className="text-amber-400"> · розмитих відповідей: {v.dossier.weak}</span>}
+                                                {v.dossier.specialistRequests > 0 && <span className="text-amber-400"> · запитів до фахівця: {v.dossier.specialistRequests}</span>}
+                                            </div>
+                                        </div>
+                                    )}
                                     <div className="mt-4 grid gap-4 md:grid-cols-2">
                                         {v.sections.map((s) => <Section key={s.id} s={s} base={data.content2Url} cid={v.projectId} />)}
                                     </div>

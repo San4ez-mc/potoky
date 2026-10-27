@@ -1,7 +1,7 @@
 'use strict';
 // Сховище «досьє експерта» для agent-ноди онбордингу ШІ-продавця (воронка onboard-seller).
-// Доступ — як у websearch: заголовок X-Search-Secret із ключів воронки. Дані — таблиця files (fileType='seller_dossier'),
-// ключ userId+botId, тож експерт може зупинитись і продовжити в наступній сесії. Схему БД не міняємо.
+// Доступ — як у websearch: заголовок X-Search-Secret із ключів воронки. Дані (з 27.10) живуть у content2, єдине джерело правди;
+// тіньова копія files(seller_dossier) за userId+botId. Експерт може зупинитись і продовжити в наступній сесії.
 const express = require('express');
 const router = express.Router();
 const logger = require('@platform/logger');
@@ -16,23 +16,12 @@ function requireSecret(req, res, next) {
 }
 router.use(requireSecret);
 
-const FILE_TYPE = 'seller_dossier';
-
-async function load(sessionId) {
-    const session = await db.session.findUnique({ where: { id: String(sessionId || '') }, select: { id: true, userId: true, botId: true } });
-    if (!session) return null;
-    const row = await db.file.findFirst({ where: { userId: session.userId, botId: session.botId, fileType: FILE_TYPE }, orderBy: { updatedAt: 'desc' } });
-    let state;
-    try { state = row ? JSON.parse(row.content) : D.emptyState(); } catch { state = D.emptyState(); }
-    if (!state || typeof state !== 'object' || !state.fields) state = D.emptyState();
-    return { session, row, state };
-}
-
-async function save(ctx) {
-    const content = JSON.stringify(ctx.state);
-    if (ctx.row) await db.file.update({ where: { id: ctx.row.id }, data: { content, sessionId: ctx.session.id } });
-    else ctx.row = await db.file.create({ data: { userId: ctx.session.userId, botId: ctx.session.botId, sessionId: ctx.session.id, fileType: FILE_TYPE, fileName: 'seller_dossier.json', filePath: `/seller-dossier/${ctx.session.userId}.json`, content, version: 1 } });
-}
+// Сховище: основне, content2 (таблиця seller_dossiers); тіньова копія: files(seller_dossier). Див. services/dossierStore.js
+const { createContent2Client } = require('../services/content2Client');
+const { createDossierStore } = require('../services/dossierStore');
+const store = createDossierStore({ db, content2: createContent2Client({ db }), logger, emptyState: D.emptyState });
+const load = store.load;
+const save = store.save;
 
 // Відповідь розмита: агент має перепитати одним конкретним уточненням (максимум двічі), запис при цьому лишається.
 const weakInfo = (fields) => {

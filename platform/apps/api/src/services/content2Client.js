@@ -25,12 +25,14 @@ function createContent2Client({ db, fetchImpl = fetch, env = process.env }) {
         return credsCache.value;
     }
 
-    async function c2(body) {
+    // call('/api/webhooks/<назва>', body[, timeoutMs]): службовий вебхук content2; помилки мають status (502 недоступний, 404, 503 не налаштовано)
+    async function call(path, body, timeoutMs) {
         const c = await creds();
         let res;
         try {
-            res = await fetchImpl(c.url + '/api/webhooks/seller-admin', {
+            res = await fetchImpl(c.url + path, {
                 method: 'POST', headers: { 'Content-Type': 'application/json', 'x-webhook-secret': c.secret }, body: JSON.stringify(body),
+                ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
             });
         } catch (e) {
             throw Object.assign(new Error('Content2 недоступний: ' + e.message), { status: 502 });
@@ -40,12 +42,14 @@ function createContent2Client({ db, fetchImpl = fetch, env = process.env }) {
         return j;
     }
 
+    const c2 = (body) => call('/api/webhooks/seller-admin', body);
+
     // Публічна адреса content2 для посилань у браузері (CONTENT2_URL у ключах бува внутрішній, localhost)
     function publicUrl() {
         return String(env.CONTENT2_PUBLIC_URL || 'https://content2.fineko.space').replace(/\/$/, '');
     }
 
-    return { creds, c2, publicUrl };
+    return { creds, call, c2, publicUrl };
 }
 
 module.exports = { createContent2Client };

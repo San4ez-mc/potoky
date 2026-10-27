@@ -3,7 +3,7 @@
 // Запуск: DATABASE_URL=... NODE_PATH="<main platform>/node_modules" node scripts/qa/test-stage-events.js
 const crypto = require('crypto');
 const { db } = require('@platform/db');
-const { recordStage, getStages, getStageSessions, ensureTable } = require('../../apps/api/src/services/stageEvents');
+const { recordStage, getStages, getStageSessions, getBoard, ensureTable } = require('../../apps/api/src/services/stageEvents');
 
 let pass = 0; let fail = 0;
 const ok = (c, m) => { if (c) { pass++; console.log('  ✔ ' + m); } else { fail++; console.log('  ✘ ПРОВАЛ: ' + m); } };
@@ -54,6 +54,13 @@ const id = () => crypto.randomUUID();
         ok(stopped.length === 1 && stopped[0].sessionId === s3.id, 'фільтр «зупинилися»: лише s3');
         ok(typeof stopped[0].telegramId === 'string', 'telegramId віддається рядком (BigInt не ламає JSON)');
         ok(JSON.stringify(ppl).length > 10, 'відповідь серіалізується');
+
+        const board = await getBoard(bot.id, { period: '30d' });
+        const col = (n) => board.find((c) => c.stageName === n);
+        ok(col('Привітання').here === 1 && col('Привітання').cards[0].sessionId === s3.id, 'канбан: у «Привітання» лише s3 (та, що зупинилась)');
+        ok(col('Записався').here === 1 && col('Записався').cards[0].sessionId === s1.id && col('Побачив пропозицію').here === 0, 'канбан: s1 у «Записався», а не в усіх пройдених');
+        ok(col('Думає').here === 1 && col('Думає').cards[0].sessionId === s2.id && col('Привітання').sessions === 3, 'канбан: s2 у бічній колонці; «пройшли» лишається накопичувальним (3)');
+        ok(board.reduce((a, c) => a + c.here, 0) === 3, 'канбан: кожна людина рівно в одній колонці (3 без тестової)');
 
         // етап, якого вже нема в графі, але події є
         await rec(s3, u3, 'Старий етап', 9);

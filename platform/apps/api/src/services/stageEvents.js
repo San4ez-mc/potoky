@@ -117,4 +117,33 @@ async function getStageSessions(botId, stageName, { period = '30d', includeTest 
         .filter((r) => !onlyStopped || !r.wentFurther);
 }
 
-module.exports = { recordStage, getStages, getStageSessions, ensureTable };
+/** Канбан: колонки = етапи, картка = людина в колонці свого НАЙДАЛЬШОГО етапу (де зараз стоїть). */
+async function getBoard(botId, { period = '30d', includeTest = false, perColumn = 60 } = {}) {
+    const columns = await getStages(botId, { period, includeTest });
+    const from = periodFrom(period);
+    const rows = await db.$queryRaw`
+        SELECT DISTINCT ON (e.session_id) e.session_id, e.stage_name, e.first_at, e.last_at, e.is_test,
+               s.state, s."lastActive", u.id AS user_id, u."firstName", u."lastName", u.username, u."telegramId"
+        FROM funnel_stage_events e
+        LEFT JOIN sessions s ON s.id = e.session_id
+        LEFT JOIN users u ON u.id = COALESCE(e.user_id, s."userId")
+        WHERE e.bot_id = ${botId} AND e.first_at >= ${from} AND (${!!includeTest} OR e.is_test = false)
+        ORDER BY e.session_id, e.stage_order DESC, e.last_at DESC`;
+    const byStage = new Map();
+    for (const r of rows) {
+        const card = {
+            sessionId: r.session_id, userId: r.user_id,
+            name: [r.firstName, r.lastName].filter(Boolean).join(' ') || null,
+            username: r.username || null, telegramId: r.telegramId != null ? String(r.telegramId) : null,
+            since: r.last_at, lastActive: r.lastActive, isTest: r.is_test, done: r.state === 'completed',
+        };
+        if (!byStage.has(r.stage_name)) byStage.set(r.stage_name, []);
+        byStage.get(r.stage_name).push(card);
+    }
+    return columns.map((c) => {
+        const all = (byStage.get(c.stageName) || []).sort((a, b) => new Date(b.since) - new Date(a.since));
+        return { ...c, here: all.length, cards: all.slice(0, perColumn) };
+    });
+}
+
+module.exports = { recordStage, getStages, getStageSessions, getBoard, ensureTable };

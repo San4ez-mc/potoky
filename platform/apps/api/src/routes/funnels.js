@@ -489,6 +489,15 @@ router.get('/:botId/stages',
         res.json({ ok: true, data });
     }));
 
+// GET /api/funnels/:botId/stages/board — канбан: колонки-етапи з картками людей (де зараз стоїть кожна)
+router.get('/:botId/stages/board',
+    validateParams({ params: z.object({ botId: z.string().uuid() }) }),
+    asyncHandler(async (req, res) => {
+        const { getBoard } = require('../services/stageEvents');
+        const data = await getBoard(req.params.botId, { period: req.query.period || '30d', includeTest: req.query.includeTest === 'true' });
+        res.json({ ok: true, data });
+    }));
+
 // GET /api/funnels/:botId/stages/sessions?stage=Назва&period=&includeTest=&onlyStopped=true — хто пройшов етап
 router.get('/:botId/stages/sessions',
     validateParams({ params: z.object({ botId: z.string().uuid() }) }),

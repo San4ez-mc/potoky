@@ -11,29 +11,44 @@ const PERIODS = [
 
 const fmt = (d) => (d ? new Date(d).toLocaleString('uk-UA', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—');
 
-function StageBar({ s, max, active, onClick }) {
-    const w = max > 0 ? Math.max(2, Math.round((s.sessions / max) * 100)) : 0;
+function Card({ c }) {
     return (
-        <button
-            onClick={onClick}
-            className={`w-full text-left rounded-xl border px-4 py-3 transition-colors ${active ? 'border-emerald-500 bg-gray-900' : 'border-gray-800 bg-gray-900/60 hover:border-gray-600'}`}
-        >
-            <div className="flex items-baseline justify-between gap-3">
-                <div className="text-sm text-white font-medium">
-                    <span className="text-gray-500 mr-2">#{s.stageOrder}</span>{s.stageName}
-                    {!s.inGraph && <span className="ml-2 text-[10px] text-amber-400">(немає в графі)</span>}
+        <Link to={`/sessions/${c.sessionId}`} className="block rounded-lg border border-gray-800 bg-gray-900 hover:border-emerald-600 px-3 py-2 transition-colors">
+            <div className="flex items-start justify-between gap-2">
+                <div className="text-sm text-white leading-tight break-words min-w-0">
+                    {c.name || (c.username ? '@' + c.username : c.telegramId) || 'без імені'}
                 </div>
-                <div className="text-sm tabular-nums text-white">{s.sessions}</div>
+                {c.isTest && <span className="shrink-0 text-[10px] text-amber-400">тест</span>}
             </div>
-            <div className="mt-2 h-2 rounded bg-gray-800 overflow-hidden">
-                <div className="h-full bg-emerald-600" style={{ width: `${w}%` }} />
+            {c.name && c.username && <div className="text-[11px] text-gray-500">@{c.username}</div>}
+            <div className="mt-1 text-[11px] text-gray-500">на етапі з {fmt(c.since)}</div>
+            <div className="text-[11px] text-gray-600">остання активність {fmt(c.lastActive || c.since)}</div>
+        </Link>
+    );
+}
+
+function Column({ col }) {
+    const hidden = col.here - col.cards.length;
+    return (
+        <div className={`w-64 shrink-0 flex flex-col rounded-xl border bg-gray-950 ${col.side ? 'border-gray-800/70' : 'border-gray-800'}`}>
+            <div className="px-3 py-3 border-b border-gray-800">
+                <div className="flex items-start justify-between gap-2">
+                    <div className="text-sm font-medium text-white leading-tight">
+                        <span className="text-gray-500 mr-1.5">#{col.stageOrder}</span>{col.stageName}
+                    </div>
+                    <div className="shrink-0 min-w-6 h-6 px-1.5 rounded-full bg-emerald-700/40 text-emerald-300 text-xs flex items-center justify-center tabular-nums" title="Зараз на цьому етапі">{col.here}</div>
+                </div>
+                <div className="mt-1.5 text-[11px] text-gray-500 space-y-0.5">
+                    <div>усього пройшли: <span className="text-gray-300 tabular-nums">{col.sessions}</span>{!col.side && col.convFromPrev != null && <span> · {col.convFromPrev}% від попереднього</span>}</div>
+                    {!col.inGraph && <div className="text-amber-400">немає в графі</div>}
+                </div>
             </div>
-            <div className="mt-1.5 flex flex-wrap gap-x-4 text-[11px] text-gray-500">
-                {!s.side && <span>від попереднього: {s.convFromPrev == null ? '—' : s.convFromPrev + '%'}</span>}
-                <span>від першого: {s.convFromFirst == null ? '—' : s.convFromFirst + '%'}</span>
-                <span className={s.stopped > 0 ? 'text-amber-400' : ''}>зупинилися тут: {s.stopped}</span>
+            <div className="p-2 space-y-2 overflow-y-auto" style={{ maxHeight: '68vh' }}>
+                {col.cards.length === 0 && <div className="text-[11px] text-gray-600 px-1 py-3 text-center">порожньо</div>}
+                {col.cards.map((c) => <Card key={c.sessionId} c={c} />)}
+                {hidden > 0 && <div className="text-[11px] text-gray-500 text-center py-1">ще {hidden} (показано {col.cards.length})</div>}
             </div>
-        </button>
+        </div>
     );
 }
 
@@ -42,39 +57,31 @@ export function FunnelStages() {
     const [bot, setBot] = useState(null);
     const [period, setPeriod] = useState('30d');
     const [includeTest, setIncludeTest] = useState(false);
-    const [stages, setStages] = useState(null);
+    const [board, setBoard] = useState(null);
     const [error, setError] = useState('');
-    const [picked, setPicked] = useState(null);
-    const [onlyStopped, setOnlyStopped] = useState(false);
-    const [people, setPeople] = useState(null);
+    const [tick, setTick] = useState(0);
 
     useEffect(() => { api.getBot(botId).then(setBot).catch(() => {}); }, [botId]);
 
     useEffect(() => {
-        setStages(null); setError('');
-        api.getFunnelStages(botId, period, includeTest)
-            .then((r) => setStages(Array.isArray(r) ? r : r?.data || []))
+        setError('');
+        api.getStageBoard(botId, period, includeTest)
+            .then((r) => setBoard(Array.isArray(r) ? r : r?.data || []))
             .catch((e) => setError(e.message || 'Помилка завантаження'));
-    }, [botId, period, includeTest]);
+    }, [botId, period, includeTest, tick]);
 
-    useEffect(() => {
-        if (!picked) { setPeople(null); return; }
-        setPeople(null);
-        api.getStageSessions(botId, picked, period, includeTest, onlyStopped)
-            .then((r) => setPeople(Array.isArray(r) ? r : r?.data || []))
-            .catch(() => setPeople([]));
-    }, [botId, picked, period, includeTest, onlyStopped]);
-
-    const max = stages && stages.length ? Math.max(...stages.map((s) => s.sessions), 1) : 1;
+    const main = board ? board.filter((c) => !c.side) : [];
+    const side = board ? board.filter((c) => c.side) : [];
+    const total = board ? board.reduce((a, c) => a + c.here, 0) : 0;
 
     return (
         <div className="min-h-screen bg-gray-950 text-white">
-            <div className="max-w-5xl mx-auto px-4 py-6">
+            <div className="px-4 py-6">
                 <div className="flex items-center justify-between gap-3 flex-wrap">
                     <div>
                         <Link to="/funnels" className="text-xs text-gray-500 hover:text-gray-300">← Воронки</Link>
                         <h1 className="text-xl font-semibold mt-1">🎯 Воронка: {bot?.name || '…'}</h1>
-                        <div className="text-xs text-gray-500">Етапи збираються з нод «Етап (Flows)» у графі. Клік по етапу показує людей.</div>
+                        <div className="text-xs text-gray-500">Кожна людина стоїть у колонці найдальшого етапу, якого досягла. Картки рухаються самі, коли розмова доходить до нової ноди «Етап (Flows)».</div>
                     </div>
                     <div className="flex items-center gap-2 flex-wrap">
                         <Link to={`/funnel/${botId}/analytics`} className="px-3 py-2 bg-gray-800 text-gray-300 text-xs rounded-lg">📊 Аналітика</Link>
@@ -85,66 +92,34 @@ export function FunnelStages() {
                         <label className="flex items-center gap-1.5 text-xs text-gray-400">
                             <input type="checkbox" checked={includeTest} onChange={(e) => setIncludeTest(e.target.checked)} /> з тестовими
                         </label>
+                        <button onClick={() => setTick((t) => t + 1)} className="px-3 py-2 bg-gray-800 text-gray-300 text-xs rounded-lg" title="Оновити">⟳</button>
                     </div>
                 </div>
 
                 {error && <div className="mt-4 text-sm text-red-400">{error}</div>}
-                {!stages && !error && <div className="mt-6 text-sm text-gray-500">Завантаження…</div>}
+                {!board && !error && <div className="mt-6 text-sm text-gray-500">Завантаження…</div>}
 
-                {stages && stages.length === 0 && (
-                    <div className="mt-6 rounded-xl border border-gray-800 bg-gray-900/60 p-5 text-sm text-gray-400">
+                {board && board.length === 0 && (
+                    <div className="mt-6 max-w-2xl rounded-xl border border-gray-800 bg-gray-900/60 p-5 text-sm text-gray-400">
                         У цій воронці ще немає етапів. Додайте в редакторі ноду <b className="text-emerald-400">🎯 Етап (Flows)</b>
-                        (група «Аналітика»), вкажіть назву й порядковий номер та поставте її в потрібне місце графа. Коли хтось дійде до такої ноди, етап з'явиться тут.
+                        (група «Аналітика»), вкажіть назву й порядковий номер та поставте її в потрібне місце графа. Коли хтось дійде до такої ноди, колонка з'явиться тут.
                     </div>
                 )}
 
-                {stages && stages.length > 0 && (
-                    <div className="mt-5 grid gap-5 md:grid-cols-2">
-                        <div className="space-y-2">
-                            {stages.filter((s) => !s.side).map((s) => (
-                                <StageBar key={s.stageName} s={s} max={max} active={picked === s.stageName} onClick={() => setPicked(picked === s.stageName ? null : s.stageName)} />
-                            ))}
-                            {stages.some((s) => s.side) && <div className="pt-3 text-xs text-gray-500">Інші виходи (поза основним шляхом)</div>}
-                            {stages.filter((s) => s.side).map((s) => (
-                                <StageBar key={s.stageName} s={s} max={max} active={picked === s.stageName} onClick={() => setPicked(picked === s.stageName ? null : s.stageName)} />
-                            ))}
-                        </div>
-                        <div>
-                            {!picked && <div className="text-sm text-gray-500 pt-2">Оберіть етап ліворуч, щоб побачити людей, які його пройшли.</div>}
-                            {picked && (
-                                <div className="rounded-xl border border-gray-800 bg-gray-900/60 p-4">
-                                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                                        <div className="text-sm font-medium">{picked}</div>
-                                        <label className="flex items-center gap-1.5 text-xs text-gray-400">
-                                            <input type="checkbox" checked={onlyStopped} onChange={(e) => setOnlyStopped(e.target.checked)} /> лише ті, хто далі не пішов
-                                        </label>
-                                    </div>
-                                    {!people && <div className="mt-3 text-xs text-gray-500">Завантаження…</div>}
-                                    {people && people.length === 0 && <div className="mt-3 text-xs text-gray-500">Нікого.</div>}
-                                    {people && people.length > 0 && (
-                                        <div className="mt-3 divide-y divide-gray-800 max-h-[70vh] overflow-y-auto">
-                                            {people.map((p) => (
-                                                <Link key={p.sessionId} to={`/sessions/${p.sessionId}`} className="block py-2 hover:bg-gray-800/50 px-1 rounded">
-                                                    <div className="flex items-baseline justify-between gap-2">
-                                                        <div className="text-sm text-white">
-                                                            {p.name || p.username || p.telegramId || 'без імені'}
-                                                            {p.username && p.name && <span className="text-gray-500 text-xs"> @{p.username}</span>}
-                                                            {p.isTest && <span className="ml-2 text-[10px] text-amber-400">тест</span>}
-                                                        </div>
-                                                        <div className="text-[11px] text-gray-500">{fmt(p.firstAt)}</div>
-                                                    </div>
-                                                    <div className="text-[11px] text-gray-500">
-                                                        {p.wentFurther ? <>пішов далі → <span className="text-emerald-400">{p.furthest}</span></> : <span className="text-amber-400">зупинився на цьому етапі</span>}
-                                                        {' · '}остання активність {fmt(p.lastActive || p.lastAt)}
-                                                    </div>
-                                                </Link>
-                                            ))}
-                                        </div>
-                                    )}
+                {board && board.length > 0 && (
+                    <>
+                        <div className="mt-4 text-xs text-gray-500">Людей у воронці за період: <span className="text-gray-300 tabular-nums">{total}</span></div>
+                        <div className="mt-3 flex gap-3 overflow-x-auto pb-4 items-start">
+                            {main.map((c) => <Column key={c.stageName} col={c} />)}
+                            {side.length > 0 && (
+                                <div className="shrink-0 self-stretch flex items-center px-1">
+                                    <div className="h-full w-px bg-gray-800" />
                                 </div>
                             )}
+                            {side.map((c) => <Column key={c.stageName} col={c} />)}
                         </div>
-                    </div>
+                        {side.length > 0 && <div className="text-[11px] text-gray-600">Колонки праворуч від лінії — бічні виходи (поза основним шляхом до запису).</div>}
+                    </>
                 )}
             </div>
         </div>

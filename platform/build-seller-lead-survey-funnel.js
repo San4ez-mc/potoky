@@ -56,7 +56,7 @@ const SYSTEM_PROMPT = [
 // Витягуємо id заявки й підпис з context.startRaw ("lead-12-ab12cd34ef56") або мітку сайту ("site", "site-utm").
 const PARSE_CODE = [
   "const raw = String(context.startRaw || '');",
-  "const m = raw.match(/^lead-(\d{1,9})-([a-f0-9]{8,16})$/);",
+  "const m = raw.match(/^lead-([0-9]{1,9})-([a-f0-9]{8,16})$/);",
   "const site = raw.match(/^site(?:-([A-Za-z0-9_-]{1,40}))?$/);",
   "return { hubLeadId: m ? Number(m[1]) : 0, hubLeadToken: m ? m[2] : '', fromSite: !!site, siteUtm: site && site[1] ? site[1] : '' };",
 ].join('\n');
@@ -66,7 +66,7 @@ const ENSURE_CODE = [
   "const out = {};",
   "if (context.hubLeadId && context.hubLeadToken) return out;",
   "try {",
-  "  const base = String(keys.HUB_URL || '').replace(/\/$/, '');",
+  "  const base = String(keys.HUB_URL || '').replace(/[/]$/, '');",
   "  if (!base || !keys.HUB_API_KEY) throw new Error('не задано HUB_URL / HUB_API_KEY');",
   "  const name = [user.firstName, user.lastName].filter(Boolean).join(' ').slice(0, 190);",
   "  const body = { name: name, contact: user.username ? '@' + user.username : '', tg_id: String(user.telegramId || ''), interest: 'Telegram-бот', message: 'Прийшов у бота з сайту' + (context.siteUtm ? ' (мітка: ' + context.siteUtm + ')' : ''), ab: 'entry=bot', page_url: 'https://seller-lp.fineko.space/' };",
@@ -85,7 +85,7 @@ const SAVE_CODE = [
   "const r = context.surveyResult || {};",
   "const out = { hubSaved: false, hubError: '' };",
   "try {",
-  "  const base = String(keys.HUB_URL || '').replace(/\\/$/, '');",
+  "  const base = String(keys.HUB_URL || '').replace(/[/]$/, '');",
   "  if (!base || !keys.HUB_API_KEY) throw new Error('не задано HUB_URL / HUB_API_KEY');",
   "  const clip = (v) => String(v == null ? '' : v).slice(0, 600);",
   "  const body = { sells: clip(r.sells), inquiries: clip(r.inquiries), contact_pref: clip(r.contact_pref), contact_time: clip(r.contact_time), summary: clip(r.summary) };",

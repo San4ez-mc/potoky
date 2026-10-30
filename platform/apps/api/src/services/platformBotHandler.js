@@ -666,6 +666,18 @@ async function resolveTargetBot(botId, startPayload, userId) {
     });
     const projectId = originBot?.projectId;
 
+    // ── Rule 0a: deep link з лендінгу після заявки: /start lead-<id заявки в Hub>-<підпис> ──
+    // Веде в воронку з анкетою (slug seller-lead-survey); payload лишається в context.startRaw.
+    if (startPayload && /^lead-\d{1,9}-[a-f0-9]{8,16}$/.test(startPayload)) {
+        try {
+            const leadBot = await db.bot.findFirst({ where: { slug: 'seller-lead-survey', isActive: true }, select: { id: true } });
+            if (leadBot) return { targetBotId: leadBot.id, lessonSlug: null, startRaw: startPayload };
+            logger.warn('[platformBotHandler] lead deep link: bot seller-lead-survey not found', { startPayload });
+        } catch (e) {
+            logger.warn('[platformBotHandler] lead deep link routing failed', { err: e.message });
+        }
+    }
+
     // ── Rule 0: tracked deep links ─────────────────────────────────────────
     // Handles: lm<12hex> (legacy per-post lead-magnet link), k<8hex> (per-network
     // channel link), k<8hex>_<n> (per-post link nested under a channel). Records the
@@ -740,6 +752,9 @@ async function resolveTargetBot(botId, startPayload, userId) {
                 }
             }
             logger.warn('[platformBotHandler] Slug not found in project, using webhook bot', { slug: startPayload, botId });
+            // Невідомий payload (напр. deep link лендінгу lead-<id>-<токен>) не губимо: воронка бота
+            // читає його з context.startRaw.
+            return { targetBotId: botId, lessonSlug: null, startRaw: startPayload };
         }
         return { targetBotId: botId, lessonSlug: null };
     }
@@ -1288,6 +1303,7 @@ async function _handlePlatformBotUpdateInner(botId, update) {
     let lessonSlug = null;
     let entryLinkSource = null;
     let entryStartArg = null;
+    let entryStartRaw = null;
 
     if (isStart) {
         const resolved = await resolveTargetBot(botId, startPayload, user.id);
@@ -1295,6 +1311,7 @@ async function _handlePlatformBotUpdateInner(botId, update) {
         lessonSlug = resolved.lessonSlug;
         entryLinkSource = resolved.linkSource || null;
         entryStartArg = resolved.startArg || null;
+        entryStartRaw = resolved.startRaw || null;
     }
 
     // ── Phase 3.5: archived bot guard ─────────────────────────────────────────
@@ -1366,6 +1383,7 @@ async function _handlePlatformBotUpdateInner(botId, update) {
         // Free-text arg after the slug (e.g. "/start onboard KIRO" → "KIRO") — read by
         // the target funnel's own nodes (e.g. onboard's n_resolve_project) for company switching.
         if (entryStartArg) extraCtx.startArg = entryStartArg;
+        if (entryStartRaw) extraCtx.startRaw = String(entryStartRaw).slice(0, 80);
         if (Object.keys(extraCtx).length > 0) {
             const updatedCtx = { ...(session.context || {}), ...extraCtx };
             session = await db.session.update({

@@ -132,7 +132,7 @@ function buildFlow() {
     add('n_err_notify', 'notifyTg', 'Збій брифу: алерт власнику', { targetKey: 'ADMIN_TELEGRAM_ID', message: '⚠️ Продавець: не вдалося завантажити бриф експерта. {{context.expertError}}' }, -420);
     add('n_err_msg', 'message', 'Збій брифу: людині', { text: 'Вибач, зараз не можу відповісти. Спробуй трохи пізніше.', qaExpectation: 'Людина бачить ввічливу відмову, без технічних деталей.' }, -420);
     add('n_blocked_msg', 'message', 'Недоступно (не запущено/пауза/ліміт)', { text: '{{context.expert.texts.unavailable}}', qaExpectation: 'Чужим людям, коли продавець не запущений, лише ввічлива відмова.' }, -840);
-    add('n_lead', 'notifyTg', 'Новий лід', { targetKey: 'HANDOFF_TELEGRAM_ID', message: '🚀 Нова розмова з продавцем\n\nTelegram: @{{user.username}} · tg://user?id={{user.telegramId}}\nІмʼя в Telegram: {{user.firstName}} {{user.lastName}}' });
+    add('n_lead', 'notifyTg', 'Новий лід', { targetKey: 'HANDOFF_TELEGRAM_ID', message: '🚀 Нова розмова з продавцем\n🎯 Воронка: {{bot.name}}\n\nTelegram: @{{user.username}} · tg://user?id={{user.telegramId}}\nІмʼя в Telegram: {{user.firstName}} {{user.lastName}}' });
     add('n_greet', 'claude', 'Вітання', liveNode('greeting', 'Живе привітання: імʼя й титул продавця, чесно що він ШІ, чим допомагає, одне відкрите питання; без шаблонів і вигаданих фактів.',
         '[{"role":"user","content":"Людина щойно відкрила бота. Імʼя в Telegram: {{user.firstName}}."}]'));
     add('n_spin', 'claude', 'Діалог із людиною', {

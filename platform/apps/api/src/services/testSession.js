@@ -2054,6 +2054,7 @@ async function executeFlowStep({ sessionId, incomingUserMessage = null, incoming
             context: ctx,
             user: sanitizeBigInt(session.user),
             session: { id: session.id, state: session.state },
+            bot: { name: (session.bot && session.bot.name) || '', slug: (session.bot && session.bot.slug) || '' },
             input: runtime.lastUserMessage || '',
             env: funnelEnv,
             // JSON array of {role,content} — usable as messagesTemplate:'{{conversationHistory}}'

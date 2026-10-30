@@ -49,11 +49,25 @@ function escapeHtmlForPre(str) {
 }
 var __FENCE = String.fromCharCode(96, 96, 96);
 var __FENCE_RE = new RegExp(__FENCE + "[a-zA-Z0-9_-]*\\r?\\n?([\\s\\S]*?)" + __FENCE, "g");
+// Модель любить markdown-виділення (**жирний**, ### заголовки), а Telegram у режимі HTML
+// показує зірочки буквально, і текст читається незручно. Прибираємо розмітку, лишаючи слова.
+function stripMdEmphasis(t) {
+    return String(t)
+        .replace(/\*\*([^*\n][^\n]*?)\*\*/g, '$1')
+        .replace(/(^|[\s(])__([^_\n][^\n]*?)__(?=$|[\s).,!?:;])/g, '$1$2')
+        .replace(/^[ \t]*#{1,6}[ \t]+/gm, '')
+        .replace(/^[ \t]*\*[ \t]+/gm, '• ');
+}
 function convertCodeFencesToHtml(text) {
-    if (!text || text.indexOf(__FENCE) === -1) return text;
-    return text.replace(__FENCE_RE, function (_m, code) {
-        return "<pre>" + escapeHtmlForPre(code.replace(/\r?\n$/, "")) + "</pre>";
-    });
+    if (!text) return text;
+    if (text.indexOf(__FENCE) === -1) return stripMdEmphasis(text);
+    var out = '', last = 0, m;
+    __FENCE_RE.lastIndex = 0;
+    while ((m = __FENCE_RE.exec(text)) !== null) {
+        out += stripMdEmphasis(text.slice(last, m.index)) + "<pre>" + escapeHtmlForPre(m[1].replace(/\r?\n$/, "")) + "</pre>";
+        last = m.index + m[0].length;
+    }
+    return out + stripMdEmphasis(text.slice(last));
 }
 
 /**
@@ -1836,4 +1850,4 @@ async function deliverSessionMessages(botId, sessionId, telegramChatId, sinceTim
     }
 }
 
-module.exports = { handlePlatformBotUpdate, deliverSessionMessages, getBotToken };
+module.exports = { handlePlatformBotUpdate, deliverSessionMessages, getBotToken, convertCodeFencesToHtml };

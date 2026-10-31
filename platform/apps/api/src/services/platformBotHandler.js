@@ -666,9 +666,9 @@ async function resolveTargetBot(botId, startPayload, userId) {
     });
     const projectId = originBot?.projectId;
 
-    // ── Rule 0a: deep link з лендінгу: /start lead-<id заявки в Hub>-<підпис> (після форми) або /start site[-мітка] (одразу в бота) ──
+    // ── Rule 0a: deep link з лендінгу після заявки: /start lead-<id заявки в Hub>-<підпис> ──
     // Веде в воронку з анкетою (slug seller-lead-survey); payload лишається в context.startRaw.
-    if (startPayload && /^(lead-\d{1,9}-[a-f0-9]{8,16}|site(-[A-Za-z0-9_-]{1,40})?)$/.test(startPayload)) {
+    if (startPayload && /^lead-\d{1,9}-[a-f0-9]{8,16}$/.test(startPayload)) {
         try {
             const leadBot = await db.bot.findFirst({ where: { slug: 'seller-lead-survey', isActive: true }, select: { id: true } });
             if (leadBot) return { targetBotId: leadBot.id, lessonSlug: null, startRaw: startPayload };

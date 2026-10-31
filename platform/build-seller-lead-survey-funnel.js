@@ -53,30 +53,10 @@ const SYSTEM_PROMPT = [
   'Чого людина не сказала — порожній рядок, нічого не вигадуй. JSON = кінець діалогу.',
 ].join('\n');
 
-// Витягуємо id заявки й підпис з context.startRaw ("lead-12-ab12cd34ef56") або мітку сайту ("site", "site-utm").
+// Витягуємо id заявки й підпис з context.startRaw ("lead-12-ab12cd34ef56").
 const PARSE_CODE = [
-  "const raw = String(context.startRaw || '');",
-  "const m = raw.match(/^lead-(\d{1,9})-([a-f0-9]{8,16})$/);",
-  "const site = raw.match(/^site(?:-([A-Za-z0-9_-]{1,40}))?$/);",
-  "return { hubLeadId: m ? Number(m[1]) : 0, hubLeadToken: m ? m[2] : '', fromSite: !!site, siteUtm: site && site[1] ? site[1] : '' };",
-].join('\n');
-
-// Прийшов у бота напряму з сайту (/start site[-utm]) і заявки ще нема → створюємо її в Hub, далі анкета дописується в неї.
-const ENSURE_CODE = [
-  "const out = {};",
-  "if (context.hubLeadId && context.hubLeadToken) return out;",
-  "try {",
-  "  const base = String(keys.HUB_URL || '').replace(/\/$/, '');",
-  "  if (!base || !keys.HUB_API_KEY) throw new Error('не задано HUB_URL / HUB_API_KEY');",
-  "  const name = [user.firstName, user.lastName].filter(Boolean).join(' ').slice(0, 190);",
-  "  const body = { name: name, contact: user.username ? '@' + user.username : '', tg_id: String(user.telegramId || ''), interest: 'Telegram-бот', message: 'Прийшов у бота з сайту' + (context.siteUtm ? ' (мітка: ' + context.siteUtm + ')' : ''), ab: 'entry=bot', page_url: 'https://seller-lp.fineko.space/' };",
-  "  if (context.siteUtm) body.utm_source = context.siteUtm;",
-  "  const res = await fetch(base + '/api/lead', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Api-Key': String(keys.HUB_API_KEY) }, body: JSON.stringify(body) });",
-  "  const j = await res.json().catch(() => ({}));",
-  "  if (!res.ok || !j || !j.ok || !j.token) throw new Error((j && (j.error || j.message)) || ('HTTP ' + res.status));",
-  "  out.hubLeadId = j.id; out.hubLeadToken = j.token; out.hubCreatedHere = true;",
-  "} catch (e) { out.hubError = String(e && e.message || e).slice(0, 200); }",
-  "return out;",
+  "const m = String(context.startRaw || '').match(/^lead-(\\d{1,9})-([a-f0-9]{8,16})$/);",
+  "return { hubLeadId: m ? Number(m[1]) : 0, hubLeadToken: m ? m[2] : '' };",
 ].join('\n');
 
 // Зберігаємо анкету в Hub. Є id+підпис → дописуємо в ту саму заявку; немає → нова заявка із Telegram-контактом.
@@ -91,7 +71,13 @@ const SAVE_CODE = [
   "  const body = { sells: clip(r.sells), inquiries: clip(r.inquiries), contact_pref: clip(r.contact_pref), contact_time: clip(r.contact_time), summary: clip(r.summary) };",
   "  if (context.hubLeadId && context.hubLeadToken) {",
   "    body.lead_id = context.hubLeadId; body.token = context.hubLeadToken;",
-  "  } else { throw new Error(context.hubError || 'нема id заявки в Hub'); }",
+  "  } else {",
+  "    const uname = user.username ? '@' + user.username : '';",
+  "    if (!uname) throw new Error('немає id заявки й немає @username — створити заявку нема з чим');",
+  "    body.name = clip(r.name || user.firstName); body.contact = uname; body.interest = clip(r.sells).slice(0, 190);",
+  "    body.message = ['Прийшов(ла) напряму в бота без форми. Анкета:', 'Що продає: ' + clip(r.sells), 'Звернень: ' + clip(r.inquiries), 'Зв’язок: ' + clip(r.contact_pref) + ', ' + clip(r.contact_time)].join('\\n');",
+  "    body.source_note = 'telegram-bot-direct';",
+  "  }",
   "  const res = await fetch(base + '/api/lead', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Api-Key': String(keys.HUB_API_KEY) }, body: JSON.stringify(body) });",
   "  const j = await res.json().catch(() => ({}));",
   "  if (!res.ok || !j || !j.ok) throw new Error((j && (j.error || j.message)) || ('HTTP ' + res.status));",
@@ -122,9 +108,7 @@ function buildGraph() {
     { id: 'start_1', type: 'start', position: { x: 80, y: 60 }, data: { label: 'Старт', trigger: '/start ' + BOT_SLUG } },
     { id: 'n_parse', type: 'js', position: { x: 80, y: 200 }, data: { label: 'Розібрати посилання з лендінгу', code: PARSE_CODE,
       qaExpectation: 'З context.startRaw (lead-<id>-<підпис>) виходить hubLeadId і hubLeadToken; без посилання — 0 і порожньо.' } },
-    { id: 'n_ensure', type: 'js', position: { x: 80, y: 270 }, data: { label: 'Заявка в Hub (якщо прийшов з сайту без форми)', code: ENSURE_CODE,
-      qaExpectation: 'Є id+підпис з посилання — нічого не робить. /start site[-мітка] без заявки — створює її в Hub (interest «Telegram-бот»), збій Hub не валить сесію.' } },
-    { id: 'n_greet', type: 'message', position: { x: 80, y: 410 }, data: { label: 'Привітання + питання 1', text: GREETING,
+    { id: 'n_greet', type: 'message', position: { x: 80, y: 340 }, data: { label: 'Привітання + питання 1', text: GREETING,
       qaExpectation: 'Чесно: ШІ-помічник Олександра Мацука; 4 питання, перше — що продає; без жаргону.' } },
     { id: 'n_ask', type: 'claude', position: { x: 80, y: 480 }, data: { label: 'Анкета (діалог)', mode: 'dialog', model: 'claude-sonnet-4-6',
       connectorId: '{{env.CLAUDE_CONNECTOR_ID}}', systemPrompt: SYSTEM_PROMPT, exitCondition: 'json_output', outputVar: 'context.surveyResult',

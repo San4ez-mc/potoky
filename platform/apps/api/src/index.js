@@ -272,7 +272,11 @@ const server = app.listen(PORT, () => {
 });
 
 // Етап 0 плану «правки → нуль»: щоденний звіт якості й сторож «клієнт чекає менеджера» (services/quality/cron.js).
-if (!process.env.name || process.env.name === 'platform-api') require('./services/quality/cron').start();
+if (!process.env.name || process.env.name === 'platform-api') {
+    require('./services/quality/cron').start();
+    // 31.10: окремий щоденний звіт — прийняті замовлення без ТТН довше 5 робочих днів (services/quality/stuckOrders.js).
+    require('./services/quality/stuckOrders').start();
+}
 
 // Плавна зупинка (13.10.2026): перезапуск під час деплою обривав хід посеред відправки — відповідь лишалась у базі, але клієнт
 // її не отримував (v_khanenko25, 12.10). Тепер: не приймаємо нових запитів, одразу запускаємо ходи, що чекали склеювання пачки,

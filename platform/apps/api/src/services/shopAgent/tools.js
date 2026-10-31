@@ -382,7 +382,11 @@ async function crmCheck(A, { key, title, details, pageUrl, priority }) {
     const { ctx } = A;
     if (ctx.testMode) { A.trace.push({ crmCheck: title, skipped: 'testMode' }); ctx.testAlerts = [...(ctx.testAlerts || []), 'crm-check: ' + title]; return false; }
     const list = await crmFetch(A.keys, '/crm-checks', {}, 5000);
-    const dup = Array.isArray(list.data) && list.data.find((t) => t && t.source === key && t.status !== 'closed');
+    const items = Array.isArray(list.data) ? list.data : [];
+    // 27.10: той самий тікет менеджер уже ЗАКРИВ (вирішив, що привʼязка правильна) — не відкриваємо його знову на кожного клієнта.
+    // Інший текст розбіжності (новий артикул у пості) — новий тікет. Той самий текст під іншим id реклами (один допис) — той самий тікет.
+    if (items.some((t) => t && t.status === 'closed' && t.title === title)) { A.trace.push({ crmCheck: title, skipped: 'closed earlier' }); return true; }
+    const dup = items.find((t) => t && t.status !== 'closed' && (t.source === key || t.title === title));
     const link = { label: (A.user && A.user.username ? '@' + A.user.username : 'клієнт') + ' — розмова', url: 'https://flows.fineko.space/sessions/' + A.session.id };
     if (dup) {
         const links = Array.isArray(dup.sessionLinks) ? dup.sessionLinks : [];

@@ -1391,6 +1391,18 @@ async function main() {
             const ls2 = await linesFromCrm({ botId: BOT, keys: assets.keys, ctx: {}, session: { id: 'test' } }, order);
             check('54.2 Звичайний комплект (ціна є, речей окремо нема) розгортається на склад', ls2.length === 2 && Math.round(ls2.reduce((s, l) => s + l.price * l.qty, 0)) === 1590, ls2.map((l) => l.sku + '×' + l.qty + ' ' + l.price).join(' + '));
         }
+        // 56. Розміри товару — одне канонічне написання (31.10, Edits: «XXL та 2XL — один розмір»): у каталозі змішані 2XL/XXL, 3XL/XXXL (j0032 —
+        // для одного кольору обидва). Бот показував «розміри S, 3XL, XXXL, XS, L, XXL» і «найбільший розмір — 2XL».
+        {
+            const { productSizes, sortSizes } = require('../catalogFacts');
+            const a = productSizes({ offers: [{ effectiveSizes: ['S', '3XL', 'XXXL', 'XS', 'L', 'XXL'] }] });
+            check('56.1 Змішані написання зливаються й сортуються: XS S L XXL XXXL', a.join(' ') === 'XS S L XXL XXXL', a.join(' '));
+            const b = productSizes({ sizes: ['S', 'M', 'L', 'XL', '2XL'] });
+            check('56.2 2XL = XXL; найбільший — останній у списку', b.join(' ') === 'S M L XL XXL' && b[b.length - 1] === 'XXL', b.join(' '));
+            const c = productSizes({ sizes: ['46', '42', '44'] });
+            check('56.3 Числові розміри — за числом', c.join(' ') === '42 44 46', c.join(' '));
+            check('56.4 sortSizes не мутує вхід', (() => { const x = ['XL', 'S']; sortSizes(x); return x.join() === 'XL,S'; })());
+        }
         check('31.2 Текст із переносами не чіпається', paragraphize('Рядок один.\nРядок два, досить довгий, щоб перевищити межу в сто сорок символів, і ще трохи тексту, щоб точно перевищити.') === 'Рядок один.\nРядок два, досить довгий, щоб перевищити межу в сто сорок символів, і ще трохи тексту, щоб точно перевищити.', '');
     }
 

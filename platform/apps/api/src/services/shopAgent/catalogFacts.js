@@ -128,6 +128,13 @@ function colorHasSize(product, color, size) {
     return lists.some((l) => l.map(sizeKey).includes(sizeKey(size)));
 }
 
+const SIZE_RANK = { XXS: 0, XS: 1, S: 2, M: 3, L: 4, XL: 5, XXL: 6, XXXL: 7, XXXXL: 8 };
+/** Літерні розміри — за зростанням, числові (44, 46) — за числом після них, решта — як були. Не мутує вхід. */
+function sortSizes(list) {
+    const key = (z, i) => (z in SIZE_RANK ? SIZE_RANK[z] : /^\d+([.,]\d+)?$/.test(z) ? 100 + parseFloat(String(z).replace(',', '.')) : 10000 + i);
+    return list.map((z, i) => [z, key(z, i)]).sort((x, y) => x[1] - y[1]).map((x) => x[0]);
+}
+
 /**
  * Розміри товару — ОДНЕ джерело (2026-10-07): офери CRM (effectiveSizes/availableSizes) → поле sizes → structuredSizes →
  * розмірна сітка (sizeChartData.sizes) → рядок «Розміри:» в описі. Раніше policy брала лише p.sizes (у A0187 порожній — розміри є
@@ -137,7 +144,10 @@ function colorHasSize(product, color, size) {
 function productSizes(p) {
     if (!p) return [];
     const norm = (z) => String((z && (z.name || z.size || z.value)) || z || '').trim().toUpperCase().replace(/\s*\(.*$/, '');
-    const uniq = (arr) => arr.map(norm).filter(Boolean).filter((z, i, a) => a.indexOf(z) === i);
+    // 31.10 (Edits Олексія: «XXL та 2XL — один і той самий розмір»; бот писав «розміри S, 3XL, XXXL, XS, L, XXL» і «найбільший розмір — 2XL»):
+    // у каталозі змішані написання (A0182 — 2XL, A0068 — 3XL, у j0032 для одного кольору і 3XL, і XXXL). Усе, що бот показує й звіряє, —
+    // канонічні (2XL→XXL, 3XL→XXXL), без дублів і за порядком розмірів, тож «найбільший» — справді останній у списку.
+    const uniq = (arr) => sortSizes(arr.map(norm).filter(Boolean).map(sizeKey).filter((z, i, a) => a.indexOf(z) === i));
     const fromOffers = uniq([].concat(...(Array.isArray(p.offers) ? p.offers : []).map((o) => offerSizes(o) || [])));
     if (fromOffers.length) return fromOffers;
     for (const src of [p.sizes, p.structuredSizes, p.sizeChartData && p.sizeChartData.sizes]) if (Array.isArray(src) && src.length) return uniq(src);
@@ -168,4 +178,4 @@ function productHasSize(p, size) {
     return productSizes(p).map(sizeKey).includes(k);
 }
 
-module.exports = { catalogFacts, catalogProducts, otherCategoryProducts, colorHasSize, productSizes, productHasSize, sizeKey, sizeTokens };
+module.exports = { catalogFacts, catalogProducts, otherCategoryProducts, colorHasSize, productSizes, productHasSize, sizeKey, sizeTokens, sortSizes };

@@ -1883,7 +1883,13 @@ async function runPolicyInner(A, u) {
     }
     // 2026-09-25 (FunnelTest 32): фото БЕЗ тексту у відповідь на питання про колір — це зразок кольору, а не новий товар:
     // не перезапускаємо розпізнавання (раніше перемикало на іншу кофту), просимо співставити з палітрою товару.
-    if (ctx.product && ctx.product.sku && A.turnImage && /колір/i.test(String(ctx.agent.lastAsk || '')) && !ctx.crmOrderId && !String(text).replace(/\[фото\]/gi, '').trim() && ctx.product.colors) {
+    // 2.11 (Edits Олексія, alexred_4444: «клієнт надіслав квитанцію, а бот перепитує спосіб оплати»): оформлення вів менеджер, клієнт уже
+    // заплатив і надіслав банківську «Платіжну інструкцію» на 200 грн — бот прийняв її за зразок кольору («Який колір найближчий до зразка?»),
+    // а далі пройшов увесь шлях замовлення знову й спитав спосіб оплати. Фото тут — зразок кольору, лише якщо це не квитанція: перевіряємо
+    // вміст (receiptCheck, той самий, що на етапі оплати); не вдалось перевірити — квитанція, якщо менеджер уже вів оформлення (1a2 нижче).
+    const _colorPhoto = !!(ctx.product && ctx.product.sku && A.turnImage && /колір/i.test(String(ctx.agent.lastAsk || '')) && !ctx.crmOrderId && !String(text).replace(/\[фото\]/gi, '').trim() && ctx.product.colors);
+    const _photoIsReceipt = _colorPhoto ? await require('./receiptCheck').imageIsReceipt(A, A.turnImage) : null;
+    if (_colorPhoto && !(_photoIsReceipt === true || (_photoIsReceipt === null && managerCheckoutInHistory(A)))) {
         A.out.push({ text: 'Дякую за фото! 🎨 У цієї моделі є кольори: ' + ctx.product.colors + '. Який із них найближчий до вашого зразка? Напишіть назву, і я одразу зафіксую 🙂', step: 'color_sample_ask' });
         ctx.agent.colorSampleAsked = true;
         
@@ -3949,7 +3955,11 @@ async function runPolicyInner(A, u) {
                 if (!payQResolved) await escalateUnresolved(A, u.questions[0]);
                 // нагадування «лишилось обрати оплату» у відповіді — раз після списку; далі лише відповіді (20.10, крок pay_q реєстр прохань не рахує)
                 ctx.agent.payRemindN = Number(ctx.agent.payRemindN || 0) + 1;
-                A.out.push({ text: payQTxt, step: 'pay_q' });
+                // 2.11 (Edits Олексія, yuragolubosh: «двічі пише про способи оплати»): модель відповіла на питання й сама перелічила 1️⃣/2️⃣, а далі
+                // система додає свій шаблон зі способами — у клієнта два однакові переліки в одному повідомленні. Інструкція «сам список дасть
+                // система» виконується не завжди, тому, коли шаблон іде слідом, речення про вибір способу оплати з відповіді прибираємо.
+                const payQOut = Asks.shown(A, 'pay') >= 1 ? payQTxt : require('./payEcho').dropPayOptionsEcho(payQTxt);
+                if (payQOut) A.out.push({ text: payQOut, step: 'pay_q' });
                 if (Asks.shown(A, 'pay') >= 1) return; // список способів оплати клієнт уже бачив — не дублюємо його під відповіддю (20.10)
             }
             const payAck = (u.receiptLink || A.turnImage) ? messageTextMultiline(A.assets, 'n_agent_pay_ack_receipt', ctx, A.session.id) + '\n\n' : ((u.phone || u.fullName || u.city || u.branch) ? messageTextMultiline(A.assets, 'n_agent_pay_ack_address', ctx, A.session.id) + '\n\n' : (u.addUpsell === false && ctx.agent.upsellOffered ? messageTextMultiline(A.assets, 'n_agent_pay_ack_no_upsell', ctx, A.session.id) + '\n\n' : ''));

@@ -1403,6 +1403,37 @@ async function main() {
             check('56.3 Числові розміри — за числом', c.join(' ') === '42 44 46', c.join(' '));
             check('56.4 sortSizes не мутує вхід', (() => { const x = ['XL', 'S']; sortSizes(x); return x.join() === 'XL,S'; })());
         }
+        // 57. Правки 01–02.11. (а) Фото-квитанція у відповідь на питання про колір — не «зразок кольору» (alexred_4444: менеджер вів оформлення,
+        // клієнт надіслав «Платіжну інструкцію» 200 грн, бот спитав колір і спосіб оплати). (б) Модель не дублює перелік способів оплати
+        // перед шаблоном системи (yuragolubosh: «двічі пише про способи оплати»).
+        {
+            const RC = require('../receiptCheck'); const orig = RC.imageIsReceipt;
+            const mk = (hist) => {
+                const A = freshA({ turnText: '', turnImage: 'https://example.com/receipt.jpg' });
+                A.ctx.product = { sku: 'A0191', name: 'Костюм', price: 1979, colors: 'Чорний, Графітовий' }; A.ctx.agent.presentedSku = 'A0191'; A.ctx.agent.lastAsk = 'колір';
+                A.history = hist ? [{ who: 'manager', text: 'Після оплати (200 грн) надішліть, будь ласка, квитанцію або скріншот оплати', at: new Date(Date.now() - 20 * 3600e3) }] : [];
+                return A;
+            };
+            const steps = (A) => A.out.map((o) => o.step).join(',');
+            try {
+                RC.imageIsReceipt = async () => true;
+                const A = mk(true); await runPolicy(A, freshU({ intent: 'other' }));
+                check('57.1 Квитанція у відповідь на питання про колір (веде менеджер) — не зразок кольору, а передача менеджеру', !A.out.some((o) => o.step === 'color_sample_ask') && A.out.some((o) => o.step === 'manager_checkout_handoff'), steps(A));
+                RC.imageIsReceipt = async () => false;
+                const B = mk(true); await runPolicy(B, freshU({ intent: 'other' }));
+                check('57.2 Справжній зразок кольору (не квитанція) — як раніше', B.out.some((o) => o.step === 'color_sample_ask'), steps(B));
+                RC.imageIsReceipt = async () => null;
+                const C = mk(true); await runPolicy(C, freshU({ intent: 'other' }));
+                check('57.3 Не вдалось перевірити фото, але оформлення веде менеджер — не зразок кольору', !C.out.some((o) => o.step === 'color_sample_ask'), steps(C));
+                const D = mk(false); await runPolicy(D, freshU({ intent: 'other' }));
+                check('57.4 Не вдалось перевірити, менеджера в розмові нема — як раніше (зразок кольору)', D.out.some((o) => o.step === 'color_sample_ask'), steps(D));
+            } finally { RC.imageIsReceipt = orig; }
+            const { dropPayOptionsEcho } = require('../payEcho');
+            const echo = 'Так, саме ця кофта має металеву блискавку на всю довжину — від коміра до самого низу, розстібається повністю 🤝 Графітовий XL вже підібрано, лишилось обрати спосіб оплати — оберіть зручний варіант: 1️⃣ Передоплата 200 грн, решта при отриманні (накладений платіж) 2️⃣ Повна передоплата всієї суми';
+            const cleaned = dropPayOptionsEcho(echo);
+            check('57.5 Відповідь моделі без власного переліку способів оплати (його додає система)', /блискавку/.test(cleaned) && !/1️⃣|2️⃣|спосіб оплати/.test(cleaned), cleaned);
+            check('57.6 Відповідь без переліку не чіпається', dropPayOptionsEcho('Так, накладений платіж доступний — з частковою передоплатою 200 грн 🙌') === 'Так, накладений платіж доступний — з частковою передоплатою 200 грн 🙌');
+        }
         check('31.2 Текст із переносами не чіпається', paragraphize('Рядок один.\nРядок два, досить довгий, щоб перевищити межу в сто сорок символів, і ще трохи тексту, щоб точно перевищити.') === 'Рядок один.\nРядок два, досить довгий, щоб перевищити межу в сто сорок символів, і ще трохи тексту, щоб точно перевищити.', '');
     }
 

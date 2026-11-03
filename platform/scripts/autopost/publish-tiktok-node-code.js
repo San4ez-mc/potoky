@@ -19,7 +19,7 @@ return (async () => {
       try {
         await fetch(cb, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
           postGroupId: context.postGroupId || null, status: res.publishError ? 'failed' : 'published', platform: 'tiktok',
-          externalId: res.publishId || null, error: res.publishError || null }) });
+          externalId: res.publishId || null, url: res.url || null, error: res.publishError || null }) });
       } catch (e) {}
     }
     return res;
@@ -41,6 +41,78 @@ return (async () => {
   }
 
   if (!isInfo && !context.videoUrl) return await fail('NO_VIDEO_URL');
+
+  // 0) Zernio: якщо в ключах воронки є ZERNIO_API_KEY — публікуємо через Zernio (власний схвалений TikTok-додаток Zernio,
+  //    тож без нашого аудиту). Акаунт — ZERNIO_TIKTOK_ACCOUNT_ID або перший підключений tiktok у Zernio. Відео лише публічні
+  //    (акаунти через TikTok for Business app); для не-публічних вибір користувача → draft (чернетка в застосунку TikTok).
+  //    Без ZERNIO_API_KEY працює старий шлях нижче (Content Posting API напряму).
+  if (k.ZERNIO_API_KEY) {
+    var ZAPI = 'https://zernio.com/api/v1';
+    var zh = { 'Authorization': 'Bearer ' + k.ZERNIO_API_KEY, 'Content-Type': 'application/json' };
+    var zacc = k.ZERNIO_TIKTOK_ACCOUNT_ID || '';
+    var zinfo = null;
+    try {
+      var zr = await fetch(ZAPI + '/accounts', { headers: zh });
+      var zj = await zr.json().catch(function () { return {}; });
+      var zl = (zj && zj.accounts) || [];
+      var za = zl.filter(function (a) { return a.platform === 'tiktok' && (!zacc || a._id === zacc); })[0];
+      if (za) { zacc = za._id; zinfo = za; }
+    } catch (e) {}
+    if (!zacc) return await fail('ZERNIO_NO_TIKTOK_ACCOUNT: у Zernio не підключено TikTok-акаунт (підключи в кабінеті Zernio → Connections)');
+    if (isInfo) {
+      return await infoDone({ ok: true, creator: {
+        nickname: (zinfo && (zinfo.displayName || zinfo.name)) || '', username: (zinfo && zinfo.username) || '', avatarUrl: (zinfo && (zinfo.profilePicture || zinfo.avatar)) || '',
+        privacyLevelOptions: ['PUBLIC_TO_EVERYONE'], commentDisabled: false, duetDisabled: false, stitchDisabled: false, maxVideoPostDurationSec: 600 } });
+    }
+    var zopt = (context.tiktok && typeof context.tiktok === 'object') ? context.tiktok : null;
+    var zpriv = zopt ? zopt.privacy_level : (context.privacy || 'PUBLIC_TO_EVERYONE');
+    var zdraft = zpriv !== 'PUBLIC_TO_EVERYONE';
+    var ztitle = String((zopt ? zopt.title : (context.title || context.content || context.text)) || '').slice(0, 2200);
+    var zbody = {
+      content: ztitle,
+      mediaItems: [{ type: 'video', url: context.videoUrl }],
+      platforms: [{ platform: 'tiktok', accountId: zacc }],
+      publishNow: true,
+      tiktokSettings: {
+        privacy_level: 'PUBLIC_TO_EVERYONE',
+        allow_comment: zopt ? !!zopt.allow_comment : true,
+        allow_duet: zopt ? !!zopt.allow_duet : true,
+        allow_stitch: zopt ? !!zopt.allow_stitch : true,
+        commercial_content_type: 'none',
+        content_preview_confirmed: true,
+        express_consent_given: true,
+        media_type: 'video',
+        auto_add_music: false,
+        video_made_with_ai: zopt ? !!zopt.is_aigc : true,
+      },
+    };
+    if (zdraft) zbody.tiktokSettings.draft = true;
+    var zc = await fetch(ZAPI + '/posts', { method: 'POST', headers: zh, body: JSON.stringify(zbody) });
+    var zcj = await zc.json().catch(function () { return {}; });
+    var zpost = zcj && zcj.post;
+    var zid = zpost && zpost._id;
+    if (!zc.ok || !zid) return await done({ platform: 'tiktok', publishError: 'ZERNIO_CREATE_FAILED HTTP ' + zc.status + ' ' + JSON.stringify(zcj).slice(0, 400) });
+    // статус публікації (до ~5 хв, раз на 10 с)
+    var zfin = zpost;
+    for (var zi = 0; zi < 30; zi++) {
+      var zst = String((zfin && zfin.status) || '').toLowerCase();
+      if (zst === 'published' || zst === 'failed' || zst === 'partial' || zst === 'draft') break;
+      await sleep(10000);
+      try {
+        var zg = await fetch(ZAPI + '/posts/' + zid, { headers: zh });
+        var zgj = await zg.json().catch(function () { return {}; });
+        if (zgj && zgj.post) zfin = zgj.post;
+      } catch (e) {}
+    }
+    var zfst = String((zfin && zfin.status) || '').toLowerCase();
+    var zplat = ((zfin && zfin.platforms) || []).filter(function (p) { return p.platform === 'tiktok'; })[0] || {};
+    var zerr = null;
+    if (zfst === 'failed' || zplat.status === 'failed') zerr = 'ZERNIO_PUBLISH_FAILED ' + String(zplat.error || zplat.errorMessage || (zfin && zfin.error) || '').slice(0, 300);
+    else if (zfst !== 'published' && zfst !== 'draft') zerr = 'ZERNIO_STATUS_TIMEOUT (статус "' + zfst + '", post ' + zid + ')';
+    return await done({ platform: 'tiktok', publishId: zplat.platformPostId || zid, privacy: zdraft ? 'DRAFT' : 'PUBLIC_TO_EVERYONE', tiktokStatus: zfst,
+      url: zplat.platformPostUrl || zplat.url || null, via: 'zernio', publishError: zerr,
+      note: zdraft ? 'Збережено як чернетка в TikTok (draft) через Zernio.' : (zplat.platformPostUrl ? zplat.platformPostUrl : '') });
+  }
 
   // 1) токен доступу
   var token = k.TIKTOK_ACCESS_TOKEN || '';

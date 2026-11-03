@@ -208,6 +208,38 @@ async function t(name, fn) { try { await fn(); passed++; console.log('✅', name
         assert.ok(/INIT_FAILED/.test(r.publishError)); assert.strictEqual(has(calls, 'upload.tiktok').length, 0);
     });
 
+    // ── TikTok через Zernio (ключ ZERNIO_API_KEY у воронці) ────────────────
+    await t('tiktok/zernio: пост створюється з відео, публічно, ШІ-позначка; статус published → callback з url', async () => {
+        let polls = 0;
+        const calls = mockFetch([
+            { when: (u, o) => u.endsWith('/accounts'), reply: resp({ accounts: [{ _id: 'acc_tt1', platform: 'tiktok', username: 'kiro0333' }] }) },
+            { when: (u, o) => u.endsWith('/posts') && o.method === 'POST', reply: resp({ post: { _id: 'p1', status: 'publishing' } }) },
+            { when: (u) => u.endsWith('/posts/p1'), reply: () => { polls++; return resp({ post: { _id: 'p1', status: 'published', platforms: [{ platform: 'tiktok', status: 'published', platformPostId: 'tt99', platformPostUrl: 'https://tiktok.com/@kiro0333/video/tt99' }] } }); } },
+            { when: (u) => u.includes('/cb'), reply: resp({}) },
+        ]);
+        const r = await run('publish-tiktok-node-code.js', { videoUrl: 'https://v/x.mp4', title: 'Привіт TikTok', postGroupId: 'g9', callbackUrl: 'https://c2/cb' }, { ZERNIO_API_KEY: 'sk_test' });
+        assert.ok(!r.publishError, r.publishError); assert.strictEqual(r.via, 'zernio');
+        const create = JSON.parse(has(calls, '/posts', 'POST')[0].body);
+        assert.strictEqual(create.platforms[0].accountId, 'acc_tt1'); assert.strictEqual(create.mediaItems[0].url, 'https://v/x.mp4');
+        assert.strictEqual(create.content, 'Привіт TikTok'); assert.strictEqual(create.tiktokSettings.privacy_level, 'PUBLIC_TO_EVERYONE');
+        assert.strictEqual(create.tiktokSettings.video_made_with_ai, true); assert.ok(!create.tiktokSettings.draft);
+        assert.ok(polls >= 1);
+        assert.strictEqual(has(calls, 'open.tiktokapis.com').length, 0, 'прямий TikTok API не чіпаємо');
+        const cb = JSON.parse(has(calls, '/cb')[0].body);
+        assert.strictEqual(cb.status, 'published'); assert.strictEqual(cb.externalId, 'tt99'); assert.ok(/tiktok\.com/.test(cb.url));
+    });
+    await t('tiktok/zernio: акаунт не підключено → зрозуміла помилка; SELF_ONLY → draft', async () => {
+        mockFetch([{ when: (u) => u.endsWith('/accounts'), reply: resp({ accounts: [] }) }, { when: (u) => u.includes('/cb'), reply: resp({}) }]);
+        const r1 = await run('publish-tiktok-node-code.js', { videoUrl: 'https://v/x.mp4', title: 't', callbackUrl: 'https://c2/cb' }, { ZERNIO_API_KEY: 'sk_test' });
+        assert.ok(/ZERNIO_NO_TIKTOK_ACCOUNT/.test(r1.publishError));
+        const calls = mockFetch([
+            { when: (u) => u.endsWith('/accounts'), reply: resp({ accounts: [{ _id: 'acc_tt1', platform: 'tiktok' }] }) },
+            { when: (u, o) => u.endsWith('/posts') && o.method === 'POST', reply: resp({ post: { _id: 'p2', status: 'draft' } }) },
+        ]);
+        const r2 = await run('publish-tiktok-node-code.js', { videoUrl: 'https://v/x.mp4', title: 't', privacy: 'SELF_ONLY' }, { ZERNIO_API_KEY: 'sk_test' });
+        assert.ok(!r2.publishError, r2.publishError); assert.strictEqual(JSON.parse(has(calls, '/posts', 'POST')[0].body).tiktokSettings.draft, true);
+    });
+
     // ── TikTok: вікно публікації (creator_info + вибір користувача) ───────────
     const creatorData = { creator_nickname: 'KIRO', creator_username: 'kiro0333', creator_avatar_url: 'https://a/x.jpg',
         privacy_level_options: ['SELF_ONLY'], comment_disabled: false, duet_disabled: true, stitch_disabled: false, max_video_post_duration_sec: 600 };

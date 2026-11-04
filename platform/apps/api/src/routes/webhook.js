@@ -77,6 +77,23 @@ async function verifyTelegramSecretForBot(req, res, next) {
     next();
 }
 
+// Ходи Telegram-ботів, що зараз виконуються: плавна зупинка (деплой) чекає їх, інакше повідомлення людини, яка саме писала,
+// лишається без відповіді (04.11: хід агента онбордингу обірвано перезапуском через 12 с після повідомлення).
+const _tgInflight = new Set();
+function trackTg(fn) {
+    return () => {
+        const p = Promise.resolve().then(fn);
+        _tgInflight.add(p);
+        p.finally(() => _tgInflight.delete(p)).catch(() => {});
+        return p;
+    };
+}
+async function drainTelegram(timeoutMs = 25000) {
+    const until = Date.now() + timeoutMs;
+    while (_tgInflight.size && Date.now() < until) await Promise.race([Promise.allSettled([..._tgInflight]), new Promise((r) => setTimeout(r, 500))]);
+    if (_tgInflight.size) logger.warn('[webhook] drainTelegram: не встигли завершити ходів: ' + _tgInflight.size);
+}
+
 // POST /webhook/telegram — finance-course bot
 router.post('/telegram',
     verifyTelegramSecret,
@@ -118,7 +135,7 @@ router.post('/telegram/:botId',
         const botId = req.params.botId;
         res.json({ ok: true });
 
-        setImmediate(async () => {
+        setImmediate(trackTg(async () => {
             // A1: тримаємо claim окремо, щоб при падінні обробки зняти позначку «оброблено»
             // і дати Telegram-ретраю ще один шанс (інакше повідомлення губиться назавжди).
             let claimedUpdateId = '';
@@ -152,7 +169,7 @@ router.post('/telegram/:botId',
                     await db.processedMessage.deleteMany({ where: { botId, updateId: claimedUpdateId } }).catch(() => {});
                 }
             }
-        });
+        }));
     })
 );
 
@@ -625,3 +642,4 @@ router.post('/wayforpay',
 );
 
 module.exports = router;
+module.exports.drainTelegram = drainTelegram;

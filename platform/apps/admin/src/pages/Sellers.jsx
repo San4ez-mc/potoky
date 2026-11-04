@@ -106,7 +106,7 @@ function SellerList() {
                                             className="px-1.5 py-0.5 rounded bg-brand/15 border border-brand/40 text-brand hover:text-white">
                                             🤖 {s.clone.slug}{s.clone.isActive === false ? ' (вимкнена)' : ''}
                                         </Link>
-                                        <Link to={`/bots/${s.clone.botId}/sessions`} title="Розмови клієнтів з цим продавцем" className="px-1.5 py-0.5 rounded bg-gray-800 border border-gray-700 hover:border-gray-500 text-gray-300 hover:text-white">💬 розмови</Link>
+                                        <Link to={`/bots/${s.clone.botId}/sessions`} title="Усі сесії цієї воронки (розмови клієнтів з продавцем)" className="px-1.5 py-0.5 rounded bg-gray-800 border border-gray-700 hover:border-gray-500 text-gray-300 hover:text-white">🗂 сесії бота</Link>
                                         {s.clone.link && <a href={s.clone.link} target="_blank" rel="noreferrer" title="Відкрити бота в Telegram" className="px-1.5 py-0.5 rounded bg-gray-800 border border-gray-700 hover:border-gray-500 text-gray-300 hover:text-white">✈️ Telegram</a>}
                                     </span>
                                 ) : <span className="text-yellow-500/80">➜ воронки ще нема</span>}
@@ -182,7 +182,7 @@ function SellerDetail({ projectId }) {
                 <a href={`${CONTENT2}/products?projectId=${projectId}`} target="_blank" rel="noreferrer" className="px-2.5 py-1 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:text-white">Послуга ↗</a>
                 <a href={`${CONTENT2}/storage?projectId=${projectId}`} target="_blank" rel="noreferrer" className="px-2.5 py-1 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:text-white">Правила й документи ↗</a>
                 {clone && <Link to={`/funnel/${clone.botId}`} className="px-2.5 py-1 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:text-white">Воронка {clone.slug}</Link>}
-                {clone && <Link to={`/bots/${clone.botId}/sessions`} className="px-2.5 py-1 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:text-white">Розмови (сесії)</Link>}
+                {clone && <Link to={`/bots/${clone.botId}/sessions`} className="px-2.5 py-1 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:text-white">Сесії бота</Link>}
                 {clone && clone.link && <a href={clone.link} target="_blank" rel="noreferrer" className="px-2.5 py-1 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:text-white">Відкрити в Telegram ↗</a>}
                 {!clone && (
                     <button onClick={async () => { setSaving(true); setMsg(null); try { const r = await api.provisionSeller(projectId); setMsg({ ok: true, text: r.created ? `Воронку створено: ${r.link}` : 'Воронка вже є' }); await load(); } catch (e) { setMsg({ ok: false, text: e.message }); } finally { setSaving(false); } }}

@@ -289,6 +289,7 @@ async function gracefulShutdown(sig) {
     logger.info('[shutdown] ' + sig + ' — завершую ходи перед зупинкою');
     try { server.close(); } catch (e) { /* ок */ }
     try { await require('./services/metaChannel').drain(25 * 1000); } catch (e) { logger.warn('[shutdown] drain: ' + e.message); }
+    try { await require('./routes/webhook').drainTelegram(25 * 1000); } catch (e) { logger.warn('[shutdown] drainTelegram: ' + e.message); }
     logger.info('[shutdown] готово');
     process.exit(0);
 }

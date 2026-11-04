@@ -4785,6 +4785,12 @@ ${_baseUrl}/legal/terms — Правила використання`;
                 try {
                     const _dtxt = await extractDocumentText(ctx.lastFile.fileUrl, ctx.lastFile.mimeType, ctx.lastFile.fileName);
                     if (_dtxt) agentUserInput = (agentUserInput ? agentUserInput + '\n\n' : '') + `[Користувач надіслав документ «${ctx.lastFile.fileName || 'файл'}». Текст документа:]\n${_dtxt}`;
+                    // Оригінал матеріалів не губимо: агент стискає документ до кількох полів, а сам файл лишався лише в Telegram
+                    // (04.11: 64 КБ кейсів → 1340 символів у досьє). Зберігаємо текст, далі він іде в content2 як документ експерта.
+                    if (_dtxt && data.saveIncomingDocs) {
+                        await db.file.create({ data: { userId: session.userId, botId: session.botId, sessionId: session.id, fileType: 'incoming_document', fileName: String(ctx.lastFile.fileName || 'file').slice(0, 200), filePath: `/incoming-documents/${session.id}/${Date.now()}`, content: String(_dtxt).slice(0, 300000), version: 1 } })
+                            .catch((e) => logger.warn('[agent node] не вдалось зберегти оригінал документа', { error: e.message }));
+                    }
                 } catch (e) { logger.warn('[agent node] doc extract failed', { error: e.message }); }
                 ctx.lastFile = null;
             }

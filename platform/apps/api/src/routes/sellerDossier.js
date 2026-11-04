@@ -86,6 +86,15 @@ router.post('/expert-card', wrap(async (req, res, ctx) => {
     res.json({ ok: true, ready: card.ready, text: D.renderExpertCard(card), stillNeeded: card.blockers.map((b) => b.id) });
 }));
 
+// Оригінали документів, які надіслав експерт (зберігає agent-нода з data.saveIncomingDocs): js-нода онбордингу кладе їх у content2.
+router.post('/documents', wrap(async (req, res, ctx) => {
+    const rows = await db.file.findMany({
+        where: { userId: ctx.session.userId, botId: ctx.session.botId, fileType: 'incoming_document' },
+        orderBy: { createdAt: 'asc' }, take: 10, select: { fileName: true, content: true, createdAt: true },
+    });
+    res.json({ ok: true, documents: rows.map((r) => ({ fileName: r.fileName, text: r.content || '', at: r.createdAt })) });
+}));
+
 // Картка власнику + повні відповіді. Викликається js-нодою після завершення діалогу.
 router.post('/owner-card', wrap(async (req, res, ctx) => {
     const card = D.computeCard(ctx.state);

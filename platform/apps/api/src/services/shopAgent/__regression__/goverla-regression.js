@@ -1434,6 +1434,39 @@ async function main() {
             check('57.5 Відповідь моделі без власного переліку способів оплати (його додає система)', /блискавку/.test(cleaned) && !/1️⃣|2️⃣|спосіб оплати/.test(cleaned), cleaned);
             check('57.6 Відповідь без переліку не чіпається', dropPayOptionsEcho('Так, накладений платіж доступний — з частковою передоплатою 200 грн 🙌') === 'Так, накладений платіж доступний — з частковою передоплатою 200 грн 🙌');
         }
+        // 70. Правки 02–03.11. (а) Обіцяна розмірна сітка = надіслана (Ирина Щербак: «Так, зараз надішлю розмірну сітку окремим фото» — без фото).
+        // (б) Фото клієнта, що збігається з нашим кольором, → називаємо колір, а не «не можу визначити відтінок» (Яна Горулько).
+        {
+            const { applyChartPromise } = require('../chartPromise');
+            const strip = (t, pred) => String(t).split(/(?<=[.!?…])\s+|(?<=\p{Extended_Pictographic}️?)\s+(?=[А-ЯІЇЄҐA-Z👉])/u).filter((s) => !pred(s)).join(' '); // той самий поділ на речення, що в index.js stripAskSentences
+            const promise = 'Так, зараз надішлю розмірну сітку окремим фото 📏 Підкажіть зріст і вагу.';
+            const mkA = (out) => ({ out });
+            const A1 = mkA([{ text: promise, step: 'answer' }]); const c1 = { product: { sku: 'A0187', sizeChartUrl: 'https://x/chart.png' }, agent: {} };
+            check('70.1 Текст обіцяє сітку, а її нема — сітка додається', applyChartPromise(A1, c1, strip) === 'added' && A1.out.some((o) => o.step === 'size_chart' && o.photoUrls[0] === 'https://x/chart.png') && c1.agent.chartSentFor === 'A0187', JSON.stringify(A1.out));
+            const A2 = mkA([{ text: promise, step: 'answer' }, { photoUrls: ['https://x/chart.png'], step: 'size_chart' }]);
+            check('70.2 Сітка вже є в ході — нічого не додаємо', applyChartPromise(A2, c1, strip) === null && A2.out.length === 2, JSON.stringify(A2.out));
+            const A3 = mkA([{ text: promise, step: 'answer' }]);
+            check('70.3 Сітки в товару нема — обіцянка прибирається, решта тексту лишається', applyChartPromise(A3, { product: { sku: 'Z1' }, agent: {} }, strip) === 'stripped' && !/сітк/.test(A3.out[0].text) && /зріст/.test(A3.out[0].text), JSON.stringify(A3.out));
+            const A4 = mkA([{ text: 'Ось розмірна сітка для кофти 👇', step: 'answer' }]); const c4 = { product: { sku: 'set1', isSet: true, setItems: [{ name: 'Кофта. Артикул: A1', sizeChartUrl: 'https://x/a.png' }, { name: 'Джинси', sizeChartUrl: 'https://x/b.png' }] }, agent: {} };
+            check('70.4 Комплект без своєї сітки — шлемо сітки речей', applyChartPromise(A4, c4, strip) === 'added' && A4.out.filter((o) => o.step === 'size_chart').length === 2, JSON.stringify(A4.out));
+            const A5 = mkA([{ text: 'Розмір підберу за зростом і вагою, напишіть їх, будь ласка.', step: 'answer' }]);
+            check('70.5 Звичайний текст без обіцянки сітки не чіпається', applyChartPromise(A5, c1, strip) === null && A5.out.length === 1, JSON.stringify(A5.out));
+            const CM = require('../colorPhotoMatch'); const origM = CM.matchPhotoColor;
+            const mkC = () => { const A = freshA({ turnText: '', turnImage: 'https://example.com/own.jpg' }); A.ctx.product = { sku: 'A0187', name: 'Кофта', price: 1279, colors: 'Графітовий, Чорний, Світло-сірий' }; A.ctx.agent.presentedSku = 'A0187'; A.ctx.agent.lastAsk = 'колір'; A.history = []; return A; };
+            try {
+                CM.matchPhotoColor = async () => 'Світло-сірий';
+                const B = mkC(); await runPolicy(B, freshU({ intent: 'other' }));
+                check('70.6 Фото збігається з нашим кольором — бот називає колір, а не просить «зразок»', B.out.some((o) => o.step === 'color_sample_matched' && /Світло-сірий/.test(o.text) && /Графітовий, Чорний/.test(o.text)) && !B.out.some((o) => o.step === 'color_sample_ask'), B.out.map((o) => o.step + ':' + (o.text || '')).join(' | '));
+                const B2 = mkC(); B2.ctx.agent.colorSampleAsked = true; B2.ctx.agent.colorSampleMatch = 'Світло-сірий'; B2.turnImage = null; B2.turnText = 'Оце який колір?';
+                await runPolicy(B2, freshU({ intent: 'question', questions: ['Оце який колір?'] }));
+                check('70.7 «Оце який колір?» після порівняного фото — відповідь з кольором, не «не можу визначити»', B2.out.some((o) => o.step === 'color_sample_matched' && /Світло-сірий/.test(o.text)) && !B2.out.some((o) => o.step === 'color_sample_honest'), B2.out.map((o) => o.step + ':' + (o.text || '')).join(' | '));
+                CM.matchPhotoColor = async () => null;
+                const C = mkC(); await runPolicy(C, freshU({ intent: 'other' }));
+                check('70.8 Колір за фото не визначено — як раніше (просимо назвати колір)', C.out.some((o) => o.step === 'color_sample_ask'), C.out.map((o) => o.step).join(','));
+            } finally { CM.matchPhotoColor = origM; }
+            const refs = CM.colorRefs({ offers: [{ properties: [{ name: 'Колір', value: 'Чорний' }], images: ['/a.jpg', '/a2.jpg'] }, { properties: [{ name: 'Колір', value: 'Чорний' }, { name: 'Розмір', value: 'M' }], images: ['/a3.jpg'] }, { properties: [{ name: 'Колір', value: 'Сірий' }], images: ['https://h/b.jpg'] }, { properties: [{ name: 'Колір', value: 'Без фото' }], images: [] }] }, 'https://crm');
+            check('70.9 Еталони кольорів: одне фото на колір, відносні шляхи з базою CRM, колір без фото пропускається', refs.length === 2 && refs[0].url === 'https://crm/a.jpg' && refs[1].url === 'https://h/b.jpg', JSON.stringify(refs));
+        }
         check('31.2 Текст із переносами не чіпається', paragraphize('Рядок один.\nРядок два, досить довгий, щоб перевищити межу в сто сорок символів, і ще трохи тексту, щоб точно перевищити.') === 'Рядок один.\nРядок два, досить довгий, щоб перевищити межу в сто сорок символів, і ще трохи тексту, щоб точно перевищити.', '');
     }
 

@@ -1890,15 +1890,24 @@ async function runPolicyInner(A, u) {
     const _colorPhoto = !!(ctx.product && ctx.product.sku && A.turnImage && /колір/i.test(String(ctx.agent.lastAsk || '')) && !ctx.crmOrderId && !String(text).replace(/\[фото\]/gi, '').trim() && ctx.product.colors);
     const _photoIsReceipt = _colorPhoto ? await require('./receiptCheck').imageIsReceipt(A, A.turnImage) : null;
     if (_colorPhoto && !(_photoIsReceipt === true || (_photoIsReceipt === null && managerCheckoutInHistory(A)))) {
-        A.out.push({ text: 'Дякую за фото! 🎨 У цієї моделі є кольори: ' + ctx.product.colors + '. Який із них найближчий до вашого зразка? Напишіть назву, і я одразу зафіксую 🙂', step: 'color_sample_ask' });
+        // 3.11 (Edits Олексія, Яна Горулько): клієнтка надіслала наше ж фото й питала «оце який колір?» — порівнюємо з фото кольорів товару.
+        const _matched = await require('./colorPhotoMatch').matchPhotoColor(A, A.turnImage, ctx.product);
+        ctx.agent.colorSampleMatch = _matched || null;
+        if (_matched) A.out.push({ text: 'Дякую за фото! 🎨 Схоже, це наш колір «' + _matched + '». Беремо його чи оберете інший (' + String(ctx.product.colors).split(/\s*,\s*/).filter((c) => c.toLowerCase() !== _matched.toLowerCase()).join(', ') + ')?', step: 'color_sample_matched' });
+        else A.out.push({ text: 'Дякую за фото! 🎨 У цієї моделі є кольори: ' + ctx.product.colors + '. Який із них найближчий до вашого зразка? Напишіть назву, і я одразу зафіксую 🙂', step: 'color_sample_ask' });
         ctx.agent.colorSampleAsked = true;
-        
+
         ctx.agent.lastAsk = 'колір';
         return;
     }
     // Питання про відтінок після фото-зразка («Такий колір є?», «Це який колір?»): за фото відтінок не визначаємо — чесно, без вигаданого «схожий є».
     if (ctx.product && ctx.product.sku && ctx.agent.colorSampleAsked && /колір/i.test(String(ctx.agent.lastAsk || '')) && !ctx.crmOrderId && !A.turnImage && /(такий|схожий|цей|це\s+який|який\s+це|який\s+саме)[^?]{0,20}(колір|відтін)|(колір|відтін)[^?]{0,15}(є|такий|схожий)|(на|з)\s+фото[^?]{0,20}(колір|відтін)|(колір|відтін)[^?]{0,20}(на|з)\s+фото/i.test(String(text)) && ctx.product.colors) {
         ctx.agent.colorSampleReplies = (ctx.agent.colorSampleReplies || 0) + 1;
+        if (ctx.agent.colorSampleMatch) { // фото вже порівняли з нашими кольорами (colorPhotoMatch) — відповідаємо, а не відмовляємось
+            A.out.push({ text: 'Це наш колір «' + ctx.agent.colorSampleMatch + '» 🎨 Беремо його чи оберете інший?', step: 'color_sample_matched' });
+            Q.coverTopics(A, u, ['colors', 'photo', 'availability', 'other'], 'color_sample');
+            return;
+        }
         const t1 = 'За фото я не можу точно визначити відтінок 🙈 У цієї моделі є: ' + ctx.product.colors + '. Напишіть, будь ласка, який із них вам ближчий, — або я уточню у менеджера 🙂';
         const t2 = 'Точно порівняти відтінок за фото не вийде — орієнтуйтесь на назви: ' + ctx.product.colors + '. Якщо сумніваєтесь, передам питання менеджеру 💛';
         A.out.push({ text: ctx.agent.colorSampleReplies % 2 ? t1 : t2, step: 'color_sample_honest' });

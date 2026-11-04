@@ -276,6 +276,8 @@ if (!process.env.name || process.env.name === 'platform-api') {
     require('./services/quality/cron').start();
     // 31.10: окремий щоденний звіт — прийняті замовлення без ТТН довше 5 робочих днів (services/quality/stuckOrders.js).
     require('./services/quality/stuckOrders').start();
+    // 04.11: вартість ШІ-бота по розмовах → CRM («Щоденна аналітика» → «Витрати на токени Claude»), services/quality/aiCostSync.js.
+    require('./services/quality/aiCostSync').start();
 }
 
 // Плавна зупинка (13.10.2026): перезапуск під час деплою обривав хід посеред відправки — відповідь лишалась у базі, але клієнт

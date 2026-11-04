@@ -398,6 +398,13 @@ async function handleTurn({ botId, sessionId, text, imageUrl, imageUrls, sharedP
             else A.out = A.out.map((o) => (o.text && PHOTO_CLAIM.test(o.text) ? Object.assign({}, o, { text: stripAskSentences(o.text, (snt) => PHOTO_CLAIM.test(snt)) }) : o)).filter((o) => o.text || o.photoUrls);
         }
     }
+    // Той самий інваріант для розмірної сітки (Edits 02.11, Ирина Щербак: «Є розмірна сітка» → «Так, зараз надішлю розмірну сітку окремим
+    // фото» — а фото не було: на ході презентації аналітик поставив тему size_chart, але не wantsSizeChart). Текст обіцяє сітку, а її в ході
+    // нема → додаємо сітку товару (для комплекту — сітки речей); нічого надіслати → прибираємо обіцянку.
+    {
+        const r = require('./chartPromise').applyChartPromise(A, ctx, stripAskSentences);
+        if (r) logger.info('[shopAgent] обіцяна сітка: ' + (r === 'added' ? 'додано' : 'обіцянку прибрано'), { sessionId });
+    }
     // Абзаци замість суцільного рядка (paragraphize) — для всіх текстів, крім полів для копіювання (noMerge).
     A.out = A.out.map((o) => (o.text && !o.noMerge ? Object.assign({}, o, { text: paragraphize(o.text) }) : o));
     // Одне й те саме фото (картка товару + прев'ю зі списку, обкладинка й фото кольору) не надсилаємо двічі за один хід.

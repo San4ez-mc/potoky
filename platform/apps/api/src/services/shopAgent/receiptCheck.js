@@ -52,4 +52,4 @@ async function imageIsReceipt(A, url) {
     return res;
 }
 
-module.exports = { imageIsReceipt };
+module.exports = { imageIsReceipt, loadImage };

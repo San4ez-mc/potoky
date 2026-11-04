@@ -219,17 +219,27 @@ async function extractIncomingMedia(message, token) {
 
     if (!fileId) return null;
 
+    // getFile — до 3 спроб: разовий збій Telegram (429/мережа) раніше мовчки лишав fileUrl порожнім, і голосове
+    // миттєво (без жодного рядка в логах) оберталось на «Не почула голосове». 04.11: перше голосове впало так, друге пройшло.
     let fileUrl = null;
-    try {
-        const res = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`);
-        const data = await res.json();
-        const filePath = data?.result?.file_path;
-        if (filePath) {
-            fileUrl = `https://api.telegram.org/file/bot${token}/${filePath}`;
+    let lastGetFileErr = '';
+    for (let attempt = 0; attempt < 3 && !fileUrl; attempt++) {
+        try {
+            const res = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`, { signal: AbortSignal.timeout(8000) });
+            const data = await res.json().catch(() => ({}));
+            const filePath = data?.result?.file_path;
+            if (filePath) {
+                fileUrl = `https://api.telegram.org/file/bot${token}/${filePath}`;
+            } else {
+                lastGetFileErr = `HTTP ${res.status}: ${String(data?.description || 'без file_path').slice(0, 120)}`;
+                if (res.status === 400) break; // «file is too big» тощо: повторювати марно
+            }
+        } catch (err) {
+            lastGetFileErr = err.message;
         }
-    } catch (err) {
-        logger.warn('[platformBotHandler] getFile failed for incoming media', { error: err.message });
+        if (!fileUrl && attempt < 2) await new Promise((r) => setTimeout(r, 700));
     }
+    if (!fileUrl) logger.warn('[platformBotHandler] getFile не дав посилання на медіа', { type, error: lastGetFileErr });
 
     return {
         type,
@@ -308,8 +318,7 @@ async function resolveGeminiKey(botId) {
  * Модель береться з env, а не зашита: Google ретайрнув уже три покоління flash
  * поспіль, і кожного разу резерв мовчки переставав працювати (урок 11 у CLAUDE.md).
  */
-async function transcribeViaGemini(buf, apiKey, language = 'uk') {
-    const model = process.env.GEMINI_FALLBACK_MODEL || 'gemini-flash-latest';
+async function transcribeViaGemini(buf, apiKey, language = 'uk', model = process.env.GEMINI_FALLBACK_MODEL || 'gemini-flash-latest') {
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -320,24 +329,57 @@ async function transcribeViaGemini(buf, apiKey, language = 'uk') {
                     { inline_data: { mime_type: 'audio/ogg', data: buf.toString('base64') } },
                 ],
             }],
+            // Розшифровка не потребує роздумів: без thinkingBudget:0 «думаюча» модель витрачала секунди на роздуми (15.19).
+            // (lite-модель не «думає» і thinkingConfig відхиляє з 400 — перевірено живим викликом 04.11)
+            generationConfig: /lite/i.test(model) ? { temperature: 0 } : { temperature: 0, thinkingConfig: { thinkingBudget: 0 } },
         }),
-        signal: AbortSignal.timeout(60000),
+        signal: AbortSignal.timeout(25000),
     });
-    if (!res.ok) throw new Error(`Gemini ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
+    if (!res.ok) { const e = new Error(`Gemini ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`); e.status = res.status; throw e; }
     const j = await res.json();
     const text = (j?.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join(' ').trim();
     if (!text) throw new Error('Gemini повернув порожню розшифровку');
     return text;
 }
 
+/**
+ * Резерв з повторами: Gemini 503 «high demand» — тимчасова відмова, тож одна модель = одна невдала спроба, а друга спроба
+ * (або друга модель) зазвичай проходить. Моделі з env (їх ретайрять, див. урок 11): основна й запасна.
+ */
+async function transcribeViaGeminiResilient(buf, apiKey, language) {
+    const models = [process.env.GEMINI_FALLBACK_MODEL || 'gemini-flash-latest', process.env.GEMINI_FALLBACK_MODEL_2 || 'gemini-flash-lite-latest']
+        .filter((m, i, a) => m && a.indexOf(m) === i);
+    let lastErr;
+    for (const model of models) {
+        for (let attempt = 0; attempt < 2; attempt++) {
+            try { return await transcribeViaGemini(buf, apiKey, language, model); } catch (err) {
+                lastErr = err;
+                const transient = err.name === 'TimeoutError' || err.name === 'AbortError' || err.status === 429 || err.status >= 500;
+                logger.warn('[platformBotHandler] Gemini розшифровка: невдала спроба', { model, attempt, error: String(err.message).slice(0, 160) });
+                if (!transient) break; // 400/404 тощо: повторювати марно, пробуємо наступну модель
+                await new Promise((r) => setTimeout(r, 1200));
+            }
+        }
+    }
+    throw lastErr;
+}
+
+// OpenAI без кредитів (429 insufficient_quota / 401 / 402): наступні 10 хвилин Whisper не пробуємо, одразу Gemini, а не 2 марні спроби з паузою на кожне голосове.
+const whisperDown = { until: 0, alertedAt: 0 };
+
 async function transcribeAudio(fileUrl, apiKey, language = 'uk', botId = null) {
     let buf;
-    try {
-        const fileRes = await fetch(fileUrl);
-        if (!fileRes.ok) return null;
-        buf = Buffer.from(await fileRes.arrayBuffer());
-    } catch (err) {
-        logger.warn('[platformBotHandler] не вдалось завантажити голосове', { error: err.message });
+    let dlErr = '';
+    for (let attempt = 0; attempt < 2 && !buf; attempt++) {
+        try {
+            const fileRes = await fetch(fileUrl, { signal: AbortSignal.timeout(15000) });
+            if (!fileRes.ok) dlErr = `HTTP ${fileRes.status}`;
+            else buf = Buffer.from(await fileRes.arrayBuffer());
+        } catch (err) { dlErr = err.message; }
+        if (!buf && attempt < 1) await new Promise((r) => setTimeout(r, 700));
+    }
+    if (!buf) {
+        logger.warn('[platformBotHandler] не вдалось завантажити голосове', { error: dlErr });
         return null;
     }
 
@@ -345,7 +387,9 @@ async function transcribeAudio(fileUrl, apiKey, language = 'uk', botId = null) {
     // тимчасова відмова OpenAI, і саме через неї клієнтка втратила голосове,
     // хоча ключ і доступ до моделі були справні.
     let whisperErr = '';
-    for (let attempt = 0; attempt < 2 && apiKey; attempt++) {
+    const tStart = Date.now();
+    const whisperSkipped = Date.now() < whisperDown.until;
+    for (let attempt = 0; attempt < 2 && apiKey && !whisperSkipped; attempt++) {
         try {
             const form = new FormData();
             form.append('file', new Blob([buf], { type: 'audio/ogg' }), 'voice.ogg');
@@ -364,6 +408,15 @@ async function transcribeAudio(fileUrl, apiKey, language = 'uk', botId = null) {
                 break;
             }
             whisperErr = `HTTP ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`;
+            const noCredits = res.status === 401 || res.status === 402 || (res.status === 429 && /insufficient_quota|no credits|billing|exceeded your current quota/i.test(whisperErr));
+            if (noCredits) {
+                whisperDown.until = Date.now() + 10 * 60 * 1000;
+                if (Date.now() - whisperDown.alertedAt > 6 * 3600 * 1000) {
+                    whisperDown.alertedAt = Date.now();
+                    notifyAdminOfServiceOutage(null, 'OpenAI Whisper: немає кредитів', 'Голосові розшифровує резерв Gemini (повільніше). Поповніть баланс: https://platform.openai.com/settings/organization/billing/', { botId }).catch(() => {});
+                }
+                break; // повторювати марно
+            }
             const retriable = res.status === 429 || res.status >= 500;
             if (!retriable) break;
             await new Promise((r) => setTimeout(r, 1500));
@@ -372,15 +425,16 @@ async function transcribeAudio(fileUrl, apiKey, language = 'uk', botId = null) {
             await new Promise((r) => setTimeout(r, 1500));
         }
     }
-    if (whisperErr) logger.warn('[platformBotHandler] Whisper error', { error: whisperErr });
+    if (whisperErr) logger.warn('[platformBotHandler] Whisper error', { error: whisperErr, ms: Date.now() - tStart });
 
     // Резерв. Голос для власниці — основний спосіб писати на ходу, тож мовчки
     // втратити його гірше, ніж розшифрувати трохи гіршою моделлю.
     const geminiKey = await resolveGeminiKey(botId);
     if (geminiKey) {
         try {
-            const text = await transcribeViaGemini(buf, geminiKey, language);
-            logger.info('[platformBotHandler] голосове розшифровано резервом (Gemini)', { botId });
+            const tG = Date.now();
+            const text = await transcribeViaGeminiResilient(buf, geminiKey, language);
+            logger.info('[platformBotHandler] голосове розшифровано резервом (Gemini)', { botId, whisperMs: tG - tStart, geminiMs: Date.now() - tG, bytes: buf.length });
             return text;
         } catch (err) {
             logger.warn('[platformBotHandler] резерв Gemini теж не впорався', { error: err.message });

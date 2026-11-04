@@ -98,6 +98,18 @@ function SellerList() {
                                         ))}
                                     </span>
                                 )}
+                                {/* Ланцюжок «онбординг → воронка»: воронка створена з даних саме цього онбордингу (проєкт експерта = EXPERT_PROJECT_ID воронки) */}
+                                {s.clone ? (
+                                    <span className="flex items-center gap-1.5 flex-wrap">
+                                        <span className="text-gray-500" title="Воронку продавця створено з цього онбордингу">➜ Воронка:</span>
+                                        <Link to={`/funnel/${s.clone.botId}`} title="Відкрити воронку, створену з цього онбордингу"
+                                            className="px-1.5 py-0.5 rounded bg-brand/15 border border-brand/40 text-brand hover:text-white">
+                                            🤖 {s.clone.slug}{s.clone.isActive === false ? ' (вимкнена)' : ''}
+                                        </Link>
+                                        <Link to={`/bots/${s.clone.botId}/sessions`} title="Розмови клієнтів з цим продавцем" className="px-1.5 py-0.5 rounded bg-gray-800 border border-gray-700 hover:border-gray-500 text-gray-300 hover:text-white">💬 розмови</Link>
+                                        {s.clone.link && <a href={s.clone.link} target="_blank" rel="noreferrer" title="Відкрити бота в Telegram" className="px-1.5 py-0.5 rounded bg-gray-800 border border-gray-700 hover:border-gray-500 text-gray-300 hover:text-white">✈️ Telegram</a>}
+                                    </span>
+                                ) : <span className="text-yellow-500/80">➜ воронки ще нема</span>}
                             </div>
                         </div>
                     );

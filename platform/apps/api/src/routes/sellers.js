@@ -31,11 +31,47 @@ function createSellersRouter({ db, fetchImpl = fetch, env = process.env }) {
         return out;
     }
 
+    // Хто експерт і де його онбординг: Telegram-id беремо з назви проєкту («Експерт TG<id>», «QA Експерт TG<id>»),
+    // а коли в назві його нема (власний продавець власника тощо), з ключа HANDOFF_TELEGRAM_ID клон-воронки.
+    // Сесії онбордингу: справжні (не тестові) сесії цієї людини у воронці onboard-seller, де були реальні відповіді.
+    async function expertInfo(sellers, clones) {
+        const out = {};
+        const onboard = await db.bot.findFirst({ where: { slug: 'onboard-seller' }, select: { id: true } });
+        const cloneIds = Object.values(clones).map((c) => c.botId);
+        const handoffs = cloneIds.length
+            ? await db.funnelKey.findMany({ where: { botId: { in: cloneIds }, key: 'HANDOFF_TELEGRAM_ID' }, select: { botId: true, value: true } })
+            : [];
+        const handoffByBot = Object.fromEntries(handoffs.map((h) => [h.botId, String(h.value || '').trim()]));
+        for (const s of sellers) {
+            const fromName = (/TG(\d{5,})/.exec(s.projectName || '') || [])[1];
+            const clone = clones[s.projectId];
+            const tg = fromName || (clone && /^\d+$/.test(handoffByBot[clone.botId] || '') ? handoffByBot[clone.botId] : '');
+            if (!tg) { out[s.projectId] = null; continue; }
+            const user = await db.user.findFirst({ where: { telegramId: BigInt(tg) }, select: { id: true, firstName: true, lastName: true, username: true } });
+            const info = { telegramId: tg, name: user ? [user.firstName, user.lastName].filter(Boolean).join(' ') : '', username: (user && user.username) || '', onboarding: [] };
+            if (user && onboard) {
+                const sessions = await db.session.findMany({
+                    where: { userId: user.id, botId: onboard.id, isTest: false },
+                    orderBy: { startedAt: 'desc' },
+                    take: 12,
+                    select: { id: true, state: true, startedAt: true, lastActive: true, _count: { select: { messages: true } } },
+                });
+                info.onboarding = sessions
+                    .filter((x) => x._count.messages >= 3)
+                    .slice(0, 5)
+                    .map((x) => ({ id: x.id, state: x.state, startedAt: x.startedAt, lastActive: x.lastActive, messages: x._count.messages }));
+            }
+            out[s.projectId] = info;
+        }
+        return out;
+    }
+
     router.get('/', asyncHandler(async (req, res) => {
         const r = await c2({ action: 'list' });
         const sellers = r.sellers || [];
         const clones = await clonesByProject(sellers.map((s) => s.projectId));
-        res.json({ ok: true, data: sellers.map((s) => ({ ...s, clone: clones[s.projectId] || null })) });
+        const experts = await expertInfo(sellers, clones).catch(() => ({}));
+        res.json({ ok: true, data: sellers.map((s) => ({ ...s, clone: clones[s.projectId] || null, expert: experts[s.projectId] || null })) });
     }));
 
     // Вивантаження відповідей онбордингу для аналізу (зустріч 22.10, п. «Перевірка»): усі експерти × усі поля досьє.

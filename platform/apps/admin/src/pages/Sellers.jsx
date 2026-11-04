@@ -24,6 +24,12 @@ const CONTENT2 = 'https://content2.fineko.space';
 
 const input = 'w-full mt-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600';
 
+const fmtDate = (v) => {
+    if (!v) return '';
+    const d = new Date(v);
+    return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('uk-UA', { day: '2-digit', month: '2-digit', year: '2-digit' });
+};
+
 function StatusBadge({ status }) {
     const s = statusOf(status);
     return <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${s.badge}`}>{s.label}</span>;
@@ -48,25 +54,54 @@ function SellerList() {
             <p className="text-sm text-gray-400 mt-1 mb-4">Продавці експертів. Їх налаштування заповнює онбординг-бот; тут ви перевіряєте, виправляєте і запускаєте. Дані зберігаються в content2.</p>
             {rows.length === 0 && <p className="text-sm text-gray-500">Поки нікого: продавець зʼявляється після онбордингу експерта.</p>}
             <div className="space-y-2">
-                {rows.map((s) => (
-                    <Link key={s.projectId} to={`/sellers/${s.projectId}`} className="block bg-gray-900 border border-gray-800 hover:border-gray-600 rounded-xl px-4 py-3">
-                        <div className="flex items-center justify-between gap-3 flex-wrap">
-                            <div className="min-w-0">
-                                <p className="text-sm font-medium text-white truncate">{s.projectName}</p>
-                                <p className="text-xs text-gray-500 mt-0.5">
-                                    {s.sellerName ? `Продавець: ${s.sellerName}` : 'Імʼя продавця ще не задано'}
-                                    {s.clone ? ` · воронка ${s.clone.slug}` : ' · воронки ще нема'}
-                                </p>
+                {rows.map((s) => {
+                    const ex = s.expert;
+                    const sessions = (ex && ex.onboarding) || [];
+                    const first = sessions.length ? sessions[sessions.length - 1].startedAt : null;
+                    const last = sessions.length ? sessions.reduce((m, x) => (x.lastActive > m ? x.lastActive : m), sessions[0].lastActive) : null;
+                    return (
+                        <div key={s.projectId} className="bg-gray-900 border border-gray-800 hover:border-gray-600 rounded-xl px-4 py-3">
+                            <div className="flex items-start justify-between gap-3 flex-wrap">
+                                <Link to={`/sellers/${s.projectId}`} className="min-w-0 flex-1">
+                                    <p className="text-sm font-medium text-white truncate">{s.projectName}</p>
+                                    <p className="text-xs text-gray-500 mt-0.5">
+                                        {s.sellerName ? `Продавець: ${s.sellerName}` : 'Імʼя продавця ще не задано'}
+                                        {s.clone ? ` · воронка ${s.clone.slug}` : ' · воронки ще нема'}
+                                    </p>
+                                </Link>
+                                <div className="flex items-center gap-2 shrink-0">
+                                    <StatusBadge status={s.status} />
+                                    {s.ready
+                                        ? <span className="text-xs text-green-400">✓ готово до запуску</span>
+                                        : <span className="text-xs text-yellow-400">бракує: {s.missing}</span>}
+                                </div>
                             </div>
-                            <div className="flex items-center gap-2 shrink-0">
-                                <StatusBadge status={s.status} />
-                                {s.ready
-                                    ? <span className="text-xs text-green-400">✓ готово до запуску</span>
-                                    : <span className="text-xs text-yellow-400">бракує: {s.missing}</span>}
+                            <div className="mt-2 flex items-center gap-x-4 gap-y-1 flex-wrap text-xs text-gray-400">
+                                {ex ? (
+                                    <span className="flex items-center gap-1.5 min-w-0">
+                                        <span title="Експерт (клієнт)">👤</span>
+                                        <span className="text-gray-200 truncate">{ex.name || 'Без імені'}</span>
+                                        {ex.username && !ex.username.startsWith('ig_') && <a href={`https://t.me/${ex.username}`} target="_blank" rel="noreferrer" className="text-brand hover:underline">@{ex.username}</a>}
+                                        <span className="text-gray-600">TG {ex.telegramId}</span>
+                                    </span>
+                                ) : <span className="text-gray-600">👤 експерта не визначено</span>}
+                                {first && <span title="Перша й остання активність в онбордингу">📅 {fmtDate(first)}{last && fmtDate(last) !== fmtDate(first) ? ` → ${fmtDate(last)}` : ''}</span>}
+                                {sessions.length > 0 && (
+                                    <span className="flex items-center gap-1.5 flex-wrap">
+                                        <span className="text-gray-500">Онбординг:</span>
+                                        {sessions.map((x) => (
+                                            <a key={x.id} href={`/sessions/${x.id}`} target="_blank" rel="noreferrer"
+                                                title={`Сесія онбордингу: ${fmtDate(x.startedAt)}, повідомлень ${x.messages}${x.state === 'completed' ? ', завершена' : ', не завершена'}`}
+                                                className="px-1.5 py-0.5 rounded bg-gray-800 border border-gray-700 hover:border-gray-500 text-gray-300 hover:text-white">
+                                                💬 {fmtDate(x.startedAt)} <span className="text-gray-500">({x.messages}{x.state === 'completed' ? ' ✓' : ''})</span>
+                                            </a>
+                                        ))}
+                                    </span>
+                                )}
                             </div>
                         </div>
-                    </Link>
-                ))}
+                    );
+                })}
             </div>
         </div>
     );

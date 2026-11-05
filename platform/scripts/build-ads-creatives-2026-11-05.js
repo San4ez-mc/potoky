@@ -112,7 +112,7 @@ async function buildCreativeFunnel(mode) {
             projectId: 'string, обовʼязково: id компанії в content2',
             productId: 'string, необовʼязково (інакше головний продукт)', productName: 'string, необовʼязково',
             count: video ? 'число 1-5, за замовчуванням 2' : 'число 1-8, за замовчуванням 4',
-            landingUrl: 'string, https-сторінка запису/пропозиції (якщо без лід-магніту)',
+            landingUrl: 'string, https-сторінка запису/пропозиції (необовʼязково: посилання можна додати в кабінеті Meta)',
             leadMagnet: 'true | false | назва/ідентифікатор; за замовчуванням auto (є магніт з ботом → один кут про нього)',
             angles: 'масив: pain, outcome, objection, proof, curiosity, lead_magnet (необовʼязково)',
             aspects: video ? '(не використовується, відео завжди 9:16)' : 'масив: 4:5, 9:16, 1:1; за замовчуванням ["4:5","9:16"]',
@@ -130,7 +130,7 @@ async function buildCreativeFunnel(mode) {
         bodyFields: { projectId: '{{context.adProjectId}}', productId: '{{context.adProductId}}', productName: '{{context.adProductName}}', ensureNetwork: true },
         outputVar: 'context.adCtx', qaExpectation: 'Віддає дані з content2 і створює мережу meta_ads, якщо її ще нема.',
     });
-    await b.add('prepare', 'js', 'Підготовка: кути, магніт, посилання, бриф', { code: C.withMode(C.prepareCode, mode), qaExpectation: 'Без продукту або без місця призначення (landingUrl/магніт) ставить adFatal з поясненням, а не вигадує.' });
+    await b.add('prepare', 'js', 'Підготовка: кути, магніт, посилання, бриф', { code: C.withMode(C.prepareCode, mode), qaExpectation: 'Без продукту ставить adFatal з поясненням; посилання необовʼязкове і ніколи не вигадується.' });
     await b.add('c1', 'condition', 'Є дані для креативів?', { conditions: [
         { id: 'ok', label: 'так', expression: '!context.adFatal' },
         { id: 'fatal', label: 'ні', expression: '!!context.adFatal' },

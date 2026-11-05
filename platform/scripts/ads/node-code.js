@@ -56,8 +56,6 @@ if (wanted.length) order = wanted;
 var angles = [];
 for (var i = 0; i < context.adCount; i++) angles.push(order[i % order.length]);
 
-var landing = context.adLanding;
-if (!landing && !magnet) return { adFatal: 'Нема куди вести рекламу: передай landingUrl (сторінка запису) або заведи лід-магніт з ботом у content2.' };
 
 var prev = (r.previousAds || []).slice(0, 25).map(function (a) { return '- ' + a.headline + (a.angle ? ' [' + a.angle + ']' : ''); }).join('\n');
 var brief = [
@@ -94,7 +92,8 @@ var CTA = ['Дізнатися більше', "Зв'язатися з нами",
 function s(v, n) { return String(v == null ? '' : v).replace(/\s+\n/g, '\n').trim().slice(0, n); }
 function slug(t) { return encodeURIComponent(String(t || '').toLowerCase().replace(/[^a-z0-9а-яіїєґ]+/g, '-').replace(/^-+|-+$/g, '')); }
 function linkFor(angle, idx) {
-  var base = angle === 'lead_magnet' && context.adMagnet ? context.adMagnet.link : (context.adLanding || (context.adMagnet && context.adMagnet.link) || '');
+  // Посилання необовʼязкове (його часто додають у кабінеті Meta): лід-магніт має свій, інші кути — landingUrl, якщо передали.
+  var base = angle === 'lead_magnet' && context.adMagnet ? context.adMagnet.link : (context.adLanding || '');
   if (!base) return '';
   if (/^https?:\/\/t\.me\//i.test(base)) return base; // Telegram-посилання без utm: відстеження дає посилання з start-параметром
   var sep = base.indexOf('?') >= 0 ? '&' : '?';

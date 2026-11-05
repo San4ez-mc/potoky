@@ -100,7 +100,8 @@ async function buildCreativeFunnel(mode) {
         ['CONTENT2_URL', CONTENT2_URL, 'content2 (дані експерта, імпорт у план)', false],
         ['CONTENT2_WEBHOOK_SECRET', await content2Secret(), 'Секрет вебхуків content2', true],
         ['CLAUDE_CONNECTOR_ID', await readKey('content-manager-v2', 'CLAUDE_CONNECTOR_ID'), 'Claude (збережений конектор)', false],
-        ['TELEGRAM_BOT_TOKEN', await readKey('content-imagen4-vertex', 'TELEGRAM_BOT_TOKEN'), 'Telegram-бот для сповіщень', true],
+        // Збережений конектор «Telegram — Контент бот»: двигун сам дістає з нього токен (CLAUDE.md §3, §16).
+        ['TELEGRAM_CONNECTOR_ID', (await readKey('content-imagen4-vertex', 'TELEGRAM_CONNECTOR_ID')) || 'eb411228-6318-4e15-8ddb-286d3776fe8b', 'Telegram-бот для сповіщень (конектор)', false],
         ['ADMIN_TELEGRAM_ID', (await readKey('content-imagen4-vertex', 'OWNER_TELEGRAM_ID')) || '345126254', 'Кому слати звіт про створені креативи', false],
     ]);
 

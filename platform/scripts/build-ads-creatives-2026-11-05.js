@@ -2,7 +2,7 @@
 // Воронки рекламних креативів Meta (Facebook/Instagram) для БУДЬ-ЯКОГО експерта з content2:
 //   ads-creative-image  — тексти + картинки (4:5 для стрічки, 9:16 для Stories/Reels)
 //   ads-creative-video  — сценарії коротких відео-креативів (рендерить content-short-video)
-//   ads-render-image    — рендер одного креатива: фон Vertex Imagen 4 + текст через slide-builder → content2
+//   ads-render-image    — рендер одного креатива: фон OpenAI gpt-image-2 + текст через slide-builder → content2
 // Креативна логіка — в Claude-нодах, правила й перевірка — в content2 (src/lib/adRules.ts, /api/webhooks/ad-check),
 // у воронках їх копії немає. Дані про експерта/продукт/ЦА/кейси/факти воронка бере з content2 (/api/webhooks/ad-context).
 // Секрети в цей файл НЕ пишуться: ключі копіюються з уже налаштованих воронок (content-manager-v2 тощо) всередині БД платформи.
@@ -203,11 +203,11 @@ async function buildRenderFunnel() {
     const slug = 'ads-render-image';
     const bot = await ensureBot(
         slug, 'Реклама FB/IG: рендер фото-креатива',
-        'Рендерить одну картинку рекламного креатива: фон від Google Imagen 4 за описом сцени (без тексту й облич) + текст на картинці через slide-builder. Розмір за форматом: 4:5 (1080×1350), 9:16 (1080×1920), 1:1 (1080×1080). Результат віддає в content2 (generation-event).',
+        'Рендерить одну картинку рекламного креатива: фон від OpenAI gpt-image-2 за описом сцени (без тексту й облич) + текст на картинці через slide-builder. Розмір за форматом: 4:5 (1080×1350), 9:16 (1080×1920), 1:1 (1080×1080). Результат віддає в content2 (generation-event).',
         'Повернути на callbackUrl готовий PNG креатива або status:error з причиною.',
     );
     await copyKeys(bot.id, [
-        ['GOOGLE_VERTEX_CONNECTOR_ID', await readKey('content-stories-ai-bg', 'GOOGLE_VERTEX_CONNECTOR_ID'), 'Google Vertex (збережений конектор)', false],
+        ['OPENAI_CONNECTOR_ID', (await readKey('content-manager-v2', 'OPENAI_CONNECTOR_ID')) || '54a9dabc-88e3-47a5-a4b5-a7c551428053', 'OpenAI (збережений конектор «GPT для воронок»): генерація фону', false],
         ['CONTENT2_WEBHOOK_SECRET', await content2Secret(), 'Секрет вебхуків content2', true],
     ]);
     const start = await resetFlow(bot.id);
@@ -218,17 +218,11 @@ async function buildRenderFunnel() {
     const b = builder(bot.id);
     b.ids.start = start.id;
     await b.add('params', 'js', 'Параметри рендера', { code: C.renderParamsCode, qaExpectation: 'Розмір за аспектом; промпт фону без тексту/облич.' });
-    await b.add('jwt', 'js', 'Підпис JWT (Vertex)', { code: C.jwtCode });
-    await b.add('token', 'httpRequest', 'Токен Google OAuth', {
-        url: 'https://oauth2.googleapis.com/token', method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: 'grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion={{context.gJwt}}',
-        outputVar: 'context.gToken', responseField: 'access_token',
-    });
-    await b.add('imagen', 'httpRequest', 'Imagen 4: фон креатива', {
-        url: 'https://us-central1-aiplatform.googleapis.com/v1/projects/{{env.GOOGLE_PROJECT_ID}}/locations/us-central1/publishers/google/models/imagen-4.0-generate-001:predict',
-        method: 'POST', headers: { Authorization: 'Bearer {{context.gToken}}' },
-        body: '{"instances":[{"prompt":"{{context.bgPromptFinal}}"}],"parameters":{"sampleCount":1,"aspectRatio":"{{context.imagenAspect}}","personGeneration":"allow_adult"}}',
-        outputVar: 'context.bgBase64', responseField: 'predictions.0.bytesBase64Encoded',
+    await b.add('imagen', 'httpRequest', 'OpenAI gpt-image-2: фон креатива', {
+        url: 'https://api.openai.com/v1/images/generations', method: 'POST', headers: { Authorization: 'Bearer {{env.OPENAI_API_KEY}}' },
+        body: '{"model":"gpt-image-2","prompt":"{{context.bgPromptFinal}}","size":"{{context.openaiSize}}","quality":"medium","n":1}',
+        outputVar: 'context.bgBase64', responseField: 'data.0.b64_json',
+        qaExpectation: 'Повертає фон без тексту; ~25 с. Якщо баланс OpenAI закінчився — status:error у content2.',
     });
     await b.add('bgReady', 'js', 'Фон готовий?', { code: C.bgReadyCode });
     await b.add('c1', 'condition', 'Є фон?', { conditions: [
@@ -255,9 +249,7 @@ async function buildRenderFunnel() {
         outputVar: 'context.callbackResult',
     });
     await b.edge('start', 'params');
-    await b.edge('params', 'jwt');
-    await b.edge('jwt', 'token');
-    await b.edge('token', 'imagen');
+    await b.edge('params', 'imagen');
     await b.edge('imagen', 'bgReady');
     await b.edge('bgReady', 'c1');
     await b.edge('c1', 'render');

@@ -205,7 +205,7 @@ return { importPayload: { projectId: context.adProjectId, posts: posts }, adPost
 // ── Рендер картинки (воронка ads-render-image) ──────────────────────────────────────────────────────────
 
 const renderParamsCode = String.raw`// Параметри рендера одного рекламного креатива: розмір, співвідношення для Imagen, промпт фону.
-var ASP = { '4:5': { w: 1080, h: 1350, im: '3:4' }, '9:16': { w: 1080, h: 1920, im: '9:16' }, '1:1': { w: 1080, h: 1080, im: '1:1' } };
+var ASP = { '4:5': { w: 1080, h: 1350, sz: '1024x1536' }, '9:16': { w: 1080, h: 1920, sz: '1024x1536' }, '1:1': { w: 1080, h: 1080, sz: '1024x1024' } };
 var asp = ASP[context.aspect] ? context.aspect : '4:5';
 var a = ASP[asp];
 var base = String(context.bgPrompt || (context.ad && context.ad.visual) || '').trim();
@@ -213,7 +213,7 @@ if (!base) throw new Error('bgPrompt (опис картинки) обовʼяз�
 var safe = asp === '9:16' ? ' Keep the top 15% and the bottom 20% of the frame calm and uncluttered.' : ' Keep the lower 40% of the frame calm and uncluttered.';
 var prompt = base.replace(/["\\\n\r]+/g, ' ').slice(0, 800) + '. Clean modern advertising visual, soft natural light, shallow depth of field, no text, no letters, no numbers, no logos, no watermark, no faces.' + safe;
 return {
-  width: a.w, height: a.h, imagenAspect: a.im, adAspect: asp,
+  width: a.w, height: a.h, openaiSize: a.sz, adAspect: asp,
   bgPromptFinal: prompt,
   title: String(context.title || (context.ad && context.ad.overlayTitle) || '').trim(),
   subtitle: String(context.subtitle || (context.ad && context.ad.overlaySub) || '').trim(),
@@ -224,23 +224,9 @@ return {
   callbackUrl: context.callbackUrl || '',
 };`;
 
-const jwtCode = String.raw`// Підпис JWT для сервісного акаунта Google (Vertex AI). Мережевих викликів нема: обмін на токен робить наступна http-нода.
-var raw = keys.GOOGLE_SA_KEY || '';
-if (!raw) throw new Error('GOOGLE_SA_KEY не налаштовано (конектор Vertex: GOOGLE_VERTEX_CONNECTOR_ID)');
-var sa;
-try { sa = JSON.parse(raw); } catch (e) { sa = JSON.parse(Buffer.from(raw, 'base64').toString('utf8')); }
-function b64u(b) { return Buffer.from(b).toString('base64').replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_'); }
-var now = Math.floor(Date.now() / 1000);
-var head = b64u(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
-var pay = b64u(JSON.stringify({ iss: sa.client_email, scope: 'https://www.googleapis.com/auth/cloud-platform', aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3000 }));
-var sign = crypto.createSign('RSA-SHA256');
-sign.update(head + '.' + pay);
-var sig = sign.sign(sa.private_key, 'base64').replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
-return { gJwt: head + '.' + pay + '.' + sig };`;
-
-const bgReadyCode = String.raw`// Фон від Imagen → data URL для slide-builder. Нема фону = чесна помилка (потім callback зі status:error).
+const bgReadyCode = String.raw`// Фон від генератора (OpenAI gpt-image-2) → data URL для slide-builder. Нема фону = чесна помилка (потім callback зі status:error).
 var b = context.bgBase64;
-if (!b || typeof b !== 'string' || b.length < 1000) return { bgOk: false, bgError: 'Imagen не повернув картинку (ліміт/фільтр безпеки/ключ). Токен: ' + (context.gToken ? 'є' : 'нема') };
+if (!b || typeof b !== 'string' || b.length < 1000) return { bgOk: false, bgError: 'Генератор картинок не повернув фон (ліміт, фільтр безпеки, ключ або баланс OpenAI)' };
 return { bgOk: true, finalPhotoUrl: 'data:image/png;base64,' + b };`;
 
 const renderFailCode = String.raw`return { failBody: JSON.stringify({ status: 'error', error: String(context.bgError || context.renderError || 'render failed').slice(0, 400), postItemId: context.postItemId || null }) };`;
@@ -250,5 +236,5 @@ const withMode = (code, mode) => code.split('context.__adMode').join("'" + mode 
 module.exports = {
   withMode,
   paramsCode, prepareCode, parseCode, repairBriefCode, mergeCode, assembleImageCode, assembleVideoCode,
-  renderParamsCode, jwtCode, bgReadyCode, renderFailCode,
+  renderParamsCode, bgReadyCode, renderFailCode,
 };

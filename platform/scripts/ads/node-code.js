@@ -143,6 +143,8 @@ list.forEach(function (f) {
   var next = Object.assign({}, cur);
   Object.keys(f).forEach(function (k) { if (k !== 'index' && KEEP.indexOf(k) < 0 && f[k] != null) next[k] = f[k]; });
   if (CTA.indexOf(next.cta) < 0) next.cta = cur.cta;
+  // Опис необовʼязковий і часто не показується: якщо після виправлення все ще > 30 символів, прибираємо його, а не тримаємо креатив у чернетках.
+  if (Array.from(String(next.description || '')).length > 30) next.description = '';
   ads[i] = next;
 });
 return { ads: ads, adRepaired: list.length };`;
@@ -226,15 +228,33 @@ return {
 
 const bgReadyCode = String.raw`// Фон від генератора (OpenAI gpt-image-2) → data URL для slide-builder. Нема фону = чесна помилка (потім callback зі status:error).
 var b = context.bgBase64;
-if (!b || typeof b !== 'string' || b.length < 1000) return { bgOk: false, bgError: 'Генератор картинок не повернув фон (ліміт, фільтр безпеки, ключ або баланс OpenAI)' };
+if (!b || typeof b !== 'string' || b.length < 1000) return { bgOk: false, failMsg: 'Генератор картинок не повернув фон (ліміт, фільтр безпеки, ключ або баланс OpenAI)', bgError: 'Генератор картинок не повернув фон (ліміт, фільтр безпеки, ключ або баланс OpenAI)' };
 return { bgOk: true, finalPhotoUrl: 'data:image/png;base64,' + b };`;
 
 const renderFailCode = String.raw`return { failBody: JSON.stringify({ status: 'error', error: String(context.bgError || context.renderError || 'render failed').slice(0, 400), postItemId: context.postItemId || null }) };`;
 
 const withMode = (code, mode) => code.split('context.__adMode').join("'" + mode + "'");
 
+
+// Розкид у часі: slide-builder рендерить по одному, тож 8 креативів одночасно дають 504. Слот береться з id поста.
+const staggerCode = String.raw`var id = String(context.postItemId || context.postGroupId || Math.random());
+var slot = parseInt(id.slice(-3), 36) % 8;
+var ms = slot * 5000;
+await new Promise(function (r) { setTimeout(r, ms); });
+return { staggerMs: ms };`;
+
+// Перевірка результату slide-builder: HTML 504 / обрізана відповідь не мають іти в content2 як «успіх».
+const renderCheckCode = String.raw`var b = context.finalImageBase64;
+var tries = (Number(context.renderTry) || 0) + 1;
+var ok = typeof b === 'string' && b.length > 20000 && b.indexOf('iVBOR') === 0;
+return { renderOk: ok, renderTry: tries, failMsg: ok ? '' : 'slide-builder не повернув картинку (спроба ' + tries + ')', finalImageBase64: ok ? b : '' };`;
+
+const retryWaitCode = String.raw`var ms = 8000 + Math.floor(Math.random() * 12000);
+await new Promise(function (r) { setTimeout(r, ms); });
+return { retryWaitMs: ms };`;
+
 module.exports = {
   withMode,
   paramsCode, prepareCode, parseCode, repairBriefCode, mergeCode, assembleImageCode, assembleVideoCode,
-  renderParamsCode, bgReadyCode, renderFailCode,
+  renderParamsCode, bgReadyCode, staggerCode, renderCheckCode, retryWaitCode, renderFailCode,
 };

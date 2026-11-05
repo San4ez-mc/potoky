@@ -229,6 +229,7 @@ async function buildRenderFunnel() {
         { id: 'ok', label: 'так', expression: 'context.bgOk === true' },
         { id: 'fail', label: 'ні', expression: 'context.bgOk !== true' },
     ] });
+    await b.add('stagger', 'js', 'Черга рендера (розкид у часі)', { code: C.staggerCode, qaExpectation: 'Розводить одночасні креативи по 5 с, щоб slide-builder не віддавав 504.' });
     await b.add('render', 'httpRequest', 'Slide-builder: текст на фоні', {
         url: 'https://slides.flows.fineko.space/render/story', method: 'POST',
         bodyFields: {
@@ -238,23 +239,36 @@ async function buildRenderFunnel() {
         },
         outputVar: 'context.finalImageBase64', responseField: 'result.imageBase64',
     });
+    await b.add('check', 'js', 'Перевірка картинки', { code: C.renderCheckCode, qaExpectation: 'HTML 504 або обрізана відповідь не вважається картинкою.' });
+    await b.add('c2', 'condition', 'Картинка ок?', { conditions: [
+        { id: 'ok', label: 'так', expression: 'context.renderOk === true' },
+        { id: 'retry', label: 'повтор', expression: 'context.renderOk !== true && context.renderTry < 3' },
+        { id: 'fail', label: 'помилка', expression: 'context.renderOk !== true' },
+    ] });
+    await b.add('retryWait', 'js', 'Пауза перед повтором', { code: C.retryWaitCode });
     await b.add('done', 'httpRequest', 'Віддати в content2', {
         url: '{{context.callbackUrl}}', method: 'POST', headers: { 'x-webhook-token': '{{env.CONTENT2_WEBHOOK_SECRET}}' },
-        bodyFields: { projectId: '{{context.projectId}}', status: 'success', imageBase64: '{{context.finalImageBase64}}', tags: ['ads-meta', 'vertex-ai'], postItemId: '{{context.postItemId}}' },
+        bodyFields: { projectId: '{{context.projectId}}', status: 'success', imageBase64: '{{context.finalImageBase64}}', tags: ['ads-meta', 'openai-image'], postItemId: '{{context.postItemId}}' },
         outputVar: 'context.callbackResult',
     });
     await b.add('fail', 'httpRequest', 'Помилка → content2', {
         url: '{{context.callbackUrl}}', method: 'POST', headers: { 'x-webhook-token': '{{env.CONTENT2_WEBHOOK_SECRET}}' },
-        body: '{"status":"error","error":"{{context.bgError}}","postItemId":"{{context.postItemId}}"}',
+        body: '{"status":"error","error":"{{context.failMsg}}","postItemId":"{{context.postItemId}}"}',
         outputVar: 'context.callbackResult',
     });
     await b.edge('start', 'params');
     await b.edge('params', 'imagen');
     await b.edge('imagen', 'bgReady');
     await b.edge('bgReady', 'c1');
-    await b.edge('c1', 'render');
+    await b.edge('c1', 'stagger');
     await b.edge('c1', 'fail');
-    await b.edge('render', 'done');
+    await b.edge('stagger', 'render');
+    await b.edge('render', 'check');
+    await b.edge('check', 'c2');
+    await b.edge('c2', 'done');
+    await b.edge('c2', 'retryWait');
+    await b.edge('c2', 'fail');
+    await b.edge('retryWait', 'render');
     try { await callTool('auto_layout', { botId: bot.id }); } catch (e) { /* косметика */ }
     console.log('ok', slug, bot.id);
     return bot;

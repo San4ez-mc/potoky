@@ -326,7 +326,7 @@ context.ads.forEach(function (ad, i) {
 return { importPayload: { projectId: context.adProjectId, posts: posts }, adPostCount: posts.length, adSummary: lines.join('\n') };`;
 
 // Рендер фото-креатива через slide-builder: фото лишається як є, зверху заголовок, знизу пропозиція.
-const photoRenderParamsCode = String.raw`var ASP = { '4:5': { w: 1088, h: 1360, tpl: 'promo' }, '9:16': { w: 1152, h: 2048, tpl: 'multi-plate' }, '1:1': { w: 1080, h: 1080, tpl: 'promo' } };
+const photoRenderParamsCode = String.raw`var ASP = { '4:5': { w: 1088, h: 1360, tpl: 'promo' }, '9:16': { w: 1152, h: 2048, tpl: 'promo' }, '1:1': { w: 1080, h: 1080, tpl: 'promo' } };
 var asp = ASP[context.aspect] ? context.aspect : '4:5';
 var ad = context.ad || {};
 var title = String(ad.overlayTitle || context.title || '').replace(/\s+/g, ' ').trim();

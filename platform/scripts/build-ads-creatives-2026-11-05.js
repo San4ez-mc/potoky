@@ -274,7 +274,7 @@ async function buildPhotoRenderFunnel() {
     } });
     const b = builder(bot.id);
     b.ids.start = start.id;
-    await b.add('params', 'js', 'Параметри фото-креатива', { code: C.photoRenderParamsCode, qaExpectation: 'Розмір за аспектом; шаблон promo (4:5) / multi-plate (9:16); потрібні заголовок і https-фото.' });
+    await b.add('params', 'js', 'Параметри фото-креатива', { code: C.photoRenderParamsCode, qaExpectation: 'Розмір за аспектом; шаблон promo (текст знизу, обличчя не закрито); потрібні заголовок і https-фото.' });
     await b.add('stagger', 'js', 'Черга рендера (розкид у часі)', { code: C.staggerCode, qaExpectation: 'Розводить одночасні креативи по 6 с, щоб slide-builder не віддавав 504.' });
     await b.add('render', 'httpRequest', 'Slide-builder: текст на фото', {
         url: 'https://slides.flows.fineko.space/render/story', method: 'POST',

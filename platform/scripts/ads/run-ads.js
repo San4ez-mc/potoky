@@ -3,7 +3,7 @@
 // Використання на сервері:
 //   node scripts/ads/run-ads.js <image|video> <назва компанії> '<json параметрів>'
 // Приклад:
-//   node scripts/ads/run-ads.js image "Продаж автоматизації" '{"count":3,"leadMagnet":false,"note":"консультація з автоматизації"}'
+//   node scripts/ads/run-ads.js image "FINEKO — Контент" '{"painsFile":"pains-consult.json#first_six","productName":"Розбір процесу","leadMagnet":"no"}'
 // Назву і json можна передати у base64 з префіксом b64: (щоб кирилиця не ламалась в ssh): b64:0J_RgNC+0LTQsNC2...
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
@@ -15,6 +15,13 @@ async function main() {
     const mode = process.argv[2] === 'video' ? 'video' : 'image';
     const name = dec(process.argv[3]).trim();
     const params = JSON.parse(dec(process.argv[4]) || '{}');
+    // painsFile: "pains-consult.json#first_six" — болі з каталогу в scripts/ads (рядок "файл#ключ")
+    if (typeof params.painsFile === 'string') {
+        const [file, key] = params.painsFile.split('#');
+        const all = JSON.parse(require('fs').readFileSync(path.join(__dirname, file), 'utf8'));
+        if (!Array.isArray(all[key])) throw new Error('у ' + file + ' нема масиву «' + key + '»');
+        params.pains = all[key]; delete params.painsFile;
+    }
     if (!name) throw new Error('назва компанії обовʼязкова');
 
     const src = await db.bot.findFirst({ where: { slug: 'ads-creative-' + mode } });

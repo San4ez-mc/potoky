@@ -2,7 +2,7 @@
 // Воронки рекламних креативів Meta (Facebook/Instagram) для БУДЬ-ЯКОГО експерта з content2:
 //   ads-creative-image  — тексти + картинки (4:5 для стрічки, 9:16 для Stories/Reels)
 //   ads-creative-video  — сценарії коротких відео-креативів (рендерить content-short-video)
-//   ads-render-image    — рендер одного креатива: фон OpenAI gpt-image-2 + текст через slide-builder → content2
+//   ads-render-image    — рендер одного креатива: gpt-image-2 малює цілий креатив із текстом → content2
 // Креативна логіка — в Claude-нодах, правила й перевірка — в content2 (src/lib/adRules.ts, /api/webhooks/ad-check),
 // у воронках їх копії немає. Дані про експерта/продукт/ЦА/кейси/факти воронка бере з content2 (/api/webhooks/ad-context).
 // Секрети в цей файл НЕ пишуться: ключі копіюються з уже налаштованих воронок (content-manager-v2 тощо) всередині БД платформи.
@@ -118,6 +118,7 @@ async function buildCreativeFunnel(mode) {
             angles: 'масив: pain, outcome, objection, proof, curiosity, lead_magnet (необовʼязково)',
             aspects: video ? '(не використовується, відео завжди 9:16)' : 'масив: 4:5, 9:16, 1:1; за замовчуванням ["4:5","9:16"]',
             date: 'YYYY-MM-DD, дата в плані (за замовчуванням сьогодні)',
+            pains: 'масив болів [{id, pain, hook, angle, evidence: case|hypothesis, proof, layout}]: по одному креативу на біль (каталог: документація/реклама-болі-ЦА-розбір-процесу.md)',
             note: 'додаткова вказівка власника для копірайтера',
             render: 'false = без рендера медіа (лише тексти/сценарії в плані)',
         }, null, 1),
@@ -203,7 +204,7 @@ async function buildRenderFunnel() {
     const slug = 'ads-render-image';
     const bot = await ensureBot(
         slug, 'Реклама FB/IG: рендер фото-креатива',
-        'Рендерить одну картинку рекламного креатива: фон від OpenAI gpt-image-2 за описом сцени (без тексту й облич) + текст на картинці через slide-builder. Розмір за форматом: 4:5 (1080×1350), 9:16 (1080×1920), 1:1 (1080×1080). Результат віддає в content2 (generation-event).',
+        'Рендерить ОДИН цілий рекламний креатив: gpt-image-2 малює плашку «для кого», заголовок, акцент/пункти, ілюстрацію болю й нижню плашку з пропозицією (текст українською). Нативний розмір: 4:5 (1088×1360), 9:16 (1152×2048), 1:1. Результат віддає в content2 (generation-event).',
         'Повернути на callbackUrl готовий PNG креатива або status:error з причиною.',
     );
     await copyKeys(bot.id, [
@@ -213,36 +214,21 @@ async function buildRenderFunnel() {
     const start = await resetFlow(bot.id);
     await callTool('update_node', { botId: bot.id, nodeId: start.id, data: {
         label: 'Webhook Trigger', trigger: 'webhook', description: 'POST від content2 (fireGeneration / bulk-import) для рекламного креатива',
-        bodySchema: JSON.stringify({ bgPrompt: 'опис сцени (EN), без тексту', title: 'текст на картинці', subtitle: 'підзаголовок', aspect: '4:5 | 9:16 | 1:1', accent: '#hex', callbackUrl: 'string', postItemId: 'string', projectId: 'string' }, null, 1),
+        bodySchema: JSON.stringify({ ad: '{audience, overlayTitle, accent, points[], overlaySub, visual}', aspect: '4:5 | 9:16 | 1:1', callbackUrl: 'string', postItemId: 'string', projectId: 'string' }, null, 1),
     } });
     const b = builder(bot.id);
     b.ids.start = start.id;
-    await b.add('params', 'js', 'Параметри рендера', { code: C.renderParamsCode, qaExpectation: 'Розмір за аспектом; промпт фону без тексту/облич.' });
-    await b.add('imagen', 'httpRequest', 'OpenAI gpt-image-2: фон креатива', {
+    await b.add('params', 'js', 'Промпт цілого креатива', { code: C.renderParamsCode, qaExpectation: 'Будує промпт: плашка «для кого», заголовок, акцент/пункти, ілюстрація болю, нижня плашка; нативний розмір 4:5=1088x1360, 9:16=1152x2048.' });
+    await b.add('imagen', 'httpRequest', 'OpenAI gpt-image-2: цілий креатив', {
         url: 'https://api.openai.com/v1/images/generations', method: 'POST', headers: { Authorization: 'Bearer {{env.OPENAI_API_KEY}}' },
-        body: '{"model":"gpt-image-2","prompt":"{{context.bgPromptFinal}}","size":"{{context.openaiSize}}","quality":"medium","n":1}',
+        body: '{"model":"gpt-image-2","prompt":"{{context.fullPrompt}}","size":"{{context.openaiSize}}","quality":"high","n":1}',
         outputVar: 'context.bgBase64', responseField: 'data.0.b64_json',
-        qaExpectation: 'Повертає фон без тексту; ~25 с. Якщо баланс OpenAI закінчився — status:error у content2.',
+        qaExpectation: 'Повертає PNG цілого креатива з українським текстом; ~65 с. Якщо баланс OpenAI закінчився: повтор, потім status:error у content2.',
     });
-    await b.add('bgReady', 'js', 'Фон готовий?', { code: C.bgReadyCode });
-    await b.add('c1', 'condition', 'Є фон?', { conditions: [
-        { id: 'ok', label: 'так', expression: 'context.bgOk === true' },
-        { id: 'fail', label: 'ні', expression: 'context.bgOk !== true' },
-    ] });
-    await b.add('stagger', 'js', 'Черга рендера (розкид у часі)', { code: C.staggerCode, qaExpectation: 'Розводить одночасні креативи по 5 с, щоб slide-builder не віддавав 504.' });
-    await b.add('render', 'httpRequest', 'Slide-builder: текст на фоні', {
-        url: 'https://slides.flows.fineko.space/render/story', method: 'POST',
-        bodyFields: {
-            title: '{{context.title}}', subtitle: '{{context.subtitle}}', width: '{{context.width}}', height: '{{context.height}}',
-            accent: '{{context.accent}}', bgColor: '{{context.bgColor}}', bgStyle: '{{context.bgStyle}}', template: '{{context.template}}',
-            photoUrl: '{{context.finalPhotoUrl}}', backgroundImageUrl: '{{context.finalPhotoUrl}}',
-        },
-        outputVar: 'context.finalImageBase64', responseField: 'result.imageBase64',
-    });
-    await b.add('check', 'js', 'Перевірка картинки', { code: C.renderCheckCode, qaExpectation: 'HTML 504 або обрізана відповідь не вважається картинкою.' });
+    await b.add('check', 'js', 'Перевірка картинки', { code: C.renderCheckCode, qaExpectation: 'Відповідь без PNG не вважається креативом.' });
     await b.add('c2', 'condition', 'Картинка ок?', { conditions: [
         { id: 'ok', label: 'так', expression: 'context.renderOk === true' },
-        { id: 'retry', label: 'повтор', expression: 'context.renderOk !== true && context.renderTry < 3' },
+        { id: 'retry', label: 'повтор', expression: 'context.renderOk !== true && context.renderTry < 2' },
         { id: 'fail', label: 'помилка', expression: 'context.renderOk !== true' },
     ] });
     await b.add('retryWait', 'js', 'Пауза перед повтором', { code: C.retryWaitCode });
@@ -258,17 +244,12 @@ async function buildRenderFunnel() {
     });
     await b.edge('start', 'params');
     await b.edge('params', 'imagen');
-    await b.edge('imagen', 'bgReady');
-    await b.edge('bgReady', 'c1');
-    await b.edge('c1', 'stagger');
-    await b.edge('c1', 'fail');
-    await b.edge('stagger', 'render');
-    await b.edge('render', 'check');
+    await b.edge('imagen', 'check');
     await b.edge('check', 'c2');
     await b.edge('c2', 'done');
     await b.edge('c2', 'retryWait');
     await b.edge('c2', 'fail');
-    await b.edge('retryWait', 'render');
+    await b.edge('retryWait', 'imagen');
     try { await callTool('auto_layout', { botId: bot.id }); } catch (e) { /* косметика */ }
     console.log('ok', slug, bot.id);
     return bot;

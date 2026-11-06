@@ -5,6 +5,42 @@
 
 const withMode = (code, mode) => code.split('context.__adMode').join("'" + mode + "'");
 
+
+// Спільні функції розбору (один код і для parse, і для merge): JSON, що прощає зайву закриваючу дужку, і нормалізація основного тексту.
+const JSON_HELPERS = String.raw`function tryParse(t) {
+  for (var k = 0; k < 8; k++) {
+    try { return JSON.parse(t); } catch (e) {
+      var m = /position (\d+)/.exec(String(e.message || ''));
+      if (!m) return null;
+      var p = Number(m[1]);
+      if ('}]'.indexOf(t.charAt(p)) >= 0) t = t.slice(0, p) + t.slice(p + 1); else return null;
+    }
+  }
+  return null;
+}
+function pickJson(v) {
+  if (v && typeof v === 'object') return v;
+  var s = String(v || '');
+  var i = s.indexOf('{'), j = s.lastIndexOf('}');
+  if (i < 0 || j <= i) return null;
+  return tryParse(s.slice(i, j + 1));
+}
+function normPrimary(t) {
+  t = String(t || '').replace(/\r/g, '').trim();
+  var nl = t.indexOf('\n');
+  var first = nl < 0 ? t : t.slice(0, nl);
+  var rest = nl < 0 ? '' : t.slice(nl + 1).trim();
+  if (Array.from(first).length > 120) {
+    var m = /^([\s\S]{20,120}?[.!?…])\s+([\s\S]*)$/.exec(first);
+    if (m) { first = m[1]; rest = (m[2] + (rest ? '\n' + rest : '')).trim(); }
+  }
+  var joined = first + (rest ? '\n\n' + rest : '');
+  return joined.split(/\n\s*\n/).map(function (par) {
+    var c = 0;
+    return par.replace(/\s*—\s*/g, function (x) { c++; return c === 1 ? x : ', '; });
+  }).join('\n\n');
+}`;
+
 // ── Спільне ────────────────────────────────────────────────────────────────────────────────────────────
 
 const paramsCode = String.raw`// Нормалізація входу webhook. Нічого не вигадуємо: projectId обовʼязковий, решта має розумні значення за замовчуванням.
@@ -99,13 +135,7 @@ return {
 };`;
 
 // Розбір відповіді Claude → масив креативів + посилання/utm (посилання ставить КОД, не модель).
-const parseCode = String.raw`function pickJson(v) {
-  if (v && typeof v === 'object') return v;
-  var s = String(v || '');
-  var i = s.indexOf('{'), j = s.lastIndexOf('}');
-  if (i < 0 || j <= i) return null;
-  try { return JSON.parse(s.slice(i, j + 1)); } catch (e) { return null; }
-}
+const parseCode = String.raw`/*HELPERS*/
 var obj = pickJson(context.creativesRaw);
 var list = obj && Array.isArray(obj.creatives) ? obj.creatives : (Array.isArray(obj) ? obj : []);
 if (!list.length) return { adFatal: 'Claude не повернув креативів у JSON: ' + String(typeof context.creativesRaw === 'string' ? context.creativesRaw : JSON.stringify(context.creativesRaw || '')).slice(0, 200) };
@@ -129,7 +159,7 @@ var ads = list.slice(0, context.adCount).map(function (c, i) {
   var ad = {
     pain: p ? p.id : s(c.pain, 20),
     angle: angle,
-    primary: s(c.primary, 600), headline: s(c.headline, 120), description: s(c.description, 80),
+    primary: normPrimary(s(c.primary, 700)), headline: s(c.headline, 120), description: s(c.description, 80),
     cta: CTA.indexOf(c.cta) >= 0 ? c.cta : (angle === 'lead_magnet' ? 'Завантажити' : 'Дізнатися більше'),
     link: linkFor(angle, i, p ? p.id : angle),
     leadMagnet: angle === 'lead_magnet' && context.adMagnet ? context.adMagnet.name : null,
@@ -158,12 +188,7 @@ var brief = 'Ось креативи з порушеннями. Перепиши
 return { adBad: bad.map(function (b) { return b.index; }), adRepairBrief: brief };`;
 
 // Підстановка виправлених креативів (за index); посилання лишаємо наші.
-const mergeCode = String.raw`function pickJson(v) {
-  if (v && typeof v === 'object') return v;
-  var s = String(v || ''); var i = s.indexOf('{'), j = s.lastIndexOf('}');
-  if (i < 0 || j <= i) return null;
-  try { return JSON.parse(s.slice(i, j + 1)); } catch (e) { return null; }
-}
+const mergeCode = String.raw`/*HELPERS*/
 var obj = pickJson(context.fixedRaw);
 var list = obj && Array.isArray(obj.creatives) ? obj.creatives : [];
 var ads = context.ads.slice();
@@ -176,6 +201,7 @@ list.forEach(function (f) {
   var next = Object.assign({}, cur);
   Object.keys(f).forEach(function (k) { if (k !== 'index' && KEEP.indexOf(k) < 0 && f[k] != null) next[k] = f[k]; });
   if (CTA.indexOf(next.cta) < 0) next.cta = cur.cta;
+  next.primary = normPrimary(next.primary);
   // Опис необовʼязковий і часто не показується: якщо після виправлення все ще > 30 символів, прибираємо його, а не тримаємо креатив у чернетках.
   if (Array.from(String(next.description || '')).length > 30) next.description = '';
   ads[i] = next;
@@ -269,8 +295,10 @@ const retryWaitCode = String.raw`var ms = 8000 + Math.floor(Math.random() * 1200
 await new Promise(function (r) { setTimeout(r, ms); });
 return { retryWaitMs: ms };`;
 
+const inj = (code) => code.replace('/*HELPERS*/', JSON_HELPERS);
+
 module.exports = {
   withMode,
-  paramsCode, prepareCode, parseCode, repairBriefCode, mergeCode, assembleImageCode, assembleVideoCode,
+  paramsCode, prepareCode, parseCode: inj(parseCode), repairBriefCode, mergeCode: inj(mergeCode), assembleImageCode, assembleVideoCode,
   renderParamsCode, renderCheckCode, retryWaitCode,
 };

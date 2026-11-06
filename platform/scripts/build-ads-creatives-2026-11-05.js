@@ -87,13 +87,14 @@ async function content2Secret() {
 // ── Воронка креативів (image | video) ─────────────────────────────────────────────────────────────────
 async function buildCreativeFunnel(mode) {
     const video = mode === 'video';
-    const slug = video ? 'ads-creative-video' : 'ads-creative-image';
+    const photo = mode === 'photo';
+    const slug = video ? 'ads-creative-video' : (photo ? 'ads-creative-photo' : 'ads-creative-image');
     const bot = await ensureBot(
         slug,
-        video ? 'Реклама FB/IG: відео-креативи' : 'Реклама FB/IG: фото-креативи',
+        video ? 'Реклама FB/IG: відео-креативи' : (photo ? 'Реклама FB/IG: креативи з фото автора' : 'Реклама FB/IG: фото-креативи'),
         video
             ? 'Бере з content2 інформацію про експерта, продукт, болі ЦА, кейси й актуальні факти та складає сценарії коротких відео-креативів (9:16, до 15 с) для реклами Facebook/Instagram. Перевіряє правила Meta, ставить креативи в план мережі «Реклама FB/IG» і запускає рендер відео.'
-            : 'Бере з content2 інформацію про експерта, продукт, болі ЦА, кейси й актуальні факти та створює готові фото-креативи для реклами Facebook/Instagram: текст оголошення + картинка (4:5 для стрічки, 9:16 для Stories/Reels). Перевіряє правила Meta, ставить креативи в план мережі «Реклама FB/IG» і запускає рендер картинок.',
+            : (photo ? 'Бере з content2 інформацію про експерта, болі ЦА, кейси й актуальні факти та створює рекламні креативи з РЕАЛЬНИХ фото автора зі сховища: фото лишається без змін, зверху заголовок про біль, знизу пропозиція. Перевіряє правила Meta, ставить креативи в план мережі «Реклама FB/IG», рендерить 4:5 і 9:16.' : 'Бере з content2 інформацію про експерта, продукт, болі ЦА, кейси й актуальні факти та створює готові фото-креативи для реклами Facebook/Instagram: текст оголошення + картинка (4:5 для стрічки, 9:16 для Stories/Reels). Перевіряє правила Meta, ставить креативи в план мережі «Реклама FB/IG» і запускає рендер картинок.'),
         'Запит {projectId, count, landingUrl|leadMagnet, ...} → креативи у плані content2, що пройшли правила реклами Meta, або чесне повідомлення, чого не вистачило.',
     );
     await copyKeys(bot.id, [
@@ -118,6 +119,7 @@ async function buildCreativeFunnel(mode) {
             angles: 'масив: pain, outcome, objection, proof, curiosity, lead_magnet (необовʼязково)',
             aspects: video ? '(не використовується, відео завжди 9:16)' : 'масив: 4:5, 9:16, 1:1; за замовчуванням ["4:5","9:16"]',
             date: 'YYYY-MM-DD, дата в плані (за замовчуванням сьогодні)',
+            photoUrls: photo ? 'масив https-посилань на відібрані фото автора зі сховища (обовʼязково для цієї воронки)' : '(не використовується)',
             pains: 'масив болів [{id, pain, hook, angle, evidence: case|hypothesis, proof, layout}]: по одному креативу на біль (каталог: документація/реклама-болі-ЦА-розбір-процесу.md)',
             note: 'додаткова вказівка власника для копірайтера',
             render: 'false = без рендера медіа (лише тексти/сценарії в плані)',
@@ -138,7 +140,7 @@ async function buildCreativeFunnel(mode) {
         { id: 'fatal', label: 'ні', expression: '!!context.adFatal' },
     ] });
     await b.add('claude', 'claude', video ? 'Сценарії відео-креативів (Claude)' : 'Тексти й картинки креативів (Claude)',
-        claudeNode(video ? P.VIDEO_SYSTEM : P.IMAGE_SYSTEM, MSG_BRIEF, 'context.creativesRaw', 'Повертає JSON {creatives:[…]} рівно за кількістю й кутами; нічого не вигадує поза даними.', video ? 9000 : 7000));
+        claudeNode(video ? P.VIDEO_SYSTEM : (photo ? P.PHOTO_SYSTEM : P.IMAGE_SYSTEM), MSG_BRIEF, 'context.creativesRaw', 'Повертає JSON {creatives:[…]} рівно за кількістю й кутами; нічого не вигадує поза даними.', video ? 9000 : 7000));
     await b.add('parse', 'js', 'Розбір відповіді, посилання й utm', { code: C.withMode(C.parseCode, mode), qaExpectation: 'Посилання ставить код, не модель; кнопка лише зі списку.' });
     await b.add('c2', 'condition', 'Креативи розібрано?', { conditions: [
         { id: 'ok', label: 'так', expression: '!context.adFatal' },
@@ -159,7 +161,7 @@ async function buildCreativeFunnel(mode) {
         url: '{{env.CONTENT2_URL}}/api/webhooks/ad-check', method: 'POST', headers: c2Headers,
         bodyFields: { ads: '{{context.ads}}' }, outputVar: 'context.gate2',
     });
-    await b.add('assemble', 'js', 'Збірка постів для плану', { code: video ? C.assembleVideoCode : C.assembleImageCode, qaExpectation: 'Один пост на креатив × формат; креатив з порушеннями піде в план як чернетка зі списком порушень.' });
+    await b.add('assemble', 'js', 'Збірка постів для плану', { code: video ? C.assembleVideoCode : (photo ? C.assemblePhotoCode : C.assembleImageCode), qaExpectation: 'Один пост на креатив × формат; креатив з порушеннями піде в план як чернетка зі списком порушень.' });
     await b.add('import', 'httpRequest', 'Постановка в план content2 (bulk-import)', {
         url: '{{env.CONTENT2_URL}}/api/posts/bulk-import', method: 'POST', headers: { 'x-import-token': '{{env.CONTENT2_WEBHOOK_SECRET}}' },
         bodyFields: { projectId: '{{context.adProjectId}}', posts: '{{context.importPayload.posts}}' }, outputVar: 'context.importResult',
@@ -255,9 +257,70 @@ async function buildRenderFunnel() {
     return bot;
 }
 
+
+// ── Рендер фото-креатива: реальне фото + текст (slide-builder), без ШІ-перемальовування обличчя ──────────
+async function buildPhotoRenderFunnel() {
+    const slug = 'ads-render-photo';
+    const bot = await ensureBot(
+        slug, 'Реклама FB/IG: рендер креатива з фото автора',
+        'Накладає текст на РЕАЛЬНЕ фото автора зі сховища (фото лишається без змін): зверху заголовок про біль, знизу пропозиція. Нативні розміри 4:5 (1088×1360) і 9:16 (1152×2048). Рендерить slide-builder, результат віддає в content2.',
+        'Повернути на callbackUrl готовий PNG креатива з фото або status:error з причиною.',
+    );
+    await copyKeys(bot.id, [['CONTENT2_WEBHOOK_SECRET', await content2Secret(), 'Секрет вебхуків content2', true]]);
+    const start = await resetFlow(bot.id);
+    await callTool('update_node', { botId: bot.id, nodeId: start.id, data: {
+        label: 'Webhook Trigger', trigger: 'webhook', description: 'POST від content2 для креатива з фото автора',
+        bodySchema: JSON.stringify({ ad: '{overlayTitle, overlaySub, photoUrl}', aspect: '4:5 | 9:16 | 1:1', callbackUrl: 'string', postItemId: 'string', projectId: 'string' }, null, 1),
+    } });
+    const b = builder(bot.id);
+    b.ids.start = start.id;
+    await b.add('params', 'js', 'Параметри фото-креатива', { code: C.photoRenderParamsCode, qaExpectation: 'Розмір за аспектом; шаблон promo (4:5) / multi-plate (9:16); потрібні заголовок і https-фото.' });
+    await b.add('stagger', 'js', 'Черга рендера (розкид у часі)', { code: C.staggerCode, qaExpectation: 'Розводить одночасні креативи по 6 с, щоб slide-builder не віддавав 504.' });
+    await b.add('render', 'httpRequest', 'Slide-builder: текст на фото', {
+        url: 'https://slides.flows.fineko.space/render/story', method: 'POST',
+        bodyFields: {
+            title: '{{context.title}}', subtitle: '{{context.subtitle}}', width: '{{context.width}}', height: '{{context.height}}',
+            accent: '{{context.accent}}', bgColor: '{{context.bgColor}}', bgStyle: '{{context.bgStyle}}', template: '{{context.template}}',
+            photoUrl: '{{context.photoUrl}}', backgroundImageUrl: '{{context.photoUrl}}',
+        },
+        outputVar: 'context.bgBase64', responseField: 'result.imageBase64',
+    });
+    await b.add('check', 'js', 'Перевірка картинки', { code: C.renderCheckCode, qaExpectation: 'HTML 504 або обрізана відповідь не вважається картинкою.' });
+    await b.add('c2', 'condition', 'Картинка ок?', { conditions: [
+        { id: 'ok', label: 'так', expression: 'context.renderOk === true' },
+        { id: 'retry', label: 'повтор', expression: 'context.renderOk !== true && context.renderTry < 3' },
+        { id: 'fail', label: 'помилка', expression: 'context.renderOk !== true' },
+    ] });
+    await b.add('retryWait', 'js', 'Пауза перед повтором', { code: C.retryWaitCode });
+    await b.add('done', 'httpRequest', 'Віддати в content2', {
+        url: '{{context.callbackUrl}}', method: 'POST', headers: { 'x-webhook-token': '{{env.CONTENT2_WEBHOOK_SECRET}}' },
+        bodyFields: { projectId: '{{context.projectId}}', status: 'success', imageBase64: '{{context.finalImageBase64}}', tags: ['ads-meta', 'author-photo'], postItemId: '{{context.postItemId}}' },
+        outputVar: 'context.callbackResult',
+    });
+    await b.add('fail', 'httpRequest', 'Помилка → content2', {
+        url: '{{context.callbackUrl}}', method: 'POST', headers: { 'x-webhook-token': '{{env.CONTENT2_WEBHOOK_SECRET}}' },
+        body: '{"status":"error","error":"{{context.failMsg}}","postItemId":"{{context.postItemId}}"}',
+        outputVar: 'context.callbackResult',
+    });
+    await b.edge('start', 'params');
+    await b.edge('params', 'stagger');
+    await b.edge('stagger', 'render');
+    await b.edge('render', 'check');
+    await b.edge('check', 'c2');
+    await b.edge('c2', 'done');
+    await b.edge('c2', 'retryWait');
+    await b.edge('c2', 'fail');
+    await b.edge('retryWait', 'render');
+    try { await callTool('auto_layout', { botId: bot.id }); } catch (e) { /* косметика */ }
+    console.log('ok', slug, bot.id);
+    return bot;
+}
+
 async function main() {
     await buildRenderFunnel();
     await buildCreativeFunnel('image');
     await buildCreativeFunnel('video');
+    await buildPhotoRenderFunnel();
+    await buildCreativeFunnel('photo');
 }
 main().then(() => process.exit(0)).catch((e) => { console.error('FAILED:', e && e.stack || e); process.exit(1); });

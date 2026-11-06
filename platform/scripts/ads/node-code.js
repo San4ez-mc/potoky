@@ -55,6 +55,9 @@ function arr(v) {
 var projectId = String(context.projectId || '').trim();
 if (!projectId) return { adFatal: 'projectId обовʼязковий (id компанії в content2)' };
 var video = context.__adMode === 'video';
+var photo = context.__adMode === 'photo';
+var photoUrls = arr(context.photoUrls).filter(function (u) { return /^https:\/\//i.test(String(u)); });
+if (photo && !photoUrls.length) return { adFatal: 'Для фото-креативів потрібні photoUrls: https-посилання на ВІДІБРАНІ фото автора зі сховища content2 (щоб у рекламу не потрапили випадкові кадри).' };
 var pains = context.pains;
 if (typeof pains === 'string') { try { pains = JSON.parse(pains); } catch (e) { pains = []; } }
 pains = (Array.isArray(pains) ? pains : []).filter(function (p) { return p && p.id && p.hook; }).slice(0, video ? 5 : 10);
@@ -67,6 +70,7 @@ return {
   adProjectId: projectId,
   adCount: count,
   adPains: pains,
+  adPhotoUrls: photoUrls,
   adAspects: aspects,
   adRender: !(context.render === false || context.render === 'false'),
   adLanding: String(context.landingUrl || '').trim(),
@@ -289,7 +293,55 @@ return { openaiSize: ASP[asp].sz, adAspect: asp, fullPrompt: prompt, callbackUrl
 const renderCheckCode = String.raw`var b = context.bgBase64;
 var tries = (Number(context.renderTry) || 0) + 1;
 var ok = typeof b === 'string' && b.length > 20000 && b.indexOf('iVBOR') === 0;
-return { renderOk: ok, renderTry: tries, failMsg: ok ? '' : 'Генератор картинок не повернув креатив (спроба ' + tries + '): ліміт, фільтр безпеки, ключ або баланс OpenAI', finalImageBase64: ok ? b : '', bgBase64: ok ? b : '' };`;
+return { renderOk: ok, renderTry: tries, failMsg: ok ? '' : 'Не вдалося отримати картинку креатива (спроба ' + tries + '): генератор/рендер не відповів або вичерпано ліміт чи баланс', finalImageBase64: ok ? b : '', bgBase64: ok ? b : '' };`;
+
+
+// Фото-креативи: РЕАЛЬНЕ фото автора + текст зверху (фото не змінюється ШІ). Фото беремо по колу з відібраного списку.
+const assemblePhotoCode = String.raw`var STRUCT = { pain: 'ad_pain', outcome: 'ad_outcome', objection: 'ad_objection', proof: 'ad_proof', curiosity: 'ad_curiosity', lead_magnet: 'ad_lead_magnet' };
+var gate = ((context.gate2 || context.gate1) || {}).results || [];
+var photos = context.adPhotoUrls || [];
+var posts = [];
+var lines = [];
+context.ads.forEach(function (ad, i) {
+  var bad = (gate[i] && gate[i].violations) || [];
+  var photoUrl = photos[i % photos.length];
+  lines.push((i + 1) + '. [' + (ad.pain || ad.angle) + '] ' + (ad.overlayTitle || ad.headline) + (bad.length ? '  ⚠ потребує правок: ' + bad.slice(0, 2).join('; ') : ''));
+  context.adAspects.forEach(function (asp) {
+    var a = Object.assign({}, ad, { aspect: asp, photoUrl: photoUrl });
+    posts.push({
+      platform: 'meta_ads',
+      format: asp === '9:16' ? 'ad_story' : 'ad_image',
+      date: context.adDate,
+      audience: 'cold',
+      structure: STRUCT[ad.angle] || null,
+      used_topic: context.adOfferName + (ad.pain ? ' · ' + ad.pain : '') + ' · фото',
+      hook_type: ad.angle === 'pain' ? 'pain' : (ad.angle === 'curiosity' ? 'question' : 'promise'),
+      intent: 'sell',
+      content: '',
+      funnel_slug: context.adRender ? 'ads-render-photo' : null,
+      funnel_params: { ad: a, aspect: asp, projectId: context.adProjectId },
+    });
+  });
+});
+return { importPayload: { projectId: context.adProjectId, posts: posts }, adPostCount: posts.length, adSummary: lines.join('\n') };`;
+
+// Рендер фото-креатива через slide-builder: фото лишається як є, зверху заголовок, знизу пропозиція.
+const photoRenderParamsCode = String.raw`var ASP = { '4:5': { w: 1088, h: 1360, tpl: 'promo' }, '9:16': { w: 1152, h: 2048, tpl: 'multi-plate' }, '1:1': { w: 1080, h: 1080, tpl: 'promo' } };
+var asp = ASP[context.aspect] ? context.aspect : '4:5';
+var ad = context.ad || {};
+var title = String(ad.overlayTitle || context.title || '').replace(/\s+/g, ' ').trim();
+var sub = String(ad.overlaySub || context.subtitle || '').replace(/\s+/g, ' ').trim();
+var photo = String(ad.photoUrl || context.photoUrl || '').trim();
+if (!title) throw new Error('overlayTitle (заголовок на фото) обовʼязковий');
+if (!/^https:\/\//i.test(photo)) throw new Error('photoUrl обовʼязковий (https)');
+return { width: ASP[asp].w, height: ASP[asp].h, template: context.template || ASP[asp].tpl, adAspect: asp, title: title, subtitle: sub, photoUrl: photo, bgColor: '#0b1220', accent: '#3b82f6', bgStyle: 'flat', callbackUrl: context.callbackUrl || '' };`;
+
+// Розкид у часі: slide-builder рендерить по одному, тож одночасні запити дають 504. Слот береться з id поста.
+const staggerCode = String.raw`var id = String(context.postItemId || context.postGroupId || Math.random());
+var slot = parseInt(id.slice(-3), 36) % 8;
+var ms = slot * 6000;
+await new Promise(function (r) { setTimeout(r, ms); });
+return { staggerMs: ms };`;
 
 const retryWaitCode = String.raw`var ms = 8000 + Math.floor(Math.random() * 12000);
 await new Promise(function (r) { setTimeout(r, ms); });
@@ -300,5 +352,5 @@ const inj = (code) => code.replace('/*HELPERS*/', JSON_HELPERS);
 module.exports = {
   withMode,
   paramsCode, prepareCode, parseCode: inj(parseCode), repairBriefCode, mergeCode: inj(mergeCode), assembleImageCode, assembleVideoCode,
-  renderParamsCode, renderCheckCode, retryWaitCode,
+  renderParamsCode, renderCheckCode, retryWaitCode, assemblePhotoCode, photoRenderParamsCode, staggerCode,
 };

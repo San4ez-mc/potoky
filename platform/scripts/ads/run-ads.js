@@ -12,7 +12,7 @@ const { db } = require('@platform/db');
 const dec = (v) => (String(v || '').startsWith('b64:') ? Buffer.from(v.slice(4), 'base64').toString('utf8') : String(v || ''));
 
 async function main() {
-    const mode = process.argv[2] === 'video' ? 'video' : 'image';
+    const mode = ['video', 'photo'].indexOf(process.argv[2]) >= 0 ? process.argv[2] : 'image';
     const name = dec(process.argv[3]).trim();
     const params = JSON.parse(dec(process.argv[4]) || '{}');
     // painsFile: "pains-consult.json#first_six" — болі з каталогу в scripts/ads (рядок "файл#ключ")
@@ -21,6 +21,13 @@ async function main() {
         const all = JSON.parse(require('fs').readFileSync(path.join(__dirname, file), 'utf8'));
         if (!Array.isArray(all[key])) throw new Error('у ' + file + ' нема масиву «' + key + '»');
         params.pains = all[key]; delete params.painsFile;
+    }
+    // photosFile: "author-photos.json#fineko_content" — відібрані фото автора (для режиму photo)
+    if (typeof params.photosFile === 'string') {
+        const [pf, pk] = params.photosFile.split('#');
+        const pall = JSON.parse(require('fs').readFileSync(path.join(__dirname, pf), 'utf8'));
+        if (!Array.isArray(pall[pk])) throw new Error('у ' + pf + ' нема масиву «' + pk + '»');
+        params.photoUrls = pall[pk]; delete params.photosFile;
     }
     if (!name) throw new Error('назва компанії обовʼязкова');
 
